@@ -2,12 +2,9 @@ import assert from "node:assert/strict";
 import { parentPort } from "node:worker_threads";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
-import { shouldRunInitialBackfill } from "./backfillDecision";
+import { decideSyncPlan, type SyncAction } from "./backfillDecision";
 import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
-import {
-  listArchivedSubagentWorkspaceIds,
-  listSessionWorkspaceIdsWithHistory,
-} from "./workspaceDiscovery";
+import { discoverAllWorkspaces } from "./workspaceDiscovery";
 import { executeNamedQuery } from "./queries";
 
 interface WorkerTaskRequest {
@@ -57,8 +54,15 @@ interface RebuildAllData {
   workspaceMetaById?: Record<string, WorkspaceMeta>;
 }
 
-interface NeedsBackfillData {
+interface SyncCheckData {
   sessionsDir: string;
+  workspaceMetaById: Record<string, WorkspaceMeta>;
+}
+
+interface SyncCheckResult {
+  action: SyncAction;
+  workspacesIngested: number;
+  workspacesPurged: number;
 }
 
 interface ClearWorkspaceData {
@@ -255,7 +259,7 @@ async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
     const workspaceId = parseNonEmptyString(row.workspace_id);
     assert(
       workspaceId !== null,
-      "needsBackfill expected ingest_watermarks rows to have non-empty workspace_id"
+      "syncCheck expected ingest_watermarks rows to have non-empty workspace_id"
     );
     watermarkWorkspaceIds.add(workspaceId);
   }
@@ -263,8 +267,12 @@ async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
   return watermarkWorkspaceIds;
 }
 
-async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBackfill: boolean }> {
-  assert(data.sessionsDir.trim().length > 0, "needsBackfill requires sessionsDir");
+async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
+  assert(data.sessionsDir.trim().length > 0, "syncCheck requires sessionsDir");
+  assert(
+    isRecord(data.workspaceMetaById) && !Array.isArray(data.workspaceMetaById),
+    "syncCheck workspaceMetaById must be an object"
+  );
 
   const result = await getConn().run(`
     SELECT
@@ -274,57 +282,94 @@ async function handleNeedsBackfill(data: NeedsBackfillData): Promise<{ needsBack
         AS has_any_watermark_at_or_above_zero
   `);
   const rows = await result.getRowObjectsJS();
-  assert(rows.length === 1, "needsBackfill should return exactly one row");
+  assert(rows.length === 1, "syncCheck should return exactly one row");
 
   const eventCount = parseNonNegativeInteger(rows[0].event_count);
-  assert(eventCount !== null, "needsBackfill expected a non-negative integer event_count");
+  assert(eventCount !== null, "syncCheck expected a non-negative integer event_count");
 
   const watermarkCount = parseNonNegativeInteger(rows[0].watermark_count);
-  assert(watermarkCount !== null, "needsBackfill expected a non-negative integer watermark_count");
+  assert(watermarkCount !== null, "syncCheck expected a non-negative integer watermark_count");
 
   const hasAnyWatermarkAtOrAboveZero = parseBooleanLike(rows[0].has_any_watermark_at_or_above_zero);
   assert(
     hasAnyWatermarkAtOrAboveZero !== null,
-    "needsBackfill expected boolean has_any_watermark_at_or_above_zero"
+    "syncCheck expected boolean has_any_watermark_at_or_above_zero"
   );
 
-  const sessionWorkspaceIds = await listSessionWorkspaceIdsWithHistory(data.sessionsDir);
-  const sessionWorkspaceCount = sessionWorkspaceIds.length;
-
-  // Archived sub-agent transcripts are stored under the parent session directory
-  // and never appear as top-level session workspace IDs. Include them so
-  // sub-agent watermark rows do not trigger a rebuild loop on every startup.
-  const archivedSubagentWorkspaceIds = await listArchivedSubagentWorkspaceIds(
-    data.sessionsDir,
-    sessionWorkspaceIds
-  );
-  const knownWorkspaceIdSet = new Set(sessionWorkspaceIds);
-  for (const archivedWorkspaceId of archivedSubagentWorkspaceIds) {
-    knownWorkspaceIdSet.add(archivedWorkspaceId);
-  }
+  const discoveredWorkspacesById = await discoverAllWorkspaces(data.sessionsDir);
+  const knownWorkspaceIds = new Set(discoveredWorkspacesById.keys());
 
   const watermarkWorkspaceIds = await listWatermarkWorkspaceIds();
   assert(
     watermarkWorkspaceIds.size === watermarkCount,
-    "needsBackfill expected watermark_count to match ingest_watermarks workspace IDs"
+    "syncCheck expected watermark_count to match ingest_watermarks workspace IDs"
   );
 
-  const hasSessionWorkspaceMissingWatermark = sessionWorkspaceIds.some(
-    (workspaceId) => !watermarkWorkspaceIds.has(workspaceId)
-  );
-  const hasWatermarkMissingSessionWorkspace = [...watermarkWorkspaceIds].some(
-    (workspaceId) => !knownWorkspaceIdSet.has(workspaceId)
-  );
+  const plan = decideSyncPlan({
+    eventCount,
+    watermarkCount,
+    knownWorkspaceIds,
+    watermarkWorkspaceIds,
+    hasAnyWatermarkAtOrAboveZero,
+  });
+
+  if (plan.action === "noop") {
+    return {
+      action: "noop",
+      workspacesIngested: 0,
+      workspacesPurged: 0,
+    };
+  }
+
+  if (plan.action === "full_rebuild") {
+    const { workspacesIngested } = await rebuildAll(
+      getConn(),
+      data.sessionsDir,
+      data.workspaceMetaById
+    );
+    return {
+      action: "full_rebuild",
+      workspacesIngested,
+      workspacesPurged: 0,
+    };
+  }
+
+  let workspacesIngested = 0;
+  for (const workspaceId of plan.workspaceIdsToIngest) {
+    const workspace = discoveredWorkspacesById.get(workspaceId);
+    assert(workspace, `syncCheck expected discovered workspace entry for ${workspaceId}`);
+
+    try {
+      await ingestWorkspace(
+        getConn(),
+        workspaceId,
+        workspace.sessionDir,
+        data.workspaceMetaById[workspaceId] ?? {}
+      );
+      workspacesIngested += 1;
+    } catch (error) {
+      process.stderr.write(
+        `[analytics-worker] Failed to ingest workspace during sync check (${workspaceId}): ${getErrorMessage(error)}\n`
+      );
+    }
+  }
+
+  let workspacesPurged = 0;
+  for (const workspaceId of plan.workspaceIdsToPurge) {
+    try {
+      await clearWorkspaceAnalyticsState(getConn(), workspaceId);
+      workspacesPurged += 1;
+    } catch (error) {
+      process.stderr.write(
+        `[analytics-worker] Failed to purge workspace during sync check (${workspaceId}): ${getErrorMessage(error)}\n`
+      );
+    }
+  }
 
   return {
-    needsBackfill: shouldRunInitialBackfill({
-      eventCount,
-      watermarkCount,
-      sessionWorkspaceCount,
-      hasSessionWorkspaceMissingWatermark,
-      hasWatermarkMissingSessionWorkspace,
-      hasAnyWatermarkAtOrAboveZero,
-    }),
+    action: "incremental",
+    workspacesIngested,
+    workspacesPurged,
   };
 }
 
@@ -399,8 +444,8 @@ async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
       return handleClearWorkspace(data as ClearWorkspaceData);
     case "query":
       return handleQuery(data as QueryData);
-    case "needsBackfill":
-      return handleNeedsBackfill(data as NeedsBackfillData);
+    case "syncCheck":
+      return handleSyncCheck(data as SyncCheckData);
     default:
       throw new Error(`Unknown analytics worker task: ${taskName}`);
   }

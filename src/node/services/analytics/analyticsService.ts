@@ -89,17 +89,9 @@ interface RebuildAllResult {
   workspacesIngested: number;
 }
 
-interface NeedsBackfillResult {
-  needsBackfill: boolean;
-}
-
 interface RebuildAllData {
   sessionsDir: string;
   workspaceMetaById: Record<string, IngestWorkspaceMeta>;
-}
-
-interface NeedsBackfillData {
-  sessionsDir: string;
 }
 
 function toOptionalNonEmptyString(value: string | undefined): string | undefined {
@@ -347,30 +339,18 @@ export class AnalyticsService {
     const dbPath = path.join(dbDir, "analytics.db");
     await this.dispatch("init", { dbPath });
 
-    const backfillState = await this.dispatch<NeedsBackfillResult>("needsBackfill", {
-      sessionsDir: this.config.sessionsDir,
-    } satisfies NeedsBackfillData);
-    assert(
-      typeof backfillState.needsBackfill === "boolean",
-      "Analytics worker needsBackfill task must return a boolean"
-    );
-
-    if (!backfillState.needsBackfill) {
-      return;
-    }
-
-    // Backfill existing workspace history when analytics initialization is
-    // missing or appears partial (for example, when any session workspace lacks
-    // a matching watermark row, even if stale watermark rows keep counts equal).
-    // Once every session workspace has a watermark row, routine worker restarts
-    // skip full rebuilds, including zero-event histories. Awaited so the first
-    // query sees complete data instead of an empty/partially-rebuilt database.
+    // Sync analytics state with on-disk workspace history when worker starts.
+    // Worker decides whether this is a noop, incremental sync, or full rebuild.
+    // Awaited so first query observes complete startup state.
     try {
-      await this.dispatch("rebuildAll", this.buildRebuildAllData());
+      await this.dispatch("syncCheck", {
+        sessionsDir: this.config.sessionsDir,
+        workspaceMetaById: this.buildRebuildWorkspaceMetaById(),
+      });
     } catch (error) {
-      // Non-fatal: queries will work but may show partial historical data
+      // Non-fatal: queries still work but may show partial historical data
       // until incremental stream-end ingestion fills gaps.
-      log.warn("[AnalyticsService] Initial backfill failed (non-fatal)", {
+      log.warn("[AnalyticsService] Initial sync check failed (non-fatal)", {
         error: getErrorMessage(error),
       });
     }
