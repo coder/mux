@@ -19,9 +19,31 @@ For this sandbox flow:
 
 ## Quick start (deterministic)
 
-Run these in separate terminals.
+### Preferred: one command for backend + proxy + mobile web
 
-### 1) Start isolated backend sandbox
+```bash
+BACKEND_PORT=3900 \
+VITE_PORT=5174 \
+MOBILE_CORS_PROXY_PORT=3901 \
+KEEP_SANDBOX=1 \
+make mobile-sandbox
+```
+
+This starts:
+
+- isolated backend sandbox (`dev-server-sandbox`) on `127.0.0.1:3900`
+- local CORS proxy on `127.0.0.1:3901` → forwards to backend
+- Expo web app on `http://localhost:8081`
+
+Why the proxy exists:
+
+- backend origin validation for `/orpc` is intentionally strict
+- mobile web and backend use different origins in dev (`:8081` vs `:3900`)
+- proxy keeps backend strictness while enabling local browser-based mobile UI testing
+
+### Manual path (if you need separate terminals)
+
+1. Start isolated backend sandbox
 
 ```bash
 BACKEND_PORT=3900 \
@@ -30,24 +52,30 @@ KEEP_SANDBOX=1 \
 make dev-server-sandbox
 ```
 
-Why this shape:
-
-- fixed backend port removes guesswork
-- isolated `MUX_ROOT` avoids collisions with other running mux instances
-- `KEEP_SANDBOX=1` keeps temp state for debugging
-
-### 2) Start mobile web against that backend
+2. Start local mobile CORS proxy
 
 ```bash
-EXPO_PUBLIC_BACKEND_URL=http://127.0.0.1:3900 make mobile-web
+MOBILE_BACKEND_PORT=3900 \
+MOBILE_CORS_PROXY_PORT=3901 \
+# Optional when the mobile origin is not localhost:8081:
+# MOBILE_CORS_ALLOWED_ORIGINS="http://localhost:8081,http://127.0.0.1:8081"
+make mobile-cors-proxy
 ```
 
-### 3) Pair connection settings in app settings
+3. Start Expo web
+
+```bash
+EXPO_PUBLIC_BACKEND_URL=http://127.0.0.1:3901 make mobile-web
+```
+
+> `EXPO_PUBLIC_BACKEND_URL` now feeds Expo `extra.mux.baseUrl` defaults. Settings can still override it.
+
+### Pair connection settings in app settings
 
 In the mobile UI (`http://localhost:8081`):
 
 - open **Settings**
-- keep/save Base URL as `http://127.0.0.1:3900`
+- set Base URL to `http://127.0.0.1:3901` (proxy)
 - clear Auth Token (or leave it empty)
 
 After this, the URL persists in app storage.
@@ -58,13 +86,18 @@ Copy this checklist and keep it updated while working:
 
 ```text
 Mobile sandbox progress:
-- [ ] Step 1: Start isolated backend (`make dev-server-sandbox`)
-- [ ] Step 2: Start Expo web (`make mobile-web`)
-- [ ] Step 3: Pair URL in Settings and clear token
-- [ ] Step 4: Verify project/workspace list loads
-- [ ] Step 5: Implement UI change
-- [ ] Step 6: Re-verify via Chrome MCP + screenshots
+- [ ] Step 1: Start backend + proxy + mobile (`make mobile-sandbox`)
+- [ ] Step 2: Verify Base URL points to proxy (:3901) and token is empty
+- [ ] Step 3: Verify project/workspace list loads
+- [ ] Step 4: Implement UI change
+- [ ] Step 5: Re-verify via Chrome MCP + screenshots
 ```
+
+## Chrome MCP prerequisites
+
+- Ensure Google Chrome is installed and discoverable by MCP.
+- If MCP says Chrome executable is missing, install Chrome before retrying.
+- Avoid killing Chrome processes manually (`pkill`, `kill -9`) while using MCP; restart the workspace instead if MCP gets wedged.
 
 ## Chrome MCP loop (for UI work)
 
@@ -93,23 +126,28 @@ KEEP_SANDBOX=1 \
 make dev-server-sandbox
 ```
 
-Then set mobile Base URL to a reachable machine IP (LAN/VPN/Tailscale), not `localhost`.
+Then run a proxy host reachable from the device and set mobile Base URL to that proxy URL.
 
 ## Validation loop (do not skip)
 
 1. Backend reachable:
-   - `http://127.0.0.1:3900` responds
-2. Mobile connected:
-   - project list loads without auth errors
-3. Streaming works:
+   - `http://127.0.0.1:3900/health` responds
+2. Proxy reachable:
+   - `http://127.0.0.1:3901/health` responds
+3. Mobile connected:
+   - project list loads without auth/CORS errors
+4. Streaming works:
    - open workspace and confirm live chat updates
-4. If any check fails, fix config and re-run the same checks.
+5. If any check fails, fix config and re-run the same checks.
 
 ## Troubleshooting
 
-- **Unexpected auth errors**: this sandbox flow is no-auth; confirm you are on the sandbox URL and clear any stale mobile Auth Token value.
-- **Connection refused**: wrong port or backend not running.
-- **Works on desktop browser, fails on real device**: device cannot use `localhost`; switch to LAN/VPN IP and ensure `BACKEND_HOST=0.0.0.0`.
+- **Unexpected auth errors**: this sandbox flow is no-auth; confirm token is empty.
+- **`Failed to fetch` immediately after changing settings**: press **Retry** once after returning from Settings; initial fetch may still reflect stale state.
+- **`Origin not allowed` from proxy**: include your mobile web origin in `MOBILE_CORS_ALLOWED_ORIGINS`.
+- **Connection refused**: wrong port or backend/proxy not running.
+- **CORS 403 from backend**: verify Base URL is proxy `:3901` (not backend `:3900`).
+- **Works on desktop browser, fails on real device**: device cannot use `localhost`; use LAN/VPN IPs.
 - **Sandbox vanished after exit**: re-run with `KEEP_SANDBOX=1`.
 
 ## Implementation references
@@ -117,10 +155,12 @@ Then set mobile Base URL to a reachable machine IP (LAN/VPN/Tailscale), not `loc
 Use these files when behavior needs to be confirmed:
 
 - `scripts/dev-server-sandbox.ts`
+- `scripts/mobile-cors-proxy.ts`
 - `mobile/src/orpc/client.ts`
 - `mobile/src/contexts/AppConfigContext.tsx`
 - `mobile/src/shims/backendBaseUrl.ts`
+- `mobile/app.config.js`
 - `mobile/metro.config.js`
-- `src/node/services/serverService.ts`
+- `src/node/orpc/server.ts`
 - `src/node/services/serverLockfile.ts`
-- `Makefile` targets: `dev-server-sandbox`, `mobile-web`, `test-mobile`, `typecheck-react-native`
+- `Makefile` targets: `mobile-sandbox`, `mobile-cors-proxy`, `dev-server-sandbox`, `mobile-web`, `test-mobile`, `typecheck-react-native`

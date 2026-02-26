@@ -61,7 +61,7 @@ include fmt.mk
 
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static build-docker-runtime verify-docker-runtime-artifacts
-.PHONY: lint lint-fix typecheck typecheck-react-native mobile-web static-check
+.PHONY: lint lint-fix typecheck typecheck-react-native mobile-web mobile-cors-proxy mobile-sandbox static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64 check-appimage-icons
 .PHONY: vscode-ext vscode-ext-install
@@ -339,7 +339,7 @@ lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
 	@./scripts/zizmor.sh --min-confidence high .
 
 # Shell files to lint (excludes node_modules, build artifacts, .git)
-SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
+SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
 
 lint-shellcheck: ## Run shellcheck on shell scripts
 	shellcheck --external-sources $(SHELL_SRC_FILES)
@@ -358,6 +358,42 @@ typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(
 	@bun x concurrently -g \
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
+endif
+
+mobile-cors-proxy: node_modules/.installed ## Start local mobile CORS proxy (default: :3901 -> backend :3900)
+	@MOBILE_BACKEND_HOST=$(or $(MOBILE_BACKEND_HOST),127.0.0.1) \
+		MOBILE_BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900)) \
+		MOBILE_CORS_PROXY_HOST=$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1) \
+		MOBILE_CORS_PROXY_PORT=$(or $(MOBILE_CORS_PROXY_PORT),3901) \
+		bun scripts/mobile-cors-proxy.ts
+
+ifeq ($(OS),Windows_NT)
+mobile-sandbox: node_modules/.installed mobile/node_modules/.installed ## Start backend sandbox + CORS proxy + Expo web in one command
+	@echo "Starting mobile sandbox..."
+	@echo "  Backend: http://$(or $(MOBILE_BACKEND_HOST),127.0.0.1):$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))"
+	@echo "  Proxy:   http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901)"
+	@echo "  Mobile:  http://localhost:8081"
+	@echo "  Base URL in Settings should match the proxy URL above."
+	@# User rationale: mobile web and backend run on different origins; backend keeps strict origin checks.
+	@# This starts a local CORS bridge so mobile UI work is deterministic in one command.
+	@# On Windows, use npm run because bun x doesn't correctly pass arguments to concurrently.
+	@npm x -- concurrently -k \
+		"set BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))&& set VITE_PORT=$(or $(MOBILE_VITE_PORT),$(or $(VITE_PORT),5174))&& set KEEP_SANDBOX=$(or $(KEEP_SANDBOX),1)&& $(MAKE) --no-print-directory dev-server-sandbox" \
+		"set MOBILE_BACKEND_HOST=$(or $(MOBILE_BACKEND_HOST),127.0.0.1)&& set MOBILE_BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))&& set MOBILE_CORS_PROXY_HOST=$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1)&& set MOBILE_CORS_PROXY_PORT=$(or $(MOBILE_CORS_PROXY_PORT),3901)&& $(MAKE) --no-print-directory mobile-cors-proxy" \
+		"set EXPO_PUBLIC_BACKEND_URL=http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901)&& $(MAKE) --no-print-directory mobile-web"
+else
+mobile-sandbox: node_modules/.installed mobile/node_modules/.installed ## Start backend sandbox + CORS proxy + Expo web in one command
+	@echo "Starting mobile sandbox..."
+	@echo "  Backend: http://$(or $(MOBILE_BACKEND_HOST),127.0.0.1):$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))"
+	@echo "  Proxy:   http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901)"
+	@echo "  Mobile:  http://localhost:8081"
+	@echo "  Base URL in Settings should match the proxy URL above."
+	@# User rationale: mobile web and backend run on different origins; backend keeps strict origin checks.
+	@# This starts a local CORS bridge so mobile UI work is deterministic in one command.
+	@bun x concurrently -k \
+		"BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900)) VITE_PORT=$(or $(MOBILE_VITE_PORT),$(or $(VITE_PORT),5174)) KEEP_SANDBOX=$(or $(KEEP_SANDBOX),1) $(MAKE) --no-print-directory dev-server-sandbox" \
+		"MOBILE_BACKEND_HOST=$(or $(MOBILE_BACKEND_HOST),127.0.0.1) MOBILE_BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900)) MOBILE_CORS_PROXY_HOST=$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1) MOBILE_CORS_PROXY_PORT=$(or $(MOBILE_CORS_PROXY_PORT),3901) $(MAKE) --no-print-directory mobile-cors-proxy" \
+		"EXPO_PUBLIC_BACKEND_URL=http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901) $(MAKE) --no-print-directory mobile-web"
 endif
 
 mobile-web: mobile/node_modules/.installed ## Start mobile app web dev server
