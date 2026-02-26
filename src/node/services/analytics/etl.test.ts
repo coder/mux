@@ -5,7 +5,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
-import { CHAT_FILE_NAME, clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
+import {
+  appendEvents,
+  CHAT_FILE_NAME,
+  clearWorkspaceAnalyticsState,
+  ingestWorkspace,
+  parseWorkspaceFromDisk,
+  rebuildAll,
+} from "./etl";
 
 const CREATE_EVENTS_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS events (
@@ -279,6 +286,94 @@ describe("rebuildAll", () => {
       "DELETE FROM ingest_watermarks",
       "ROLLBACK",
     ]);
+  });
+
+  test("continues rebuild when parsing one workspace fails", async () => {
+    const conn = await createTestConn();
+    const sessionsDir = await createTempSessionDir();
+
+    const goodWorkspaceDir = path.join(sessionsDir, "ws-good");
+    await fs.mkdir(goodWorkspaceDir, { recursive: true });
+    await writeChatJsonl(goodWorkspaceDir, [makeUserLine(), makeAssistantLine()]);
+
+    const badWorkspaceDir = path.join(sessionsDir, "ws-bad");
+    await fs.mkdir(path.join(badWorkspaceDir, CHAT_FILE_NAME), { recursive: true });
+
+    const result = await rebuildAll(conn, sessionsDir, {});
+
+    expect(result).toEqual({ workspacesIngested: 1 });
+    expect(await queryEventCount(conn)).toBe(1);
+  });
+});
+
+describe("appendEvents", () => {
+  test("inserts parsed events with expected fields", async () => {
+    const conn = await createTestConn();
+    const sessionDir = await createTempSessionDir();
+
+    await writeMetadataJson(sessionDir, {
+      projectPath: "/proj",
+      projectName: "my-proj",
+    });
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      makeAssistantLine({ model: "openai:gpt-4", inputTokens: 200, outputTokens: 75 }),
+    ]);
+
+    const parsed = await parseWorkspaceFromDisk("ws-append", sessionDir, {});
+    expect(parsed).not.toBeNull();
+    assert(parsed, "appendEvents test expected parseWorkspaceFromDisk to parse workspace");
+
+    await appendEvents(conn, parsed.events);
+
+    expect(await queryEventCount(conn, "ws-append")).toBe(1);
+    const rows = await queryRows(
+      conn,
+      "SELECT model, input_tokens, output_tokens, project_path FROM events WHERE workspace_id = ?",
+      ["ws-append"]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].model).toBe("openai:gpt-4");
+    expect(parseInteger(rows[0].input_tokens, "input_tokens")).toBe(200);
+    expect(parseInteger(rows[0].output_tokens, "output_tokens")).toBe(75);
+    expect(rows[0].project_path).toBe("/proj");
+  });
+
+  test("is a no-op when events is empty", async () => {
+    const conn = await createTestConn();
+
+    await appendEvents(conn, []);
+
+    expect(await queryEventCount(conn)).toBe(0);
+  });
+});
+
+describe("parseWorkspaceFromDisk", () => {
+  test("reads chat.jsonl and metadata.json", async () => {
+    const sessionDir = await createTempSessionDir();
+    await writeMetadataJson(sessionDir, {
+      projectPath: "/test",
+      projectName: "test-proj",
+    });
+    await writeChatJsonl(sessionDir, [makeUserLine(), makeAssistantLine({ model: "gpt-4" })]);
+
+    const parsed = await parseWorkspaceFromDisk("ws-test", sessionDir, {});
+
+    expect(parsed).not.toBeNull();
+    assert(parsed, "parseWorkspaceFromDisk test expected non-null parsed workspace");
+    expect(parsed.workspaceId).toBe("ws-test");
+    expect(parsed.workspaceMeta.projectPath).toBe("/test");
+    expect(parsed.events).toHaveLength(1);
+    expect(parsed.events[0].row.model).toBe("gpt-4");
+    expect(parsed.stat.mtimeMs).toBeGreaterThan(0);
+  });
+
+  test("returns null when chat.jsonl is missing", async () => {
+    const sessionDir = await createTempSessionDir();
+
+    const parsed = await parseWorkspaceFromDisk("ws-missing", sessionDir, {});
+
+    expect(parsed).toBeNull();
   });
 });
 

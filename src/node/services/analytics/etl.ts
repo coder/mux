@@ -15,6 +15,12 @@ const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
 const SESSION_USAGE_FILE_NAME = "session-usage.json";
 const SUBAGENT_REPORTS_FILE_NAME = "subagent-reports.json";
 
+/**
+ * Maximum number of workspace directories to parse in parallel during rebuildAll.
+ * Balances disk throughput against file-descriptor pressure.
+ */
+const REBUILD_CONCURRENCY = 16;
+
 const INSERT_EVENT_SQL = `
 INSERT INTO events (
   workspace_id,
@@ -1027,38 +1033,19 @@ async function ingestArchivedSubagentTranscripts(
   return ingested;
 }
 
-/** Read session-usage.json and subagent-reports.json, then insert delegation_rollups rows. */
-async function ingestDelegationRollups(
+/**
+ * Core DB-write logic for delegation rollups.
+ * Both ingestDelegationRollups (file-based) and writeDelegationRollupsFromParsed
+ * (pre-read data) delegate to this function.
+ */
+async function writeDelegationRollupEntries(
   conn: DuckDBConnection,
   workspaceId: string,
-  sessionDir: string,
+  usageData: Record<string, unknown> | null,
+  reportTokenByChildId: Map<string, number>,
   workspaceMeta: WorkspaceMeta
 ): Promise<void> {
-  const usagePath = path.join(sessionDir, SESSION_USAGE_FILE_NAME);
-  let usageRaw: string;
-  try {
-    usageRaw = await fs.readFile(usagePath, "utf-8");
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") {
-      await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
-      return;
-    }
-    log.warn("[analytics-etl] Failed to read session-usage.json for delegation rollups", {
-      workspaceId,
-      error: getErrorMessage(error),
-    });
-    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
-    return;
-  }
-
-  let usageData: unknown;
-  try {
-    usageData = JSON.parse(usageRaw);
-  } catch {
-    await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
-    return;
-  }
-  if (!isRecord(usageData)) {
+  if (usageData == null) {
     await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
     return;
   }
@@ -1068,9 +1055,6 @@ async function ingestDelegationRollups(
     await conn.run("DELETE FROM delegation_rollups WHERE parent_workspace_id = ?", [workspaceId]);
     return;
   }
-
-  // Read subagent-reports.json for reportTokenEstimate lookup
-  const reportTokenByChildId = await readReportTokenEstimates(sessionDir);
 
   await conn.run("BEGIN TRANSACTION");
   try {
@@ -1121,6 +1105,43 @@ async function ingestDelegationRollups(
   }
 }
 
+/** Read session-usage.json and subagent-reports.json, then insert delegation_rollups rows. */
+async function ingestDelegationRollups(
+  conn: DuckDBConnection,
+  workspaceId: string,
+  sessionDir: string,
+  workspaceMeta: WorkspaceMeta
+): Promise<void> {
+  const usagePath = path.join(sessionDir, SESSION_USAGE_FILE_NAME);
+  let usageData: Record<string, unknown> | null = null;
+
+  try {
+    const usageRaw = await fs.readFile(usagePath, "utf-8");
+    const parsed: unknown = JSON.parse(usageRaw);
+    if (isRecord(parsed)) {
+      usageData = parsed;
+    }
+  } catch (error) {
+    if (!(isRecord(error) && error.code === "ENOENT")) {
+      log.warn("[analytics-etl] Failed to read session-usage.json for delegation rollups", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+    // usageData stays null -> writeDelegationRollupEntries clears stale rows.
+  }
+
+  // Read subagent-reports.json for reportTokenEstimate lookup.
+  const reportTokenByChildId = await readReportTokenEstimates(sessionDir);
+  await writeDelegationRollupEntries(
+    conn,
+    workspaceId,
+    usageData,
+    reportTokenByChildId,
+    workspaceMeta
+  );
+}
+
 async function readReportTokenEstimates(sessionDir: string): Promise<Map<string, number>> {
   const result = new Map<string, number>();
   const reportsPath = path.join(sessionDir, SUBAGENT_REPORTS_FILE_NAME);
@@ -1158,6 +1179,26 @@ async function readDelegationRollupFilesFromDisk(sessionDir: string): Promise<De
 
   const reportTokenByChildId = await readReportTokenEstimates(sessionDir);
   return { usageData, reportTokenByChildId };
+}
+
+export async function writeDelegationRollupsFromParsed(
+  conn: DuckDBConnection,
+  workspaceId: string,
+  delegationRollupRaw: DelegationRollupRaw,
+  workspaceMeta: WorkspaceMeta
+): Promise<void> {
+  assert(
+    workspaceId.trim().length > 0,
+    "writeDelegationRollupsFromParsed: workspaceId is required"
+  );
+
+  await writeDelegationRollupEntries(
+    conn,
+    workspaceId,
+    delegationRollupRaw.usageData,
+    delegationRollupRaw.reportTokenByChildId,
+    workspaceMeta
+  );
 }
 
 async function parseArchivedTranscriptsFromDisk(
@@ -1291,6 +1332,20 @@ export async function parseWorkspaceFromDisk(
   };
 }
 
+/** Flatten parsed workspaces (including archived transcripts) into one event list. */
+function collectAllEvents(parsed: ParsedWorkspaceData[]): IngestEvent[] {
+  const all: IngestEvent[] = [];
+
+  for (const workspace of parsed) {
+    all.push(...workspace.events);
+    for (const childWorkspace of workspace.archivedTranscripts) {
+      all.push(...childWorkspace.events);
+    }
+  }
+
+  return all;
+}
+
 export async function rebuildAll(
   conn: DuckDBConnection,
   sessionsDir: string,
@@ -1328,27 +1383,71 @@ export async function rebuildAll(
 
   assert(entries, "rebuildAll expected a directory listing");
 
-  let workspacesIngested = 0;
+  const directoryEntries = entries.filter((entry) => entry.isDirectory());
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
+  const allParsed: ParsedWorkspaceData[] = [];
+  for (let i = 0; i < directoryEntries.length; i += REBUILD_CONCURRENCY) {
+    const batch = directoryEntries.slice(i, i + REBUILD_CONCURRENCY);
 
-    const workspaceId = entry.name;
-    const sessionDir = path.join(sessionsDir, workspaceId);
-    const suppliedWorkspaceMeta = workspaceMetaById[workspaceId] ?? {};
+    const results = await Promise.allSettled(
+      batch.map((entry) => {
+        const workspaceId = entry.name;
+        const sessionDir = path.join(sessionsDir, workspaceId);
+        const suppliedWorkspaceMeta = workspaceMetaById[workspaceId] ?? {};
+        return parseWorkspaceFromDisk(workspaceId, sessionDir, suppliedWorkspaceMeta);
+      })
+    );
 
-    try {
-      await ingestWorkspace(conn, workspaceId, sessionDir, suppliedWorkspaceMeta);
-      workspacesIngested += 1;
-    } catch (error) {
-      log.warn("[analytics-etl] Failed to ingest workspace during rebuild", {
-        workspaceId,
-        error: getErrorMessage(error),
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
+      const batchEntry = batch[j];
+      assert(result, "rebuildAll: Promise.allSettled result should always be present");
+
+      if (result.status === "fulfilled") {
+        if (result.value != null) {
+          allParsed.push(result.value);
+        }
+        continue;
+      }
+
+      log.warn("[analytics-etl] Failed to parse workspace during rebuild", {
+        workspaceId: batchEntry?.name,
+        error: getErrorMessage(result.reason),
       });
     }
   }
 
-  return { workspacesIngested };
+  await appendEvents(conn, collectAllEvents(allParsed));
+
+  for (const parsedWorkspace of allParsed) {
+    const maxSequence = getMaxSequence(parsedWorkspace.events) ?? -1;
+    await writeWatermark(conn, parsedWorkspace.workspaceId, {
+      lastSequence: maxSequence,
+      lastModified: parsedWorkspace.stat.mtimeMs,
+    });
+
+    await writeDelegationRollupsFromParsed(
+      conn,
+      parsedWorkspace.workspaceId,
+      parsedWorkspace.delegationRollupRaw,
+      parsedWorkspace.workspaceMeta
+    );
+
+    for (const archivedWorkspace of parsedWorkspace.archivedTranscripts) {
+      const archivedMaxSequence = getMaxSequence(archivedWorkspace.events) ?? -1;
+      await writeWatermark(conn, archivedWorkspace.workspaceId, {
+        lastSequence: archivedMaxSequence,
+        lastModified: archivedWorkspace.stat.mtimeMs,
+      });
+
+      await writeDelegationRollupsFromParsed(
+        conn,
+        archivedWorkspace.workspaceId,
+        archivedWorkspace.delegationRollupRaw,
+        archivedWorkspace.workspaceMeta
+      );
+    }
+  }
+
+  return { workspacesIngested: allParsed.length };
 }
