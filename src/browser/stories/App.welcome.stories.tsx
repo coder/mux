@@ -561,11 +561,24 @@ export const CreateWorkspaceWithSections: AppStory = {
     await openFirstProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for the section selector to appear on its own row
+    // Wait for the section selector and assert it renders on its own row
+    // (below the workspace-name header, not crammed into the same line).
     await waitFor(
       () => {
-        if (!canvas.queryByTestId("section-selector")) {
+        const sectionSelector = canvas.queryByTestId("section-selector");
+        if (!sectionSelector) {
           throw new Error("Section selector not visible");
+        }
+        const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
+        if (!headerRow) {
+          throw new Error("Workspace name header row not found");
+        }
+        const headerBottom = headerRow.getBoundingClientRect().bottom;
+        const sectionTop = sectionSelector.getBoundingClientRect().top;
+        if (sectionTop < headerBottom) {
+          throw new Error(
+            `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
+          );
         }
       },
       { timeout: 10000 }
