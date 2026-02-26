@@ -86,7 +86,6 @@ export const WORKSPACE_DRAFTS_BY_PROJECT_KEY = "workspaceDraftsByProject";
  * mirrored into ~/.mux/config.json for portability across server ports.
  */
 export const GATEWAY_MODELS_KEY = "gateway-models"; // enabled model IDs (canonical)
-export const GATEWAY_CONFIGURED_KEY = "gateway-available"; // synced from provider config
 export const GATEWAY_ENABLED_KEY = "gateway-enabled"; // global on/off toggle
 
 /**
