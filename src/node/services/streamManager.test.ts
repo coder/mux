@@ -932,6 +932,13 @@ describe("StreamManager - TTFT metadata persistence", () => {
     historySequence: number;
     startTime: number;
     parts: unknown[];
+    usage?: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      reasoningTokens?: number;
+    };
+    reasoningTokensByDelta?: number;
   }) {
     const streamManager = new StreamManager(historyService);
     // Suppress error events from bubbling up as uncaught exceptions during tests
@@ -966,14 +973,16 @@ describe("StreamManager - TTFT metadata persistence", () => {
     ) => Promise<void>;
     expect(typeof processStreamWithCleanup).toBe("function");
 
+    const usage = params.usage ?? { inputTokens: 4, outputTokens: 6, totalTokens: 10 };
+
     const streamInfo = {
       state: "streaming",
       streamResult: {
         fullStream: (async function* () {
           // No-op stream: tests verify stream-end finalization behavior from pre-populated parts.
         })(),
-        totalUsage: Promise.resolve({ inputTokens: 4, outputTokens: 6, totalTokens: 10 }),
-        usage: Promise.resolve({ inputTokens: 4, outputTokens: 6, totalTokens: 10 }),
+        totalUsage: Promise.resolve(usage),
+        usage: Promise.resolve(usage),
         providerMetadata: Promise.resolve(undefined),
         steps: Promise.resolve([]),
       },
@@ -994,6 +1003,7 @@ describe("StreamManager - TTFT metadata persistence", () => {
       runtimeTempDir: "",
       runtime,
       cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      reasoningTokensByDelta: params.reasoningTokensByDelta ?? 0,
       cumulativeProviderMetadata: undefined,
       didRetryPreviousResponseIdAtStep: false,
       currentStepStartIndex: 0,
@@ -1065,6 +1075,81 @@ describe("StreamManager - TTFT metadata persistence", () => {
     expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "ttftMs")).toBe(
       false
     );
+  });
+
+  describe("StreamManager - reasoning token backfill", () => {
+    test("backfills reasoningTokens from delta count when provider reports undefined", async () => {
+      const startTime = Date.now() - 1000;
+      const updatedMessage = await finalizeStreamAndReadMessage({
+        workspaceId: "reasoning-backfill-workspace",
+        messageId: "reasoning-backfill-message",
+        historySequence: 1,
+        startTime,
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        reasoningTokensByDelta: 42,
+        parts: [
+          {
+            type: "reasoning",
+            text: "Thinking through tradeoffs",
+            timestamp: startTime + 100,
+          },
+          {
+            type: "text",
+            text: "Final answer",
+            timestamp: startTime + 200,
+          },
+        ],
+      });
+
+      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBe(42);
+    });
+
+    test("preserves provider-reported reasoningTokens when present", async () => {
+      const startTime = Date.now() - 1000;
+      const updatedMessage = await finalizeStreamAndReadMessage({
+        workspaceId: "reasoning-provider-workspace",
+        messageId: "reasoning-provider-message",
+        historySequence: 1,
+        startTime,
+        usage: { inputTokens: 100, outputTokens: 250, totalTokens: 350, reasoningTokens: 200 },
+        reasoningTokensByDelta: 190,
+        parts: [
+          {
+            type: "reasoning",
+            text: "Model-supplied chain of thought",
+            timestamp: startTime + 150,
+          },
+          {
+            type: "text",
+            text: "Summarized response",
+            timestamp: startTime + 300,
+          },
+        ],
+      });
+
+      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBe(200);
+    });
+
+    test("does not inject reasoningTokens when no reasoning deltas occurred", async () => {
+      const startTime = Date.now() - 1000;
+      const updatedMessage = await finalizeStreamAndReadMessage({
+        workspaceId: "reasoning-none-workspace",
+        messageId: "reasoning-none-message",
+        historySequence: 1,
+        startTime,
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        reasoningTokensByDelta: 0,
+        parts: [
+          {
+            type: "text",
+            text: "Only final response",
+            timestamp: startTime + 200,
+          },
+        ],
+      });
+
+      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBeUndefined();
+    });
   });
 });
 
