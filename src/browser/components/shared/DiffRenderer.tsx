@@ -1378,7 +1378,15 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const firstLineType = highlightedLineData[0]?.type;
     const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
 
-    const shouldCullOffscreenDiffRows = isComposing && lineData.length >= 500;
+    const hasPendingInlineReview = parsedInlineReviews.some(
+      ({ review }) => review.status === "pending"
+    );
+    const shouldCullOffscreenDiffRows =
+      isComposing &&
+      lineData.length >= 500 &&
+      // Pending inline notes render as subgrid rows; combining them with
+      // content-visibility row culling can desync immersive column alignment.
+      !hasPendingInlineReview;
 
     const cursorLikeOutlineColor = "hsl(from var(--color-review-accent) h s l / 0.45)";
     const normalizedSelectedLineRange = selectedLineRange
