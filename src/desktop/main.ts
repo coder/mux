@@ -42,23 +42,6 @@ import {
 // Must be called before app.whenReady().
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 
-// Diagnostic: log effective launch state to help diagnose renderer crashes.
-// No mitigation flags are applied by app code — if any appear here,
-// they were injected externally (wrapper script, desktop entry, etc.).
-if (process.platform === "linux") {
-  // Deep-link args (mux:// URLs) may contain user data (prompts, project
-  // paths) and must never be logged raw.
-  const redactedArgv = process.argv.map((arg) =>
-    arg.toLowerCase().startsWith("mux:") ? "mux:[redacted]" : arg
-  );
-  console.log("[diag] startup", {
-    argv: redactedArgv,
-    noSandbox: app.commandLine.hasSwitch("no-sandbox"),
-    disableGpu: app.commandLine.hasSwitch("disable-gpu"),
-    disableGpuCompositing: app.commandLine.hasSwitch("disable-gpu-compositing"),
-  });
-}
-
 import * as fs from "fs";
 import * as path from "path";
 import type { Config } from "../node/config";
