@@ -795,6 +795,22 @@ export class ProjectService {
         return Err({ type: "project_not_found" as const });
       }
 
+      // Self-healing: purge workspace entries whose backing directories no longer exist.
+      // This handles the case where a user manually deleted workspace dirs from ~/.mux/src/.
+      const survivingWorkspaces = [];
+      for (const ws of projectConfig.workspaces) {
+        try {
+          await fsPromises.access(ws.path);
+          survivingWorkspaces.push(ws);
+        } catch {
+          log.info(`Pruning stale workspace entry (directory missing): ${ws.path}`);
+        }
+      }
+      if (survivingWorkspaces.length !== projectConfig.workspaces.length) {
+        projectConfig.workspaces = survivingWorkspaces;
+        await this.config.saveConfig(config);
+      }
+
       const counts = getProjectWorkspaceCounts(projectConfig.workspaces);
       if (counts.activeCount + counts.archivedCount > 0) {
         return Err({ type: "workspace_blockers" as const, ...counts });
