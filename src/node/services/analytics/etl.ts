@@ -1260,7 +1260,7 @@ async function readDelegationRollupFilesFromDisk(sessionDir: string): Promise<De
   return { usageData, reportTokenByChildId };
 }
 
-export async function writeDelegationRollupsFromParsed(
+async function writeDelegationRollupsFromParsed(
   conn: DuckDBConnection,
   workspaceId: string,
   delegationRollupRaw: DelegationRollupRaw,
