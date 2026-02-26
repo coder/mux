@@ -8,8 +8,8 @@ interface LoadingAnimationProps {
 }
 
 /**
- * Shared loading animation used across all loading screens (workspace loading,
- * workspace creation, initial boot, etc.) for a consistent visual experience.
+ * Shared loading animation used for workspace loading and workspace creation screens.
+ * (Initial boot uses the static MuxLogo in LoadingScreen instead.)
  * Renders the dancing-blink Lottie animation with automatic light/dark theme handling.
  *
  * Respects prefers-reduced-motion: shows a static first frame when the user
@@ -22,6 +22,9 @@ export function LoadingAnimation(props: LoadingAnimationProps) {
 
   return (
     <Lottie
+      // Force remount when reduced-motion toggles at runtime — Lottie doesn't
+      // dynamically respond to loop/autoplay prop changes on an active instance.
+      key={String(prefersReducedMotion)}
       animationData={dancingBlinkAnimation}
       loop={!prefersReducedMotion}
       autoplay={!prefersReducedMotion}

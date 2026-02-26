@@ -35,13 +35,14 @@ describe("LoadingScreen", () => {
   });
 
   test("renders boot loader markup with Mux logo", () => {
-    const { getByRole, getByText } = render(
+    const { getByRole, getByTestId, getByText } = render(
       <ThemeProvider>
         <LoadingScreen />
       </ThemeProvider>
     );
 
     expect(getByRole("status")).toBeTruthy();
+    expect(getByTestId("mux-logo-mock")).toBeTruthy();
     expect(getByText("Loading Mux")).toBeTruthy();
   });
 

@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import App from "../App";
 import { AuthTokenModal } from "./AuthTokenModal";
 import { ThemeProvider } from "../contexts/ThemeContext";
 import { LoadingScreen } from "./LoadingScreen";
 import { StartupConnectionError } from "./StartupConnectionError";
+import { useReducedMotion } from "../hooks/useReducedMotion";
 import { useWorkspaceStoreRaw, workspaceStore } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { useBackgroundBashStoreRaw } from "../stores/BackgroundBashStore";
@@ -67,6 +69,8 @@ function AppLoaderInner() {
   const workspaceStoreInstance = useWorkspaceStoreRaw();
   const gitStatusStore = useGitStatusStoreRaw();
   const backgroundBashStore = useBackgroundBashStoreRaw();
+
+  const prefersReducedMotion = useReducedMotion();
 
   // Track whether stores have been synced
   const [storesSynced, setStoresSynced] = useState(false);
@@ -132,27 +136,45 @@ function AppLoaderInner() {
     );
   }
 
-  // Only block the UI during the very first load. After that, keep rendering the
-  // last-known UI during reconnects so we don't flash the LoadingScreen again.
-  if (!initialLoadComplete) {
-    if (apiState.status === "error") {
-      return <StartupConnectionError error={apiState.error} onRetry={apiState.retry} />;
-    }
-
-    const statusText =
-      apiState.status === "reconnecting"
-        ? `Reconnecting to backend (attempt ${apiState.attempt})...`
-        : "Loading Mux";
-
-    return <LoadingScreen statusText={statusText} />;
-  }
-
-  // Render App - all state available via contexts
+  // AnimatePresence provides a smooth fade-out when the loading screen
+  // transitions to the main app. mode="wait" ensures the exit animation
+  // completes before the enter animation starts.
   return (
-    <TelemetryEnabledProvider>
-      <TerminalRouterProvider>
-        <App />
-      </TerminalRouterProvider>
-    </TelemetryEnabledProvider>
+    <AnimatePresence mode="wait">
+      {!initialLoadComplete ? (
+        <motion.div
+          key="loading"
+          initial={{ opacity: 1 }}
+          exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -20 }}
+          transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.4, ease: "easeInOut" }}
+        >
+          {apiState.status === "error" ? (
+            <StartupConnectionError error={apiState.error} onRetry={apiState.retry} />
+          ) : (
+            <LoadingScreen
+              statusText={
+                apiState.status === "reconnecting"
+                  ? `Reconnecting to backend (attempt ${apiState.attempt})...`
+                  : "Loading Mux"
+              }
+            />
+          )}
+        </motion.div>
+      ) : (
+        <motion.div
+          key="app"
+          initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.3, ease: "easeOut" }}
+          className="h-full"
+        >
+          <TelemetryEnabledProvider>
+            <TerminalRouterProvider>
+              <App />
+            </TerminalRouterProvider>
+          </TelemetryEnabledProvider>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

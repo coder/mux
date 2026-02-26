@@ -2,14 +2,19 @@ import { useSyncExternalStore } from "react";
 
 const QUERY = "(prefers-reduced-motion: reduce)";
 
+// Cache the MediaQueryList at module level so subscribe/getSnapshot don't
+// create a new object on every call.
+const mql = typeof window !== "undefined" ? window.matchMedia(QUERY) : null;
+
 function subscribe(callback: () => void): () => void {
-  const mql = window.matchMedia(QUERY);
+  // eslint-disable-next-line @typescript-eslint/no-empty-function -- no matchMedia in SSR
+  if (!mql) return () => {};
   mql.addEventListener("change", callback);
   return () => mql.removeEventListener("change", callback);
 }
 
 function getSnapshot(): boolean {
-  return window.matchMedia(QUERY).matches;
+  return mql?.matches ?? false;
 }
 
 function getServerSnapshot(): boolean {
