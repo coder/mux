@@ -667,8 +667,15 @@ export const SecurityMixedTrust: AppStory = {
     const settingsCanvas = within(canvasElement);
 
     await settingsCanvas.findByText(/Project Trust/i);
-    await settingsCanvas.findByRole("button", { name: /^Trust /i });
-    await settingsCanvas.findByRole("button", { name: /^Revoke trust for /i });
+    // One untrusted project → exactly one "Trust" button
+    await settingsCanvas.findByRole("button", { name: /^Trust untrusted-repo$/i });
+    // Two trusted projects → use findAllByRole (findByRole errors on multiple matches)
+    const revokeButtons = await settingsCanvas.findAllByRole("button", {
+      name: /^Revoke trust for /i,
+    });
+    if (revokeButtons.length !== 2) {
+      throw new Error(`Expected 2 Revoke trust buttons, got ${revokeButtons.length}`);
+    }
   },
 };
 
