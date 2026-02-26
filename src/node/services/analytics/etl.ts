@@ -58,19 +58,35 @@ INSERT INTO events (
 `;
 
 function appendVarcharOrNull(appender: DuckDBAppender, value: string | null | undefined): void {
-  value != null ? appender.appendVarchar(value) : appender.appendNull();
+  if (value != null) {
+    appender.appendVarchar(value);
+  } else {
+    appender.appendNull();
+  }
 }
 
 function appendDoubleOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
-  value != null ? appender.appendDouble(value) : appender.appendNull();
+  if (value != null) {
+    appender.appendDouble(value);
+  } else {
+    appender.appendNull();
+  }
 }
 
 function appendIntegerOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
-  value != null ? appender.appendInteger(value) : appender.appendNull();
+  if (value != null) {
+    appender.appendInteger(value);
+  } else {
+    appender.appendNull();
+  }
 }
 
 function appendBigIntOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
-  value != null ? appender.appendBigInt(BigInt(Math.trunc(value))) : appender.appendNull();
+  if (value != null) {
+    appender.appendBigInt(BigInt(Math.trunc(value)));
+  } else {
+    appender.appendNull();
+  }
 }
 
 function appendDateOrNull(appender: DuckDBAppender, dateStr: string | null | undefined): void {
@@ -81,10 +97,10 @@ function appendDateOrNull(appender: DuckDBAppender, dateStr: string | null | und
 
   const [y, m, d] = dateStr.split("-").map(Number);
   assert(
-    Number.isFinite(y!) && Number.isFinite(m!) && Number.isFinite(d!),
+    Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d),
     `appendDateOrNull: invalid date "${dateStr}"`
   );
-  appender.appendDate(DuckDBDateValue.fromParts({ year: y!, month: m!, day: d! }));
+  appender.appendDate(DuckDBDateValue.fromParts({ year: y, month: m, day: d }));
 }
 
 export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]): Promise<void> {
