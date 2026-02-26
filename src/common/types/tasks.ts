@@ -48,7 +48,7 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
-  planSubagentExecutorRouting: "exec",
+  planSubagentExecutorRouting: "auto",
   planSubagentDefaultsToOrchestrator: false,
 
   bashOutputCompactionMinLines:

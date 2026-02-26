@@ -1037,7 +1037,7 @@ export function TasksSection() {
               <SelectContent>
                 <SelectItem value="exec">Exec</SelectItem>
                 <SelectItem value="orchestrator">Orchestrator</SelectItem>
-                <SelectItem value="auto">Auto (LLM decides)</SelectItem>
+                <SelectItem value="auto">Auto (Agent chooses)</SelectItem>
               </SelectContent>
             </Select>
           </div>
