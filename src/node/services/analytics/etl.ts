@@ -163,6 +163,21 @@ interface IngestEvent {
   date: string | null;
 }
 
+interface DelegationRollupRaw {
+  usageData: Record<string, unknown> | null;
+  reportTokenByChildId: Map<string, number>;
+}
+
+interface ParsedWorkspaceData {
+  workspaceId: string;
+  sessionDir: string;
+  events: IngestEvent[];
+  stat: { mtimeMs: number };
+  workspaceMeta: WorkspaceMeta;
+  delegationRollupRaw: DelegationRollupRaw;
+  archivedTranscripts: ParsedWorkspaceData[];
+}
+
 interface EventHeadSignatureParts {
   timestamp: number | null;
   model: string | null;
@@ -1126,6 +1141,154 @@ async function readReportTokenEstimates(sessionDir: string): Promise<Map<string,
     // Missing or invalid file — not an error, just no report data.
   }
   return result;
+}
+
+async function readDelegationRollupFilesFromDisk(sessionDir: string): Promise<DelegationRollupRaw> {
+  const usagePath = path.join(sessionDir, SESSION_USAGE_FILE_NAME);
+  let usageData: Record<string, unknown> | null = null;
+  try {
+    const raw = await fs.readFile(usagePath, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed)) {
+      usageData = parsed;
+    }
+  } catch {
+    // ENOENT or parse error → null
+  }
+
+  const reportTokenByChildId = await readReportTokenEstimates(sessionDir);
+  return { usageData, reportTokenByChildId };
+}
+
+async function parseArchivedTranscriptsFromDisk(
+  sessionDir: string,
+  parentMeta: WorkspaceMeta,
+  parentWorkspaceId: string
+): Promise<ParsedWorkspaceData[]> {
+  const transcriptsDir = path.join(sessionDir, SUBAGENT_TRANSCRIPTS_DIR_NAME);
+
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(transcriptsDir, { withFileTypes: true });
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      return [];
+    }
+    log.warn("[analytics-etl] Failed to read archived sub-agent transcripts directory", {
+      transcriptsDir,
+      error: getErrorMessage(error),
+    });
+    return [];
+  }
+
+  const results: ParsedWorkspaceData[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const childWorkspaceId = entry.name;
+    const archivedSessionDir = path.join(transcriptsDir, childWorkspaceId);
+
+    try {
+      const archivedWorkspaceMeta = await readWorkspaceMetaFromDisk(archivedSessionDir);
+      const overrideMeta: WorkspaceMeta = {
+        projectPath: parentMeta.projectPath,
+        projectName: parentMeta.projectName,
+        workspaceName: archivedWorkspaceMeta.workspaceName,
+      };
+
+      if (!archivedWorkspaceMeta.parentWorkspaceId) {
+        overrideMeta.parentWorkspaceId = parentWorkspaceId;
+      }
+
+      const parsed = await parseWorkspaceFromDisk(
+        childWorkspaceId,
+        archivedSessionDir,
+        overrideMeta
+      );
+      if (parsed) {
+        results.push(parsed);
+      }
+    } catch (error) {
+      log.warn("[analytics-etl] Failed to parse archived sub-agent transcript", {
+        childWorkspaceId,
+        sessionDir,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  return results;
+}
+
+export async function parseWorkspaceFromDisk(
+  workspaceId: string,
+  sessionDir: string,
+  suppliedMeta: WorkspaceMeta
+): Promise<ParsedWorkspaceData | null> {
+  assert(workspaceId.trim().length > 0, "parseWorkspaceFromDisk: workspaceId is required");
+  assert(sessionDir.trim().length > 0, "parseWorkspaceFromDisk: sessionDir is required");
+
+  const chatPath = path.join(sessionDir, CHAT_FILE_NAME);
+
+  let stat: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    stat = await fs.stat(chatPath);
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+
+  const persistedMeta = await readWorkspaceMetaFromDisk(sessionDir);
+  const workspaceMeta = mergeWorkspaceMeta(persistedMeta, suppliedMeta);
+
+  const chatContents = await fs.readFile(chatPath, "utf-8");
+  const lines = chatContents.split("\n").filter((line) => line.trim().length > 0);
+
+  let responseIndex = 0;
+  const events: IngestEvent[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    assert(line != null, "parseWorkspaceFromDisk: line should not be null after filter");
+    const message = parsePersistedMessage(line, workspaceId, i + 1);
+    if (!message) {
+      continue;
+    }
+
+    const event = extractIngestEvent({
+      workspaceId,
+      workspaceMeta,
+      message,
+      lineNumber: i + 1,
+      responseIndex,
+    });
+    if (!event) {
+      continue;
+    }
+
+    responseIndex += 1;
+    events.push(event);
+  }
+
+  const delegationRollupRaw = await readDelegationRollupFilesFromDisk(sessionDir);
+  const archivedTranscripts = await parseArchivedTranscriptsFromDisk(
+    sessionDir,
+    workspaceMeta,
+    workspaceId
+  );
+
+  return {
+    workspaceId,
+    sessionDir,
+    events,
+    stat: { mtimeMs: stat.mtimeMs },
+    workspaceMeta,
+    delegationRollupRaw,
+    archivedTranscripts,
+  };
 }
 
 export async function rebuildAll(
