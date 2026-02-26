@@ -580,7 +580,7 @@ export const CreateWorkspaceWithSections: AppStory = {
     const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
     const sidebarIsExpanded = sidebar && sidebar.getBoundingClientRect().width > 40;
     if (sidebarIsExpanded) {
-      const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Toggle sidebar']");
+      const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Collapse sidebar']");
       if (collapseBtn) {
         await userEvent.click(collapseBtn);
       }
