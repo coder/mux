@@ -811,8 +811,18 @@ export class ProjectService {
         try {
           await fsPromises.access(ws.path);
           survivingWorkspaces.push(ws);
-        } catch {
-          log.info(`Pruning stale workspace entry (directory missing): ${ws.path}`);
+        } catch (err: unknown) {
+          // Only prune when the directory is truly gone (ENOENT/ENOTDIR).
+          // Other errors (EACCES, transient I/O) mean the path may still exist.
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "ENOTDIR") {
+            log.info(`Pruning stale workspace entry (directory missing): ${ws.path}`);
+          } else {
+            log.warn(
+              `Keeping workspace entry despite access error (${code ?? "unknown"}): ${ws.path}`
+            );
+            survivingWorkspaces.push(ws);
+          }
         }
       }
       if (survivingWorkspaces.length !== projectConfig.workspaces.length) {
