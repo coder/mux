@@ -11,6 +11,8 @@ import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit
 import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
 import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
+import { createProposeNameTool } from "@/node/services/tools/propose_name";
+
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { createNotifyTool } from "@/node/services/tools/notify";
@@ -328,6 +330,8 @@ export async function getToolsForModel(
     agent_skill_delete: createAgentSkillDeleteTool(config),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
+    propose_name: createProposeNameTool(config),
+
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     switch_agent: createSwitchAgentTool(config),
     system1_keep_ranges: createSystem1KeepRangesTool(config),
