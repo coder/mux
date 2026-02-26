@@ -345,7 +345,11 @@ export class ProviderService {
     }
   }
 
-  public setConfig(provider: string, keyPath: string[], value: string): Result<void, string> {
+  public setConfig(
+    provider: string,
+    keyPath: string[],
+    value: string | boolean
+  ): Result<void, string> {
     try {
       // Load current providers config or create empty
       const providersConfig = this.config.loadProvidersConfig() ?? {};
@@ -391,7 +395,7 @@ export class ProviderService {
 
         if (isProviderEnabledToggle) {
           // Persist only `enabled: false` and delete on enable so providers.jsonc stays minimal.
-          if (value === "false") {
+          if (value === false || value === "false") {
             current[lastKey] = false;
           } else {
             delete current[lastKey];

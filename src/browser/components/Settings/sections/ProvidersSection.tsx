@@ -1529,7 +1529,7 @@ export function ProvidersSection() {
                           void api.providers.setProviderConfig({
                             provider: "anthropic",
                             keyPath: ["disableBetaFeatures"],
-                            value: next === "disabled" ? "true" : "",
+                            value: next === "disabled" ? true : "",
                           });
                         }}
                       >
@@ -1857,7 +1857,7 @@ export function ProvidersSection() {
                           void api.providers.setProviderConfig({
                             provider: "openai",
                             keyPath: ["store"],
-                            value: next === "disabled" ? "false" : "",
+                            value: next === "disabled" ? false : "",
                           });
                         }}
                       >

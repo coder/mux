@@ -182,7 +182,7 @@ export const providers = {
     input: z.object({
       provider: z.string(),
       keyPath: z.array(z.string()),
-      value: z.string(),
+      value: z.union([z.string(), z.boolean()]),
     }),
     output: ResultSchema(z.void(), z.string()),
   },

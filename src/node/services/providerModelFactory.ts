@@ -560,7 +560,8 @@ export class ProviderModelFactory {
 
       // Anthropic-specific: merge global disableBetaFeatures into muxProviderOptions.
       const configDisableBeta = providersConfig.anthropic?.disableBetaFeatures;
-      if (isAnthropicRoutedModel && configDisableBeta === true && muxProviderOptions) {
+      if (isAnthropicRoutedModel && configDisableBeta === true) {
+        muxProviderOptions ??= {};
         muxProviderOptions.anthropic = {
           ...(muxProviderOptions.anthropic ?? {}),
           disableBetaFeatures: muxProviderOptions.anthropic?.disableBetaFeatures ?? true,
@@ -579,7 +580,8 @@ export class ProviderModelFactory {
       // OpenAI-specific: merge global store setting into muxProviderOptions.
       const isOpenAIRoutedModel = providerName === "openai" || modelId.startsWith("openai/");
       const configOpenAIStore = providersConfig.openai?.store;
-      if (isOpenAIRoutedModel && typeof configOpenAIStore === "boolean" && muxProviderOptions) {
+      if (isOpenAIRoutedModel && typeof configOpenAIStore === "boolean") {
+        muxProviderOptions ??= {};
         muxProviderOptions.openai = {
           ...(muxProviderOptions.openai ?? {}),
           store: muxProviderOptions.openai?.store ?? configOpenAIStore,
