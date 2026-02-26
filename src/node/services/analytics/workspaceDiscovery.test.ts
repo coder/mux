@@ -161,6 +161,7 @@ describe("discoverAllWorkspaces", () => {
     expect(discovered.get(workspaceId)).toEqual({
       workspaceId,
       sessionDir: workspaceSessionDir,
+      parentWorkspaceId: undefined,
     });
   });
 
@@ -186,10 +187,12 @@ describe("discoverAllWorkspaces", () => {
     expect(discovered.get(parentWorkspaceId)).toEqual({
       workspaceId: parentWorkspaceId,
       sessionDir: parentSessionDir,
+      parentWorkspaceId: undefined,
     });
     expect(discovered.get(childWorkspaceId)).toEqual({
       workspaceId: childWorkspaceId,
       sessionDir: childSessionDir,
+      parentWorkspaceId,
     });
   });
 
@@ -226,6 +229,7 @@ describe("discoverAllWorkspaces", () => {
     expect(discovered.get(duplicateWorkspaceId)).toEqual({
       workspaceId: duplicateWorkspaceId,
       sessionDir: archivedDuplicateSessionDir,
+      parentWorkspaceId,
     });
   });
 

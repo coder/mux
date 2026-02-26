@@ -153,6 +153,8 @@ export async function listArchivedSubagentWorkspaceIds(
 export interface DiscoveredWorkspace {
   workspaceId: string;
   sessionDir: string;
+  /** Set for archived subagent workspaces — the parent workspace's ID. */
+  parentWorkspaceId?: string;
 }
 
 export async function discoverAllWorkspaces(
@@ -164,12 +166,26 @@ export async function discoverAllWorkspaces(
   const workspaceChatFileMtimes = new Map<string, number>();
   const topLevelWorkspaceIds: string[] = [];
 
-  const addIfNewer = async (workspaceId: string, sessionDir: string): Promise<void> => {
+  const addIfNewer = async (
+    workspaceId: string,
+    sessionDir: string,
+    parentWorkspaceId?: string
+  ): Promise<void> => {
     const normalizedWorkspaceId = parseNonEmptyString(workspaceId);
     assert(
       normalizedWorkspaceId !== null,
       "discoverAllWorkspaces expected workspace IDs to be non-empty"
     );
+
+    let normalizedParentWorkspaceId: string | undefined;
+    if (parentWorkspaceId !== undefined) {
+      const parsedParentWorkspaceId = parseNonEmptyString(parentWorkspaceId);
+      assert(
+        parsedParentWorkspaceId !== null,
+        "discoverAllWorkspaces expected parent workspace IDs to be non-empty"
+      );
+      normalizedParentWorkspaceId = parsedParentWorkspaceId;
+    }
 
     const chatPath = path.join(sessionDir, CHAT_FILE_NAME);
 
@@ -197,6 +213,7 @@ export async function discoverAllWorkspaces(
     discoveredWorkspaces.set(normalizedWorkspaceId, {
       workspaceId: normalizedWorkspaceId,
       sessionDir,
+      parentWorkspaceId: normalizedParentWorkspaceId,
     });
   };
 
@@ -263,7 +280,7 @@ export async function discoverAllWorkspaces(
 
       const childSessionDir = path.join(transcriptsDir, childWorkspaceId);
       try {
-        await addIfNewer(childWorkspaceId, childSessionDir);
+        await addIfNewer(childWorkspaceId, childSessionDir, parentWorkspaceId);
       } catch (error) {
         log.warn("[analytics-worker] Failed to stat archived sub-agent transcript chat file", {
           chatPath: path.join(childSessionDir, CHAT_FILE_NAME),

@@ -336,16 +336,28 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
 
   let workspacesIngested = 0;
   for (const workspaceId of plan.workspaceIdsToIngest) {
-    const workspace = discoveredWorkspacesById.get(workspaceId);
-    assert(workspace, `syncCheck expected discovered workspace entry for ${workspaceId}`);
+    const discoveredWorkspace = discoveredWorkspacesById.get(workspaceId);
+    assert(
+      discoveredWorkspace != null,
+      `syncCheck expected discovered workspace entry for ${workspaceId}`
+    );
+
+    let workspaceMeta = data.workspaceMetaById[workspaceId];
+    if (workspaceMeta == null && discoveredWorkspace.parentWorkspaceId != null) {
+      // Archived subagent workspaces are keyed under their parent workspace IDs in config
+      // metadata. Inherit parent project metadata to match rebuildAll behavior.
+      const parentMeta = data.workspaceMetaById[discoveredWorkspace.parentWorkspaceId];
+      if (parentMeta != null) {
+        workspaceMeta = {
+          projectPath: parentMeta.projectPath,
+          projectName: parentMeta.projectName,
+        };
+      }
+    }
+    workspaceMeta ??= {};
 
     try {
-      await ingestWorkspace(
-        getConn(),
-        workspaceId,
-        workspace.sessionDir,
-        data.workspaceMetaById[workspaceId] ?? {}
-      );
+      await ingestWorkspace(getConn(), workspaceId, discoveredWorkspace.sessionDir, workspaceMeta);
       workspacesIngested += 1;
     } catch (error) {
       process.stderr.write(
