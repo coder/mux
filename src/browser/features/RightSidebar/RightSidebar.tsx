@@ -1151,14 +1151,25 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // Check if the file is already open
       const allTabs = collectAllTabs(layout.root);
       if (allTabs.includes(fileTabType)) {
-        // File already open - just select it
+        // File already open — select it and refresh the parent to the current
+        // active tab so closing always returns to the most recent origin.
         const tabsetId = collectAllTabsWithTabset(layout.root).find(
           (t) => t.tab === fileTabType
         )?.tabsetId;
         if (tabsetId) {
           setLayout((prev) => {
+            const focused = findTabset(prev.root, prev.focusedTabsetId);
+            const parentTabId = focused?.type === "tabset" ? focused.activeTab : undefined;
             const withFocus = setFocusedTabset(prev, tabsetId);
-            return selectTabInTabset(withFocus, tabsetId, fileTabType);
+            const next = selectTabInTabset(withFocus, tabsetId, fileTabType);
+            // Update parent to the tab the user is navigating from
+            if (parentTabId && parentTabId !== fileTabType) {
+              return {
+                ...next,
+                parentTab: { ...next.parentTab, [fileTabType]: parentTabId },
+              };
+            }
+            return next;
           });
         }
         return;
