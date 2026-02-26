@@ -1411,20 +1411,26 @@ export async function parseWorkspaceFromDisk(
   };
 }
 
+interface CollectedEvents {
+  eventsByWorkspace: Map<string, IngestEvent[]>;
+  /** Tracks the chat.jsonl mtime of the dedup winner per workspace ID. */
+  winnerMtimes: Map<string, number>;
+}
+
 /** Collect parsed workspaces (including archived transcripts) into deduplicated workspace event groups. */
-function collectAllEvents(parsed: ParsedWorkspaceData[]): Map<string, IngestEvent[]> {
+function collectAllEvents(parsed: ParsedWorkspaceData[]): CollectedEvents {
   // Workspace-level dedup with recency: if the same workspace_id appears from multiple
   // sources (e.g. top-level session + archived sub-agent transcript), keep the
   // freshest occurrence by mtime so traversal order does not affect rebuild output.
-  const workspaceEvents = new Map<string, IngestEvent[]>();
-  const workspaceMtimes = new Map<string, number>();
+  const eventsByWorkspace = new Map<string, IngestEvent[]>();
+  const winnerMtimes = new Map<string, number>();
 
   function collect(workspaces: ParsedWorkspaceData[]): void {
     for (const workspace of workspaces) {
-      const existingMtime = workspaceMtimes.get(workspace.workspaceId);
+      const existingMtime = winnerMtimes.get(workspace.workspaceId);
       if (existingMtime == null || workspace.stat.mtimeMs >= existingMtime) {
-        workspaceEvents.set(workspace.workspaceId, workspace.events);
-        workspaceMtimes.set(workspace.workspaceId, workspace.stat.mtimeMs);
+        eventsByWorkspace.set(workspace.workspaceId, workspace.events);
+        winnerMtimes.set(workspace.workspaceId, workspace.stat.mtimeMs);
       }
 
       if (workspace.archivedTranscripts.length > 0) {
@@ -1434,7 +1440,7 @@ function collectAllEvents(parsed: ParsedWorkspaceData[]): Map<string, IngestEven
   }
 
   collect(parsed);
-  return workspaceEvents;
+  return { eventsByWorkspace, winnerMtimes };
 }
 
 export async function rebuildAll(
@@ -1511,10 +1517,9 @@ export async function rebuildAll(
   // Phase 2a: Per-workspace bulk-append with isolation.
   // Keep rebuild resilient: a malformed event batch in one workspace should not
   // prevent unrelated workspace analytics data from being rebuilt.
-  const workspaceEventsMap = collectAllEvents(allParsed);
-  const includedWorkspaceIds = new Set(workspaceEventsMap.keys());
+  const { eventsByWorkspace, winnerMtimes } = collectAllEvents(allParsed);
   const failedWorkspaceIds = new Set<string>();
-  for (const [workspaceId, events] of workspaceEventsMap) {
+  for (const [workspaceId, events] of eventsByWorkspace) {
     try {
       await appendEvents(conn, events);
     } catch (error) {
@@ -1529,18 +1534,17 @@ export async function rebuildAll(
   async function writeWorkspaceMetadata(
     workspaces: ParsedWorkspaceData[],
     failedWorkspaceIds: Set<string>,
-    includedWorkspaceIds: Set<string>
+    winnerMtimes: Map<string, number>
   ): Promise<void> {
     for (const workspace of workspaces) {
       try {
-        // Only write metadata for dedup winners that appended successfully.
-        // Skipping excluded workspaces prevents stale duplicates from
-        // overwriting fresh metadata from the winning workspace source.
-        // Skipping failed workspaces lets future ingest retry without
-        // short-circuiting on advanced watermarks.
+        // Only write metadata for the dedup winner instance (matching mtime)
+        // that also appended successfully. This prevents stale duplicates with
+        // the same workspaceId from overwriting fresh winner metadata.
+        const winnerMtime = winnerMtimes.get(workspace.workspaceId);
+        const isDedupeWinner = winnerMtime != null && workspace.stat.mtimeMs === winnerMtime;
         const shouldWriteMetadata =
-          includedWorkspaceIds.has(workspace.workspaceId) &&
-          !failedWorkspaceIds.has(workspace.workspaceId);
+          isDedupeWinner && !failedWorkspaceIds.has(workspace.workspaceId);
 
         if (shouldWriteMetadata) {
           const maxSequence = getMaxSequence(workspace.events) ?? -1;
@@ -1569,13 +1573,14 @@ export async function rebuildAll(
         await writeWorkspaceMetadata(
           workspace.archivedTranscripts,
           failedWorkspaceIds,
-          includedWorkspaceIds
+          winnerMtimes
         );
       }
     }
   }
 
-  await writeWorkspaceMetadata(allParsed, failedWorkspaceIds, includedWorkspaceIds);
+  // Phase 2b: Write metadata only for dedup winners that appended successfully.
+  await writeWorkspaceMetadata(allParsed, failedWorkspaceIds, winnerMtimes);
 
   let workspacesIngested = 0;
   for (const workspace of allParsed) {
