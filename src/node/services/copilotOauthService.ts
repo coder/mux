@@ -36,7 +36,6 @@ export const COPILOT_MODELS: readonly string[] = [
   "gpt-5.1",
   "gpt-5.1-codex-max",
   "gpt-5.2",
-  "gpt-5.3-codex",
 ];
 
 interface DeviceFlow {
