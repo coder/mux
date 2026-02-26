@@ -302,12 +302,6 @@ export const DEFAULT_MODEL_KEY = "model-default";
 export const HIDDEN_MODELS_KEY = "hidden-models";
 
 /**
- * Get the localStorage key for the preferred compaction model (global)
- * Format: "preferredCompactionModel"
- */
-export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
-
-/**
  * Get the localStorage key for the preferred System 1 model (global)
  * Format: "preferredSystem1Model"
  */

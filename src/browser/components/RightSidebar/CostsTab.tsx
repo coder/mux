@@ -68,7 +68,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
       listener: true,
     }
   );
-  const preferredCompactionModel = agentAiDefaults.compact?.modelString ?? "";
+  const configuredCompactionModel = agentAiDefaults.compact?.modelString ?? "";
   const { has1MContext } = useProviderOptions();
   const pendingSendOptions = useSendMessageOptions(workspaceId);
   const { config: providersConfig } = useProvidersConfig();
@@ -85,7 +85,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const contextDisplayModel = usage.liveUsage?.model ?? pendingSendOptions.baseModel;
   // Align warning with /compact model resolution so it matches actual compaction behavior.
   const effectiveCompactionModel =
-    resolveCompactionModel(preferredCompactionModel) ?? contextDisplayModel;
+    resolveCompactionModel(configuredCompactionModel) ?? contextDisplayModel;
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =

@@ -568,7 +568,6 @@ export const router = (authToken?: string) => {
             muxGatewayModels: config.muxGatewayModels,
             defaultModel: config.defaultModel,
             hiddenModels: config.hiddenModels,
-            preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
             runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
             defaultRuntime: config.defaultRuntime ?? null,
@@ -669,10 +668,6 @@ export const router = (authToken?: string) => {
               }
 
               next.hiddenModels = normalizedHidden;
-            }
-
-            if (input.preferredCompactionModel !== undefined) {
-              next.preferredCompactionModel = normalizeModelString(input.preferredCompactionModel);
             }
 
             return next;

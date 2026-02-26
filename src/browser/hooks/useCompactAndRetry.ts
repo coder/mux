@@ -108,7 +108,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       listener: true,
     }
   );
-  const preferredCompactionModel = agentAiDefaults.compact?.modelString ?? "";
+  const configuredCompactionModel = agentAiDefaults.compact?.modelString ?? "";
 
   useEffect(() => {
     if (!api) return;
@@ -158,7 +158,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       });
     }
 
-    const preferred = preferredCompactionModel.trim();
+    const preferred = configuredCompactionModel.trim();
     if (preferred.length > 0) {
       const explicit = getExplicitCompactionSuggestion({
         modelId: preferred,
@@ -181,7 +181,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
     isCompactionRecoveryFlow,
     providersConfig,
     effectivePolicy,
-    preferredCompactionModel,
+    configuredCompactionModel,
   ]);
 
   /**

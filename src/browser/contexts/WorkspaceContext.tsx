@@ -34,7 +34,6 @@ import {
   DEFAULT_MODEL_KEY,
   DEFAULT_RUNTIME_KEY,
   HIDDEN_MODELS_KEY,
-  PREFERRED_COMPACTION_MODEL_KEY,
   RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
@@ -73,7 +72,7 @@ import { getErrorMessage } from "@/common/utils/errors";
  */
 function migrateLocalModelPrefsToBackend(
   api: APIClient,
-  cfg: { defaultModel?: string; hiddenModels?: string[]; preferredCompactionModel?: string }
+  cfg: { defaultModel?: string; hiddenModels?: string[] }
 ): void {
   if (!api.config.updateModelPreferences) return;
 
@@ -83,12 +82,10 @@ function migrateLocalModelPrefsToBackend(
       ? migrateGatewayModel(localDefaultModelRaw).trim()
       : undefined;
   const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
-  const localPreferredCompactionModel = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
 
   const patch: {
     defaultModel?: string;
     hiddenModels?: string[];
-    preferredCompactionModel?: string;
   } = {};
 
   if (
@@ -105,14 +102,6 @@ function migrateLocalModelPrefsToBackend(
     localHiddenModels.length > 0
   ) {
     patch.hiddenModels = localHiddenModels;
-  }
-
-  if (
-    cfg.preferredCompactionModel === undefined &&
-    typeof localPreferredCompactionModel === "string" &&
-    localPreferredCompactionModel.trim()
-  ) {
-    patch.preferredCompactionModel = localPreferredCompactionModel;
   }
 
   if (Object.keys(patch).length > 0) {
@@ -507,9 +496,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         }
         if (cfg.hiddenModels !== undefined) {
           updatePersistedState(HIDDEN_MODELS_KEY, cfg.hiddenModels);
-        }
-        if (cfg.preferredCompactionModel !== undefined) {
-          updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, cfg.preferredCompactionModel);
         }
 
         // Seed runtime enablement from backend so switching ports doesn't reset the UI.
