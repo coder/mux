@@ -42,6 +42,23 @@ import {
 // Must be called before app.whenReady().
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 
+// Diagnostic: log effective launch state to help diagnose renderer crashes.
+// No mitigation flags are applied by app code — if any appear here,
+// they were injected externally (wrapper script, desktop entry, etc.).
+if (process.platform === "linux") {
+  // Deep-link args (mux:// URLs) may contain user data (prompts, project
+  // paths) and must never be logged raw.
+  const redactedArgv = process.argv.map((arg) =>
+    arg.toLowerCase().startsWith("mux:") ? "mux:[redacted]" : arg
+  );
+  console.log("[diag] startup", {
+    argv: redactedArgv,
+    noSandbox: app.commandLine.hasSwitch("no-sandbox"),
+    disableGpu: app.commandLine.hasSwitch("disable-gpu"),
+    disableGpuCompositing: app.commandLine.hasSwitch("disable-gpu-compositing"),
+  });
+}
+
 import * as fs from "fs";
 import * as path from "path";
 import type { Config } from "../node/config";
@@ -890,6 +907,33 @@ function createWindow() {
     // First token count will use approximation, accurate count caches in background.
   });
 
+  // Diagnostic crash hooks — log only, no recovery side effects.
+  // Crash behavior is left unmodified so the root cause can be observed.
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[diag] render-process-gone", {
+      reason: details.reason,
+      exitCode: details.exitCode,
+      url: mainWindow?.webContents.getURL(),
+    });
+  });
+
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame) {
+        console.error("[diag] did-fail-load", {
+          errorCode,
+          errorDescription,
+          url: validatedURL,
+        });
+      }
+    }
+  );
+
+  mainWindow.webContents.on("unresponsive", () => {
+    console.warn("[diag] renderer unresponsive");
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
     mainWindowFinishedLoading = false;
@@ -996,6 +1040,14 @@ if (gotTheLock) {
     void Promise.race([disposePromise, timeoutPromise]).finally(() => {
       app.quit();
     });
+  });
+
+  app.on("child-process-gone", (_event, details) => {
+    if (details.type === "GPU") {
+      console.error(
+        `[window] GPU process gone: reason=${details.reason}, exitCode=${details.exitCode}`
+      );
+    }
   });
 
   app.on("window-all-closed", () => {
