@@ -82,6 +82,11 @@ export const SessionUsageTokenStatsCacheSchema = z.object({
 
 export const RolledUpChildEntrySchema = z.object({
   totalTokens: z.number(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  reasoningTokens: z.number().optional(),
+  cachedTokens: z.number().optional(),
+  cacheCreateTokens: z.number().optional(),
   contextTokens: z.number().optional(), // input + cached + cacheCreate (for compaction estimates)
   totalCostUsd: z.number().optional(),
   agentType: z.string().optional(),
