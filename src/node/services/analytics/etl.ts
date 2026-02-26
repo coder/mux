@@ -1354,8 +1354,9 @@ function collectAllEvents(parsed: ParsedWorkspaceData[]): IngestEvent[] {
 
   for (const workspace of parsed) {
     all.push(...workspace.events);
-    for (const childWorkspace of workspace.archivedTranscripts) {
-      all.push(...childWorkspace.events);
+
+    if (workspace.archivedTranscripts.length > 0) {
+      all.push(...collectAllEvents(workspace.archivedTranscripts));
     }
   }
 
@@ -1435,35 +1436,28 @@ export async function rebuildAll(
 
   await appendEvents(conn, collectAllEvents(allParsed));
 
-  for (const parsedWorkspace of allParsed) {
-    const maxSequence = getMaxSequence(parsedWorkspace.events) ?? -1;
-    await writeWatermark(conn, parsedWorkspace.workspaceId, {
-      lastSequence: maxSequence,
-      lastModified: parsedWorkspace.stat.mtimeMs,
-    });
-
-    await writeDelegationRollupsFromParsed(
-      conn,
-      parsedWorkspace.workspaceId,
-      parsedWorkspace.delegationRollupRaw,
-      parsedWorkspace.workspaceMeta
-    );
-
-    for (const archivedWorkspace of parsedWorkspace.archivedTranscripts) {
-      const archivedMaxSequence = getMaxSequence(archivedWorkspace.events) ?? -1;
-      await writeWatermark(conn, archivedWorkspace.workspaceId, {
-        lastSequence: archivedMaxSequence,
-        lastModified: archivedWorkspace.stat.mtimeMs,
+  async function writeWorkspaceMetadata(workspaces: ParsedWorkspaceData[]): Promise<void> {
+    for (const workspace of workspaces) {
+      const maxSequence = getMaxSequence(workspace.events) ?? -1;
+      await writeWatermark(conn, workspace.workspaceId, {
+        lastSequence: maxSequence,
+        lastModified: workspace.stat.mtimeMs,
       });
 
       await writeDelegationRollupsFromParsed(
         conn,
-        archivedWorkspace.workspaceId,
-        archivedWorkspace.delegationRollupRaw,
-        archivedWorkspace.workspaceMeta
+        workspace.workspaceId,
+        workspace.delegationRollupRaw,
+        workspace.workspaceMeta
       );
+
+      if (workspace.archivedTranscripts.length > 0) {
+        await writeWorkspaceMetadata(workspace.archivedTranscripts);
+      }
     }
   }
+
+  await writeWorkspaceMetadata(allParsed);
 
   return { workspacesIngested: allParsed.length };
 }
