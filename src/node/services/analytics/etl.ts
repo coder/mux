@@ -1350,19 +1350,15 @@ export async function parseWorkspaceFromDisk(
 
 /** Flatten parsed workspaces (including archived transcripts) into one deduplicated event list. */
 function collectAllEvents(parsed: ParsedWorkspaceData[]): IngestEvent[] {
-  // Deduplicate by (workspace_id, response_index) so duplicate workspace IDs in
-  // top-level sessions and archived transcripts do not double-count events.
-  // Map insertion order preserves the first key position while overwriting values,
-  // giving us "last occurrence wins" semantics for each dedup key.
-  const eventMap = new Map<string, IngestEvent>();
+  // Workspace-level dedup: if the same workspace_id appears from multiple sources
+  // (e.g. top-level session + archived sub-agent transcript), keep only the last
+  // occurrence's events. This matches replaceWorkspaceEvents semantics that replace
+  // all rows for a workspace_id, naturally handling truncation of replay tails.
+  const workspaceEvents = new Map<string, IngestEvent[]>();
 
   function collect(workspaces: ParsedWorkspaceData[]): void {
     for (const workspace of workspaces) {
-      for (const event of workspace.events) {
-        const key = `${event.row.workspace_id}:${event.row.response_index ?? event.sequence}`;
-        eventMap.set(key, event);
-      }
-
+      workspaceEvents.set(workspace.workspaceId, workspace.events);
       if (workspace.archivedTranscripts.length > 0) {
         collect(workspace.archivedTranscripts);
       }
@@ -1370,7 +1366,12 @@ function collectAllEvents(parsed: ParsedWorkspaceData[]): IngestEvent[] {
   }
 
   collect(parsed);
-  return Array.from(eventMap.values());
+
+  const all: IngestEvent[] = [];
+  for (const events of workspaceEvents.values()) {
+    all.push(...events);
+  }
+  return all;
 }
 
 export async function rebuildAll(
