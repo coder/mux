@@ -1,4 +1,4 @@
-import { APICallError, RetryError } from "ai";
+import { APICallError, NoOutputGeneratedError, RetryError } from "ai";
 import { describe, expect, test } from "bun:test";
 import {
   buildWorkspaceIdentityPrompt,
@@ -134,6 +134,17 @@ describe("workspaceTitleGenerator error mappers", () => {
       expect(mapNameGenerationError(retryError, "openai:gpt-4.1-mini")).toMatchObject({
         type: "authentication",
         authKind: "invalid_credentials",
+      });
+    });
+
+    test("maps NoOutputGeneratedError to a user-friendly message", () => {
+      const noOutput = new NoOutputGeneratedError({
+        message: "No output generated. Check the stream for errors.",
+      });
+
+      expect(mapNameGenerationError(noOutput, "openai:gpt-4.1-mini")).toEqual({
+        type: "unknown",
+        raw: "No output generated from the AI provider.",
       });
     });
 

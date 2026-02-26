@@ -1,5 +1,4 @@
-import { APICallError, RetryError, streamText, tool } from "ai";
-import { z } from "zod";
+import { APICallError, NoOutputGeneratedError, RetryError, streamText, tool } from "ai";
 import type { AIService } from "./aiService";
 import { log } from "./log";
 import type { Result } from "@/common/types/result";
@@ -7,20 +6,8 @@ import { Ok, Err } from "@/common/types/result";
 import type { NameGenerationError, SendMessageError } from "@/common/types/errors";
 import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
-import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { TOOL_DEFINITIONS, ProposeNameToolArgsSchema } from "@/common/utils/tools/toolDefinitions";
 import crypto from "crypto";
-
-// Local schema for the propose_name tool call within streamText.
-// Defined here (not imported from TOOL_DEFINITIONS) so TypeScript can infer
-// the tool result type through the streamText generic.
-const proposeNameSchema = z.object({
-  name: z
-    .string()
-    .regex(/^[a-z0-9-]+$/)
-    .min(2)
-    .max(20),
-  title: z.string().min(5).max(60),
-});
 
 export interface WorkspaceIdentity {
   /** Codebase area with 4-char suffix (e.g., "sidebar-a1b2", "auth-k3m9") */
@@ -90,6 +77,15 @@ export function mapNameGenerationError(error: unknown, modelString: string): Nam
     if (error.statusCode != null && error.statusCode >= 500) {
       return { type: "service_unavailable", raw: error.message };
     }
+  }
+
+  // NoOutputGeneratedError can still occur with tool-based generation when a
+  // provider returns no output at all (e.g. empty response before any tool call).
+  if (NoOutputGeneratedError.isInstance(error)) {
+    return {
+      type: "unknown",
+      raw: "No output generated from the AI provider.",
+    };
   }
 
   if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
@@ -222,16 +218,21 @@ export async function generateWorkspaceIdentity(
         tools: {
           propose_name: tool({
             description: TOOL_DEFINITIONS.propose_name.description,
-            inputSchema: proposeNameSchema,
+            inputSchema: ProposeNameToolArgsSchema,
             // eslint-disable-next-line @typescript-eslint/require-await -- AI SDK tool execute must be async
             execute: async (args) => ({ success: true as const, ...args }),
           }),
         },
-        toolChoice: { type: "tool", toolName: "propose_name" },
+        // Use "required" instead of { type: "tool", toolName: "propose_name" }
+        // because forced tool choice (by name) isn't supported by all providers.
+        // With only one tool available, "required" is equivalent but more widely
+        // compatible. Models that don't support tool choice at all will throw,
+        // caught below, and the retry loop tries the next candidate.
+        toolChoice: "required",
       });
 
-      // Wait for the tool call result. toolChoice forces the model to call
-      // propose_name, so toolResults will contain exactly one result.
+      // Wait for the tool call result. toolChoice "required" forces the model
+      // to call a tool; with only one tool available, it will be propose_name.
       const results = await currentStream.toolResults;
       const toolResult = results[0];
 
