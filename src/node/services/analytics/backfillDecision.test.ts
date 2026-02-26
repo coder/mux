@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  decideSyncPlan,
-  type SyncPlanInput,
-} from "./backfillDecision";
+import { decideSyncPlan, type SyncPlanInput } from "./backfillDecision";
 
 function makeInput(overrides: Partial<SyncPlanInput> = {}): SyncPlanInput {
   return {
