@@ -1348,19 +1348,29 @@ export async function parseWorkspaceFromDisk(
   };
 }
 
-/** Flatten parsed workspaces (including archived transcripts) into one event list. */
+/** Flatten parsed workspaces (including archived transcripts) into one deduplicated event list. */
 function collectAllEvents(parsed: ParsedWorkspaceData[]): IngestEvent[] {
-  const all: IngestEvent[] = [];
+  // Deduplicate by (workspace_id, response_index) so duplicate workspace IDs in
+  // top-level sessions and archived transcripts do not double-count events.
+  // Map insertion order preserves the first key position while overwriting values,
+  // giving us "last occurrence wins" semantics for each dedup key.
+  const eventMap = new Map<string, IngestEvent>();
 
-  for (const workspace of parsed) {
-    all.push(...workspace.events);
+  function collect(workspaces: ParsedWorkspaceData[]): void {
+    for (const workspace of workspaces) {
+      for (const event of workspace.events) {
+        const key = `${event.row.workspace_id}:${event.row.response_index ?? event.sequence}`;
+        eventMap.set(key, event);
+      }
 
-    if (workspace.archivedTranscripts.length > 0) {
-      all.push(...collectAllEvents(workspace.archivedTranscripts));
+      if (workspace.archivedTranscripts.length > 0) {
+        collect(workspace.archivedTranscripts);
+      }
     }
   }
 
-  return all;
+  collect(parsed);
+  return Array.from(eventMap.values());
 }
 
 export async function rebuildAll(
