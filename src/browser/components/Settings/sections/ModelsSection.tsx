@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Loader2, Plus, ShieldCheck } from "lucide-react";
+import { ArrowRight, Info, Loader2, Plus, ShieldCheck } from "lucide-react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { Button } from "@/browser/components/ui/button";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { useAPI } from "@/browser/contexts/API";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -114,6 +115,7 @@ export function ModelsSection() {
   );
 
   const { api } = useAPI();
+  const { open: openSettings } = useSettings();
   const { config, loading, updateModelsOptimistically } = useProvidersConfig();
   const [lastProvider, setLastProvider] = usePersistedState(LAST_CUSTOM_MODEL_PROVIDER_KEY, "");
   const [newModelId, setNewModelId] = useState("");
@@ -545,6 +547,28 @@ export function ModelsSection() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div className="border-border-medium bg-background-secondary/40 text-muted rounded-md border px-3 py-2.5 text-xs">
+        <div className="flex items-start gap-2">
+          <Info className="text-accent mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <div className="space-y-1">
+            <p>
+              Agent-specific model defaults and thinking levels (Compact and others) are configured
+              in <span className="text-foreground font-medium">Settings → Agents</span>.
+            </p>
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              onClick={() => openSettings("tasks")}
+              className="text-accent h-auto px-0 py-0 text-xs"
+            >
+              Open Agents settings
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
       </div>
 
