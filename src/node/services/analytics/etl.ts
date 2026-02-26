@@ -1438,21 +1438,28 @@ export async function rebuildAll(
 
   async function writeWorkspaceMetadata(workspaces: ParsedWorkspaceData[]): Promise<void> {
     for (const workspace of workspaces) {
-      const maxSequence = getMaxSequence(workspace.events) ?? -1;
-      await writeWatermark(conn, workspace.workspaceId, {
-        lastSequence: maxSequence,
-        lastModified: workspace.stat.mtimeMs,
-      });
+      try {
+        const maxSequence = getMaxSequence(workspace.events) ?? -1;
+        await writeWatermark(conn, workspace.workspaceId, {
+          lastSequence: maxSequence,
+          lastModified: workspace.stat.mtimeMs,
+        });
 
-      await writeDelegationRollupsFromParsed(
-        conn,
-        workspace.workspaceId,
-        workspace.delegationRollupRaw,
-        workspace.workspaceMeta
-      );
+        await writeDelegationRollupsFromParsed(
+          conn,
+          workspace.workspaceId,
+          workspace.delegationRollupRaw,
+          workspace.workspaceMeta
+        );
 
-      if (workspace.archivedTranscripts.length > 0) {
-        await writeWorkspaceMetadata(workspace.archivedTranscripts);
+        if (workspace.archivedTranscripts.length > 0) {
+          await writeWorkspaceMetadata(workspace.archivedTranscripts);
+        }
+      } catch (error) {
+        log.warn("[analytics-etl] Failed to write metadata during rebuild", {
+          workspaceId: workspace.workspaceId,
+          error: getErrorMessage(error),
+        });
       }
     }
   }
