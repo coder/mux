@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { DuckDBConnection } from "@duckdb/node-api";
+import { DuckDBAppender, DuckDBDateValue, type DuckDBConnection } from "@duckdb/node-api";
 import { EventRowSchema, type EventRow } from "@/common/orpc/schemas/analytics";
 import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -50,6 +50,89 @@ INSERT INTO events (
   ?, ?, ?, ?, ?, ?, ?
 )
 `;
+
+function appendVarcharOrNull(appender: DuckDBAppender, value: string | null | undefined): void {
+  value != null ? appender.appendVarchar(value) : appender.appendNull();
+}
+
+function appendDoubleOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
+  value != null ? appender.appendDouble(value) : appender.appendNull();
+}
+
+function appendIntegerOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
+  value != null ? appender.appendInteger(value) : appender.appendNull();
+}
+
+function appendBigIntOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
+  value != null ? appender.appendBigInt(BigInt(Math.trunc(value))) : appender.appendNull();
+}
+
+function appendDateOrNull(appender: DuckDBAppender, dateStr: string | null | undefined): void {
+  if (dateStr == null) {
+    appender.appendNull();
+    return;
+  }
+
+  const [y, m, d] = dateStr.split("-").map(Number);
+  assert(
+    Number.isFinite(y!) && Number.isFinite(m!) && Number.isFinite(d!),
+    `appendDateOrNull: invalid date "${dateStr}"`
+  );
+  appender.appendDate(DuckDBDateValue.fromParts({ year: y!, month: m!, day: d! }));
+}
+
+export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]): Promise<void> {
+  assert(INSERT_EVENT_SQL.length > 0, "appendEvents: expected INSERT_EVENT_SQL to remain defined");
+
+  if (events.length === 0) {
+    return;
+  }
+
+  const appender = await conn.createAppender("events");
+
+  try {
+    assert(
+      appender instanceof DuckDBAppender,
+      "appendEvents: expected createAppender to return a DuckDBAppender"
+    );
+
+    for (const event of events) {
+      const row = event.row;
+      appendVarcharOrNull(appender, row.workspace_id);
+      appendVarcharOrNull(appender, row.project_path);
+      appendVarcharOrNull(appender, row.project_name);
+      appendVarcharOrNull(appender, row.workspace_name);
+      appendVarcharOrNull(appender, row.parent_workspace_id);
+      appendVarcharOrNull(appender, row.agent_id);
+      appendBigIntOrNull(appender, row.timestamp);
+      appendDateOrNull(appender, event.date);
+      appendVarcharOrNull(appender, row.model);
+      appendVarcharOrNull(appender, row.thinking_level);
+      appender.appendInteger(row.input_tokens);
+      appender.appendInteger(row.output_tokens);
+      appender.appendInteger(row.reasoning_tokens);
+      appender.appendInteger(row.cached_tokens);
+      appender.appendInteger(row.cache_create_tokens);
+      appender.appendDouble(row.input_cost_usd);
+      appender.appendDouble(row.output_cost_usd);
+      appender.appendDouble(row.reasoning_cost_usd);
+      appender.appendDouble(row.cached_cost_usd);
+      appender.appendDouble(row.total_cost_usd);
+      appendDoubleOrNull(appender, row.duration_ms);
+      appendDoubleOrNull(appender, row.ttft_ms);
+      appendDoubleOrNull(appender, row.streaming_ms);
+      appendDoubleOrNull(appender, row.tool_execution_ms);
+      appendDoubleOrNull(appender, row.output_tps);
+      appendIntegerOrNull(appender, row.response_index);
+      appender.appendBoolean(row.is_sub_agent);
+      appender.endRow();
+    }
+
+    appender.flushSync();
+  } finally {
+    appender.closeSync();
+  }
+}
 
 const INSERT_DELEGATION_ROLLUP_SQL = `
 INSERT OR REPLACE INTO delegation_rollups (
@@ -656,44 +739,13 @@ async function replaceEventsByResponseIndex(
       [workspaceId, ...responseIndexes]
     );
 
-    for (const event of events) {
-      const row = event.row;
-      await conn.run(INSERT_EVENT_SQL, [
-        row.workspace_id,
-        row.project_path,
-        row.project_name,
-        row.workspace_name,
-        row.parent_workspace_id,
-        row.agent_id,
-        row.timestamp,
-        event.date,
-        row.model,
-        row.thinking_level,
-        row.input_tokens,
-        row.output_tokens,
-        row.reasoning_tokens,
-        row.cached_tokens,
-        row.cache_create_tokens,
-        row.input_cost_usd,
-        row.output_cost_usd,
-        row.reasoning_cost_usd,
-        row.cached_cost_usd,
-        row.total_cost_usd,
-        row.duration_ms,
-        row.ttft_ms,
-        row.streaming_ms,
-        row.tool_execution_ms,
-        row.output_tps,
-        row.response_index,
-        row.is_sub_agent,
-      ]);
-    }
-
     await conn.run("COMMIT");
   } catch (error) {
     await conn.run("ROLLBACK");
     throw error;
   }
+
+  await appendEvents(conn, events);
 }
 
 async function replaceWorkspaceEvents(
@@ -701,52 +753,18 @@ async function replaceWorkspaceEvents(
   workspaceId: string,
   events: IngestEvent[]
 ): Promise<void> {
+  // DELETE in transaction, then bulk-append.
+  // Analytics is eventually consistent; if append fails after DELETE, next ingest/rebuild recovers.
   await conn.run("BEGIN TRANSACTION");
   try {
     await conn.run("DELETE FROM events WHERE workspace_id = ?", [workspaceId]);
-
-    for (const event of events) {
-      const row = event.row;
-      assert(
-        row.workspace_id === workspaceId,
-        "replaceWorkspaceEvents: all rows must belong to the target workspace"
-      );
-      await conn.run(INSERT_EVENT_SQL, [
-        row.workspace_id,
-        row.project_path,
-        row.project_name,
-        row.workspace_name,
-        row.parent_workspace_id,
-        row.agent_id,
-        row.timestamp,
-        event.date,
-        row.model,
-        row.thinking_level,
-        row.input_tokens,
-        row.output_tokens,
-        row.reasoning_tokens,
-        row.cached_tokens,
-        row.cache_create_tokens,
-        row.input_cost_usd,
-        row.output_cost_usd,
-        row.reasoning_cost_usd,
-        row.cached_cost_usd,
-        row.total_cost_usd,
-        row.duration_ms,
-        row.ttft_ms,
-        row.streaming_ms,
-        row.tool_execution_ms,
-        row.output_tps,
-        row.response_index,
-        row.is_sub_agent,
-      ]);
-    }
-
     await conn.run("COMMIT");
   } catch (error) {
     await conn.run("ROLLBACK");
     throw error;
   }
+
+  await appendEvents(conn, events);
 }
 
 function getMaxSequence(events: IngestEvent[]): number | null {
