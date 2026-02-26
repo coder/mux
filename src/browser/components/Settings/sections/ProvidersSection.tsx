@@ -1440,59 +1440,109 @@ export function ProvidersSection() {
 
                 {/* Anthropic: prompt cache TTL */}
                 {provider === "anthropic" && (
-                  <div className="border-border-light border-t pt-3">
-                    <div className="mb-1 flex items-center gap-1">
-                      <label className="text-muted block text-xs">Prompt cache TTL</label>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <HelpIndicator aria-label="Anthropic prompt cache TTL help">
-                              ?
-                            </HelpIndicator>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <div className="max-w-[280px]">
-                              <div className="font-semibold">Prompt cache TTL</div>
-                              <div className="mt-1">
-                                Default is <span className="font-semibold">5m</span>. Use{" "}
-                                <span className="font-semibold">1h</span> for longer workflows at a
-                                higher cache-write cost.
+                  <>
+                    <div className="border-border-light border-t pt-3">
+                      <div className="mb-1 flex items-center gap-1">
+                        <label className="text-muted block text-xs">Prompt cache TTL</label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpIndicator aria-label="Anthropic prompt cache TTL help">
+                                ?
+                              </HelpIndicator>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div className="max-w-[280px]">
+                                <div className="font-semibold">Prompt cache TTL</div>
+                                <div className="mt-1">
+                                  Default is <span className="font-semibold">5m</span>. Use{" "}
+                                  <span className="font-semibold">1h</span> for longer workflows at
+                                  a higher cache-write cost.
+                                </div>
                               </div>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+
+                      <Select
+                        value={config?.anthropic?.cacheTtl === "1h" ? "1h" : "default"}
+                        onValueChange={(next) => {
+                          if (!api) {
+                            return;
+                          }
+                          if (next !== "default" && next !== "1h") {
+                            return;
+                          }
+
+                          const cacheTtl = next === "1h" ? "1h" : undefined;
+                          updateOptimistically("anthropic", { cacheTtl });
+                          void api.providers.setProviderConfig({
+                            provider: "anthropic",
+                            keyPath: ["cacheTtl"],
+                            // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
+                            value: next === "1h" ? "1h" : "",
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default (5m)</SelectItem>
+                          <SelectItem value="1h">1 hour</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
 
-                    <Select
-                      value={config?.anthropic?.cacheTtl === "1h" ? "1h" : "default"}
-                      onValueChange={(next) => {
-                        if (!api) {
-                          return;
-                        }
-                        if (next !== "default" && next !== "1h") {
-                          return;
-                        }
+                    <div className="border-border-light border-t pt-3">
+                      <div className="mb-1 flex items-center gap-1">
+                        <label className="text-muted block text-xs">Beta features</label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpIndicator aria-label="Anthropic beta features help">
+                                ?
+                              </HelpIndicator>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div className="max-w-[260px]">
+                                <div className="font-semibold">Anthropic beta features</div>
+                                <div className="mt-1">
+                                  Controls 1M context window and prompt caching. Disable for zero
+                                  data retention (ZDR) environments where beta features are not
+                                  eligible.
+                                </div>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <Select
+                        value={config?.anthropic?.disableBetaFeatures ? "disabled" : "enabled"}
+                        onValueChange={(next) => {
+                          if (!api) return;
+                          if (next !== "enabled" && next !== "disabled") return;
 
-                        const cacheTtl = next === "1h" ? "1h" : undefined;
-                        updateOptimistically("anthropic", { cacheTtl });
-                        void api.providers.setProviderConfig({
-                          provider: "anthropic",
-                          keyPath: ["cacheTtl"],
-                          // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
-                          value: next === "1h" ? "1h" : "",
-                        });
-                      }}
-                    >
-                      <SelectTrigger className="w-40">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="default">Default (5m)</SelectItem>
-                        <SelectItem value="1h">1 hour</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                          const disableBetaFeatures = next === "disabled" ? true : undefined;
+                          updateOptimistically("anthropic", { disableBetaFeatures });
+                          void api.providers.setProviderConfig({
+                            provider: "anthropic",
+                            keyPath: ["disableBetaFeatures"],
+                            value: next === "disabled" ? "true" : "",
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="enabled">enabled</SelectItem>
+                          <SelectItem value="disabled">disabled</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
                 )}
 
                 {/* OpenAI: ChatGPT OAuth + service tier */}
@@ -1767,6 +1817,56 @@ export function ProvidersSection() {
                         <SelectContent>
                           <SelectItem value="responses">responses</SelectItem>
                           <SelectItem value="chatCompletions">chat completions</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="border-border-light border-t pt-3">
+                      <div className="mb-1 flex items-center gap-1">
+                        <label className="text-muted block text-xs">Response storage</label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpIndicator aria-label="OpenAI response storage help">
+                                ?
+                              </HelpIndicator>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div className="max-w-[260px]">
+                                <div className="font-semibold">OpenAI response storage</div>
+                                <div className="mt-1">
+                                  <span className="font-semibold">enabled</span>: OpenAI stores
+                                  responses for retrieval and context (default).
+                                </div>
+                                <div>
+                                  <span className="font-semibold">disabled</span>: responses are not
+                                  stored. Required for zero data retention (ZDR) endpoints.
+                                </div>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <Select
+                        value={config?.openai?.store === false ? "disabled" : "enabled"}
+                        onValueChange={(next) => {
+                          if (!api) return;
+                          if (next !== "enabled" && next !== "disabled") return;
+
+                          const store = next === "disabled" ? false : undefined;
+                          updateOptimistically("openai", { store });
+                          void api.providers.setProviderConfig({
+                            provider: "openai",
+                            keyPath: ["store"],
+                            value: next === "disabled" ? "false" : "",
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="enabled">enabled</SelectItem>
+                          <SelectItem value="disabled">disabled</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
