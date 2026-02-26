@@ -1372,6 +1372,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }),
       getSubagentTranscript: (input: { workspaceId?: string; taskId: string }) =>
         Promise.resolve(subagentTranscripts.get(input.taskId) ?? { messages: [] }),
+      getPostCompactionState: () =>
+        Promise.resolve({ planPath: null, trackedFilePaths: [], excludedItems: [] }),
+      setPostCompactionExclusion: () =>
+        Promise.resolve({ success: true as const, data: undefined }),
       executeBash: async (input: { workspaceId: string; script: string }) => {
         if (executeBash) {
           const result = await executeBash(input.workspaceId, input.script);

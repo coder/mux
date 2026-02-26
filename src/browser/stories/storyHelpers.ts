@@ -15,6 +15,7 @@ import type {
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
@@ -353,6 +354,7 @@ export interface SimpleChatSetupOptions {
   /** Git diff output for Review tab */
   gitDiff?: GitDiffFixture;
   providersConfig?: ProvidersConfigMap;
+  agentAiDefaults?: AgentAiDefaults;
   backgroundProcesses?: BackgroundProcessFixture[];
   /** Session usage data for Costs tab */
   statsTabEnabled?: boolean;
@@ -468,6 +470,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     onChat,
     executeBash,
     providersConfig: opts.providersConfig,
+    agentAiDefaults: opts.agentAiDefaults,
     backgroundProcesses: bgProcesses,
     statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
