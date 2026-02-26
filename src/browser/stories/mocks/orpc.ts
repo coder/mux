@@ -1143,6 +1143,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }
         return Promise.resolve({ success: true, data: undefined });
       },
+      setTrust: (input: { projectPath: string; trusted: boolean }) => {
+        const project = projects.get(input.projectPath);
+        if (project) {
+          project.trusted = input.trusted;
+        }
+        return Promise.resolve();
+      },
       secrets: {
         get: (input: { projectPath: string }) =>
           Promise.resolve(projectSecrets.get(input.projectPath) ?? []),
