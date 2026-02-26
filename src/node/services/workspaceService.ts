@@ -4696,20 +4696,33 @@ export class WorkspaceService extends EventEmitter {
     const execAgentSettings =
       workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ?? workspaceEntry?.aiSettings;
 
-    const preferredCompactionModel =
-      typeof config.preferredCompactionModel === "string"
-        ? normalizeGatewayModel(config.preferredCompactionModel.trim())
+    // Compaction defaults now flow through per-agent defaults.
+    const globalCompactDefaultModel = config.agentAiDefaults?.compact?.modelString;
+    const normalizedGlobalCompactDefaultModel =
+      typeof globalCompactDefaultModel === "string"
+        ? normalizeGatewayModel(globalCompactDefaultModel.trim())
+        : undefined;
+    const validGlobalCompactDefaultModel =
+      normalizedGlobalCompactDefaultModel && isValidModelFormat(normalizedGlobalCompactDefaultModel)
+        ? normalizedGlobalCompactDefaultModel
         : undefined;
 
-    const normalizedPreferredCompactionModel =
-      preferredCompactionModel && isValidModelFormat(preferredCompactionModel)
-        ? preferredCompactionModel
+    const globalExecDefaultModel =
+      config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString;
+    const normalizedGlobalExecDefaultModel =
+      typeof globalExecDefaultModel === "string"
+        ? normalizeGatewayModel(globalExecDefaultModel.trim())
+        : undefined;
+    const validGlobalExecDefaultModel =
+      normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
+        ? normalizedGlobalExecDefaultModel
         : undefined;
 
     const fallbackModel =
-      normalizedPreferredCompactionModel ??
       compactAgentSettings?.model ??
+      validGlobalCompactDefaultModel ??
       execAgentSettings?.model ??
+      validGlobalExecDefaultModel ??
       activity?.lastModel ??
       WORKSPACE_DEFAULTS.model;
 

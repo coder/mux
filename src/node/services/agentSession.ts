@@ -2442,18 +2442,21 @@ export class AgentSession {
   private getPreferredCompactionModel(): string | null {
     try {
       const maybeConfig = this.config as Config & {
-        loadConfigOrDefault?: () => { preferredCompactionModel?: string } | null;
+        loadConfigOrDefault?: () => {
+          agentAiDefaults?: Record<string, { modelString?: string }>;
+        } | null;
       };
       if (typeof maybeConfig.loadConfigOrDefault !== "function") {
         return null;
       }
 
-      const preferredCompactionModel = maybeConfig.loadConfigOrDefault()?.preferredCompactionModel;
-      if (typeof preferredCompactionModel !== "string") {
+      const compactModelString =
+        maybeConfig.loadConfigOrDefault()?.agentAiDefaults?.compact?.modelString;
+      if (typeof compactModelString !== "string") {
         return null;
       }
 
-      const normalized = normalizeGatewayModel(preferredCompactionModel.trim());
+      const normalized = normalizeGatewayModel(compactModelString.trim());
       if (!isValidModelFormat(normalized)) {
         return null;
       }
