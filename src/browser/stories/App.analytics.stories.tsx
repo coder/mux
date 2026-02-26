@@ -451,12 +451,38 @@ const DELEGATION_SUMMARY_BY_PROJECT = new Map<AnalyticsProjectPath | null, Deleg
       totalReportTokens: 296_000,
       compressionRatio: 9.2,
       totalCostDelegated: 58.34,
-      exploreCount: 108,
-      exploreTokens: 870_000,
-      execCount: 136,
-      execTokens: 1_430_000,
-      planCount: 42,
-      planTokens: 410_000,
+      byAgentType: [
+        {
+          agentType: "explore",
+          count: 108,
+          totalTokens: 870_000,
+          inputTokens: 430_000,
+          outputTokens: 300_000,
+          reasoningTokens: 90_000,
+          cachedTokens: 40_000,
+          cacheCreateTokens: 10_000,
+        },
+        {
+          agentType: "exec",
+          count: 136,
+          totalTokens: 1_430_000,
+          inputTokens: 700_000,
+          outputTokens: 500_000,
+          reasoningTokens: 150_000,
+          cachedTokens: 60_000,
+          cacheCreateTokens: 20_000,
+        },
+        {
+          agentType: "plan",
+          count: 42,
+          totalTokens: 410_000,
+          inputTokens: 210_000,
+          outputTokens: 120_000,
+          reasoningTokens: 50_000,
+          cachedTokens: 20_000,
+          cacheCreateTokens: 10_000,
+        },
+      ],
     },
   ],
   [
@@ -467,12 +493,38 @@ const DELEGATION_SUMMARY_BY_PROJECT = new Map<AnalyticsProjectPath | null, Deleg
       totalReportTokens: 150_000,
       compressionRatio: 9.4,
       totalCostDelegated: 31.12,
-      exploreCount: 56,
-      exploreTokens: 440_000,
-      execCount: 69,
-      execTokens: 760_000,
-      planCount: 19,
-      planTokens: 210_000,
+      byAgentType: [
+        {
+          agentType: "explore",
+          count: 56,
+          totalTokens: 440_000,
+          inputTokens: 220_000,
+          outputTokens: 150_000,
+          reasoningTokens: 40_000,
+          cachedTokens: 20_000,
+          cacheCreateTokens: 10_000,
+        },
+        {
+          agentType: "exec",
+          count: 69,
+          totalTokens: 760_000,
+          inputTokens: 360_000,
+          outputTokens: 280_000,
+          reasoningTokens: 70_000,
+          cachedTokens: 35_000,
+          cacheCreateTokens: 15_000,
+        },
+        {
+          agentType: "plan",
+          count: 19,
+          totalTokens: 210_000,
+          inputTokens: 110_000,
+          outputTokens: 60_000,
+          reasoningTokens: 20_000,
+          cachedTokens: 15_000,
+          cacheCreateTokens: 5_000,
+        },
+      ],
     },
   ],
   [
@@ -483,12 +535,38 @@ const DELEGATION_SUMMARY_BY_PROJECT = new Map<AnalyticsProjectPath | null, Deleg
       totalReportTokens: 107_000,
       compressionRatio: 8.7,
       totalCostDelegated: 19.57,
-      exploreCount: 33,
-      exploreTokens: 300_000,
-      execCount: 48,
-      execTokens: 490_000,
-      planCount: 15,
-      planTokens: 145_000,
+      byAgentType: [
+        {
+          agentType: "explore",
+          count: 33,
+          totalTokens: 300_000,
+          inputTokens: 150_000,
+          outputTokens: 100_000,
+          reasoningTokens: 30_000,
+          cachedTokens: 15_000,
+          cacheCreateTokens: 5_000,
+        },
+        {
+          agentType: "exec",
+          count: 48,
+          totalTokens: 490_000,
+          inputTokens: 240_000,
+          outputTokens: 170_000,
+          reasoningTokens: 45_000,
+          cachedTokens: 25_000,
+          cacheCreateTokens: 10_000,
+        },
+        {
+          agentType: "plan",
+          count: 15,
+          totalTokens: 145_000,
+          inputTokens: 70_000,
+          outputTokens: 45_000,
+          reasoningTokens: 15_000,
+          cachedTokens: 10_000,
+          cacheCreateTokens: 5_000,
+        },
+      ],
     },
   ],
   [
@@ -499,28 +577,74 @@ const DELEGATION_SUMMARY_BY_PROJECT = new Map<AnalyticsProjectPath | null, Deleg
       totalReportTokens: 39_000,
       compressionRatio: 9.4,
       totalCostDelegated: 7.65,
-      exploreCount: 19,
-      exploreTokens: 130_000,
-      execCount: 19,
-      execTokens: 180_000,
-      planCount: 8,
-      planTokens: 55_000,
+      byAgentType: [
+        {
+          agentType: "explore",
+          count: 19,
+          totalTokens: 130_000,
+          inputTokens: 65_000,
+          outputTokens: 40_000,
+          reasoningTokens: 15_000,
+          cachedTokens: 7_000,
+          cacheCreateTokens: 3_000,
+        },
+        {
+          agentType: "exec",
+          count: 19,
+          totalTokens: 180_000,
+          inputTokens: 85_000,
+          outputTokens: 60_000,
+          reasoningTokens: 20_000,
+          cachedTokens: 10_000,
+          cacheCreateTokens: 5_000,
+        },
+        {
+          agentType: "plan",
+          count: 8,
+          totalTokens: 55_000,
+          inputTokens: 25_000,
+          outputTokens: 18_000,
+          reasoningTokens: 7_000,
+          cachedTokens: 3_000,
+          cacheCreateTokens: 2_000,
+        },
+      ],
     },
   ],
 ]);
 
 for (const [projectPath, summary] of DELEGATION_SUMMARY_BY_PROJECT.entries()) {
-  const childCountByAgentType = summary.exploreCount + summary.execCount + summary.planCount;
+  const childCountByAgentType = summary.byAgentType.reduce(
+    (total, breakdown) => total + breakdown.count,
+    0
+  );
   assert(
     childCountByAgentType === summary.totalChildren,
     `Delegation fixture child counts must sum to totalChildren for ${projectPath ?? "all"}`
   );
 
-  const tokenCountByAgentType = summary.exploreTokens + summary.execTokens + summary.planTokens;
+  const tokenCountByAgentType = summary.byAgentType.reduce(
+    (total, breakdown) => total + breakdown.totalTokens,
+    0
+  );
   assert(
     tokenCountByAgentType === summary.totalTokensConsumed,
     `Delegation fixture token counts must sum to totalTokensConsumed for ${projectPath ?? "all"}`
   );
+
+  for (const breakdown of summary.byAgentType) {
+    const tokenTotal =
+      breakdown.inputTokens +
+      breakdown.cachedTokens +
+      breakdown.cacheCreateTokens +
+      breakdown.outputTokens +
+      breakdown.reasoningTokens;
+
+    assert(
+      tokenTotal === breakdown.totalTokens,
+      `Delegation fixture token categories must sum to totalTokens for ${projectPath ?? "all"} (${breakdown.agentType})`
+    );
+  }
 
   const expectedCompressionRatio = Number(
     (summary.totalTokensConsumed / Math.max(1, summary.totalReportTokens)).toFixed(1)

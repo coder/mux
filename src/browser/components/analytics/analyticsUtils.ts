@@ -13,6 +13,14 @@ export const ANALYTICS_CHART_COLORS = [
   "var(--color-ask-mode)",
 ] as const;
 
+/** Token category colors shared across charts (TokensByModel, Delegation). */
+export const TOKEN_CATEGORY_COLORS = {
+  inputTokens: "var(--color-plan-mode)",
+  cachedTokens: "var(--color-info)",
+  cacheCreateTokens: "var(--color-ask-mode)",
+  outputTokens: "var(--color-exec-mode)",
+  reasoningTokens: "var(--color-task-mode)",
+} as const;
 // Shared recharts styling constants so each chart component stays DRY.
 // These match the project's CSS custom-property theme tokens.
 
