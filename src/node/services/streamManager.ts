@@ -42,6 +42,7 @@ import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
+import { countTokens } from "@/node/utils/main/tokenizer";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { Runtime } from "@/node/runtime/Runtime";
 import {
@@ -811,7 +812,9 @@ export class StreamManager extends EventEmitter {
       if (!isReplay) {
         const streamInfo = this.workspaceStreams.get(workspaceId);
         if (streamInfo) {
-          streamInfo.reasoningTokensByDelta += tokens;
+          // Use per-stream model for backfill accuracy; the shared tokenTracker
+          // may have been reconfigured by a concurrent stream with a different model.
+          streamInfo.reasoningTokensByDelta += await countTokens(streamInfo.model, part.text);
         }
       }
       this.emit("reasoning-delta", {
