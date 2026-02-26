@@ -359,13 +359,17 @@ async function queryTimingDistribution(
   // Histogram emits real metric values (e.g. ms, tok/s) as bucket labels,
   // not abstract 1..20 indices. This way the chart x-axis maps directly to
   // meaningful units and percentile reference lines land correctly.
+  //
+  // Cap the histogram range at p99 so a single extreme outlier does not flatten
+  // the distribution for the other 99% of responses. Values above p99 are
+  // intentionally folded into the final bucket via LEAST(20, ...).
   const histogram = await typedQuery(
     conn,
     `
     WITH stats AS (
       SELECT
         MIN(${column}) AS min_value,
-        MAX(${column}) AS max_value
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ${column}) AS max_value
       FROM events
       WHERE ${column} IS NOT NULL
         AND (? IS NULL OR project_path = ?)
