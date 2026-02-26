@@ -244,9 +244,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       e.preventDefault();
       e.stopPropagation();
 
-      // Don't allow numbered shortcuts to bypass Auto lock
-      if (isAuto) return;
-
       // Use selectableOptions so keybinds match the visible dropdown items
       if (index < selectableOptions.length) {
         const picked = selectableOptions[index];
@@ -259,7 +256,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     // Use capture phase to intercept before other handlers
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isPickerOpen, isAuto, selectableOptions, handleSelectAgent]);
+  }, [isPickerOpen, selectableOptions, handleSelectAgent]);
 
   const handleDropdownKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -270,9 +267,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       closePicker();
       return;
     }
-
-    // Don't navigate agents list when auto is active
-    if (isAuto) return;
 
     if (e.key === "Enter") {
       // Only handle Enter for agent rows — don't intercept when focus is on

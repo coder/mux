@@ -1,13 +1,22 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+
 import { GLOBAL_SCOPE_ID, getAgentIdKey, getProjectScopeId } from "@/common/constants/storage";
+import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+
+let mockAgentDefinitions: AgentDefinitionDescriptor[] = [];
+const apiClient = {
+  agents: {
+    list: () => Promise.resolve(mockAgentDefinitions),
+  },
+};
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
-    api: null,
-    status: "connecting" as const,
+    api: apiClient,
+    status: "connected" as const,
     error: null,
     authenticate: () => undefined,
     retry: () => undefined,
@@ -15,6 +24,30 @@ void mock.module("@/browser/contexts/API", () => ({
 }));
 
 import { AgentProvider, useAgent, type AgentContextValue } from "./AgentContext";
+
+const AUTO_AGENT: AgentDefinitionDescriptor = {
+  id: "auto",
+  scope: "built-in",
+  name: "Auto",
+  uiSelectable: true,
+  subagentRunnable: false,
+};
+
+const EXEC_AGENT: AgentDefinitionDescriptor = {
+  id: "exec",
+  scope: "built-in",
+  name: "Exec",
+  uiSelectable: true,
+  subagentRunnable: false,
+};
+
+const PLAN_AGENT: AgentDefinitionDescriptor = {
+  id: "plan",
+  scope: "built-in",
+  name: "Plan",
+  uiSelectable: true,
+  subagentRunnable: false,
+};
 
 interface HarnessProps {
   onChange: (value: AgentContextValue) => void;
@@ -36,6 +69,8 @@ describe("AgentContext", () => {
   let originalLocalStorage: typeof globalThis.localStorage;
 
   beforeEach(() => {
+    mockAgentDefinitions = [];
+
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
     originalLocalStorage = globalThis.localStorage;
@@ -88,6 +123,37 @@ describe("AgentContext", () => {
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("plan");
+    });
+  });
+
+  test("cycle shortcut switches from auto to exec", async () => {
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("auto"));
+
+    let contextValue: AgentContextValue | undefined;
+
+    render(
+      <AgentProvider projectPath={projectPath}>
+        <Harness onChange={(value) => (contextValue = value)} />
+      </AgentProvider>
+    );
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("auto");
+      expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["auto", "exec", "plan"]);
+    });
+
+    (window as Window & { api?: { platform?: string } }).api = { platform: "darwin" };
+
+    fireEvent.keyDown(window, {
+      key: ".",
+      ctrlKey: true,
+      metaKey: true,
+    });
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("exec");
     });
   });
 });

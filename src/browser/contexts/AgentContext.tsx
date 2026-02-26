@@ -232,11 +232,6 @@ function AgentProviderWithState(props: {
       isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
     );
 
-    // Auto mode: ignore the cycle shortcut when auto is a live agent
-    // (stale persisted "auto" not in list → allow cycling to recover)
-    const autoAvailable = selectableAgents.some((a) => a.id === "auto");
-    if (activeAgentId === "auto" && autoAvailable) return;
-
     // Never cycle into "auto" — it's toggled explicitly via the picker switch
     const cyclableAgents = selectableAgents.filter((a) => a.id !== "auto");
     if (cyclableAgents.length < 2) return;

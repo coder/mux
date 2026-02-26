@@ -329,4 +329,51 @@ describe("AgentModePicker", () => {
       expect(getByTestId("agentId").textContent).toBe("plan");
     });
   });
+
+  test("numbered quick-select while auto is active switches to exec", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("auto");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, AUTO_AGENT],
+            loaded: true,
+            loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
+            ...defaultContextProps,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByTestId, getByText, getByLabelText } = render(<Harness />);
+
+    expect(getByTestId("agentId").textContent).toBe("auto");
+
+    fireEvent.click(getByLabelText("Select agent"));
+
+    await waitFor(() => {
+      expect(getByText("Plan")).toBeTruthy();
+    });
+
+    fireEvent.keyDown(window, {
+      key: "1",
+      ctrlKey: true,
+      metaKey: true,
+    });
+
+    await waitFor(() => {
+      expect(getByTestId("agentId").textContent).toBe("exec");
+    });
+  });
 });
