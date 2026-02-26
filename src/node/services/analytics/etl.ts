@@ -1413,15 +1413,20 @@ export async function parseWorkspaceFromDisk(
 
 /** Collect parsed workspaces (including archived transcripts) into deduplicated workspace event groups. */
 function collectAllEvents(parsed: ParsedWorkspaceData[]): Map<string, IngestEvent[]> {
-  // Workspace-level dedup: if the same workspace_id appears from multiple sources
-  // (e.g. top-level session + archived sub-agent transcript), keep only the last
-  // occurrence's events. Returns per-workspace groups so rebuild can isolate append
-  // failures without dropping analytics data for unrelated workspaces.
+  // Workspace-level dedup with recency: if the same workspace_id appears from multiple
+  // sources (e.g. top-level session + archived sub-agent transcript), keep the
+  // freshest occurrence by mtime so traversal order does not affect rebuild output.
   const workspaceEvents = new Map<string, IngestEvent[]>();
+  const workspaceMtimes = new Map<string, number>();
 
   function collect(workspaces: ParsedWorkspaceData[]): void {
     for (const workspace of workspaces) {
-      workspaceEvents.set(workspace.workspaceId, workspace.events);
+      const existingMtime = workspaceMtimes.get(workspace.workspaceId);
+      if (existingMtime == null || workspace.stat.mtimeMs >= existingMtime) {
+        workspaceEvents.set(workspace.workspaceId, workspace.events);
+        workspaceMtimes.set(workspace.workspaceId, workspace.stat.mtimeMs);
+      }
+
       if (workspace.archivedTranscripts.length > 0) {
         collect(workspace.archivedTranscripts);
       }
@@ -1507,10 +1512,12 @@ export async function rebuildAll(
   // Keep rebuild resilient: a malformed event batch in one workspace should not
   // prevent unrelated workspace analytics data from being rebuilt.
   const workspaceEventsMap = collectAllEvents(allParsed);
+  const failedWorkspaceIds = new Set<string>();
   for (const [workspaceId, events] of workspaceEventsMap) {
     try {
       await appendEvents(conn, events);
     } catch (error) {
+      failedWorkspaceIds.add(workspaceId);
       log.warn("[analytics-etl] Failed to append events for workspace during rebuild", {
         workspaceId,
         error: getErrorMessage(error),
@@ -1518,8 +1525,17 @@ export async function rebuildAll(
     }
   }
 
-  async function writeWorkspaceMetadata(workspaces: ParsedWorkspaceData[]): Promise<void> {
+  async function writeWorkspaceMetadata(
+    workspaces: ParsedWorkspaceData[],
+    failedWorkspaceIds: Set<string>
+  ): Promise<void> {
     for (const workspace of workspaces) {
+      if (failedWorkspaceIds.has(workspace.workspaceId)) {
+        // Skip watermark/rollup writes for failed event appends so future ingest
+        // retries are not short-circuited by an advanced last_modified watermark.
+        continue;
+      }
+
       try {
         const maxSequence = getMaxSequence(workspace.events) ?? -1;
         await writeWatermark(conn, workspace.workspaceId, {
@@ -1535,7 +1551,7 @@ export async function rebuildAll(
         );
 
         if (workspace.archivedTranscripts.length > 0) {
-          await writeWorkspaceMetadata(workspace.archivedTranscripts);
+          await writeWorkspaceMetadata(workspace.archivedTranscripts, failedWorkspaceIds);
         }
       } catch (error) {
         log.warn("[analytics-etl] Failed to write metadata during rebuild", {
@@ -1546,7 +1562,14 @@ export async function rebuildAll(
     }
   }
 
-  await writeWorkspaceMetadata(allParsed);
+  await writeWorkspaceMetadata(allParsed, failedWorkspaceIds);
 
-  return { workspacesIngested: allParsed.length };
+  let workspacesIngested = 0;
+  for (const workspace of allParsed) {
+    if (!failedWorkspaceIds.has(workspace.workspaceId)) {
+      workspacesIngested += 1;
+    }
+  }
+
+  return { workspacesIngested };
 }
