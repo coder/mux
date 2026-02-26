@@ -9,6 +9,7 @@ import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import { generateDiff } from "./fileCommon";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getMuxHomeFromWorkspaceSessionDir } from "./muxHome";
+import { hasErrorCode } from "./skillFileUtils";
 
 export interface MuxGlobalAgentsWriteToolArgs {
   newContent: string;
@@ -85,7 +86,7 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
             };
           }
         } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+          if (!hasErrorCode(error, "ENOENT")) {
             throw error;
           }
           // File missing is OK (will create).

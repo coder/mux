@@ -7,6 +7,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getMuxHomeFromWorkspaceSessionDir } from "./muxHome";
+import { hasErrorCode } from "./skillFileUtils";
 
 export interface MuxGlobalAgentsReadToolResult {
   success: true;
@@ -53,7 +54,7 @@ export const createMuxGlobalAgentsReadTool: ToolFactory = (config: ToolConfigura
           const content = await fsPromises.readFile(agentsPath, "utf-8");
           return { success: true, content };
         } catch (error) {
-          if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          if (hasErrorCode(error, "ENOENT")) {
             return { success: true, content: "" };
           }
 
