@@ -1164,8 +1164,20 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         return;
       }
 
-      // Add new file tab to the focused tabset
-      setLayout((prev) => addTabToFocusedTabset(prev, fileTabType));
+      // Add new file tab to the focused tabset, recording the currently active
+      // tab as its parent so closing the file returns to where the user was.
+      setLayout((prev) => {
+        const focused = findTabset(prev.root, prev.focusedTabsetId);
+        const parentTabId = focused?.type === "tabset" ? focused.activeTab : undefined;
+        const next = addTabToFocusedTabset(prev, fileTabType);
+        if (parentTabId) {
+          return {
+            ...next,
+            parentTab: { ...next.parentTab, [fileTabType]: parentTabId },
+          };
+        }
+        return next;
+      });
     },
     [layout.root, setLayout]
   );

@@ -5,7 +5,9 @@ import {
   closeSplit,
   dockTabToEdge,
   getDefaultRightSidebarLayoutState,
+  isRightSidebarLayoutState,
   moveTabToTabset,
+  removeTabEverywhere,
   reorderTabInTabset,
   selectTabInFocusedTabset,
   splitFocusedTabset,
@@ -258,4 +260,146 @@ test("closeSplit keeps the specified child", () => {
   if (s2.root.type !== "tabset") throw new Error("expected tabset");
   expect(s2.root.id).toBe("tabset-2");
   expect(s2.root.tabs).toEqual(["review"]);
+});
+
+// --- Parent-tab tracking tests ---
+
+test("removeTabEverywhere activates parent tab when parentTab entry exists", () => {
+  const s: RightSidebarLayoutState = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "tabset",
+      id: "tabset-1",
+      tabs: ["costs", "review", "file:src/foo.ts"],
+      activeTab: "file:src/foo.ts",
+    },
+    parentTab: { "file:src/foo.ts": "review" },
+  };
+
+  const result = removeTabEverywhere(s, "file:src/foo.ts");
+  if (result.root.type !== "tabset") throw new Error("expected tabset");
+  // Should activate "review" (the parent) instead of positional adjacency
+  expect(result.root.activeTab).toBe("review");
+  expect(result.root.tabs).toEqual(["costs", "review"]);
+  // parentTab entry should be cleaned up
+  expect(result.parentTab).toBeUndefined();
+});
+
+test("removeTabEverywhere falls back to positional adjacency when parent is not in same tabset", () => {
+  const s: RightSidebarLayoutState = {
+    version: 1,
+    nextId: 3,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "split",
+      id: "split-1",
+      direction: "vertical",
+      sizes: [50, 50],
+      children: [
+        {
+          type: "tabset",
+          id: "tabset-1",
+          tabs: ["costs", "file:src/foo.ts"],
+          activeTab: "file:src/foo.ts",
+        },
+        { type: "tabset", id: "tabset-2", tabs: ["review"], activeTab: "review" },
+      ],
+    },
+    // Parent "review" is in tabset-2, but the file tab is in tabset-1
+    parentTab: { "file:src/foo.ts": "review" },
+  };
+
+  const result = removeTabEverywhere(s, "file:src/foo.ts");
+  // Split remains because tabset-1 still has "costs"
+  expect(result.root.type).toBe("split");
+  if (result.root.type !== "split") throw new Error("expected split");
+  const left = result.root.children[0];
+  if (left.type !== "tabset") throw new Error("expected tabset");
+  // Since "review" is not in tabset-1, fallback to positional adjacency → "costs"
+  expect(left.activeTab).toBe("costs");
+  expect(left.tabs).toEqual(["costs"]);
+});
+
+test("removeTabEverywhere cleans up parentTab entry for the removed tab", () => {
+  const s: RightSidebarLayoutState = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "tabset",
+      id: "tabset-1",
+      tabs: ["costs", "review", "file:src/a.ts", "file:src/b.ts"],
+      activeTab: "file:src/a.ts",
+    },
+    parentTab: {
+      "file:src/a.ts": "review",
+      "file:src/b.ts": "costs",
+    },
+  };
+
+  const result = removeTabEverywhere(s, "file:src/a.ts");
+  // Only the entry for b.ts should remain
+  expect(result.parentTab).toEqual({ "file:src/b.ts": "costs" });
+});
+
+test("removeTabEverywhere cleans up parentTab entries pointing to a removed parent tab", () => {
+  const s: RightSidebarLayoutState = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "tabset",
+      id: "tabset-1",
+      tabs: ["costs", "review", "file:src/a.ts", "file:src/b.ts"],
+      activeTab: "costs",
+    },
+    parentTab: {
+      "file:src/a.ts": "file:src/b.ts",
+      "file:src/b.ts": "review",
+    },
+  };
+
+  // Remove file:src/b.ts — the entry for file:src/a.ts should also be cleaned
+  // because its parent (file:src/b.ts) was the tab that was removed.
+  const result = removeTabEverywhere(s, "file:src/b.ts");
+  expect(result.parentTab).toBeUndefined();
+});
+
+test("persisted layouts without parentTab field still validate correctly (backward compat)", () => {
+  const raw = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: { type: "tabset", id: "tabset-1", tabs: ["costs"], activeTab: "costs" },
+  };
+  expect(isRightSidebarLayoutState(raw)).toBe(true);
+});
+
+test("persisted layouts with valid parentTab field validate correctly", () => {
+  const raw = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "tabset",
+      id: "tabset-1",
+      tabs: ["costs", "file:src/foo.ts"],
+      activeTab: "costs",
+    },
+    parentTab: { "file:src/foo.ts": "costs" },
+  };
+  expect(isRightSidebarLayoutState(raw)).toBe(true);
+});
+
+test("persisted layouts with invalid parentTab field are rejected", () => {
+  const raw = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: { type: "tabset", id: "tabset-1", tabs: ["costs"], activeTab: "costs" },
+    parentTab: { "file:src/foo.ts": 42 }, // value is not a string
+  };
+  expect(isRightSidebarLayoutState(raw)).toBe(false);
 });

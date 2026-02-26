@@ -47,6 +47,13 @@ export function isRightSidebarLayoutState(value: unknown): value is RightSidebar
   if (typeof v.nextId !== "number") return false;
   if (typeof v.focusedTabsetId !== "string") return false;
   if (!isLayoutNode(v.root)) return false;
+  // parentTab is optional; if present, must be a Record<string, string>
+  if (v.parentTab != null) {
+    if (typeof v.parentTab !== "object" || Array.isArray(v.parentTab)) return false;
+    for (const val of Object.values(v.parentTab as Record<string, unknown>)) {
+      if (typeof val !== "string") return false;
+    }
+  }
   return findTabset(v.root, v.focusedTabsetId) !== null;
 }
 export interface RightSidebarLayoutState {
@@ -54,6 +61,10 @@ export interface RightSidebarLayoutState {
   nextId: number;
   focusedTabsetId: string;
   root: RightSidebarLayoutNode;
+  // Maps file/terminal tabs to the tab that opened them.
+  // When a tab with a parentTab entry is closed, the parent is activated
+  // instead of falling back to positional adjacency.
+  parentTab?: Record<string, string>;
 }
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
@@ -137,18 +148,23 @@ function allocId(state: RightSidebarLayoutState, prefix: "tabset" | "split") {
 
 function removeTabFromNode(
   node: RightSidebarLayoutNode,
-  tab: TabType
+  tab: TabType,
+  preferredActiveTab?: string
 ): RightSidebarLayoutNode | null {
   if (node.type === "tabset") {
     const oldIndex = node.tabs.indexOf(tab);
     const tabs = node.tabs.filter((t) => t !== tab);
     if (tabs.length === 0) return null;
 
-    // When removing the active tab, focus next tab (or previous if no next)
+    // When removing the active tab, prefer the parent tab if it exists in this tabset
     let activeTab = node.activeTab;
     if (node.activeTab === tab) {
-      // Prefer next tab, fall back to previous
-      activeTab = tabs[Math.min(oldIndex, tabs.length - 1)];
+      if (preferredActiveTab && tabs.includes(preferredActiveTab as TabType)) {
+        activeTab = preferredActiveTab as TabType;
+      } else {
+        // Fallback: positional adjacency
+        activeTab = tabs[Math.min(oldIndex, tabs.length - 1)];
+      }
     }
     return {
       ...node,
@@ -157,8 +173,8 @@ function removeTabFromNode(
     };
   }
 
-  const left = removeTabFromNode(node.children[0], tab);
-  const right = removeTabFromNode(node.children[1], tab);
+  const left = removeTabFromNode(node.children[0], tab, preferredActiveTab);
+  const right = removeTabFromNode(node.children[1], tab, preferredActiveTab);
 
   if (!left && !right) {
     return null;
@@ -178,7 +194,10 @@ export function removeTabEverywhere(
   state: RightSidebarLayoutState,
   tab: TabType
 ): RightSidebarLayoutState {
-  const nextRoot = removeTabFromNode(state.root, tab);
+  // Look up parent tab before removal so we can activate it
+  const parentTab = state.parentTab?.[tab];
+
+  const nextRoot = removeTabFromNode(state.root, tab, parentTab);
   if (!nextRoot) {
     return getDefaultRightSidebarLayoutState("costs");
   }
@@ -188,10 +207,22 @@ export function removeTabEverywhere(
     ? state.focusedTabsetId
     : (findFirstTabsetId(nextRoot) ?? "tabset-1");
 
+  // Clean up parentTab entries:
+  // 1. Remove the entry for the closed tab itself
+  // 2. Remove any entries whose parent was the closed tab (orphaned children)
+  let nextParentTab = state.parentTab;
+  if (nextParentTab) {
+    const cleaned = Object.fromEntries(
+      Object.entries(nextParentTab).filter(([key, parent]) => key !== tab && parent !== tab)
+    );
+    nextParentTab = Object.keys(cleaned).length > 0 ? cleaned : undefined;
+  }
+
   return {
     ...state,
     root: nextRoot,
     focusedTabsetId,
+    parentTab: nextParentTab,
   };
 }
 function updateNode(
