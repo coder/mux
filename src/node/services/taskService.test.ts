@@ -1667,6 +1667,87 @@ describe("TaskService", () => {
     );
   });
 
+  test("foreground waiter suppresses tasks-completed auto-resume notification", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-111";
+    const childTaskId = "task-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "parent"),
+                id: parentWorkspaceId,
+                name: "parent",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const waiter = taskService.waitForAgentReport(childTaskId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentWorkspaceId,
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    const report = await waiter;
+    expect(report.reportMarkdown).toBe("Hello from child");
+    expect(report.title).toBe("Result");
+
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      parentWorkspaceId,
+      expect.stringContaining("background sub-agent task(s) have completed"),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
   test("hard-interrupted parent skips tasks-completed auto-resume after child report", async () => {
     const config = await createTestConfig(rootDir);
 

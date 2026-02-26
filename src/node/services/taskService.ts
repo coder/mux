@@ -2990,7 +2990,7 @@ export class TaskService {
     );
 
     // Resolve foreground waiters.
-    this.resolveWaiters(childWorkspaceId, reportArgs);
+    const hadForegroundWaiters = this.resolveWaiters(childWorkspaceId, reportArgs);
 
     // Free slot and start queued tasks.
     await this.maybeStartQueuedTasks();
@@ -3015,7 +3015,18 @@ export class TaskService {
       return;
     }
 
-    if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
+    if (hadForegroundWaiters) {
+      log.debug("Skipping post-report parent auto-resume: report delivered to foreground waiter", {
+        parentWorkspaceId,
+        childWorkspaceId,
+      });
+    }
+
+    if (
+      !hadForegroundWaiters &&
+      !hasActiveDescendants &&
+      !this.aiService.isStreaming(parentWorkspaceId)
+    ) {
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         parentWorkspaceId,
         parentEntry,
@@ -3049,7 +3060,10 @@ export class TaskService {
     }
   }
 
-  private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
+  private resolveWaiters(
+    taskId: string,
+    report: { reportMarkdown: string; title?: string }
+  ): boolean {
     const cfg = this.config.loadConfigOrDefault();
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
     const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(parentById, taskId);
@@ -3063,7 +3077,7 @@ export class TaskService {
 
     const waiters = this.pendingWaitersByTaskId.get(taskId);
     if (!waiters || waiters.length === 0) {
-      return;
+      return false;
     }
 
     this.pendingWaitersByTaskId.delete(taskId);
@@ -3075,6 +3089,8 @@ export class TaskService {
         // ignore
       }
     }
+
+    return true;
   }
 
   private rejectWaiters(taskId: string, error: Error): void {
