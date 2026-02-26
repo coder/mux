@@ -720,6 +720,10 @@ export class ProviderModelFactory {
           }
         }
 
+        // Resolve effective wireFormat once — used by both fetch wrapper and model selection.
+        // Includes request-level overrides from muxProviderOptions, not just config.
+        const effectiveWireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
+
         const baseFetch = getProviderFetch(providerConfig);
         const codexOauthService = this.codexOauthService;
 
@@ -873,7 +877,7 @@ export class ProviderModelFactory {
 
               if (
                 shouldRouteThroughCodexOauth &&
-                configWireFormat !== "chatCompletions" &&
+                effectiveWireFormat !== "chatCompletions" &&
                 (isOpenAIResponses || isOpenAIChatCompletions)
               ) {
                 if (!codexOauthService) {
@@ -921,12 +925,13 @@ export class ProviderModelFactory {
           fetch: fetchWithOpenAITruncation as typeof fetch,
         });
         // OpenAI manages reasoning state via previousResponseId - no middleware needed
-        const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
         const model =
-          wireFormat === "chatCompletions" ? provider.chat(modelId) : provider.responses(modelId);
+          effectiveWireFormat === "chatCompletions"
+            ? provider.chat(modelId)
+            : provider.responses(modelId);
         // Skip Codex OAuth routing for chatCompletions — the Codex endpoint
         // only accepts Responses API format, so chat-completions requests would fail.
-        if (shouldRouteThroughCodexOauth && wireFormat !== "chatCompletions") {
+        if (shouldRouteThroughCodexOauth && effectiveWireFormat !== "chatCompletions") {
           markModelCostsIncluded(model);
 
           // Wrap model to inject store=false into providerOptions so the SDK
