@@ -418,23 +418,34 @@ export function ModelRow(props: ModelRowProps) {
             />
           )}
           {/* Favorite/default button */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!props.isDefault) props.onSetDefault();
-            }}
-            className={cn(
-              "p-0.5 transition-colors",
-              props.isDefault
-                ? "cursor-default text-yellow-400"
-                : "text-muted hover:text-yellow-400"
-            )}
-            disabled={props.isDefault}
-            aria-label={props.isDefault ? "Current default model" : "Set as default model"}
-          >
-            <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!props.isDefault) props.onSetDefault();
+                  }}
+                  className={cn(
+                    "p-0.5 transition-colors",
+                    props.isDefault
+                      ? "cursor-default text-yellow-400"
+                      : "text-muted hover:text-yellow-400"
+                  )}
+                  disabled={props.isDefault}
+                  aria-label={props.isDefault ? "Current default model" : "Set as default model"}
+                >
+                  <Star className={cn("h-3.5 w-3.5", props.isDefault && "fill-current")} />
+                </button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {props.isDefault
+                ? "Default model for new workspaces"
+                : "Set as default for new workspaces"}
+            </TooltipContent>
+          </Tooltip>
           {/* Edit/delete buttons only for custom models */}
           {props.isCustom && (
             <>
