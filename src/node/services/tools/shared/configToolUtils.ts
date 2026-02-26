@@ -54,6 +54,14 @@ export function isObjectRecord(value: unknown): value is Record<string, unknown>
 }
 
 /**
+ * Own-property membership check for config path traversal.
+ * Ensures traversal never reaches inherited prototype members (e.g. constructor, toString).
+ */
+export function hasOwnRecordKey(record: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(record, key);
+}
+
+/**
  * Deep clone a value using structuredClone with JSON fallback.
  */
 export function deepClone<T>(value: T): T {

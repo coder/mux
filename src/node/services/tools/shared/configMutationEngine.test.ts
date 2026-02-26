@@ -184,4 +184,34 @@ describe("applyMutations", () => {
       expect(Array.isArray(settings["123"])).toBe(false);
     }
   });
+
+  it("set traversal treats inherited property names as missing keys", () => {
+    const InheritedKeySchema = z
+      .object({ toString: z.object({ value: z.number() }).optional() })
+      .passthrough();
+
+    const result = applyMutations(
+      {},
+      [{ op: "set", path: ["toString", "value"], value: 1 }],
+      InheritedKeySchema
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.document).toEqual({ toString: { value: 1 } });
+    }
+  });
+
+  it("delete treats inherited property names (toString) as missing", () => {
+    const result = applyMutations(
+      { name: "test" },
+      [{ op: "delete", path: ["toString"] }],
+      TestSchema
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.document).toEqual({ name: "test" });
+    }
+  });
 });

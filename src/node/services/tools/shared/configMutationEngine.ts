@@ -1,5 +1,9 @@
 import type { ConfigOperation } from "@/common/config/schemas/configOperations";
-import { deepClone, parseArrayIndex } from "@/node/services/tools/shared/configToolUtils";
+import {
+  deepClone,
+  hasOwnRecordKey,
+  parseArrayIndex,
+} from "@/node/services/tools/shared/configToolUtils";
 import type * as z from "zod";
 
 export {
@@ -139,7 +143,7 @@ function applySetOperation(
       continue;
     }
 
-    const existing = current[segment];
+    const existing = hasOwnRecordKey(current, segment) ? current[segment] : undefined;
     if (existing === null || existing === undefined) {
       const nextContainer = createMissingContainer(current, nextSegment);
       current[segment] = nextContainer;
@@ -196,7 +200,7 @@ function applyDeleteOperation(root: MutableContainer, path: readonly string[]): 
       continue;
     }
 
-    if (!(segment in current)) {
+    if (!hasOwnRecordKey(current, segment)) {
       return null;
     }
 

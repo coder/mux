@@ -6,6 +6,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
   getMuxHomeFromWorkspaceSessionDir,
+  hasOwnRecordKey,
   isObjectRecord,
   parseArrayIndex,
   requireMuxHelpWorkspace,
@@ -60,7 +61,7 @@ function getAtPath(root: unknown, pathSegments: readonly string[]): unknown {
       continue;
     }
 
-    if (!isObjectRecord(current) || !(segment in current)) {
+    if (!isObjectRecord(current) || !hasOwnRecordKey(current, segment)) {
       return null;
     }
 

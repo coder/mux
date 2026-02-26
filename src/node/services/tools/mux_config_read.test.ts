@@ -154,4 +154,36 @@ describe("mux_config_read", () => {
       expect(JSON.stringify(result.data)).not.toContain("token-123");
     }
   });
+
+  it("returns null for inherited prototype property names in path", async () => {
+    using muxHome = new TestTempDir("mux-config-read");
+
+    await fs.writeFile(
+      path.join(muxHome.path, "config.json"),
+      JSON.stringify({ defaultModel: "anthropic:claude-sonnet-4-20250514" }, null, 2),
+      "utf-8"
+    );
+
+    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+
+    // "constructor" is inherited from Object.prototype — must not be traversable
+    const constructorResult = (await tool.execute!(
+      { file: "config", path: ["constructor"] },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+    expect(constructorResult.success).toBe(true);
+    if (constructorResult.success) {
+      expect(constructorResult.data).toBeNull();
+    }
+
+    // Nested prototype traversal: ["constructor", "name"] would yield "Object" without fix
+    const nestedResult = (await tool.execute!(
+      { file: "config", path: ["constructor", "name"] },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+    expect(nestedResult.success).toBe(true);
+    if (nestedResult.success) {
+      expect(nestedResult.data).toBeNull();
+    }
+  });
 });
