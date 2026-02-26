@@ -54,9 +54,10 @@ INSERT INTO events (
 const INSERT_DELEGATION_ROLLUP_SQL = `
 INSERT OR REPLACE INTO delegation_rollups (
   parent_workspace_id, child_workspace_id, project_path, project_name,
-  agent_type, model, total_tokens, context_tokens, report_token_estimate,
-  total_cost_usd, rolled_up_at_ms, date
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  agent_type, model, total_tokens, context_tokens,
+  input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_create_tokens,
+  report_token_estimate, total_cost_usd, rolled_up_at_ms, date
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 interface WorkspaceMeta {
@@ -1048,6 +1049,11 @@ async function ingestDelegationRollups(
 
       const totalTokens = toFiniteInteger(entry.totalTokens) ?? 0;
       const contextTokens = toFiniteInteger(entry.contextTokens) ?? 0;
+      const inputTokens = toFiniteInteger(entry.inputTokens) ?? 0;
+      const outputTokens = toFiniteInteger(entry.outputTokens) ?? 0;
+      const reasoningTokens = toFiniteInteger(entry.reasoningTokens) ?? 0;
+      const cachedTokens = toFiniteInteger(entry.cachedTokens) ?? 0;
+      const cacheCreateTokens = toFiniteInteger(entry.cacheCreateTokens) ?? 0;
       const totalCostUsd = toFiniteNumber(entry.totalCostUsd) ?? 0;
       const agentType = toOptionalString(entry.agentType) ?? null;
       const model = toOptionalString(entry.model) ?? null;
@@ -1064,6 +1070,11 @@ async function ingestDelegationRollups(
         model,
         totalTokens,
         contextTokens,
+        inputTokens,
+        outputTokens,
+        reasoningTokens,
+        cachedTokens,
+        cacheCreateTokens,
         reportTokenEstimate,
         totalCostUsd,
         rolledUpAtMs,

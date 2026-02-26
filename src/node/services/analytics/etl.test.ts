@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS delegation_rollups (
   model VARCHAR,
   total_tokens INTEGER DEFAULT 0,
   context_tokens INTEGER DEFAULT 0,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  reasoning_tokens INTEGER DEFAULT 0,
+  cached_tokens INTEGER DEFAULT 0,
+  cache_create_tokens INTEGER DEFAULT 0,
   report_token_estimate INTEGER DEFAULT 0,
   total_cost_usd DOUBLE DEFAULT 0,
   rolled_up_at_ms BIGINT,
@@ -176,6 +181,13 @@ async function writeChatJsonl(sessionDir: string, lines: string[]): Promise<void
 
 async function writeMetadataJson(sessionDir: string, meta: Record<string, unknown>): Promise<void> {
   await fs.writeFile(path.join(sessionDir, "metadata.json"), JSON.stringify(meta));
+}
+
+async function writeSessionUsageJson(
+  sessionDir: string,
+  usage: Record<string, unknown>
+): Promise<void> {
+  await fs.writeFile(path.join(sessionDir, "session-usage.json"), JSON.stringify(usage));
 }
 
 async function queryRows(
@@ -521,5 +533,106 @@ describe("ingestArchivedSubagentTranscripts", () => {
     // Even without metadata.json, the fallback sets parentWorkspaceId and is_sub_agent
     expect(childRows[0].parent_workspace_id).toBe(parentWorkspaceId);
     expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
+  });
+});
+
+describe("ingestDelegationRollups", () => {
+  test("should ingest per-category token fields into delegation_rollups", async () => {
+    const conn = await createTestConn();
+    const parentWorkspaceId = "parent-id";
+    const childWorkspaceId = "child-id";
+
+    const parentSessionDir = await createTempSessionDir();
+    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeSessionUsageJson(parentSessionDir, {
+      byModel: {},
+      version: 1,
+      rolledUpFrom: {
+        [childWorkspaceId]: {
+          totalTokens: 1_000,
+          contextTokens: 400,
+          inputTokens: 150,
+          outputTokens: 220,
+          reasoningTokens: 80,
+          cachedTokens: 90,
+          cacheCreateTokens: 30,
+          totalCostUsd: 1.5,
+          agentType: "delegate",
+          model: "openai:gpt-5",
+          rolledUpAtMs: 1_700_000_001_000,
+        },
+      },
+    });
+
+    await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, {
+      projectPath: "/test",
+      projectName: "test-project",
+    });
+
+    const rows = await queryRows(
+      conn,
+      `SELECT
+        input_tokens,
+        output_tokens,
+        reasoning_tokens,
+        cached_tokens,
+        cache_create_tokens
+       FROM delegation_rollups
+       WHERE parent_workspace_id = ? AND child_workspace_id = ?`,
+      [parentWorkspaceId, childWorkspaceId]
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(parseInteger(rows[0].input_tokens, "input_tokens")).toBe(150);
+    expect(parseInteger(rows[0].output_tokens, "output_tokens")).toBe(220);
+    expect(parseInteger(rows[0].reasoning_tokens, "reasoning_tokens")).toBe(80);
+    expect(parseInteger(rows[0].cached_tokens, "cached_tokens")).toBe(90);
+    expect(parseInteger(rows[0].cache_create_tokens, "cache_create_tokens")).toBe(30);
+  });
+
+  test("should default per-category tokens to 0 for legacy rollup entries", async () => {
+    const conn = await createTestConn();
+    const parentWorkspaceId = "parent-id";
+    const childWorkspaceId = "legacy-child";
+
+    const parentSessionDir = await createTempSessionDir();
+    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeSessionUsageJson(parentSessionDir, {
+      byModel: {},
+      version: 1,
+      rolledUpFrom: {
+        [childWorkspaceId]: {
+          totalTokens: 650,
+          contextTokens: 275,
+          totalCostUsd: 0.8,
+          rolledUpAtMs: 1_700_000_002_000,
+        },
+      },
+    });
+
+    await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, {
+      projectPath: "/test",
+      projectName: "test-project",
+    });
+
+    const rows = await queryRows(
+      conn,
+      `SELECT
+        input_tokens,
+        output_tokens,
+        reasoning_tokens,
+        cached_tokens,
+        cache_create_tokens
+       FROM delegation_rollups
+       WHERE parent_workspace_id = ? AND child_workspace_id = ?`,
+      [parentWorkspaceId, childWorkspaceId]
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(parseInteger(rows[0].input_tokens, "input_tokens")).toBe(0);
+    expect(parseInteger(rows[0].output_tokens, "output_tokens")).toBe(0);
+    expect(parseInteger(rows[0].reasoning_tokens, "reasoning_tokens")).toBe(0);
+    expect(parseInteger(rows[0].cached_tokens, "cached_tokens")).toBe(0);
+    expect(parseInteger(rows[0].cache_create_tokens, "cache_create_tokens")).toBe(0);
   });
 });
