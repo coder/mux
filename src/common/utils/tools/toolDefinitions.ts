@@ -998,8 +998,8 @@ export const TOOL_DEFINITIONS = {
       "The TODO list is displayed to the user at all times. " +
       "Replace the entire list on each call - the AI tracks which tasks are completed.\n" +
       "\n" +
-      "Mark ONE task as in_progress at a time. " +
-      "Order tasks as: completed first, then in_progress (max 1), then pending last. " +
+      "Mark tasks as in_progress when actively being worked on (multiple allowed for parallel work). " +
+      "Order tasks as: completed first, then in_progress, then pending last. " +
       "Use appropriate tense in content: past tense for completed (e.g., 'Added tests'), " +
       "present progressive for in_progress (e.g., 'Adding tests'), " +
       "and imperative/infinitive for pending (e.g., 'Add tests').\n" +
