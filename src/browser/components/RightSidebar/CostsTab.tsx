@@ -7,8 +7,9 @@ import {
   type ChatUsageDisplay,
 } from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
@@ -60,9 +61,14 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
   const consumers = useWorkspaceConsumers(workspaceId);
   const [viewMode, setViewMode] = usePersistedState<ViewMode>("costsTab:viewMode", "session");
-  const [preferredCompactionModel] = usePersistedState<string>(PREFERRED_COMPACTION_MODEL_KEY, "", {
-    listener: true,
-  });
+  const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
+    AGENT_AI_DEFAULTS_KEY,
+    {},
+    {
+      listener: true,
+    }
+  );
+  const preferredCompactionModel = agentAiDefaults.compact?.modelString ?? "";
   const { has1MContext } = useProviderOptions();
   const pendingSendOptions = useSendMessageOptions(workspaceId);
   const { config: providersConfig } = useProvidersConfig();

@@ -15,8 +15,9 @@ import {
 } from "@/browser/utils/compaction/suggestion";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { FilePart, ProvidersConfigMap } from "@/common/orpc/types";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   buildAgentSkillMetadata,
   type CompactionFollowUpInput,
@@ -100,9 +101,14 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
 
   const showCompactionUI = isContextExceeded || isCompactionRecoveryFlow;
 
-  const [preferredCompactionModel] = usePersistedState<string>(PREFERRED_COMPACTION_MODEL_KEY, "", {
-    listener: true,
-  });
+  const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
+    AGENT_AI_DEFAULTS_KEY,
+    {},
+    {
+      listener: true,
+    }
+  );
+  const preferredCompactionModel = agentAiDefaults.compact?.modelString ?? "";
 
   useEffect(() => {
     if (!api) return;

@@ -2,12 +2,9 @@ import React from "react";
 import { StreamingBarrierView } from "./StreamingBarrierView";
 import { getModelName } from "@/common/utils/ai/models";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import {
-  VIM_ENABLED_KEY,
-  getModelKey,
-  PREFERRED_COMPACTION_MODEL_KEY,
-} from "@/common/constants/storage";
-import { readPersistedState, readPersistedString } from "@/browser/hooks/usePersistedState";
+import { AGENT_AI_DEFAULTS_KEY, VIM_ENABLED_KEY, getModelKey } from "@/common/constants/storage";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   useWorkspaceState,
   useWorkspaceAggregator,
@@ -177,7 +174,8 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
 
   // Show settings hint during compaction if no custom compaction model is configured
   const showCompactionHint =
-    phase === "compacting" && !readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
+    phase === "compacting" &&
+    !readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {}).compact?.modelString;
 
   return (
     <StreamingBarrierView
@@ -191,7 +189,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       hintElement={
         showCompactionHint ? (
           <button
-            onClick={() => openSettings("models")}
+            onClick={() => openSettings("tasks")}
             className="text-muted hover:text-foreground text-[10px] underline decoration-dotted underline-offset-2"
           >
             configure
