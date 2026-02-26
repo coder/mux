@@ -1,7 +1,6 @@
-import Lottie from "lottie-react";
-import dancingBlinkAnimation from "@/browser/assets/animations/dancing-blink.json";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { Shimmer } from "@/browser/components/ai-elements/shimmer";
+import { LoadingAnimation } from "@/browser/components/LoadingAnimation";
 
 interface CreationCenterContentProps {
   projectName: string;
@@ -26,12 +25,7 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
         <div
           className={`absolute inset-0 z-10 flex flex-col items-center justify-center pb-[30vh] ${isDark ? "bg-sidebar" : "bg-white"}`}
         >
-          <Lottie
-            animationData={dancingBlinkAnimation}
-            loop
-            renderer="svg"
-            className={`w-[150px] ${isDark ? "brightness-0 invert" : ""}`}
-          />
+          <LoadingAnimation />
           <div className="mt-8 max-w-xl px-8 text-center">
             <h2 className="text-foreground mb-2 text-2xl font-medium">Creating workspace</h2>
             <p className="text-muted text-sm leading-relaxed">

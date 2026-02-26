@@ -1,6 +1,7 @@
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import React, { useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
+import { LoadingAnimation } from "./LoadingAnimation";
 import { RIGHT_SIDEBAR_WIDTH_KEY, getReviewImmersiveKey } from "@/common/constants/storage";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
 import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
@@ -45,6 +46,7 @@ const WorkspacePlaceholder: React.FC<{
   title: string;
   description?: string;
   className?: string;
+  showAnimation?: boolean;
 }> = (props) => (
   <div
     className={cn(
@@ -58,6 +60,7 @@ const WorkspacePlaceholder: React.FC<{
     </div>
 
     <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center">
+      {props.showAnimation && <LoadingAnimation className="mb-4" />}
       <h3 className="m-0 mb-2.5 text-base font-medium">{props.title}</h3>
       {props.description && <p className="m-0 text-[13px]">{props.description}</p>}
     </div>
@@ -134,7 +137,13 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   const backgroundBashError = useBackgroundBashError();
 
   if (!workspaceState || workspaceState.loading) {
-    return <WorkspacePlaceholder title="Loading workspace..." className={props.className} />;
+    return (
+      <WorkspacePlaceholder
+        title="Loading workspace..."
+        showAnimation
+        className={props.className}
+      />
+    );
   }
 
   if (!props.projectName || !props.workspaceName) {
