@@ -812,9 +812,12 @@ export class StreamManager extends EventEmitter {
       if (!isReplay) {
         const streamInfo = this.workspaceStreams.get(workspaceId);
         if (streamInfo) {
-          // Use per-stream model for backfill accuracy; the shared tokenTracker
-          // may have been reconfigured by a concurrent stream with a different model.
-          streamInfo.reasoningTokensByDelta += await countTokens(streamInfo.model, part.text);
+          // Use metadataModel (provider-mapped model) when available for accurate
+          // tokenizer selection, matching how StreamingTokenTracker.setModel resolves.
+          streamInfo.reasoningTokensByDelta += await countTokens(
+            streamInfo.metadataModel ?? streamInfo.model,
+            part.text
+          );
         }
       }
       this.emit("reasoning-delta", {
