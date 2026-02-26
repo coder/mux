@@ -1,4 +1,11 @@
-import { APICallError, NoObjectGeneratedError, Output, RetryError, streamText } from "ai";
+import {
+  APICallError,
+  NoObjectGeneratedError,
+  NoOutputGeneratedError,
+  Output,
+  RetryError,
+  streamText,
+} from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
 import { log } from "./log";
@@ -222,6 +229,13 @@ export function mapNameGenerationError(error: unknown, modelString: string): Nam
     return {
       type: "unknown",
       raw: "The model returned an unexpected format while generating a workspace name.",
+    };
+  }
+
+  if (NoOutputGeneratedError.isInstance(error)) {
+    return {
+      type: "unknown",
+      raw: "No output generated from the AI provider.",
     };
   }
 
