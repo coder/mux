@@ -797,8 +797,17 @@ export class ProjectService {
 
       // Self-healing: purge workspace entries whose backing directories no longer exist.
       // This handles the case where a user manually deleted workspace dirs from ~/.mux/src/.
+      // Only check local/worktree runtimes — remote runtimes (SSH, Docker, devcontainer)
+      // have paths on the remote host that won't exist locally.
+      const localRuntimeTypes = new Set(["local", "worktree"]);
       const survivingWorkspaces = [];
       for (const ws of projectConfig.workspaces) {
+        const runtimeType = ws.runtimeConfig?.type;
+        const isLocal = runtimeType == null || localRuntimeTypes.has(runtimeType);
+        if (!isLocal) {
+          survivingWorkspaces.push(ws);
+          continue;
+        }
         try {
           await fsPromises.access(ws.path);
           survivingWorkspaces.push(ws);
