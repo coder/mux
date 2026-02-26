@@ -100,7 +100,7 @@ function parseAndValidateDocument<TKey extends ConfigFileKey>(
 ): ConfigDocumentFor<TKey> {
   const parseResult = schema.safeParse(document);
   if (parseResult.success) {
-    return parseResult.data as ConfigDocumentFor<TKey>;
+    return document as ConfigDocumentFor<TKey>;
   }
 
   throw new Error(

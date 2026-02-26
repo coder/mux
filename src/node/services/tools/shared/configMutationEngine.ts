@@ -76,7 +76,7 @@ export function applyMutations<TSchema extends z.ZodTypeAny>(
 
   return {
     success: true,
-    document: parseResult.data,
+    document: clonedDocument as z.infer<TSchema>,
     appliedOps: operations.length,
   };
 }

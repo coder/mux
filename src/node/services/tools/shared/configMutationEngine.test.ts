@@ -108,4 +108,25 @@ describe("applyMutations", () => {
       expect(result.appliedOps).toBe(2);
     }
   });
+
+  it("preserves unknown fields in nested non-passthrough schemas", () => {
+    const result = applyMutations(
+      {
+        name: "original",
+        nested: { value: 1, futureField: "keep-me" },
+        topExtra: 99,
+      },
+      [{ op: "set", path: ["name"], value: "updated" }],
+      TestSchema
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.document as unknown).toEqual({
+        name: "updated",
+        nested: { value: 1, futureField: "keep-me" },
+        topExtra: 99,
+      });
+    }
+  });
 });

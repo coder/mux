@@ -1605,7 +1605,7 @@ export const config = {
   },
   saveConfig: {
     input: z.object({
-      taskSettings: ResolvedTaskSettingsSchema.optional(),
+      taskSettings: ResolvedTaskSettingsSchema,
       agentAiDefaults: AgentAiDefaultsSchema.optional(),
       // Legacy field (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema.optional(),

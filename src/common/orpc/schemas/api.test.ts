@@ -3,6 +3,7 @@ import {
   AWSCredentialStatusSchema,
   ProviderConfigInfoSchema,
   ProvidersConfigMapSchema,
+  config,
 } from "./api";
 import type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap } from "../types";
 
@@ -179,5 +180,24 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
     expect(parsed).toEqual(full);
     expect(Object.keys(parsed)).toEqual(Object.keys(full));
+  });
+});
+
+describe("config.saveConfig schema", () => {
+  it("rejects payload missing taskSettings", () => {
+    const result = config.saveConfig.input.safeParse({ agentAiDefaults: {} });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts payload with required taskSettings", () => {
+    const result = config.saveConfig.input.safeParse({
+      taskSettings: {
+        maxParallelAgentTasks: 2,
+        maxTaskNestingDepth: 3,
+      },
+    });
+
+    expect(result.success).toBe(true);
   });
 });

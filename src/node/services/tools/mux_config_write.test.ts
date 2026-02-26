@@ -181,6 +181,80 @@ describe("mux_config_write", () => {
     });
   });
 
+  it("preserves unknown nested fields when mutating unrelated key", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const configPath = path.join(muxHome.path, "config.json");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          projects: [
+            [
+              "/test/proj",
+              {
+                workspaces: [],
+                futureProjectSetting: { nested: true },
+              },
+            ],
+          ],
+          taskSettings: {
+            maxParallelAgentTasks: 4,
+            futureTaskField: "preserve-me",
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "config",
+        operations: [{ op: "set", path: ["taskSettings", "maxParallelAgentTasks"], value: 8 }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.appliedOps).toBe(1);
+    }
+
+    const configDocument = JSON.parse(await fs.readFile(configPath, "utf-8")) as {
+      projects?: Array<
+        [
+          string,
+          {
+            workspaces: unknown[];
+            futureProjectSetting?: { nested: boolean };
+          },
+        ]
+      >;
+      taskSettings?: {
+        maxParallelAgentTasks?: number;
+        futureTaskField?: string;
+      };
+    };
+
+    expect(configDocument.taskSettings).toEqual({
+      maxParallelAgentTasks: 8,
+      futureTaskField: "preserve-me",
+    });
+    expect(configDocument.projects).toEqual([
+      [
+        "/test/proj",
+        {
+          workspaces: [],
+          futureProjectSetting: { nested: true },
+        },
+      ],
+    ]);
+  });
+
   it("returns validation issues and does not write when schema validation fails", async () => {
     using muxHome = new TestTempDir("mux-config-write");
 
