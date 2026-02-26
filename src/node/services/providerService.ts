@@ -99,7 +99,9 @@ export class ProviderService {
         models?: unknown[];
         serviceTier?: string;
         wireFormat?: string;
+        store?: unknown;
         cacheTtl?: unknown;
+        disableBetaFeatures?: unknown;
         /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
         codexOauthDefaultAuth?: unknown;
         region?: string;
@@ -164,10 +166,20 @@ export class ProviderService {
         providerInfo.wireFormat = wireFormat;
       }
 
+      // OpenAI-specific: response storage setting (required for ZDR)
+      if (provider === "openai" && typeof config.store === "boolean") {
+        providerInfo.store = config.store;
+      }
+
       // Anthropic-specific fields
       const cacheTtl = config.cacheTtl;
       if (provider === "anthropic" && (cacheTtl === "5m" || cacheTtl === "1h")) {
         providerInfo.cacheTtl = cacheTtl;
+      }
+
+      // Anthropic-specific: disable all beta features for ZDR orgs.
+      if (provider === "anthropic" && config.disableBetaFeatures === true) {
+        providerInfo.disableBetaFeatures = true;
       }
 
       if (provider === "openai") {

@@ -234,6 +234,39 @@ describe("buildProviderOptions - Anthropic", () => {
       });
     });
   });
+
+  describe("disableBetaFeatures", () => {
+    test("should omit cacheControl when disableBetaFeatures is true even with cacheTtl set", () => {
+      const result = buildProviderOptions(
+        "anthropic:claude-sonnet-4-5",
+        "medium",
+        undefined,
+        undefined,
+        {
+          anthropic: { cacheTtl: "1h", disableBetaFeatures: true },
+        }
+      );
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.cacheControl).toBeUndefined();
+      expect(anthropic.sendReasoning).toBe(true);
+    });
+
+    test("should include cacheControl normally when disableBetaFeatures is false", () => {
+      const result = buildProviderOptions(
+        "anthropic:claude-sonnet-4-5",
+        "medium",
+        undefined,
+        undefined,
+        {
+          anthropic: { cacheTtl: "1h", disableBetaFeatures: false },
+        }
+      );
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.cacheControl).toEqual({ type: "ephemeral", ttl: "1h" });
+    });
+  });
 });
 
 describe("buildProviderOptions - OpenAI", () => {
@@ -246,6 +279,32 @@ describe("buildProviderOptions - OpenAI", () => {
     }
     return undefined;
   };
+
+  describe("store option", () => {
+    test("should include store: false when muxProviderOptions sets store to false", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: { store: false },
+      });
+      const openai = (result as Record<string, unknown>).openai as Record<string, unknown>;
+      expect(openai.store).toBe(false);
+    });
+
+    test("should not include store key when muxProviderOptions.openai.store is undefined", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: {},
+      });
+      const openai = (result as Record<string, unknown>).openai as Record<string, unknown>;
+      expect("store" in openai).toBe(false);
+    });
+
+    test("should include store: true when explicitly set", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: { store: true },
+      });
+      const openai = (result as Record<string, unknown>).openai as Record<string, unknown>;
+      expect(openai.store).toBe(true);
+    });
+  });
 
   describe("promptCacheKey derivation", () => {
     test("should derive promptCacheKey from workspaceId when provided", () => {
@@ -427,6 +486,20 @@ describe("buildRequestHeaders", () => {
   test("should return anthropic-beta header for gateway-routed Anthropic model", () => {
     const result = buildRequestHeaders("mux-gateway:anthropic/claude-opus-4-6", {
       anthropic: { use1MContext: true },
+    });
+    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+  });
+
+  test("should return undefined when disableBetaFeatures is true even with use1MContext", () => {
+    const result = buildRequestHeaders("anthropic:claude-opus-4-6", {
+      anthropic: { use1MContext: true, disableBetaFeatures: true },
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("should still return header when disableBetaFeatures is false", () => {
+    const result = buildRequestHeaders("anthropic:claude-opus-4-6", {
+      anthropic: { use1MContext: true, disableBetaFeatures: false },
     });
     expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
   });

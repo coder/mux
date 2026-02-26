@@ -557,6 +557,16 @@ export class ProviderModelFactory {
       const configAnthropicCacheTtl = parseAnthropicCacheTtl(providersConfig.anthropic?.cacheTtl);
       const isAnthropicRoutedModel =
         providerName === "anthropic" || modelId.startsWith("anthropic/");
+
+      // Anthropic-specific: merge global disableBetaFeatures into muxProviderOptions.
+      const configDisableBeta = providersConfig.anthropic?.disableBetaFeatures;
+      if (isAnthropicRoutedModel && configDisableBeta === true && muxProviderOptions) {
+        muxProviderOptions.anthropic = {
+          ...(muxProviderOptions.anthropic ?? {}),
+          disableBetaFeatures: muxProviderOptions.anthropic?.disableBetaFeatures ?? true,
+        };
+      }
+
       if (isAnthropicRoutedModel && configAnthropicCacheTtl && muxProviderOptions) {
         muxProviderOptions.anthropic = {
           ...(muxProviderOptions.anthropic ?? {}),
@@ -565,6 +575,16 @@ export class ProviderModelFactory {
       }
       const effectiveAnthropicCacheTtl =
         muxProviderOptions?.anthropic?.cacheTtl ?? configAnthropicCacheTtl;
+
+      // OpenAI-specific: merge global store setting into muxProviderOptions.
+      const isOpenAIRoutedModel = providerName === "openai" || modelId.startsWith("openai/");
+      const configOpenAIStore = providersConfig.openai?.store;
+      if (isOpenAIRoutedModel && typeof configOpenAIStore === "boolean" && muxProviderOptions) {
+        muxProviderOptions.openai = {
+          ...(muxProviderOptions.openai ?? {}),
+          store: muxProviderOptions.openai?.store ?? configOpenAIStore,
+        };
+      }
 
       let providerConfig = providersConfig[providerName] ?? {};
 
@@ -626,10 +646,10 @@ export class ProviderModelFactory {
         // (SDK doesn't translate providerOptions to cache_control for these)
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
-        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
-          baseFetch,
-          effectiveAnthropicCacheTtl
-        );
+        const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
+        const fetchWithCacheControl = disableBeta
+          ? baseFetch
+          : wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl);
         const provider = createAnthropic({
           ...normalizedConfig,
           fetch: fetchWithCacheControl,
@@ -1180,9 +1200,11 @@ export class ProviderModelFactory {
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");
-        const fetchWithCacheControl = isAnthropicModel
-          ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl)
-          : baseFetch;
+        const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
+        const fetchWithCacheControl =
+          isAnthropicModel && !disableBeta
+            ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl)
+            : baseFetch;
         const fetchWithAutoLogout = wrapFetchWithMuxGatewayAutoLogout(
           fetchWithCacheControl,
           this.providerService

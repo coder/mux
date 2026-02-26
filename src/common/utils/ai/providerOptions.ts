@@ -103,7 +103,8 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    const cacheTtl = muxProviderOptions?.anthropic?.cacheTtl;
+    const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
+    const cacheTtl = disableBeta ? undefined : muxProviderOptions?.anthropic?.cacheTtl;
     const cacheControl = cacheTtl ? { type: "ephemeral" as const, ttl: cacheTtl } : undefined;
 
     // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
@@ -234,6 +235,7 @@ export function buildProviderOptions(
 
     const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
     const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
+    const store = muxProviderOptions?.openai?.store;
     const isResponses = wireFormat === "responses";
     const truncationMode = openaiTruncationMode ?? "disabled";
     const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(modelName);
@@ -252,6 +254,7 @@ export function buildProviderOptions(
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
         serviceTier,
+        ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
         ...(isResponses && {
           // Default to disabled; allow auto truncation for compaction to avoid context errors
           truncation: truncationMode,
@@ -395,6 +398,9 @@ export function buildRequestHeaders(
   const [provider] = normalized.split(":", 2);
 
   if (provider !== "anthropic") return undefined;
+
+  // ZDR: skip all Anthropic beta headers when beta features are disabled.
+  if (muxProviderOptions?.anthropic?.disableBetaFeatures) return undefined;
 
   const is1MEnabled =
     ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
