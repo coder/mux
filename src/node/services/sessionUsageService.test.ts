@@ -91,8 +91,66 @@ describe("SessionUsageService", () => {
       expect(after!.byModel[model].input.tokens).toBe(107);
       expect(after!.byModel[model].output.tokens).toBe(53);
 
+      const entry = after!.rolledUpFrom?.[childWorkspaceId];
+      expect(entry).toBeDefined();
+      expect(entry).not.toBe(true);
+      if (!entry || entry === true) {
+        throw new Error("Expected an enriched rolledUpFrom entry");
+      }
+
+      expect(entry.inputTokens).toBe(7);
+      expect(entry.outputTokens).toBe(3);
+      expect(entry.reasoningTokens).toBe(0);
+      expect(entry.cachedTokens).toBe(0);
+      expect(entry.cacheCreateTokens).toBe(0);
+
       // lastRequest is preserved
       expect(after!.lastRequest).toEqual(beforeLastRequest);
+    });
+
+    it("should preserve per-category token breakdown in rolledUpFrom", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const model = "claude-sonnet-4-20250514";
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      const childUsageByModel = {
+        [model]: {
+          input: { tokens: 11 },
+          output: { tokens: 7 },
+          reasoning: { tokens: 5 },
+          cached: { tokens: 3 },
+          cacheCreate: { tokens: 2 },
+        },
+      };
+
+      await service.rollUpUsageIntoParent(parentWorkspaceId, childWorkspaceId, childUsageByModel);
+
+      const result = await service.getSessionUsage(parentWorkspaceId);
+      expect(result).toBeDefined();
+
+      const entry = result!.rolledUpFrom?.[childWorkspaceId];
+      expect(entry).toBeDefined();
+      expect(entry).not.toBe(true);
+      if (!entry || entry === true) {
+        throw new Error("Expected an enriched rolledUpFrom entry");
+      }
+
+      expect(entry.inputTokens).toBe(11);
+      expect(entry.outputTokens).toBe(7);
+      expect(entry.reasoningTokens).toBe(5);
+      expect(entry.cachedTokens).toBe(3);
+      expect(entry.cacheCreateTokens).toBe(2);
+      expect(entry.totalTokens).toBe(28);
+      expect(entry.contextTokens).toBe(16);
     });
 
     it("should store enriched RolledUpChildEntry when childMeta is provided", async () => {

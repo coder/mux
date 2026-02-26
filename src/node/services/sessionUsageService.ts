@@ -254,10 +254,21 @@ export class SessionUsageService {
       }
 
       let totalTokens = 0;
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let reasoningTokens = 0;
+      let cachedTokens = 0;
+      let cacheCreateTokens = 0;
       let contextTokens = 0;
       let totalCostUsd = 0;
       let hasCosts = false;
       for (const [, usage] of entries) {
+        inputTokens += usage.input.tokens;
+        outputTokens += usage.output.tokens;
+        reasoningTokens += usage.reasoning.tokens;
+        cachedTokens += usage.cached.tokens;
+        cacheCreateTokens += usage.cacheCreate.tokens;
+
         totalTokens +=
           usage.input.tokens +
           usage.output.tokens +
@@ -281,6 +292,11 @@ export class SessionUsageService {
       }
 
       assert(totalTokens >= 0, "rollUpUsageIntoParent: totalTokens must be >= 0");
+      assert(inputTokens >= 0, "rollUpUsageIntoParent: inputTokens must be >= 0");
+      assert(outputTokens >= 0, "rollUpUsageIntoParent: outputTokens must be >= 0");
+      assert(reasoningTokens >= 0, "rollUpUsageIntoParent: reasoningTokens must be >= 0");
+      assert(cachedTokens >= 0, "rollUpUsageIntoParent: cachedTokens must be >= 0");
+      assert(cacheCreateTokens >= 0, "rollUpUsageIntoParent: cacheCreateTokens must be >= 0");
       assert(contextTokens >= 0, "rollUpUsageIntoParent: contextTokens must be >= 0");
       assert(!hasCosts || totalCostUsd >= 0, "rollUpUsageIntoParent: totalCostUsd must be >= 0");
 
@@ -288,6 +304,11 @@ export class SessionUsageService {
         ...(current.rolledUpFrom ?? {}),
         [childWorkspaceId]: {
           totalTokens,
+          inputTokens,
+          outputTokens,
+          reasoningTokens,
+          cachedTokens,
+          cacheCreateTokens,
           contextTokens,
           totalCostUsd: hasCosts ? totalCostUsd : undefined,
           agentType: childMeta?.agentType,
