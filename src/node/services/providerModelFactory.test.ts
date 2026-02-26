@@ -10,6 +10,7 @@ import {
   modelCostsIncluded,
   MUX_AI_PROVIDER_USER_AGENT,
   resolveAIProviderHeaderSource,
+  resolveCopilotInitiatorFromRequestBody,
 } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
 
@@ -190,6 +191,52 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
         });
       }
     });
+  });
+});
+
+describe("resolveCopilotInitiatorFromRequestBody", () => {
+  it("returns user when the latest chat message is user-authored", () => {
+    const result = resolveCopilotInitiatorFromRequestBody(
+      JSON.stringify({
+        messages: [
+          { role: "system", content: "You are helpful." },
+          { role: "user", content: "Write a test." },
+        ],
+      })
+    );
+
+    expect(result).toBe("user");
+  });
+
+  it("returns agent when the latest chat message is a tool result", () => {
+    const result = resolveCopilotInitiatorFromRequestBody(
+      JSON.stringify({
+        messages: [
+          { role: "user", content: "Check the repo." },
+          { role: "tool", content: "Found 2 files." },
+        ],
+      })
+    );
+
+    expect(result).toBe("agent");
+  });
+
+  it("returns agent for Responses API tool output items", () => {
+    const result = resolveCopilotInitiatorFromRequestBody(
+      JSON.stringify({
+        input: [
+          { role: "user", content: [{ type: "input_text", text: "Summarize this." }] },
+          { type: "function_call_output", call_id: "call_123", output: "done" },
+        ],
+      })
+    );
+
+    expect(result).toBe("agent");
+  });
+
+  it("falls back to user for non-JSON payloads", () => {
+    const result = resolveCopilotInitiatorFromRequestBody("not json");
+    expect(result).toBe("user");
   });
 });
 

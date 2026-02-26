@@ -50,6 +50,73 @@ function shouldUseCopilotResponsesApi(modelId: string): boolean {
   return isGpt5OrLater(modelId) && !modelId.startsWith("gpt-5-mini");
 }
 
+type CopilotInitiator = "user" | "agent";
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function getLastRecord(value: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  return toRecord(value[value.length - 1]);
+}
+
+/**
+ * Copilot uses X-Initiator for billing classification.
+ * - user: user-authored prompts
+ * - agent: follow-up calls generated while handling tool outputs
+ *
+ * Exported for tests.
+ */
+export function resolveCopilotInitiatorFromRequestBody(
+  body: BodyInit | null | undefined
+): CopilotInitiator {
+  if (typeof body !== "string") {
+    return "user";
+  }
+
+  try {
+    const parsed = toRecord(JSON.parse(body));
+    if (!parsed) {
+      return "user";
+    }
+
+    const lastChatMessage = getLastRecord(parsed.messages);
+    if (lastChatMessage) {
+      return lastChatMessage.role === "user" ? "user" : "agent";
+    }
+
+    if (typeof parsed.input === "string") {
+      return "user";
+    }
+
+    const lastResponseInputItem = getLastRecord(parsed.input);
+    if (!lastResponseInputItem) {
+      return "user";
+    }
+
+    if (typeof lastResponseInputItem.role === "string") {
+      return lastResponseInputItem.role === "user" ? "user" : "agent";
+    }
+
+    if (
+      typeof lastResponseInputItem.type === "string" &&
+      lastResponseInputItem.type.endsWith("_call_output")
+    ) {
+      return "agent";
+    }
+
+    return "user";
+  } catch {
+    return "user";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Undici agent with unlimited timeouts for AI streaming requests.
 // Safe because users control cancellation via AbortSignal from the UI.
@@ -1263,6 +1330,7 @@ export class ProviderModelFactory {
           const headers = new Headers(init?.headers);
           headers.set("Authorization", `Bearer ${creds.apiKey ?? ""}`);
           headers.set("Openai-Intent", "conversation-edits");
+          headers.set("X-Initiator", resolveCopilotInitiatorFromRequestBody(init?.body));
           headers.delete("x-api-key");
           return baseFetch(input, { ...init, headers });
         };
@@ -1282,9 +1350,11 @@ export class ProviderModelFactory {
             // Strip fields the Copilot Responses API doesn't accept.
             if (init?.body && typeof init.body === "string") {
               try {
-                const body = JSON.parse(init.body);
-                delete body.max_output_tokens;
-                init = { ...init, body: JSON.stringify(body) };
+                const body = toRecord(JSON.parse(init.body));
+                if (body) {
+                  delete body.max_output_tokens;
+                  init = { ...init, body: JSON.stringify(body) };
+                }
               } catch {
                 // Not JSON — pass through unchanged.
               }
