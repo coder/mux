@@ -1073,7 +1073,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`Manage secrets for ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500 [@media(hover:none)_and_(pointer:coarse)]:hidden"
                               >
                                 <KeyRound size={12} />
                               </button>
@@ -1121,6 +1121,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 data-project-path={projectPath}
                                 className={cn(
                                   "text-muted-dark mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200",
+                                  "[@media(hover:none)_and_(pointer:coarse)]:hidden",
                                   canDelete
                                     ? "cursor-pointer hover:bg-danger-light/10 hover:text-danger-light"
                                     : "cursor-not-allowed"
