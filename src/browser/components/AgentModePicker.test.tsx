@@ -283,4 +283,50 @@ describe("AgentModePicker", () => {
       expect(getByTestId("agentId").textContent).toBe("exec");
     });
   });
+
+  test("clicking a specific agent while auto is on switches to that agent", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("auto");
+      return (
+        <AgentProvider
+          value={{
+            agentId,
+            setAgentId,
+            agents: [...BUILT_INS, AUTO_AGENT],
+            loaded: true,
+            loadFailed: false,
+            refresh: () => Promise.resolve(),
+            refreshing: false,
+            ...defaultContextProps,
+          }}
+        >
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByTestId, getByText, getByLabelText } = render(<Harness />);
+
+    // Start with auto
+    expect(getByTestId("agentId").textContent).toBe("auto");
+
+    // Open picker
+    fireEvent.click(getByLabelText("Select agent"));
+
+    await waitFor(() => {
+      expect(getByText("Plan")).toBeTruthy();
+    });
+
+    // Click Plan agent directly — should switch away from auto
+    fireEvent.click(getByText("Plan"));
+
+    await waitFor(() => {
+      expect(getByTestId("agentId").textContent).toBe("plan");
+    });
+  });
 });
