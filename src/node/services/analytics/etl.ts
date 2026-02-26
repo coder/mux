@@ -769,20 +769,49 @@ async function replaceEventsByResponseIndex(
 
   await conn.run("BEGIN TRANSACTION");
   try {
-    // response_index is stable for in-place rewrites, so delete before insert to
-    // ensure rewritten rows replace stale analytics entries instead of appending.
     await conn.run(
       `DELETE FROM events WHERE workspace_id = ? AND response_index IN (${placeholders})`,
       [workspaceId, ...responseIndexes]
     );
+
+    for (const event of events) {
+      const row = event.row;
+      await conn.run(INSERT_EVENT_SQL, [
+        row.workspace_id,
+        row.project_path,
+        row.project_name,
+        row.workspace_name,
+        row.parent_workspace_id,
+        row.agent_id,
+        row.timestamp,
+        event.date,
+        row.model,
+        row.thinking_level,
+        row.input_tokens,
+        row.output_tokens,
+        row.reasoning_tokens,
+        row.cached_tokens,
+        row.cache_create_tokens,
+        row.input_cost_usd,
+        row.output_cost_usd,
+        row.reasoning_cost_usd,
+        row.cached_cost_usd,
+        row.total_cost_usd,
+        row.duration_ms,
+        row.ttft_ms,
+        row.streaming_ms,
+        row.tool_execution_ms,
+        row.output_tps,
+        row.response_index,
+        row.is_sub_agent,
+      ]);
+    }
 
     await conn.run("COMMIT");
   } catch (error) {
     await conn.run("ROLLBACK");
     throw error;
   }
-
-  await appendEvents(conn, events);
 }
 
 async function replaceWorkspaceEvents(
@@ -790,18 +819,52 @@ async function replaceWorkspaceEvents(
   workspaceId: string,
   events: IngestEvent[]
 ): Promise<void> {
-  // DELETE in transaction, then bulk-append.
-  // Analytics is eventually consistent; if append fails after DELETE, next ingest/rebuild recovers.
   await conn.run("BEGIN TRANSACTION");
   try {
     await conn.run("DELETE FROM events WHERE workspace_id = ?", [workspaceId]);
+
+    for (const event of events) {
+      const row = event.row;
+      assert(
+        row.workspace_id === workspaceId,
+        "replaceWorkspaceEvents: all rows must belong to the target workspace"
+      );
+      await conn.run(INSERT_EVENT_SQL, [
+        row.workspace_id,
+        row.project_path,
+        row.project_name,
+        row.workspace_name,
+        row.parent_workspace_id,
+        row.agent_id,
+        row.timestamp,
+        event.date,
+        row.model,
+        row.thinking_level,
+        row.input_tokens,
+        row.output_tokens,
+        row.reasoning_tokens,
+        row.cached_tokens,
+        row.cache_create_tokens,
+        row.input_cost_usd,
+        row.output_cost_usd,
+        row.reasoning_cost_usd,
+        row.cached_cost_usd,
+        row.total_cost_usd,
+        row.duration_ms,
+        row.ttft_ms,
+        row.streaming_ms,
+        row.tool_execution_ms,
+        row.output_tps,
+        row.response_index,
+        row.is_sub_agent,
+      ]);
+    }
+
     await conn.run("COMMIT");
   } catch (error) {
     await conn.run("ROLLBACK");
     throw error;
   }
-
-  await appendEvents(conn, events);
 }
 
 function getMaxSequence(events: IngestEvent[]): number | null {
@@ -1348,12 +1411,12 @@ export async function parseWorkspaceFromDisk(
   };
 }
 
-/** Flatten parsed workspaces (including archived transcripts) into one deduplicated event list. */
-function collectAllEvents(parsed: ParsedWorkspaceData[]): IngestEvent[] {
+/** Collect parsed workspaces (including archived transcripts) into deduplicated workspace event groups. */
+function collectAllEvents(parsed: ParsedWorkspaceData[]): Map<string, IngestEvent[]> {
   // Workspace-level dedup: if the same workspace_id appears from multiple sources
   // (e.g. top-level session + archived sub-agent transcript), keep only the last
-  // occurrence's events. This matches replaceWorkspaceEvents semantics that replace
-  // all rows for a workspace_id, naturally handling truncation of replay tails.
+  // occurrence's events. Returns per-workspace groups so rebuild can isolate append
+  // failures without dropping analytics data for unrelated workspaces.
   const workspaceEvents = new Map<string, IngestEvent[]>();
 
   function collect(workspaces: ParsedWorkspaceData[]): void {
@@ -1366,12 +1429,7 @@ function collectAllEvents(parsed: ParsedWorkspaceData[]): IngestEvent[] {
   }
 
   collect(parsed);
-
-  const all: IngestEvent[] = [];
-  for (const events of workspaceEvents.values()) {
-    all.push(...events);
-  }
-  return all;
+  return workspaceEvents;
 }
 
 export async function rebuildAll(
@@ -1445,7 +1503,20 @@ export async function rebuildAll(
     }
   }
 
-  await appendEvents(conn, collectAllEvents(allParsed));
+  // Phase 2a: Per-workspace bulk-append with isolation.
+  // Keep rebuild resilient: a malformed event batch in one workspace should not
+  // prevent unrelated workspace analytics data from being rebuilt.
+  const workspaceEventsMap = collectAllEvents(allParsed);
+  for (const [workspaceId, events] of workspaceEventsMap) {
+    try {
+      await appendEvents(conn, events);
+    } catch (error) {
+      log.warn("[analytics-etl] Failed to append events for workspace during rebuild", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
 
   async function writeWorkspaceMetadata(workspaces: ParsedWorkspaceData[]): Promise<void> {
     for (const workspace of workspaces) {
