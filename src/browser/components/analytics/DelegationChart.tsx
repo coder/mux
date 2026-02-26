@@ -98,7 +98,9 @@ function DelegationTooltipContent(props: {
   }
 
   const row = firstPayload.payload;
-  const categoriesWithData = DELEGATION_TOKEN_CATEGORIES.filter((category) => row[category.key] > 0);
+  const categoriesWithData = DELEGATION_TOKEN_CATEGORIES.filter(
+    (category) => row[category.key] > 0
+  );
 
   return (
     <div
@@ -116,7 +118,9 @@ function DelegationTooltipContent(props: {
             />
             {category.label}
           </span>
-          <span className="text-foreground font-mono">{formatCompactNumber(row[category.key])}</span>
+          <span className="text-foreground font-mono">
+            {formatCompactNumber(row[category.key])}
+          </span>
         </div>
       ))}
       <div className="border-border-light text-muted mt-1 flex items-center justify-between gap-4 border-t pt-1">
