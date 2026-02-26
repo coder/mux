@@ -3,6 +3,8 @@ import { AlertTriangle, Check, CircleDot, EyeOff, X } from "lucide-react";
 import type { ToolErrorResult } from "@/common/types/tools";
 import { LoadingDots } from "./ToolPrimitives";
 
+export { formatDuration } from "@/common/utils/formatDuration";
+
 /**
  * Shared utilities and hooks for tool components
  */
@@ -89,17 +91,6 @@ export function formatValue(value: unknown): string {
     // If JSON.stringify fails (e.g., circular reference), return a safe fallback
     return "[Complex Object - Cannot Stringify]";
   }
-}
-
-/**
- * Format duration in human-readable form (ms, s, m, h)
- */
-export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms)) return "—";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
-  return `${Math.round(ms / 3600000)}h`;
 }
 
 /**

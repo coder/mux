@@ -8,7 +8,7 @@ import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { computeTimingPercentages } from "@/browser/utils/timingPercentages";
 import { calculateAverageTPS } from "@/browser/utils/messages/StreamingTPSCalculator";
-import { formatDurationPrecise } from "@/browser/utils/ui/dateTime";
+import { formatDuration } from "@/common/utils/formatDuration";
 
 // Colors for timing components (matching TOKEN_COMPONENT_COLORS style)
 const TIMING_COLORS = {
@@ -289,7 +289,7 @@ export function StatsTab(props: StatsTabProps) {
                   {isClearing ? "Clearing..." : "Clear stats"}
                 </button>
               )}
-              <span className="text-muted text-xs">{formatDurationPrecise(totalDuration)}</span>
+              <span className="text-muted text-xs">{formatDuration(totalDuration, "precise")}</span>
             </div>
           </div>
 
@@ -369,7 +369,7 @@ export function StatsTab(props: StatsTabProps) {
                     <span className="text-muted text-xs">waiting…</span>
                   ) : component.duration !== null ? (
                     <span className="text-muted text-xs">
-                      {formatDurationPrecise(component.duration)}
+                      {formatDuration(component.duration, "precise")}
                     </span>
                   ) : (
                     <span className="text-muted text-xs">—</span>
@@ -422,7 +422,7 @@ export function StatsTab(props: StatsTabProps) {
                       {label}
                     </span>
                     <span className="text-muted shrink-0 text-xs">
-                      {formatDurationPrecise(entry.totalDurationMs)}
+                      {formatDuration(entry.totalDurationMs, "precise")}
                     </span>
                   </div>
                   <div className="text-muted-light mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px]">
@@ -430,7 +430,7 @@ export function StatsTab(props: StatsTabProps) {
                     {avgTtft !== null && (
                       <>
                         <span>·</span>
-                        <span>TTFT {formatDurationPrecise(avgTtft)}</span>
+                        <span>TTFT {formatDuration(avgTtft, "precise")}</span>
                       </>
                     )}
                     {entryAvgTPS !== null && entryAvgTPS > 0 && (

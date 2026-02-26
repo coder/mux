@@ -3,7 +3,7 @@ import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
 import { Loader2, Wrench, CheckCircle2, AlertCircle } from "lucide-react";
 import { Shimmer } from "../ai-elements/shimmer";
-import { formatDurationPrecise } from "@/browser/utils/ui/dateTime";
+import { formatDuration } from "@/common/utils/formatDuration";
 
 interface InitMessageProps {
   message: Extract<DisplayedMessage, { type: "workspace-init" }>;
@@ -24,7 +24,7 @@ export const InitMessage = React.memo<InitMessageProps>(({ message, className })
   }, [isRunning, message.lines.length]);
 
   const durationText =
-    message.durationMs !== null ? ` in ${formatDurationPrecise(message.durationMs)}` : "";
+    message.durationMs !== null ? ` in ${formatDuration(message.durationMs, "precise")}` : "";
 
   return (
     <div

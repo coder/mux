@@ -6,6 +6,7 @@
  */
 
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
+import { formatDuration } from "../common/utils/formatDuration";
 import chalk from "chalk";
 import type { ToolCallStartEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type {
@@ -76,13 +77,6 @@ function formatDiff(diff: string): string {
       return line;
     })
     .join("\n");
-}
-
-function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms)) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60000).toFixed(1)}m`;
 }
 
 function formatBytes(bytes: number): string {
@@ -261,7 +255,7 @@ function formatBashEnd(_toolName: string, _args: unknown, result: unknown): stri
   }
 
   const duration = bashResult.wall_duration_ms
-    ? chalk.dim(` (${formatDuration(bashResult.wall_duration_ms)})`)
+    ? chalk.dim(` (${formatDuration(bashResult.wall_duration_ms, "decimal")})`)
     : "";
   const exitCode = bashResult.exitCode;
   const exitStr = exitCode === 0 ? chalk.green("exit:0") : chalk.red(`exit:${exitCode}`);

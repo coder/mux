@@ -11,6 +11,7 @@
  */
 
 import type { TabType } from "@/browser/types/rightSidebar";
+import { formatDuration } from "@/common/utils/formatDuration";
 import type { ReviewNoteData } from "@/common/types/review";
 
 /** Stats reported by ReviewPanel for tab display */
@@ -148,9 +149,8 @@ export function getTabContentClassName(tab: TabType): string {
 
 /** Format duration for tab display (compact format) */
 export function formatTabDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = Math.round((ms % 60000) / 1000);
+  if (ms < 60_000) return formatDuration(ms);
+  const mins = Math.floor(ms / 60_000);
+  const secs = Math.round((ms % 60_000) / 1000);
   return secs > 0 ? `${mins}m${secs}s` : `${mins}m`;
 }

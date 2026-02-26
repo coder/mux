@@ -88,18 +88,3 @@ export function formatRelativeTimeCompact(timestamp: number): string {
   if (elapsed < 86400) return `${Math.floor(elapsed / 3600)}h ago`;
   return `${Math.floor(elapsed / 86400)}d ago`;
 }
-
-/**
- * Formats a duration in milliseconds into a precise, human-readable string.
- * Shows one decimal for durations under 10s, and minutes+seconds for >= 60s.
- * Examples: "42ms", "3.2s", "15s", "2m 30s"
- */
-export function formatDurationPrecise(ms: number): string {
-  if (!Number.isFinite(ms)) return "—";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = Math.round((ms % 60000) / 1000);
-  return `${mins}m ${secs}s`;
-}
