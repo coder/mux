@@ -23,7 +23,6 @@ export const COPILOT_MODELS: readonly string[] = [
   // Anthropic
   "claude-haiku-4.5",
   "claude-opus-4.5",
-  "claude-opus-41",
   "claude-sonnet-4",
   "claude-sonnet-4.5",
   // Google
@@ -37,6 +36,7 @@ export const COPILOT_MODELS: readonly string[] = [
   "gpt-5.1",
   "gpt-5.1-codex-max",
   "gpt-5.2",
+  "gpt-5.3-codex",
 ];
 
 interface DeviceFlow {
