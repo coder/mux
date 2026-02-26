@@ -144,7 +144,7 @@ describe("AgentContext", () => {
       expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["auto", "exec", "plan"]);
     });
 
-    (window as Window & { api?: { platform?: string } }).api = { platform: "darwin" };
+    window.api = { platform: "darwin", versions: {} };
 
     fireEvent.keyDown(window, {
       key: ".",
