@@ -41,10 +41,10 @@ async function openFirstProjectCreationView(storyRoot: HTMLElement): Promise<voi
   const projectRow = await waitFor(
     () => {
       // Guard: a previous story's play-function may have left the sidebar
-      // collapsed via localStorage. If so, click "Expand sidebar" on each
-      // retry until the project rows become visible.
-      const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
-      if (sidebar && sidebar.getBoundingClientRect().width <= 40) {
+      // collapsed via localStorage. Check the canonical data-attribute on
+      // <html> (set by App.tsx) which works for both desktop (width-based)
+      // and mobile (transform-based) collapse modes.
+      if (document.documentElement.dataset.leftSidebarCollapsed === "true") {
         const expandBtn = storyRoot.querySelector<HTMLElement>("[aria-label='Expand sidebar']");
         if (expandBtn) expandBtn.click();
         throw new Error("Sidebar collapsed – expanding…");
