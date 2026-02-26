@@ -159,4 +159,29 @@ describe("applyMutations", () => {
       expect(result.error).toContain("exceeds maximum");
     }
   });
+
+  it("creates object (not array) for numeric-looking keys under object parents", () => {
+    const RecordSchema = z
+      .object({
+        settings: z.record(z.string(), z.object({ value: z.string().optional() })).optional(),
+      })
+      .passthrough();
+
+    const result = applyMutations(
+      {},
+      [{ op: "set", path: ["settings", "123", "value"], value: "hello" }],
+      RecordSchema
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.document).toEqual({ settings: { "123": { value: "hello" } } });
+      // The intermediate "123" must be an object, not an array
+      const settings = (result.document as Record<string, unknown>).settings as Record<
+        string,
+        unknown
+      >;
+      expect(Array.isArray(settings["123"])).toBe(false);
+    }
+  });
 });

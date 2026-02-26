@@ -41,10 +41,11 @@ export function getConfigDocumentPath(muxHomeDir: string, fileKey: ConfigFileKey
   return path.join(muxHomeDir, entry.fileName);
 }
 
-export async function readConfigDocument<TKey extends ConfigFileKey>(
+// Shared parse-only logic: reads file from disk, returns raw parsed object (no schema validation).
+async function readParsedConfigDocument(
   muxHomeDir: string,
-  fileKey: TKey
-): Promise<ConfigDocumentFor<TKey>> {
+  fileKey: ConfigFileKey
+): Promise<unknown> {
   const entry = CONFIG_FILE_REGISTRY[fileKey];
   const filePath = getConfigDocumentPath(muxHomeDir, fileKey);
 
@@ -53,18 +54,35 @@ export async function readConfigDocument<TKey extends ConfigFileKey>(
     raw = await fs.readFile(filePath, "utf-8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return parseAndValidateDocument(fileKey, entry.schema, {}, `${filePath} (default)`);
+      return {};
     }
 
     throw error;
   }
 
-  const parsed =
-    entry.fileKind === "jsonc"
-      ? parseJsoncDocument(raw, filePath)
-      : parseJsonDocument(raw, filePath);
+  return entry.fileKind === "jsonc"
+    ? parseJsoncDocument(raw, filePath)
+    : parseJsonDocument(raw, filePath);
+}
+
+export async function readConfigDocument<TKey extends ConfigFileKey>(
+  muxHomeDir: string,
+  fileKey: TKey
+): Promise<ConfigDocumentFor<TKey>> {
+  const entry = CONFIG_FILE_REGISTRY[fileKey];
+  const filePath = getConfigDocumentPath(muxHomeDir, fileKey);
+  const parsed = await readParsedConfigDocument(muxHomeDir, fileKey);
 
   return parseAndValidateDocument(fileKey, entry.schema, parsed, filePath);
+}
+
+// Parse-only read for mutation workflows: schema validation is deferred
+// until after mutations are applied, allowing writes to repair invalid configs.
+export async function readConfigDocumentUnvalidated(
+  muxHomeDir: string,
+  fileKey: ConfigFileKey
+): Promise<unknown> {
+  return readParsedConfigDocument(muxHomeDir, fileKey);
 }
 
 export async function writeConfigDocument<TKey extends ConfigFileKey>(

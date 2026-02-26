@@ -366,4 +366,46 @@ describe("mux_config_write", () => {
       expect(result.error).toContain("REDACTED");
     }
   });
+
+  it("can repair a pre-existing invalid config field", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    // Seed config with an out-of-range value that would fail schema validation on read
+    const configPath = path.join(muxHome.path, "config.json");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          taskSettings: { maxParallelAgentTasks: 999 },
+          defaultModel: "anthropic:claude-sonnet-4-20250514",
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "config",
+        operations: [{ op: "set", path: ["taskSettings", "maxParallelAgentTasks"], value: 4 }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.appliedOps).toBe(1);
+    }
+
+    // Verify the repaired value was persisted
+    const configDocument = JSON.parse(await fs.readFile(configPath, "utf-8")) as {
+      taskSettings?: { maxParallelAgentTasks?: number };
+      defaultModel?: string;
+    };
+    expect(configDocument.taskSettings?.maxParallelAgentTasks).toBe(4);
+    expect(configDocument.defaultModel).toBe("anthropic:claude-sonnet-4-20250514");
+  });
 });

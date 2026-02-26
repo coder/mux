@@ -125,7 +125,7 @@ function applySetOperation(
 
       const existing = current[arrayIndex];
       if (existing === null || existing === undefined) {
-        const nextContainer = createContainerForSegment(nextSegment);
+        const nextContainer = createMissingContainer(current, nextSegment);
         current[arrayIndex] = nextContainer;
         current = nextContainer;
         continue;
@@ -141,7 +141,7 @@ function applySetOperation(
 
     const existing = current[segment];
     if (existing === null || existing === undefined) {
-      const nextContainer = createContainerForSegment(nextSegment);
+      const nextContainer = createMissingContainer(current, nextSegment);
       current[segment] = nextContainer;
       current = nextContainer;
       continue;
@@ -227,8 +227,15 @@ function applyDeleteOperation(root: MutableContainer, path: readonly string[]): 
   return null;
 }
 
-function createContainerForSegment(segment: string): MutableContainer {
-  return parseArrayIndex(segment) === null ? {} : [];
+// Create a missing intermediate container based on the parent's kind.
+// Object parents always create object children (numeric-looking keys are valid record keys).
+// Array parents infer child kind from the next segment shape.
+function createMissingContainer(current: MutableContainer, nextSegment: string): MutableContainer {
+  if (Array.isArray(current)) {
+    return parseArrayIndex(nextSegment) === null ? {} : [];
+  }
+
+  return {};
 }
 
 function formatPath(path: readonly string[], untilInclusive?: number): string {

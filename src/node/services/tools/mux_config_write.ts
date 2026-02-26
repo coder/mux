@@ -12,7 +12,7 @@ import {
   requireMuxHelpWorkspace,
 } from "@/node/services/tools/shared/configToolUtils";
 import {
-  readConfigDocument,
+  readConfigDocumentUnvalidated,
   writeConfigDocument,
 } from "@/node/services/tools/shared/configReadWrite";
 
@@ -56,7 +56,7 @@ export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration)
         }
 
         const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "mux_config_write");
-        const currentDocument = await readConfigDocument(muxHome, args.file);
+        const currentDocument = await readConfigDocumentUnvalidated(muxHome, args.file);
         const registryEntry = CONFIG_FILE_REGISTRY[args.file];
         const mutationResult = applyMutations(
           currentDocument,
