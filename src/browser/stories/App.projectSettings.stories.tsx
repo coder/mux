@@ -798,31 +798,33 @@ export const ToolSelectorInteraction: AppStory = {
       await expect(allBtn).toBeDisabled();
     });
 
-    // Click "None" to deselect all tools.
+    // Full None→All cycle in one atomic assertion. Keeping the entire
+    // flow inside a single modal.assert() removes the cross-assert
+    // state dependency window that caused flakes: if a Storybook remount
+    // resets the modal between separate assert() calls, the unsaved local
+    // overrides are lost and "All" stays disabled. A single callback lets
+    // waitFor retry the whole sequence from scratch on remount, while the
+    // idempotent guards prevent double-clicks on retry iterations.
     await modal.assert(async (scope) => {
+      // Click "None" to deselect all tools.
       const noneBtn = scope.getByRole("button", { name: /^None$/i }) as HTMLElement;
       if (!noneBtn.hasAttribute("disabled")) {
         await userEvent.click(noneBtn);
       }
       await expect(noneBtn).toBeDisabled();
+
       scope.getByText((_content: string, element: Element | null) => {
         const t = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
         return /^0 of \d+ tools enabled$/i.test(t);
       });
-    });
 
-    // "All" must be enabled before we click. This guards against a Storybook
-    // remount silently resetting state — the click would be a no-op otherwise.
-    await modal.assert(async (scope) => {
-      await expect(scope.getByRole("button", { name: /^All$/i })).toBeEnabled();
-    });
-
-    // Click "All" to re-select all tools.
-    await modal.assert(async (scope) => {
+      // "All" must be enabled — guards against a remount silently resetting
+      // state, which would make the click a no-op.
       const allBtn = scope.getByRole("button", { name: /^All$/i }) as HTMLElement;
-      if (!allBtn.hasAttribute("disabled")) {
-        await userEvent.click(allBtn);
-      }
+      await expect(allBtn).toBeEnabled();
+
+      // Click "All" to re-select all tools.
+      await userEvent.click(allBtn);
       await expect(allBtn).toBeDisabled();
     });
   },

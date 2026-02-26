@@ -1440,7 +1440,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       mcp: {
         get: (input: { workspaceId: string }) =>
           Promise.resolve(mcpOverrides.get(input.workspaceId) ?? {}),
-        set: () => Promise.resolve({ success: true, data: undefined }),
+        set: (input: { workspaceId: string; overrides: MockMcpOverrides }) => {
+          mcpOverrides.set(input.workspaceId, input.overrides);
+          return Promise.resolve({ success: true, data: undefined });
+        },
       },
       getFileCompletions: (input: { workspaceId: string; query: string; limit?: number }) => {
         // Mock file paths for storybook - simulate typical project structure
