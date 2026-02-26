@@ -314,4 +314,56 @@ describe("mux_config_write", () => {
 
     expect(statError?.code).toBe("ENOENT");
   });
+
+  it("rejects operations containing redaction sentinel values", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const providersPath = path.join(muxHome.path, "providers.jsonc");
+    const initialProviders = JSON.stringify({ anthropic: { apiKey: "sk-real-key" } }, null, 2);
+    await fs.writeFile(providersPath, initialProviders, "utf-8");
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [{ op: "set", path: ["anthropic", "apiKey"], value: "[REDACTED]" }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("REDACTED");
+    }
+
+    // Verify original file is unchanged
+    const afterContent = await fs.readFile(providersPath, "utf-8");
+    expect(afterContent).toBe(initialProviders);
+  });
+
+  it("rejects nested redaction sentinel values in object payloads", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [
+          {
+            op: "set",
+            path: ["openai"],
+            value: { apiKey: "[REDACTED]", baseUrl: "https://api.openai.com" },
+          },
+        ],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("REDACTED");
+    }
+  });
 });

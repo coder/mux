@@ -10,6 +10,30 @@ export {
 
 const DENIED_PATH_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
 
+// Prevent sparse-array OOM: reject indices that would create unreasonably large arrays.
+const MAX_MUTATION_ARRAY_INDEX = 10_000;
+
+function parseBoundedArrayIndex(
+  segment: string,
+  path: readonly string[],
+  untilInclusive?: number
+): { ok: true; index: number } | { ok: false; error: string } {
+  const parsed = parseArrayIndex(segment);
+  if (parsed === null) {
+    return {
+      ok: false,
+      error: `Expected numeric array index at ${formatPath(path, untilInclusive)}`,
+    };
+  }
+  if (parsed > MAX_MUTATION_ARRAY_INDEX) {
+    return {
+      ok: false,
+      error: `Array index ${parsed} exceeds maximum ${MAX_MUTATION_ARRAY_INDEX} at ${formatPath(path, untilInclusive)}`,
+    };
+  }
+  return { ok: true, index: parsed };
+}
+
 export interface MutationSuccess<TDocument = unknown> {
   success: true;
   document: TDocument;
@@ -93,10 +117,11 @@ function applySetOperation(
     const nextSegment = path[index + 1];
 
     if (Array.isArray(current)) {
-      const arrayIndex = parseArrayIndex(segment);
-      if (arrayIndex === null) {
-        return `Expected numeric array index at ${formatPath(path, index)}`;
+      const boundedResult = parseBoundedArrayIndex(segment, path, index);
+      if (!boundedResult.ok) {
+        return boundedResult.error;
       }
+      const arrayIndex = boundedResult.index;
 
       const existing = current[arrayIndex];
       if (existing === null || existing === undefined) {
@@ -131,10 +156,11 @@ function applySetOperation(
 
   const leafSegment = path[path.length - 1];
   if (Array.isArray(current)) {
-    const leafIndex = parseArrayIndex(leafSegment);
-    if (leafIndex === null) {
-      return `Expected numeric array index at ${formatPath(path)}`;
+    const boundedResult = parseBoundedArrayIndex(leafSegment, path);
+    if (!boundedResult.ok) {
+      return boundedResult.error;
     }
+    const leafIndex = boundedResult.index;
 
     current[leafIndex] = value;
     return null;
@@ -151,10 +177,11 @@ function applyDeleteOperation(root: MutableContainer, path: readonly string[]): 
     const segment = path[index];
 
     if (Array.isArray(current)) {
-      const arrayIndex = parseArrayIndex(segment);
-      if (arrayIndex === null) {
-        return `Expected numeric array index at ${formatPath(path, index)}`;
+      const boundedResult = parseBoundedArrayIndex(segment, path, index);
+      if (!boundedResult.ok) {
+        return boundedResult.error;
       }
+      const arrayIndex = boundedResult.index;
 
       if (arrayIndex >= current.length) {
         return null;
@@ -183,10 +210,11 @@ function applyDeleteOperation(root: MutableContainer, path: readonly string[]): 
 
   const leafSegment = path[path.length - 1];
   if (Array.isArray(current)) {
-    const leafIndex = parseArrayIndex(leafSegment);
-    if (leafIndex === null) {
-      return `Expected numeric array index at ${formatPath(path)}`;
+    const boundedResult = parseBoundedArrayIndex(leafSegment, path);
+    if (!boundedResult.ok) {
+      return boundedResult.error;
     }
+    const leafIndex = boundedResult.index;
 
     if (leafIndex < current.length) {
       current.splice(leafIndex, 1);

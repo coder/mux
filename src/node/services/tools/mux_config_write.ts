@@ -6,6 +6,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { applyMutations } from "@/node/services/tools/shared/configMutationEngine";
+import { REDACTED_SECRET_VALUE } from "@/node/services/tools/shared/configRedaction";
 import {
   getMuxHomeFromWorkspaceSessionDir,
   requireMuxHelpWorkspace,
@@ -14,6 +15,16 @@ import {
   readConfigDocument,
   writeConfigDocument,
 } from "@/node/services/tools/shared/configReadWrite";
+
+/** Recursively check if any value in the tree is the redaction sentinel placeholder. */
+function containsRedactedSentinel(value: unknown): boolean {
+  if (value === REDACTED_SECRET_VALUE) return true;
+  if (Array.isArray(value)) return value.some(containsRedactedSentinel);
+  if (value != null && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(containsRedactedSentinel);
+  }
+  return false;
+}
 
 export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -32,6 +43,15 @@ export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration)
             success: false,
             error:
               "Refusing to write mux config without confirm: true. Ask the user for confirmation first.",
+          };
+        }
+
+        if (args.operations.some((op) => op.op === "set" && containsRedactedSentinel(op.value))) {
+          return {
+            success: false,
+            error:
+              "Refusing to write redacted placeholder values ([REDACTED]). " +
+              "Re-read the config to get current values or omit secret fields from your operations.",
           };
         }
 

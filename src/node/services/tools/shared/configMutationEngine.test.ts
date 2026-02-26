@@ -129,4 +129,34 @@ describe("applyMutations", () => {
       });
     }
   });
+
+  it("rejects oversized array index in set operation", () => {
+    const ArraySchema = z.object({ items: z.array(z.string()).optional() }).passthrough();
+    const result = applyMutations(
+      { items: ["a"] },
+      [{ op: "set", path: ["items", "4000000000"], value: "boom" }],
+      ArraySchema
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("exceeds maximum");
+    }
+  });
+
+  it("rejects oversized array index in intermediate traversal", () => {
+    const ArraySchema = z
+      .object({ items: z.array(z.object({ v: z.number() })).optional() })
+      .passthrough();
+    const result = applyMutations(
+      { items: [{ v: 1 }] },
+      [{ op: "set", path: ["items", "999999999", "v"], value: 2 }],
+      ArraySchema
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("exceeds maximum");
+    }
+  });
 });
