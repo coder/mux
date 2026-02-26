@@ -898,12 +898,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   onCancelCompaction={handleCancelCompactionFromBarrier}
                 />
                 {shouldShowQueuedAgentTaskPrompt && (
-                  <QueuedMessage
-                    message={{
-                      id: `queued-agent-task-${workspaceId}`,
-                      content: queuedAgentTaskPrompt ?? "",
-                    }}
-                  />
+                  <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
+                    <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
+                      <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
+                      <div className="text-foreground whitespace-pre-wrap break-words">
+                        {queuedAgentTaskPrompt ?? ""}
+                      </div>
+                    </div>
+                  </div>
                 )}
                 <ConcurrentLocalWarning
                   workspaceId={workspaceId}
