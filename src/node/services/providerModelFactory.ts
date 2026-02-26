@@ -689,6 +689,20 @@ export class ProviderModelFactory {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
+        // chatCompletions mode requires a real API key — Codex OAuth only supports
+        // the Responses API endpoint. Block early with a clear error instead of
+        // sending requests with the "codex-oauth" placeholder key.
+        const earlyWireFormat =
+          (providerConfig.wireFormat as string | undefined) ??
+          muxProviderOptions?.openai?.wireFormat;
+        if (
+          shouldRouteThroughCodexOauth &&
+          earlyWireFormat === "chatCompletions" &&
+          !creds.isConfigured
+        ) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+
         // Merge resolved credentials into config
         const configWithCreds = {
           ...providerConfig,
