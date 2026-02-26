@@ -121,6 +121,7 @@
           {
             "group": "Reference",
             "pages": [
+              "reference/debugging",
               "reference/telemetry",
               "reference/storybook",
               "reference/benchmarking",
@@ -177,6 +178,7 @@
     { "source": "/vscode-extension", "destination": "/integrations/vscode-extension" },
     { "source": "/telemetry", "destination": "/reference/telemetry" },
     { "source": "/storybook", "destination": "/reference/storybook" },
-    { "source": "/benchmarking", "destination": "/reference/benchmarking" }
+    { "source": "/benchmarking", "destination": "/reference/benchmarking" },
+    { "source": "/debugging", "destination": "/reference/debugging" }
   ]
 }

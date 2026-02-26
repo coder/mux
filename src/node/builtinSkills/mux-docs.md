@@ -99,6 +99,7 @@ Use this index to find a page's:
     - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair Mux workspaces with VS Code and Cursor editors
     - Mux Governor (`/integrations/mux-governor`) → `references/docs/integrations/mux-governor.mdx` — Our upcoming enterprise platform for Mux.
   - **Reference**
+    - Debugging (`/reference/debugging`) → `references/docs/reference/debugging.mdx` — View live backend logs and diagnose issues
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
     - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation
     - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter
