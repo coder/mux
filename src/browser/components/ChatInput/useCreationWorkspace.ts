@@ -237,6 +237,9 @@ export function useCreationWorkspace({
   const [isSending, setIsSending] = useState(false);
   const [trustPrompt, setTrustPrompt] = useState<{
     resolve: (trusted: boolean) => void;
+    /** Snapshot of the project path that triggered the trust prompt,
+     * so onConfirm trusts the correct project even if the user navigates. */
+    projectPath: string;
   } | null>(null);
   // The confirmed identity being used for workspace creation (set after waitForGeneration resolves)
   const [creatingWithIdentity, setCreatingWithIdentity] = useState<WorkspaceIdentity | null>(null);
@@ -472,7 +475,7 @@ export function useCreationWorkspace({
         // Skip while projects are still loading — the backend gate catches untrusted projects.
         if (!projectsLoading && !getProjectConfig(projectPath)?.trusted) {
           const userConfirmed = await new Promise<boolean>((resolve) => {
-            setTrustPrompt({ resolve });
+            setTrustPrompt({ resolve, projectPath });
           });
           if (!userConfirmed) {
             // User cancelled the trust dialog, or trust API call failed
@@ -650,7 +653,10 @@ export function useCreationWorkspace({
         onConfirm: async () => {
           try {
             if (!api) throw new Error("API not available");
-            await api.projects.setTrust({ projectPath, trusted: true });
+            await api.projects.setTrust({
+              projectPath: trustPrompt.projectPath,
+              trusted: true,
+            });
             // Trust persisted — resolve immediately. Refresh is best-effort
             // so a transient failure doesn't block workspace creation.
             trustPrompt.resolve(true);
