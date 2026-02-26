@@ -134,15 +134,30 @@ function DelegationTooltipContent(props: {
 }
 
 export function DelegationChart(props: DelegationChartProps) {
-  const rows: DelegationChartRow[] = (props.data?.byAgentType ?? []).map((agent) => ({
-    label: `${capitalize(agent.agentType)} (${formatCompactNumber(agent.count)})`,
-    inputTokens: agent.inputTokens,
-    outputTokens: agent.outputTokens,
-    reasoningTokens: agent.reasoningTokens,
-    cachedTokens: agent.cachedTokens,
-    cacheCreateTokens: agent.cacheCreateTokens,
-    totalTokens: agent.totalTokens,
-  }));
+  const rows: DelegationChartRow[] = (props.data?.byAgentType ?? []).map((agent) => {
+    const row: DelegationChartRow = {
+      label: `${capitalize(agent.agentType)} (${formatCompactNumber(agent.count)})`,
+      inputTokens: agent.inputTokens,
+      outputTokens: agent.outputTokens,
+      reasoningTokens: agent.reasoningTokens,
+      cachedTokens: agent.cachedTokens,
+      cacheCreateTokens: agent.cacheCreateTokens,
+      totalTokens: agent.totalTokens,
+    };
+
+    const categorySum =
+      row.inputTokens +
+      row.outputTokens +
+      row.reasoningTokens +
+      row.cachedTokens +
+      row.cacheCreateTokens;
+    if (categorySum === 0 && row.totalTokens > 0) {
+      // Legacy rollups may have uncategorized totals without per-category token columns.
+      row.inputTokens = row.totalTokens;
+    }
+
+    return row;
+  });
 
   const chartHeight = Math.max(256, rows.length * 64);
 
