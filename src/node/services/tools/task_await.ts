@@ -13,6 +13,7 @@ import {
   requireWorkspaceId,
 } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
@@ -176,6 +177,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 timeoutMs: 1,
                 abortSignal,
                 requestingWorkspaceId: workspaceId,
+                backgroundOnMessageQueued: true,
               });
 
               const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
@@ -200,6 +202,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               timeoutMs,
               abortSignal,
               requestingWorkspaceId: workspaceId,
+              backgroundOnMessageQueued: true,
             });
 
             const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
@@ -211,6 +214,21 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
             };
           } catch (error: unknown) {
+            if (error instanceof ForegroundWaitBackgroundedError) {
+              const currentStatus = taskService.getAgentTaskStatus(taskId);
+              const normalizedStatus =
+                currentStatus === "queued" ||
+                currentStatus === "running" ||
+                currentStatus === "awaiting_report"
+                  ? currentStatus
+                  : ("running" as const);
+              return {
+                status: normalizedStatus,
+                taskId,
+                note: "Task sent to background because a new message was queued. Use task_await to monitor progress.",
+              };
+            }
+
             if (abortSignal?.aborted) {
               return { status: "error" as const, taskId, error: "Interrupted" };
             }

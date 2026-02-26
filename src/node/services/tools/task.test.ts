@@ -5,7 +5,7 @@ import type { TaskCreatedEvent } from "@/common/types/stream";
 import { createTaskTool } from "./task";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { Ok, Err } from "@/common/types/result";
-import type { TaskService } from "@/node/services/taskService";
+import { ForegroundWaitBackgroundedError, type TaskService } from "@/node/services/taskService";
 
 // Mock ToolCallOptions for testing
 const mockToolCallOptions: ToolExecutionOptions = {
@@ -210,6 +210,48 @@ describe("task tool", () => {
     expect(waitForAgentReport).toHaveBeenCalledWith("child-task", expect.any(Object));
     expect(getAgentTaskStatus).toHaveBeenCalledWith("child-task");
     expectQueuedOrRunningTaskToolResult(result, { status: "running", taskId: "child-task" });
+  });
+
+  it("should return background result when foreground wait is backgrounded", async () => {
+    using tempDir = new TestTempDir("test-task-tool");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock(() =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.reject(new ForegroundWaitBackgroundedError()));
+    const getAgentTaskStatus = mock(() => "running" as const);
+    const taskService = {
+      create,
+      waitForAgentReport,
+      getAgentTaskStatus,
+    } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "do it",
+          title: "Child task",
+          run_in_background: false,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalled();
+    expect(waitForAgentReport).toHaveBeenCalledWith(
+      "child-task",
+      expect.objectContaining({ backgroundOnMessageQueued: true })
+    );
+    expect(getAgentTaskStatus).toHaveBeenCalledWith("child-task");
+    expectQueuedOrRunningTaskToolResult(result, { status: "running", taskId: "child-task" });
+    expect((result as { note?: string }).note).toContain("task_await");
   });
 
   it("should throw when TaskService.create fails (e.g., depth limit)", async () => {

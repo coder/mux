@@ -11,7 +11,7 @@ import {
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
 import { upsertSubagentReportArtifact } from "@/node/services/subagentReportArtifacts";
-import { TaskService } from "@/node/services/taskService";
+import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
@@ -1378,6 +1378,499 @@ describe("TaskService", () => {
     );
   });
 
+  test("does not auto-resume for queue-backgrounded descendants", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const waitPromise = taskService.waitForAgentReport(childTaskId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      backgroundOnMessageQueued: true,
+    });
+    expect(taskService.backgroundForegroundWaitsForWorkspace(rootWorkspaceId)).toBe(1);
+    const waitError = await waitPromise.catch((error: unknown) => error);
+    expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("still nudges when active descendants were not queue-backgrounded", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(childTaskId),
+      expect.objectContaining({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+  });
+
+  test("one-shot exemption — first stream-end suppressed, second stream-end nudges", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-bg";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task-bg"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const waitPromise = taskService.waitForAgentReport(childTaskId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      backgroundOnMessageQueued: true,
+    });
+    expect(taskService.backgroundForegroundWaitsForWorkspace(rootWorkspaceId)).toBe(1);
+    const waitError = await waitPromise.catch((error: unknown) => error);
+    expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root-1",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    // First stream-end: exemption active → no nudge.
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root-2",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    // Second stream-end: exemption consumed → nudge fires.
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(childTaskId),
+      expect.objectContaining({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+  });
+
+  test("multiple queue-backgrounded tasks — one-shot exemptions consumed together", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const taskAId = "task-bg-a";
+    const taskBId = "task-bg-b";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task-bg-a"),
+                id: taskAId,
+                name: "agent_explore_a",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+              {
+                path: path.join(projectPath, "child-task-bg-b"),
+                id: taskBId,
+                name: "agent_explore_b",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const waitAPromise = taskService.waitForAgentReport(taskAId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      backgroundOnMessageQueued: true,
+    });
+    const waitBPromise = taskService.waitForAgentReport(taskBId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      backgroundOnMessageQueued: true,
+    });
+    expect(taskService.backgroundForegroundWaitsForWorkspace(rootWorkspaceId)).toBe(2);
+
+    const [waitAError, waitBError] = await Promise.all([
+      waitAPromise.catch((error: unknown) => error),
+      waitBPromise.catch((error: unknown) => error),
+    ]);
+    expect(waitAError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+    expect(waitBError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root-1",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root-2",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(taskAId),
+      expect.objectContaining({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(taskBId),
+      expect.objectContaining({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+  });
+
+  test("renewed foreground wait clears stale queue-backgrounded exemption", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-bg";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task-bg"),
+                id: childTaskId,
+                name: "agent_explore_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const firstWaitPromise = taskService.waitForAgentReport(childTaskId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      backgroundOnMessageQueued: true,
+    });
+    expect(taskService.backgroundForegroundWaitsForWorkspace(rootWorkspaceId)).toBe(1);
+    const firstWaitError = await firstWaitPromise.catch((error: unknown) => error);
+    expect(firstWaitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+
+    const secondWaitPromise = taskService.waitForAgentReport(childTaskId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      backgroundOnMessageQueued: true,
+      timeoutMs: 10,
+    });
+    const secondWaitError = await secondWaitPromise.catch((error: unknown) => error);
+    expect(secondWaitError).toBeInstanceOf(Error);
+    if (secondWaitError instanceof Error) {
+      expect(secondWaitError.message).toBe("Timed out waiting for agent_report");
+    }
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root-renewed",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(childTaskId),
+      expect.objectContaining({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+  });
+
+  test("mixed descendants — nudges only for non-queue-backgrounded tasks", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const backgroundTaskId = "task-bg";
+    const blockingTaskId = "task-blocking";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: path.join(projectPath, "root"),
+                id: rootWorkspaceId,
+                name: "root",
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+              },
+              {
+                path: path.join(projectPath, "child-task-bg"),
+                id: backgroundTaskId,
+                name: "agent_explore_bg",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+              {
+                path: path.join(projectPath, "child-task-blocking"),
+                id: blockingTaskId,
+                name: "agent_explore_blocking",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.2",
+                taskThinkingLevel: "medium",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const waitPromise = taskService.waitForAgentReport(backgroundTaskId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      backgroundOnMessageQueued: true,
+    });
+    expect(taskService.backgroundForegroundWaitsForWorkspace(rootWorkspaceId)).toBe(1);
+    const waitError = await waitPromise.catch((error: unknown) => error);
+    expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(blockingTaskId),
+      expect.objectContaining({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(backgroundTaskId),
+      expect.anything(),
+      expect.anything()
+    );
+  });
   test("auto-resume preserves parent agentId from stream-end event metadata", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -2318,6 +2811,147 @@ describe("TaskService", () => {
       }),
       expect.objectContaining({ synthetic: true })
     );
+  });
+
+  describe("backgroundForegroundWaitsForWorkspace", () => {
+    test("rejects opted-in foreground waiters with ForegroundWaitBackgroundedError", async () => {
+      const config = await createTestConfig(rootDir);
+
+      const parentId = "parent-ws";
+      const childId = "child-task-ws";
+      const projectPath = "/test/project";
+
+      await config.saveConfig({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [
+                { path: `${projectPath}/parent`, id: parentId, name: "parent" },
+                {
+                  path: `${projectPath}/child`,
+                  id: childId,
+                  name: "agent_explore_child",
+                  parentWorkspaceId: parentId,
+                  agentType: "explore",
+                  taskStatus: "running",
+                },
+              ],
+            },
+          ],
+        ]),
+        taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
+      });
+
+      const { taskService } = createTaskServiceHarness(config);
+
+      const waitPromise = taskService.waitForAgentReport(childId, {
+        requestingWorkspaceId: parentId,
+        backgroundOnMessageQueued: true,
+      });
+
+      const count = taskService.backgroundForegroundWaitsForWorkspace(parentId);
+      expect(count).toBe(1);
+
+      const err = await waitPromise.catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForegroundWaitBackgroundedError);
+
+      const count2 = taskService.backgroundForegroundWaitsForWorkspace(parentId);
+      expect(count2).toBe(0);
+    });
+
+    test("defaults to queue-backgroundable when requestingWorkspaceId is present", async () => {
+      const config = await createTestConfig(rootDir);
+
+      const parentId = "parent-ws";
+      const childId = "child-task-ws";
+      const projectPath = "/test/project";
+
+      await config.saveConfig({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [
+                { path: `${projectPath}/parent`, id: parentId, name: "parent" },
+                {
+                  path: `${projectPath}/child`,
+                  id: childId,
+                  name: "agent_explore_child",
+                  parentWorkspaceId: parentId,
+                  agentType: "explore",
+                  taskStatus: "running",
+                },
+              ],
+            },
+          ],
+        ]),
+        taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
+      });
+
+      const { taskService } = createTaskServiceHarness(config);
+
+      const waitPromise = taskService.waitForAgentReport(childId, {
+        requestingWorkspaceId: parentId,
+      });
+
+      const count = taskService.backgroundForegroundWaitsForWorkspace(parentId);
+      expect(count).toBe(1);
+
+      const waitError = await waitPromise.catch((error: unknown) => error);
+      expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+    });
+
+    test("does not affect foreground waiters that explicitly opt out of backgrounding", async () => {
+      const config = await createTestConfig(rootDir);
+
+      const parentId = "parent-ws";
+      const childId = "child-task-ws";
+      const projectPath = "/test/project";
+
+      await config.saveConfig({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [
+                { path: `${projectPath}/parent`, id: parentId, name: "parent" },
+                {
+                  path: `${projectPath}/child`,
+                  id: childId,
+                  name: "agent_explore_child",
+                  parentWorkspaceId: parentId,
+                  agentType: "explore",
+                  taskStatus: "running",
+                },
+              ],
+            },
+          ],
+        ]),
+        taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
+      });
+
+      const { taskService } = createTaskServiceHarness(config);
+
+      const waitPromise = taskService.waitForAgentReport(childId, {
+        requestingWorkspaceId: parentId,
+        backgroundOnMessageQueued: false,
+      });
+
+      const count = taskService.backgroundForegroundWaitsForWorkspace(parentId);
+      expect(count).toBe(0);
+
+      const internal = taskService as unknown as {
+        resolveWaiters: (
+          taskId: string,
+          report: { reportMarkdown: string; title?: string }
+        ) => void;
+      };
+      internal.resolveWaiters(childId, { reportMarkdown: "ok" });
+
+      const result = await waitPromise;
+      expect(result).toEqual({ reportMarkdown: "ok" });
+    });
   });
 
   test("waitForAgentReport does not time out while task is queued", async () => {

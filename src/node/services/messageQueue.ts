@@ -100,8 +100,8 @@ export class MessageQueue {
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
     internal?: QueuedMessageInternalOptions
-  ): void {
-    this.addInternal(message, options, internal);
+  ): boolean {
+    return this.addInternal(message, options, internal);
   }
 
   /**

@@ -5,6 +5,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TaskToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
+import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -127,6 +128,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         const report = await taskService.waitForAgentReport(taskId, {
           abortSignal,
           requestingWorkspaceId: workspaceId,
+          backgroundOnMessageQueued: true,
         });
 
         return parseToolResult(
@@ -144,6 +146,21 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       } catch (error: unknown) {
         if (abortSignal?.aborted) {
           throw new Error("Interrupted");
+        }
+
+        if (error instanceof ForegroundWaitBackgroundedError) {
+          const currentStatus = taskService.getAgentTaskStatus(taskId) ?? created.data.status;
+          const normalizedStatus = currentStatus === "queued" ? "queued" : "running";
+
+          return parseToolResult(
+            TaskToolResultSchema,
+            {
+              status: normalizedStatus,
+              taskId,
+              note: "Task sent to background because a new message was queued. Use task_await to monitor progress.",
+            },
+            "task"
+          );
         }
 
         const message = getErrorMessage(error);
