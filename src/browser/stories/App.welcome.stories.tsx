@@ -574,13 +574,16 @@ export const CreateWorkspaceWithSections: AppStory = {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openFirstProjectCreationView(storyRoot);
 
-    // Collapse the sidebar after navigating so the creation form is the
-    // main content in the Chromatic screenshot (especially on mobile).
-    const collapseBtn = storyRoot.querySelector<HTMLElement>(
-      "[data-testid='left-sidebar'] [aria-label='Toggle sidebar']"
-    );
-    if (collapseBtn) {
-      await userEvent.click(collapseBtn);
+    // On mobile, handleAddWorkspace auto-collapses the sidebar after the
+    // project click. On desktop it stays open — collapse it so the creation
+    // form dominates the Chromatic screenshot.
+    const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
+    const sidebarIsExpanded = sidebar && sidebar.getBoundingClientRect().width > 40;
+    if (sidebarIsExpanded) {
+      const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Toggle sidebar']");
+      if (collapseBtn) {
+        await userEvent.click(collapseBtn);
+      }
     }
 
     const canvas = within(storyRoot);
