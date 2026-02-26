@@ -94,15 +94,29 @@ export function resolveAIProviderHeaderSource(
 }
 
 /**
- * Build request headers for provider fetch calls, ensuring a User-Agent is always present.
+ * Build request headers for provider fetch calls.
+ *
+ * Always includes Mux attribution in User-Agent while preserving provider SDK info
+ * for downstream diagnostics and compatibility.
  * Exported for testing.
  */
 export function buildAIProviderRequestHeaders(existingHeaders: HeadersInit | undefined): Headers {
   const headers = new Headers(existingHeaders);
+  const existingUserAgent = headers.get("user-agent")?.trim();
 
-  // Respect user/provider overrides (header names are case-insensitive).
-  if (!headers.has("user-agent")) {
+  if (!existingUserAgent) {
     headers.set("User-Agent", MUX_AI_PROVIDER_USER_AGENT);
+    return headers;
+  }
+
+  assert(existingUserAgent.length > 0, "existingUserAgent should be non-empty after trim");
+
+  // Avoid duplicating prefix when callers already include Mux attribution.
+  if (
+    existingUserAgent !== MUX_AI_PROVIDER_USER_AGENT &&
+    !existingUserAgent.startsWith(`${MUX_AI_PROVIDER_USER_AGENT} `)
+  ) {
+    headers.set("User-Agent", `${MUX_AI_PROVIDER_USER_AGENT} ${existingUserAgent}`);
   }
 
   return headers;
