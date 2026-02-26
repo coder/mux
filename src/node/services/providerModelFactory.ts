@@ -699,21 +699,25 @@ export class ProviderModelFactory {
           ...(creds.organization && { organization: creds.organization }),
         };
 
-        // Extract serviceTier from config to pass through to buildProviderOptions
+        // Extract serviceTier and wireFormat from config to pass through to buildProviderOptions.
+        // Initialize muxProviderOptions if absent so config values aren't silently dropped
+        // when call sites omit options (e.g. TaskService, WorkspaceTitleGenerator).
         const configServiceTier = providerConfig.serviceTier as string | undefined;
-        if (configServiceTier && muxProviderOptions) {
-          muxProviderOptions.openai = {
-            ...muxProviderOptions.openai,
-            serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",
-          };
-        }
-
         const configWireFormat = providerConfig.wireFormat as string | undefined;
-        if (configWireFormat && muxProviderOptions) {
-          muxProviderOptions.openai = {
-            ...muxProviderOptions.openai,
-            wireFormat: configWireFormat as "responses" | "chatCompletions",
-          };
+        if (configServiceTier || configWireFormat) {
+          muxProviderOptions ??= {};
+          if (configServiceTier) {
+            muxProviderOptions.openai = {
+              ...muxProviderOptions.openai,
+              serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",
+            };
+          }
+          if (configWireFormat) {
+            muxProviderOptions.openai = {
+              ...muxProviderOptions.openai,
+              wireFormat: configWireFormat as "responses" | "chatCompletions",
+            };
+          }
         }
 
         const baseFetch = getProviderFetch(providerConfig);
@@ -916,7 +920,9 @@ export class ProviderModelFactory {
         const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
         const model =
           wireFormat === "chatCompletions" ? provider.chat(modelId) : provider.responses(modelId);
-        if (shouldRouteThroughCodexOauth) {
+        // Skip Codex OAuth routing for chatCompletions — the Codex endpoint
+        // only accepts Responses API format, so chat-completions requests would fail.
+        if (shouldRouteThroughCodexOauth && wireFormat !== "chatCompletions") {
           markModelCostsIncluded(model);
 
           // Wrap model to inject store=false into providerOptions so the SDK
