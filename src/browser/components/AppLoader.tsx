@@ -142,7 +142,7 @@ function AppLoaderInner() {
     const statusText =
       apiState.status === "reconnecting"
         ? `Reconnecting to backend (attempt ${apiState.attempt})...`
-        : "Loading workspaces...";
+        : "Loading Mux";
 
     return <LoadingScreen statusText={statusText} />;
   }

@@ -1,11 +1,18 @@
-import { LoadingAnimation } from "./LoadingAnimation";
+import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
+import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 
 export function LoadingScreen(props: { statusText?: string }) {
+  const { theme } = useTheme();
+  const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
+
+  // Keep the outer markup/classes in sync with index.html's boot loader so
+  // the transition from the raw HTML placeholder to React is seamless.
   return (
     <div className="boot-loader" role="status" aria-live="polite" aria-busy="true">
       <div className="boot-loader__inner">
-        <LoadingAnimation />
-        <p className="boot-loader__text">{props.statusText ?? "Loading workspaces..."}</p>
+        <MuxLogo className="boot-loader__logo" aria-hidden="true" />
+        <p className="boot-loader__text">{props.statusText ?? "Loading Mux"}</p>
       </div>
     </div>
   );

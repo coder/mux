@@ -89,7 +89,7 @@ describe("AppLoader", () => {
 
     const { getByTestId, queryByText } = render(<AppLoader />);
 
-    expect(queryByText("Loading workspaces...")).toBeNull();
+    expect(queryByText("Loading Mux")).toBeNull();
     expect(getByTestId("AuthTokenModalMock").textContent).toContain("Authentication required");
   });
 

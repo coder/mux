@@ -5,11 +5,17 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { installDom } from "../../../tests/ui/dom";
 
-// lottie-web probes canvas on import, which crashes in happy-dom.
-void mock.module("lottie-react", () => ({
+// SVG ?react imports don't work in happy-dom; stub them as simple divs.
+const SvgStub = (props: Record<string, unknown>) =>
+  React.createElement("svg", { "data-testid": "mux-logo-mock", ...props });
+
+void mock.module("@/browser/assets/logos/mux-logo-dark.svg?react", () => ({
   __esModule: true,
-  default: (props: Record<string, unknown>) =>
-    React.createElement("div", { "data-testid": "lottie-mock", ...props }),
+  default: SvgStub,
+}));
+void mock.module("@/browser/assets/logos/mux-logo-light.svg?react", () => ({
+  __esModule: true,
+  default: SvgStub,
 }));
 
 import { LoadingScreen } from "./LoadingScreen";
@@ -28,7 +34,7 @@ describe("LoadingScreen", () => {
     cleanupDom = null;
   });
 
-  test("renders the boot loader markup with loading animation", () => {
+  test("renders boot loader markup with Mux logo", () => {
     const { getByRole, getByText } = render(
       <ThemeProvider>
         <LoadingScreen />
@@ -36,7 +42,7 @@ describe("LoadingScreen", () => {
     );
 
     expect(getByRole("status")).toBeTruthy();
-    expect(getByText("Loading workspaces...")).toBeTruthy();
+    expect(getByText("Loading Mux")).toBeTruthy();
   });
 
   test("renders custom statusText", () => {
