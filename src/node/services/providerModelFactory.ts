@@ -36,6 +36,21 @@ import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import packageJson from "../../../package.json";
 
 // ---------------------------------------------------------------------------
+// Copilot Responses API routing.
+// GPT-5+ models (except gpt-5-mini) require the Responses API on the Copilot
+// endpoint — the /chat/completions endpoint returns "model not supported".
+// ---------------------------------------------------------------------------
+
+function isGpt5OrLater(modelId: string): boolean {
+  const match = /^gpt-(\d+)/.exec(modelId);
+  return match != null && Number(match[1]) >= 5;
+}
+
+function shouldUseCopilotResponsesApi(modelId: string): boolean {
+  return isGpt5OrLater(modelId) && !modelId.startsWith("gpt-5-mini");
+}
+
+// ---------------------------------------------------------------------------
 // Undici agent with unlimited timeouts for AI streaming requests.
 // Safe because users control cancellation via AbortSignal from the UI.
 // Uses EnvHttpProxyAgent to automatically respect HTTP_PROXY, HTTPS_PROXY,
@@ -1229,14 +1244,16 @@ export class ProviderModelFactory {
         return Ok(model);
       }
 
-      // GitHub Copilot — OpenAI-compatible with custom auth headers
+      // GitHub Copilot — OpenAI-compatible with custom auth headers.
+      // GPT-5+ models (except gpt-5-mini) require the Responses API (/responses),
+      // while older models use the Chat Completions API (/chat/completions).
+      // We use @ai-sdk/openai for GPT-5+ (has responses() support) and
+      // @ai-sdk/openai-compatible for everything else (chat only).
       if (providerName === "github-copilot") {
         const creds = resolveProviderCredentials("github-copilot" as ProviderName, providerConfig);
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-
-        const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
 
         const baseFetch = getProviderFetch(providerConfig);
         const copilotFetchFn = async (
@@ -1252,6 +1269,21 @@ export class ProviderModelFactory {
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
 
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
+
+        // GPT-5+ models need the Responses API; the Copilot /chat/completions
+        // endpoint returns "model not supported" for these models.
+        if (shouldUseCopilotResponsesApi(modelId)) {
+          const { createOpenAI } = await PROVIDER_REGISTRY.openai();
+          const provider = createOpenAI({
+            name: "github-copilot",
+            baseURL,
+            apiKey: "copilot", // placeholder — actual auth via custom fetch
+            fetch: copilotFetch,
+          });
+          return Ok(provider.responses(modelId));
+        }
+
+        const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
         const provider = createOpenAICompatible({
           name: "github-copilot",
           baseURL,
