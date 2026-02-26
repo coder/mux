@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { Worker } from "node:worker_threads";
 import type {
   AgentCostRow,
-  DelegationSummaryRow,
+  DelegationAgentBreakdownRow,
+  DelegationSummaryTotalsRow,
   HistogramBucket,
   ProviderCacheHitModelRow,
   SpendByModelRow,
@@ -77,6 +78,11 @@ const EMPTY_INGEST_WORKSPACE_META: IngestWorkspaceMeta = {
 interface TimingDistributionRow {
   percentiles: TimingPercentilesRow;
   histogram: HistogramBucket[];
+}
+
+interface DelegationSummaryQueryResult {
+  totals: DelegationSummaryTotalsRow;
+  breakdown: DelegationAgentBreakdownRow[];
 }
 
 interface RebuildAllResult {
@@ -622,31 +628,39 @@ export class AnalyticsService {
     totalReportTokens: number;
     compressionRatio: number;
     totalCostDelegated: number;
-    exploreCount: number;
-    exploreTokens: number;
-    execCount: number;
-    execTokens: number;
-    planCount: number;
-    planTokens: number;
+    byAgentType: Array<{
+      agentType: string;
+      count: number;
+      totalTokens: number;
+      inputTokens: number;
+      outputTokens: number;
+      reasoningTokens: number;
+      cachedTokens: number;
+      cacheCreateTokens: number;
+    }>;
   }> {
-    const row = await this.executeQuery<DelegationSummaryRow>("getDelegationSummary", {
+    const result = await this.executeQuery<DelegationSummaryQueryResult>("getDelegationSummary", {
       projectPath,
       from: toDateFilterString(from),
       to: toDateFilterString(to),
     });
 
     return {
-      totalChildren: row.total_children,
-      totalTokensConsumed: row.total_tokens_consumed,
-      totalReportTokens: row.total_report_tokens,
-      compressionRatio: row.compression_ratio,
-      totalCostDelegated: row.total_cost_delegated,
-      exploreCount: row.explore_count,
-      exploreTokens: row.explore_tokens,
-      execCount: row.exec_count,
-      execTokens: row.exec_tokens,
-      planCount: row.plan_count,
-      planTokens: row.plan_tokens,
+      totalChildren: result.totals.total_children,
+      totalTokensConsumed: result.totals.total_tokens_consumed,
+      totalReportTokens: result.totals.total_report_tokens,
+      compressionRatio: result.totals.compression_ratio,
+      totalCostDelegated: result.totals.total_cost_delegated,
+      byAgentType: result.breakdown.map((row) => ({
+        agentType: row.agent_type,
+        count: row.delegation_count,
+        totalTokens: row.total_tokens,
+        inputTokens: row.input_tokens,
+        outputTokens: row.output_tokens,
+        reasoningTokens: row.reasoning_tokens,
+        cachedTokens: row.cached_tokens,
+        cacheCreateTokens: row.cache_create_tokens,
+      })),
     };
   }
 

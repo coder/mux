@@ -3,7 +3,8 @@ import type { DuckDBConnection, DuckDBValue } from "@duckdb/node-api";
 import type { z } from "zod";
 import {
   AgentCostRowSchema,
-  DelegationSummaryRowSchema,
+  DelegationAgentBreakdownRowSchema,
+  DelegationSummaryTotalsRowSchema,
   HistogramBucketSchema,
   ProviderCacheHitModelRowSchema,
   SpendByModelRowSchema,
@@ -13,6 +14,8 @@ import {
   TimingPercentilesRowSchema,
   TokensByModelRowSchema,
   type AgentCostRow,
+  type DelegationAgentBreakdownRow,
+  type DelegationSummaryTotalsRow,
   type HistogramBucket,
   type ProviderCacheHitModelRow,
   type SpendByModelRow,
@@ -32,6 +35,11 @@ type TimingMetric = "ttft" | "duration" | "tps";
 interface TimingDistributionResult {
   percentiles: TimingPercentilesRow;
   histogram: HistogramBucket[];
+}
+
+interface DelegationSummaryResult {
+  totals: DelegationSummaryTotalsRow;
+  breakdown: DelegationAgentBreakdownRow[];
 }
 
 function normalizeDuckDbValue(value: unknown): unknown {
@@ -475,8 +483,23 @@ async function queryCacheHitRatioByProvider(
 async function queryDelegationSummary(
   conn: DuckDBConnection,
   params: { projectPath: string | null; from: string | null; to: string | null }
-): Promise<z.infer<typeof DelegationSummaryRowSchema>> {
-  return typedQueryOne(
+): Promise<DelegationSummaryResult> {
+  const filterParams: DuckDBValue[] = [
+    params.projectPath,
+    params.projectPath,
+    params.from,
+    params.from,
+    params.to,
+    params.to,
+  ];
+
+  const whereClause = `
+    WHERE (? IS NULL OR project_path = ?)
+      AND (? IS NULL OR date >= CAST(? AS DATE))
+      AND (? IS NULL OR date <= CAST(? AS DATE))
+  `;
+
+  const totals = await typedQueryOne(
     conn,
     `
     SELECT
@@ -491,21 +514,36 @@ async function queryDelegationSummary(
         END,
         0
       ) AS compression_ratio,
-      COALESCE(SUM(total_cost_usd), 0) AS total_cost_delegated,
-      COALESCE(SUM(CASE WHEN agent_type = 'explore' THEN 1 ELSE 0 END), 0) AS explore_count,
-      COALESCE(SUM(CASE WHEN agent_type = 'explore' THEN total_tokens ELSE 0 END), 0) AS explore_tokens,
-      COALESCE(SUM(CASE WHEN agent_type = 'exec' THEN 1 ELSE 0 END), 0) AS exec_count,
-      COALESCE(SUM(CASE WHEN agent_type = 'exec' THEN total_tokens ELSE 0 END), 0) AS exec_tokens,
-      COALESCE(SUM(CASE WHEN agent_type = 'plan' THEN 1 ELSE 0 END), 0) AS plan_count,
-      COALESCE(SUM(CASE WHEN agent_type = 'plan' THEN total_tokens ELSE 0 END), 0) AS plan_tokens
+      COALESCE(SUM(total_cost_usd), 0) AS total_cost_delegated
     FROM delegation_rollups
-    WHERE (? IS NULL OR project_path = ?)
-      AND (? IS NULL OR date >= CAST(? AS DATE))
-      AND (? IS NULL OR date <= CAST(? AS DATE))
+    ${whereClause}
     `,
-    [params.projectPath, params.projectPath, params.from, params.from, params.to, params.to],
-    DelegationSummaryRowSchema
+    [...filterParams],
+    DelegationSummaryTotalsRowSchema
   );
+
+  const breakdown = await typedQuery(
+    conn,
+    `
+    SELECT
+      COALESCE(agent_type, 'unknown') AS agent_type,
+      COALESCE(COUNT(*), 0) AS delegation_count,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(input_tokens), 0) AS input_tokens,
+      COALESCE(SUM(output_tokens), 0) AS output_tokens,
+      COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+      COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+      COALESCE(SUM(cache_create_tokens), 0) AS cache_create_tokens
+    FROM delegation_rollups
+    ${whereClause}
+    GROUP BY agent_type
+    ORDER BY total_tokens DESC
+    `,
+    [...filterParams],
+    DelegationAgentBreakdownRowSchema
+  );
+
+  return { totals, breakdown };
 }
 
 export async function executeNamedQuery(

@@ -77,20 +77,37 @@ export const ProviderCacheHitModelRowSchema = z.object({
 });
 export type ProviderCacheHitModelRow = z.infer<typeof ProviderCacheHitModelRowSchema>;
 
-export const DelegationSummaryRowSchema = z.object({
+export const DelegationSummaryTotalsRowSchema = z.object({
   total_children: z.number(),
   total_tokens_consumed: z.number(),
   total_report_tokens: z.number(),
   compression_ratio: z.number(),
   total_cost_delegated: z.number(),
-  explore_count: z.number(),
-  explore_tokens: z.number(),
-  exec_count: z.number(),
-  exec_tokens: z.number(),
-  plan_count: z.number(),
-  plan_tokens: z.number(),
 });
-export type DelegationSummaryRow = z.infer<typeof DelegationSummaryRowSchema>;
+export type DelegationSummaryTotalsRow = z.infer<typeof DelegationSummaryTotalsRowSchema>;
+
+export const DelegationAgentBreakdownRowSchema = z.object({
+  agent_type: z.string(),
+  delegation_count: z.number(),
+  total_tokens: z.number(),
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  reasoning_tokens: z.number(),
+  cached_tokens: z.number(),
+  cache_create_tokens: z.number(),
+});
+export type DelegationAgentBreakdownRow = z.infer<typeof DelegationAgentBreakdownRowSchema>;
+
+export const AgentTypeTokenBreakdownSchema = z.object({
+  agentType: z.string(),
+  count: z.number(),
+  totalTokens: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  reasoningTokens: z.number(),
+  cachedTokens: z.number(),
+  cacheCreateTokens: z.number(),
+});
 
 /** ETL input validation — each row extracted from chat.jsonl is validated before insert */
 export const EventRowSchema = z.object({
@@ -259,12 +276,7 @@ export const analytics = {
       totalReportTokens: z.number(),
       compressionRatio: z.number(),
       totalCostDelegated: z.number(),
-      exploreCount: z.number(),
-      exploreTokens: z.number(),
-      execCount: z.number(),
-      execTokens: z.number(),
-      planCount: z.number(),
-      planTokens: z.number(),
+      byAgentType: z.array(AgentTypeTokenBreakdownSchema),
     }),
   },
   rebuildDatabase: {
