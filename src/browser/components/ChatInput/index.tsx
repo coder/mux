@@ -358,6 +358,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
   const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
   const nextDraftReviewIdRef = useRef(0);
+  const isDraftReviewData = (value: unknown): value is ReviewNoteDataForDisplay =>
+    typeof value === "object" && value !== null;
   const getDraftReviewId = (review: ReviewNoteDataForDisplay): string => {
     const existingId = draftReviewIdsByValueRef.current.get(review);
     if (existingId) return existingId;
@@ -372,7 +374,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   ) =>
     setDraftReviews((prev) => {
       if (prev === null) return prev;
-      const reviewIndex = prev.findIndex((review) => getDraftReviewId(review) === reviewId);
+      const reviewIndex = prev.findIndex(
+        (review) => isDraftReviewData(review) && getDraftReviewId(review) === reviewId
+      );
       return reviewIndex === -1 ? prev : update(prev, reviewIndex);
     });
 
@@ -897,7 +901,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const hasTypedText = input.trim().length > 0;
   const hasImages = attachments.length > 0;
   const reviewOverrideActive = draftReviews !== null;
-  const draftReviewItems = draftReviews ?? [];
+  const draftReviewItems = (draftReviews ?? []).filter(isDraftReviewData);
   const reviewData = reviewOverrideActive
     ? draftReviewItems.length > 0
       ? draftReviewItems
