@@ -50,11 +50,13 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
           className="border-border-medium bg-background-secondary/80 rounded-md border px-2.5 py-2"
           data-component="QueuedMessageCard"
         >
-          <div className="flex items-center gap-2">
+          <div>
             <span className="text-muted shrink-0 text-[11px] font-semibold uppercase tracking-wide">
-              Queued message
+              Queued
             </span>
-            <span className="text-secondary min-w-0 flex-1 truncate text-xs">{previewText}</span>
+            <div className="text-secondary mt-1 whitespace-pre-wrap break-words text-xs">
+              {previewText}
+            </div>
           </div>
 
           <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">

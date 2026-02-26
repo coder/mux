@@ -31,7 +31,7 @@ describe("QueuedMessage banner", () => {
   test("renders queued preview text and label", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} />);
 
-    expect(view.getByText("Queued message")).toBeTruthy();
+    expect(view.getByText("Queued")).toBeTruthy();
     expect(view.getByText("Review this change before sending")).toBeTruthy();
   });
 
