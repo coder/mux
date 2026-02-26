@@ -38,17 +38,18 @@ async function openFirstProjectCreationView(storyRoot: HTMLElement): Promise<voi
   // App now boots into the built-in mux-chat workspace.
   // Navigate to the first project's creation page so creation/banner UI is visible.
 
-  // Guard: a previous story's play-function may have collapsed the sidebar
-  // (e.g. via a mobile-viewport interaction). If so, expand it first so the
-  // project rows become visible and clickable.
-  const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
-  if (sidebar && sidebar.getBoundingClientRect().width <= 40) {
-    const expandBtn = storyRoot.querySelector<HTMLElement>("[aria-label='Expand sidebar']");
-    if (expandBtn) await userEvent.click(expandBtn);
-  }
-
   const projectRow = await waitFor(
     () => {
+      // Guard: a previous story's play-function may have left the sidebar
+      // collapsed via localStorage. If so, click "Expand sidebar" on each
+      // retry until the project rows become visible.
+      const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
+      if (sidebar && sidebar.getBoundingClientRect().width <= 40) {
+        const expandBtn = storyRoot.querySelector<HTMLElement>("[aria-label='Expand sidebar']");
+        if (expandBtn) expandBtn.click();
+        throw new Error("Sidebar collapsed – expanding…");
+      }
+
       const el = storyRoot.querySelector("[data-project-path][aria-controls]");
       if (!el) throw new Error("Project row not found");
       return el;
@@ -620,6 +621,11 @@ export const CreateWorkspaceWithSections: AppStory = {
       },
       { timeout: 10000 }
     );
+
+    // Clean up: the sidebar collapse above writes to localStorage.
+    // Remove the key so subsequent stories start with the default
+    // (expanded on desktop-width viewports).
+    localStorage.removeItem(LEFT_SIDEBAR_COLLAPSED_KEY);
   },
 };
 
