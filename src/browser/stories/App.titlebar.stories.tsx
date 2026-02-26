@@ -21,11 +21,34 @@ export default {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function createPopulatedClient() {
+  // Keep createdAt deterministic so recency tie-breakers can't reorder sibling
+  // workspaces between Storybook/Chromatic runs.
+  const stableCreatedAt = "2023-11-14T22:13:20.000Z";
   const workspaces = [
-    createWorkspace({ id: "tb-1", name: "feature/dark-mode", projectName: "web-app" }),
-    createWorkspace({ id: "tb-2", name: "fix/nav-overflow", projectName: "web-app" }),
-    createWorkspace({ id: "tb-3", name: "main", projectName: "api-server" }),
-    createWorkspace({ id: "tb-4", name: "refactor/auth", projectName: "api-server" }),
+    createWorkspace({
+      id: "tb-1",
+      name: "feature/dark-mode",
+      projectName: "web-app",
+      createdAt: stableCreatedAt,
+    }),
+    createWorkspace({
+      id: "tb-2",
+      name: "fix/nav-overflow",
+      projectName: "web-app",
+      createdAt: stableCreatedAt,
+    }),
+    createWorkspace({
+      id: "tb-3",
+      name: "main",
+      projectName: "api-server",
+      createdAt: stableCreatedAt,
+    }),
+    createWorkspace({
+      id: "tb-4",
+      name: "refactor/auth",
+      projectName: "api-server",
+      createdAt: stableCreatedAt,
+    }),
   ];
   const projects = groupWorkspacesByProject(workspaces);
 
