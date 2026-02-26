@@ -344,6 +344,73 @@ describe("agent_skill_read_file", () => {
         expect(result.error).toMatch(/escape|outside|symbolic link|symlink/i);
       }
     });
+    it("treats missing nested parent dirs as not-found, not path escape (runtime)", async () => {
+      using tempDir = new TestTempDir(
+        "test-agent-skill-read-file-remote-runtime-missing-parent-dir"
+      );
+      await writeProjectSkill(tempDir.path, "missing-parent");
+
+      const baseConfig = createRemoteRuntimeConfig(tempDir.path);
+      const tool = createAgentSkillReadFileTool(baseConfig);
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!(
+          { name: "missing-parent", filePath: "references/foo.txt" },
+          mockToolCallOptions
+        )
+      );
+
+      const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+
+      const result = parsed.data;
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).not.toMatch(/outside the skill directory|escape/i);
+        expect(result.error).toMatch(/failed to stat|enoent|no such file/i);
+      }
+    });
+
+    it("rejects symlinked ancestors above missing segments as path escape (runtime)", async () => {
+      using tempDir = new TestTempDir(
+        "test-agent-skill-read-file-remote-runtime-missing-parent-symlink-ancestor"
+      );
+      await writeProjectSkill(tempDir.path, "symlink-ancestor");
+
+      const skillDir = path.join(tempDir.path, ".mux", "skills", "symlink-ancestor");
+      const externalDir = path.join(tempDir.path, "external-linked-root");
+      await fs.mkdir(externalDir, { recursive: true });
+      await fs.symlink(
+        externalDir,
+        path.join(skillDir, "link-outside"),
+        process.platform === "win32" ? "junction" : "dir"
+      );
+
+      const baseConfig = createRemoteRuntimeConfig(tempDir.path);
+      const tool = createAgentSkillReadFileTool(baseConfig);
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!(
+          { name: "symlink-ancestor", filePath: "link-outside/missing-subdir/file.txt" },
+          mockToolCallOptions
+        )
+      );
+
+      const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+
+      const result = parsed.data;
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toMatch(/outside the skill directory|escape/i);
+      }
+    });
   });
 
   describe("symlink safety", () => {
