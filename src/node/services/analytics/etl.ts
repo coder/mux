@@ -1512,6 +1512,7 @@ export async function rebuildAll(
   // Keep rebuild resilient: a malformed event batch in one workspace should not
   // prevent unrelated workspace analytics data from being rebuilt.
   const workspaceEventsMap = collectAllEvents(allParsed);
+  const includedWorkspaceIds = new Set(workspaceEventsMap.keys());
   const failedWorkspaceIds = new Set<string>();
   for (const [workspaceId, events] of workspaceEventsMap) {
     try {
@@ -1527,31 +1528,33 @@ export async function rebuildAll(
 
   async function writeWorkspaceMetadata(
     workspaces: ParsedWorkspaceData[],
-    failedWorkspaceIds: Set<string>
+    failedWorkspaceIds: Set<string>,
+    includedWorkspaceIds: Set<string>
   ): Promise<void> {
     for (const workspace of workspaces) {
-      if (failedWorkspaceIds.has(workspace.workspaceId)) {
-        // Skip watermark/rollup writes for failed event appends so future ingest
-        // retries are not short-circuited by an advanced last_modified watermark.
-        continue;
-      }
-
       try {
-        const maxSequence = getMaxSequence(workspace.events) ?? -1;
-        await writeWatermark(conn, workspace.workspaceId, {
-          lastSequence: maxSequence,
-          lastModified: workspace.stat.mtimeMs,
-        });
+        // Only write metadata for dedup winners that appended successfully.
+        // Skipping excluded workspaces prevents stale duplicates from
+        // overwriting fresh metadata from the winning workspace source.
+        // Skipping failed workspaces lets future ingest retry without
+        // short-circuiting on advanced watermarks.
+        const shouldWriteMetadata =
+          includedWorkspaceIds.has(workspace.workspaceId) &&
+          !failedWorkspaceIds.has(workspace.workspaceId);
 
-        await writeDelegationRollupsFromParsed(
-          conn,
-          workspace.workspaceId,
-          workspace.delegationRollupRaw,
-          workspace.workspaceMeta
-        );
+        if (shouldWriteMetadata) {
+          const maxSequence = getMaxSequence(workspace.events) ?? -1;
+          await writeWatermark(conn, workspace.workspaceId, {
+            lastSequence: maxSequence,
+            lastModified: workspace.stat.mtimeMs,
+          });
 
-        if (workspace.archivedTranscripts.length > 0) {
-          await writeWorkspaceMetadata(workspace.archivedTranscripts, failedWorkspaceIds);
+          await writeDelegationRollupsFromParsed(
+            conn,
+            workspace.workspaceId,
+            workspace.delegationRollupRaw,
+            workspace.workspaceMeta
+          );
         }
       } catch (error) {
         log.warn("[analytics-etl] Failed to write metadata during rebuild", {
@@ -1559,10 +1562,20 @@ export async function rebuildAll(
           error: getErrorMessage(error),
         });
       }
+
+      // Always recurse into archived children regardless of parent metadata
+      // write eligibility so successful child workspaces still get metadata.
+      if (workspace.archivedTranscripts.length > 0) {
+        await writeWorkspaceMetadata(
+          workspace.archivedTranscripts,
+          failedWorkspaceIds,
+          includedWorkspaceIds
+        );
+      }
     }
   }
 
-  await writeWorkspaceMetadata(allParsed, failedWorkspaceIds);
+  await writeWorkspaceMetadata(allParsed, failedWorkspaceIds, includedWorkspaceIds);
 
   let workspacesIngested = 0;
   for (const workspace of allParsed) {
