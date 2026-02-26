@@ -7,7 +7,7 @@ import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { CopilotOauthService, COPILOT_MODELS } from "./copilotOauthService";
 
-const EXPECTED_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
+const EXPECTED_COPILOT_CLIENT_ID = "Ov23liCVKFN3jOo9R7HS";
 
 // ---------------------------------------------------------------------------
 // Helpers

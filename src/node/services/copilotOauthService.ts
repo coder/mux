@@ -7,10 +7,8 @@ import { log } from "@/node/services/log";
 import { createDeferred } from "@/node/utils/oauthUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 
-// GitHub Copilot OAuth app client ID used by working Copilot integrations
-// (for example opencode). This client ID reliably grants tokens that can
-// access current-generation models such as gpt-5.2.
-const GITHUB_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
+// Mux's GitHub OAuth app client ID for Copilot device flow.
+const GITHUB_COPILOT_CLIENT_ID = "Ov23liCVKFN3jOo9R7HS";
 const SCOPE = "read:user";
 const POLLING_SAFETY_MARGIN_MS = 3000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
