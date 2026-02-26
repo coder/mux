@@ -243,6 +243,8 @@ export async function resolveAgentForStream(
 
           { regex_match: "mux_global_agents_read", action: "enable" },
           { regex_match: "mux_global_agents_write", action: "enable" },
+          { regex_match: "mux_config_read", action: "enable" },
+          { regex_match: "mux_config_write", action: "enable" },
           { regex_match: "ask_user_question", action: "enable" },
           { regex_match: "todo_read", action: "enable" },
           { regex_match: "todo_write", action: "enable" },

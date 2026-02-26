@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { CacheTtlSchema, ServiceTierSchema } from "../../config/schemas/providersConfig";
+
 export const MuxProviderOptionsSchema = z.object({
   anthropic: z
     .object({
@@ -16,7 +18,7 @@ export const MuxProviderOptionsSchema = z.object({
       // "1h" costs 2× base input for cache writes but keeps the cache alive longer —
       // useful for agentic workflows where turns take >5 minutes.
       // See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
-      cacheTtl: z.enum(["5m", "1h"]).nullish().meta({
+      cacheTtl: CacheTtlSchema.nullish().meta({
         description:
           'Anthropic prompt cache TTL: "5m" (default, free refresh) or "1h" (2× write cost, longer cache)',
       }),
@@ -28,7 +30,7 @@ export const MuxProviderOptionsSchema = z.object({
     .optional(),
   openai: z
     .object({
-      serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional().meta({
+      serviceTier: ServiceTierSchema.optional().meta({
         description:
           "OpenAI service tier: priority (low-latency), flex (50% cheaper, higher latency), auto/default (standard)",
       }),

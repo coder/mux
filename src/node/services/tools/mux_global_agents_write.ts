@@ -2,38 +2,20 @@ import * as path from "path";
 import * as fsPromises from "fs/promises";
 import { tool } from "ai";
 
-import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
-import { generateDiff } from "./fileCommon";
+import {
+  FILE_EDIT_DIFF_OMITTED_MESSAGE,
+  type MuxGlobalAgentsWriteToolArgs,
+  type MuxGlobalAgentsWriteToolResult,
+} from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
-import { getMuxHomeFromWorkspaceSessionDir } from "./muxHome";
+import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import {
+  getMuxHomeFromWorkspaceSessionDir,
+  requireMuxHelpWorkspace,
+} from "@/node/services/tools/shared/configToolUtils";
+import { generateDiff } from "./fileCommon";
 import { hasErrorCode } from "./skillFileUtils";
-
-export interface MuxGlobalAgentsWriteToolArgs {
-  newContent: string;
-  confirm: boolean;
-}
-
-export interface MuxGlobalAgentsWriteToolResult {
-  success: true;
-  diff: string;
-  ui_only?: {
-    file_edit?: {
-      diff: string;
-    };
-  };
-}
-
-export interface MuxGlobalAgentsWriteToolError {
-  success: false;
-  error: string;
-}
-
-export type MuxGlobalAgentsWriteToolOutput =
-  | MuxGlobalAgentsWriteToolResult
-  | MuxGlobalAgentsWriteToolError;
 
 export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -42,15 +24,10 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
     execute: async (
       args: MuxGlobalAgentsWriteToolArgs,
       { abortSignal: _abortSignal }
-    ): Promise<MuxGlobalAgentsWriteToolOutput> => {
+    ): Promise<MuxGlobalAgentsWriteToolResult> => {
       try {
-        if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-          return {
-            success: false,
-            error:
-              "mux_global_agents_write is only available in the Chat with Mux system workspace",
-          };
-        }
+        const workspaceGuard = requireMuxHelpWorkspace(config, "mux_global_agents_write");
+        if (workspaceGuard) return workspaceGuard;
 
         if (!args.confirm) {
           return {

@@ -13,6 +13,11 @@ import type {
   FeatureFlagOverride,
   UpdateChannel,
 } from "@/common/types/project";
+import type {
+  AppConfigOnDisk,
+  BaseProviderConfig as ProviderConfig,
+  ProvidersConfig as CanonicalProvidersConfig,
+} from "@/common/config/schemas";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -29,16 +34,9 @@ import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/mod
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
-// Re-export project types from dedicated types file (for preload usage)
-export type { Workspace, ProjectConfig, ProjectsConfig };
-
-export interface ProviderConfig {
-  apiKey?: string;
-  baseUrl?: string;
-  baseURL?: string;
-  headers?: Record<string, string>;
-  [key: string]: unknown;
-}
+// Re-export project/provider types from dedicated schema/types files (for preload usage)
+export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
+export type ProvidersConfig = CanonicalProvidersConfig | Record<string, ProviderConfig>;
 
 function parseOptionalNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -229,8 +227,6 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
 
   return next;
 }
-export type ProvidersConfig = Record<string, ProviderConfig>;
-
 /**
  * Config - Centralized configuration management
  *
@@ -258,39 +254,11 @@ export class Config {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as {
-          projects?: unknown;
-          apiServerBindHost?: unknown;
-          apiServerPort?: unknown;
-          apiServerServeWebUi?: unknown;
-          mdnsAdvertisementEnabled?: unknown;
-          mdnsServiceName?: unknown;
-          serverSshHost?: string;
-          serverAuthGithubOwner?: unknown;
-          defaultProjectDir?: unknown;
-          viewedSplashScreens?: string[];
-          featureFlagOverrides?: Record<string, "default" | "on" | "off">;
-          layoutPresets?: unknown;
-          taskSettings?: unknown;
-          muxGatewayEnabled?: unknown;
-          muxGatewayModels?: unknown;
-          defaultModel?: unknown;
-          hiddenModels?: unknown;
-          agentAiDefaults?: unknown;
-          subagentAiDefaults?: unknown;
-          useSSH2Transport?: unknown;
-          muxGovernorUrl?: unknown;
-          muxGovernorToken?: unknown;
-          stopCoderWorkspaceOnArchive?: unknown;
-          terminalDefaultShell?: unknown;
-          updateChannel?: unknown;
-          runtimeEnablement?: unknown;
-          defaultRuntime?: unknown;
-        };
+        const parsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
 
         // Config is stored as array of [path, config] pairs
         if (parsed.projects && Array.isArray(parsed.projects)) {
-          const rawPairs = parsed.projects as Array<[string, ProjectConfig]>;
+          const rawPairs = parsed.projects;
           // Migrate: normalize project paths by stripping trailing slashes
           // This fixes configs created with paths like "/home/user/project/"
           // Also filter out any malformed entries (null/undefined paths)
@@ -391,34 +359,8 @@ export class Config {
         fs.mkdirSync(this.rootDir, { recursive: true });
       }
 
-      const data: {
+      const data: Partial<Record<keyof AppConfigOnDisk, unknown>> & {
         projects: Array<[string, ProjectConfig]>;
-        apiServerBindHost?: string;
-        apiServerPort?: number;
-        apiServerServeWebUi?: boolean;
-        mdnsAdvertisementEnabled?: boolean;
-        mdnsServiceName?: string;
-        serverSshHost?: string;
-        serverAuthGithubOwner?: string;
-        defaultProjectDir?: string;
-        viewedSplashScreens?: string[];
-        layoutPresets?: ProjectsConfig["layoutPresets"];
-        featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
-        taskSettings?: ProjectsConfig["taskSettings"];
-        muxGatewayEnabled?: ProjectsConfig["muxGatewayEnabled"];
-        muxGatewayModels?: ProjectsConfig["muxGatewayModels"];
-        defaultModel?: ProjectsConfig["defaultModel"];
-        hiddenModels?: ProjectsConfig["hiddenModels"];
-        agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
-        subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
-        useSSH2Transport?: boolean;
-        muxGovernorUrl?: string;
-        muxGovernorToken?: string;
-        stopCoderWorkspaceOnArchive?: boolean;
-        terminalDefaultShell?: string;
-        updateChannel?: UpdateChannel;
-        runtimeEnablement?: ProjectsConfig["runtimeEnablement"];
-        defaultRuntime?: ProjectsConfig["defaultRuntime"];
       } = {
         projects: Array.from(config.projects.entries()).map(
           ([projectPath, projectConfig]) =>

@@ -1,0 +1,243 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
+import { describe, expect, it } from "bun:test";
+import type { ToolExecutionOptions } from "ai";
+import * as jsonc from "jsonc-parser";
+
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+
+import { createMuxConfigWriteTool } from "./mux_config_write";
+import { TestTempDir, createTestToolConfig } from "./testHelpers";
+
+const mockToolCallOptions: ToolExecutionOptions = {
+  toolCallId: "test-call-id",
+  messages: [],
+};
+
+interface MuxConfigWriteValidationIssue {
+  path: Array<string | number>;
+  message: string;
+}
+
+interface MuxConfigWriteSuccess {
+  success: true;
+  file: "providers" | "config";
+  appliedOps: number;
+  summary: string;
+}
+
+interface MuxConfigWriteError {
+  success: false;
+  error: string;
+  validationIssues?: MuxConfigWriteValidationIssue[];
+}
+
+type MuxConfigWriteResult = MuxConfigWriteSuccess | MuxConfigWriteError;
+
+async function createWriteTool(
+  muxHomeDir: string,
+  workspaceId: string,
+  onConfigChanged?: () => void
+) {
+  const workspaceSessionDir = path.join(muxHomeDir, "sessions", workspaceId);
+  await fs.mkdir(workspaceSessionDir, { recursive: true });
+
+  const config = createTestToolConfig(muxHomeDir, {
+    workspaceId,
+    sessionsDir: workspaceSessionDir,
+  });
+  config.onConfigChanged = onConfigChanged;
+
+  return createMuxConfigWriteTool(config);
+}
+
+describe("mux_config_write", () => {
+  it("enforces Chat with Mux workspace scope", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const tool = await createWriteTool(muxHome.path, "regular-workspace");
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [{ op: "set", path: ["anthropic", "apiKey"], value: "sk-ant-123" }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("only available");
+    }
+  });
+
+  it("enforces explicit confirm gate", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [{ op: "set", path: ["anthropic", "apiKey"], value: "sk-ant-123" }],
+        confirm: false,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("confirm");
+    }
+  });
+
+  it("writes valid providers mutations (anthropic, openrouter, bedrock)", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    let onConfigChangedCalls = 0;
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID, () => {
+      onConfigChangedCalls += 1;
+    });
+
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [
+          { op: "set", path: ["anthropic", "apiKey"], value: "sk-ant-123" },
+          { op: "set", path: ["anthropic", "cacheTtl"], value: "5m" },
+          { op: "set", path: ["openrouter", "apiKey"], value: "or-123" },
+          { op: "set", path: ["openrouter", "order"], value: "quality" },
+          { op: "set", path: ["openrouter", "allow_fallbacks"], value: true },
+          { op: "set", path: ["bedrock", "region"], value: "us-east-1" },
+          { op: "set", path: ["bedrock", "accessKeyId"], value: "AKIA..." },
+        ],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.appliedOps).toBe(7);
+    }
+    expect(onConfigChangedCalls).toBe(1);
+
+    const rawProviders = await fs.readFile(path.join(muxHome.path, "providers.jsonc"), "utf-8");
+    const providersDocument: unknown = jsonc.parse(rawProviders);
+
+    expect(providersDocument).toMatchObject({
+      anthropic: {
+        apiKey: "sk-ant-123",
+        cacheTtl: "5m",
+      },
+      openrouter: {
+        apiKey: "or-123",
+        order: "quality",
+        allow_fallbacks: true,
+      },
+      bedrock: {
+        region: "us-east-1",
+        accessKeyId: "AKIA...",
+      },
+    });
+  });
+
+  it("writes valid app config mutations (defaultModel, hiddenModels, taskSettings)", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "config",
+        operations: [
+          { op: "set", path: ["defaultModel"], value: "anthropic:claude-sonnet-4-20250514" },
+          { op: "set", path: ["hiddenModels"], value: ["openai:gpt-4o", "google:gemini-pro"] },
+          { op: "set", path: ["taskSettings", "maxParallelAgentTasks"], value: 5 },
+          { op: "set", path: ["taskSettings", "maxTaskNestingDepth"], value: 3 },
+        ],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.appliedOps).toBe(4);
+    }
+
+    const configDocument = JSON.parse(
+      await fs.readFile(path.join(muxHome.path, "config.json"), "utf-8")
+    ) as {
+      defaultModel?: string;
+      hiddenModels?: string[];
+      taskSettings?: { maxParallelAgentTasks?: number; maxTaskNestingDepth?: number };
+    };
+
+    expect(configDocument.defaultModel).toBe("anthropic:claude-sonnet-4-20250514");
+    expect(configDocument.hiddenModels).toEqual(["openai:gpt-4o", "google:gemini-pro"]);
+    expect(configDocument.taskSettings).toEqual({
+      maxParallelAgentTasks: 5,
+      maxTaskNestingDepth: 3,
+    });
+  });
+
+  it("returns validation issues and does not write when schema validation fails", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const configPath = path.join(muxHome.path, "config.json");
+    const initialDocument = JSON.stringify({ defaultModel: "openai:gpt-4o" }, null, 2);
+    await fs.writeFile(configPath, initialDocument, "utf-8");
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "config",
+        operations: [{ op: "set", path: ["taskSettings", "maxParallelAgentTasks"], value: 999 }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Schema validation failed");
+      expect(result.validationIssues).toBeDefined();
+      expect(result.validationIssues?.length).toBeGreaterThan(0);
+      expect(
+        result.validationIssues?.some((issue) => issue.path.includes("maxParallelAgentTasks"))
+      ).toBe(true);
+    }
+
+    const afterDocument = await fs.readFile(configPath, "utf-8");
+    expect(afterDocument).toBe(initialDocument);
+  });
+
+  it("rejects prototype pollution paths", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const providersPath = path.join(muxHome.path, "providers.jsonc");
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [{ op: "set", path: ["__proto__", "polluted"], value: true }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("__proto__");
+    }
+
+    let statError: NodeJS.ErrnoException | null = null;
+    try {
+      await fs.stat(providersPath);
+    } catch (error) {
+      statError = error as NodeJS.ErrnoException;
+    }
+
+    expect(statError?.code).toBe("ENOENT");
+  });
+});

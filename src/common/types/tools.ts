@@ -18,6 +18,8 @@ import type {
   BashToolResultSchema,
   FileEditInsertToolResultSchema,
   FileEditReplaceStringToolResultSchema,
+  MuxConfigReadToolResultSchema,
+  MuxConfigWriteToolResultSchema,
   MuxGlobalAgentsReadToolResultSchema,
   MuxGlobalAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
@@ -91,12 +93,21 @@ export interface ToolOutputUiOnlyFields {
 // FileReadToolResult derived from Zod schema (single source of truth)
 export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
 
-// mux_global_agents_* tool types
+// mux_config_read tool types
+export type MuxConfigReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_read.schema>;
+export type MuxConfigReadToolResult = z.infer<typeof MuxConfigReadToolResultSchema>;
+
+// mux_config_write tool types
+export type MuxConfigWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_write.schema>;
+export type MuxConfigWriteToolResult = z.infer<typeof MuxConfigWriteToolResultSchema>;
+
+// mux_global_agents_read tool types
 export type MuxGlobalAgentsReadToolArgs = z.infer<
   typeof TOOL_DEFINITIONS.mux_global_agents_read.schema
 >;
 export type MuxGlobalAgentsReadToolResult = z.infer<typeof MuxGlobalAgentsReadToolResultSchema>;
 
+// mux_global_agents_write tool types
 export type MuxGlobalAgentsWriteToolArgs = z.infer<
   typeof TOOL_DEFINITIONS.mux_global_agents_write.schema
 >;

@@ -880,6 +880,7 @@ export class AIService extends EventEmitter {
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback
           recordFileState,
+          onConfigChanged: () => this.providerService.notifyConfigChanged(),
           taskService: this.taskService,
           // PTC experiments for inheritance to subagents
           experiments,

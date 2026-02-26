@@ -1,17 +1,12 @@
 import { z } from "zod";
+import { AgentIdSchema } from "@/common/schemas/ids";
+import { ThinkingLevelSchema } from "../../types/thinking";
 
 export const AgentDefinitionScopeSchema = z.enum(["built-in", "project", "global"]);
 
-// Agent IDs come from filenames (<agentId>.md).
-// Keep constraints conservative so IDs are safe to use in storage keys, URLs, etc.
-export const AgentIdSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/);
+export { AgentIdSchema } from "@/common/schemas/ids";
 
 const AgentDefinitionUiRequirementSchema = z.enum(["plan"]);
-const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 const AgentDefinitionUiSchema = z
   .object({

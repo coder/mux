@@ -5,8 +5,11 @@
  * different AI providers (Anthropic, OpenAI, etc.)
  */
 
+import { z } from "zod";
+
 export const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 /**
  * User-facing display labels for thinking levels.

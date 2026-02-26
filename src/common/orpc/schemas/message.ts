@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ThinkingLevelSchema } from "../../types/thinking";
 import { AgentIdSchema } from "./agentDefinition";
 import { StreamErrorTypeSchema } from "./errors";
 import { AgentSkillScopeSchema, SkillNameSchema } from "./agentSkill";
@@ -112,7 +113,7 @@ export const MuxMessageSchema = z.object({
       historySequence: z.number().optional(),
       timestamp: z.number().optional(),
       model: z.string().optional(),
-      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+      thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       usage: z.any().optional(),
       contextUsage: z.any().optional(),

@@ -63,6 +63,19 @@ import {
   WorkspaceMCPOverridesSchema,
 } from "./mcp";
 import { PolicyGetResponseSchema } from "./policy";
+import {
+  AgentAiDefaultsSchema,
+  SubagentAiDefaultsSchema,
+  UpdateChannelSchema,
+} from "../../config/schemas/appConfigOnDisk";
+import {
+  CacheTtlSchema,
+  CodexOauthDefaultAuthSchema,
+  ServiceTierSchema,
+} from "../../config/schemas/providersConfig";
+import { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
+import { TaskSettingsSchema } from "../../config/schemas/taskSettings";
+import { ThinkingLevelSchema } from "../../types/thinking";
 
 // Experiments
 export const ExperimentValueSchema = z.object({
@@ -88,8 +101,11 @@ export { signing, type SigningCapabilities, type SignatureEnvelope } from "./sig
 
 // Re-export analytics schemas
 export { analytics } from "./analytics";
+export { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
 
 // --- API Router Schemas ---
+
+const BackgroundProcessStatusSchema = z.enum(["running", "exited", "killed", "failed"]);
 
 // Background process info (for UI display)
 export const BackgroundProcessInfoSchema = z.object({
@@ -98,7 +114,7 @@ export const BackgroundProcessInfoSchema = z.object({
   script: z.string(),
   displayName: z.string().optional(),
   startTime: z.number(),
-  status: z.enum(["running", "exited", "killed", "failed"]),
+  status: BackgroundProcessStatusSchema,
   exitCode: z.number().optional(),
 });
 
@@ -134,17 +150,6 @@ export const AWSCredentialStatusSchema = z.object({
   secretAccessKeySet: z.boolean(),
 });
 
-export const ProviderModelEntrySchema = z.union([
-  z.string().min(1),
-  z
-    .object({
-      id: z.string().min(1),
-      contextWindowTokens: z.number().int().positive().optional(),
-      mappedToModel: z.string().min(1).optional(),
-    })
-    .strict(),
-]);
-
 export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
   /** Whether this provider is enabled for model requests */
@@ -154,11 +159,11 @@ export const ProviderConfigInfoSchema = z.object({
   baseUrl: z.string().optional(),
   models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
-  serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
+  serviceTier: ServiceTierSchema.optional(),
   wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
   store: z.boolean().optional(),
   /** Anthropic-specific fields */
-  cacheTtl: z.enum(["5m", "1h"]).optional(),
+  cacheTtl: CacheTtlSchema.optional(),
   disableBetaFeatures: z.boolean().optional(),
   /** OpenAI-only: whether Codex OAuth tokens are present in providers.jsonc */
   codexOauthSet: z.boolean().optional(),
@@ -166,7 +171,7 @@ export const ProviderConfigInfoSchema = z.object({
    * OpenAI-only: default auth precedence to use for Codex-OAuth-allowed models when BOTH
    * ChatGPT OAuth and an OpenAI API key are configured.
    */
-  codexOauthDefaultAuth: z.enum(["oauth", "apiKey"]).optional(),
+  codexOauthDefaultAuth: CodexOauthDefaultAuthSchema.optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */
@@ -1086,7 +1091,7 @@ export const workspace = {
       /** Task-level model string used when running the sub-agent (optional for legacy entries). */
       model: z.string().optional(),
       /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
-      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+      thinkingLevel: ThinkingLevelSchema.optional(),
     }),
   },
   executeBash: {
@@ -1200,7 +1205,7 @@ export const workspace = {
       }),
       output: ResultSchema(
         z.object({
-          status: z.enum(["running", "exited", "killed", "failed"]),
+          status: BackgroundProcessStatusSchema,
           output: z.string(),
           nextOffset: z.number().int().nonnegative(),
           truncatedStart: z.boolean(),
@@ -1573,33 +1578,16 @@ export const serverAuth = {
 };
 
 // Config (global settings)
-const SubagentAiDefaultsEntrySchema = z
-  .object({
-    modelString: z.string().min(1).optional(),
-    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
-
-const AgentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
-const SubagentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
+const ResolvedTaskSettingsSchema = TaskSettingsSchema.required({
+  maxParallelAgentTasks: true,
+  maxTaskNestingDepth: true,
+});
 
 export const config = {
   getConfig: {
     input: z.void(),
     output: z.object({
-      taskSettings: z.object({
-        maxParallelAgentTasks: z.number().int(),
-        maxTaskNestingDepth: z.number().int(),
-        proposePlanImplementReplacesChatHistory: z.boolean().optional(),
-        planSubagentExecutorRouting: z.enum(["exec", "orchestrator", "auto"]).optional(),
-        planSubagentDefaultsToOrchestrator: z.boolean().optional(),
-        bashOutputCompactionMinLines: z.number().int().optional(),
-        bashOutputCompactionMinTotalBytes: z.number().int().optional(),
-        bashOutputCompactionMaxKeptLines: z.number().int().optional(),
-        bashOutputCompactionTimeoutMs: z.number().int().optional(),
-        bashOutputCompactionHeuristicFallback: z.boolean().optional(),
-      }),
+      taskSettings: ResolvedTaskSettingsSchema,
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
       defaultModel: z.string().optional(),
@@ -1617,18 +1605,7 @@ export const config = {
   },
   saveConfig: {
     input: z.object({
-      taskSettings: z.object({
-        maxParallelAgentTasks: z.number().int(),
-        maxTaskNestingDepth: z.number().int(),
-        proposePlanImplementReplacesChatHistory: z.boolean().optional(),
-        planSubagentExecutorRouting: z.enum(["exec", "orchestrator", "auto"]).optional(),
-        planSubagentDefaultsToOrchestrator: z.boolean().optional(),
-        bashOutputCompactionMinLines: z.number().int().optional(),
-        bashOutputCompactionMinTotalBytes: z.number().int().optional(),
-        bashOutputCompactionMaxKeptLines: z.number().int().optional(),
-        bashOutputCompactionTimeoutMs: z.number().int().optional(),
-        bashOutputCompactionHeuristicFallback: z.boolean().optional(),
-      }),
+      taskSettings: ResolvedTaskSettingsSchema.optional(),
       agentAiDefaults: AgentAiDefaultsSchema.optional(),
       // Legacy field (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
@@ -1711,8 +1688,6 @@ export const splashScreens = {
 };
 
 // Update
-export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
-
 export const update = {
   check: {
     input: z.object({ source: z.enum(["auto", "manual"]).optional() }).optional(),
@@ -1754,6 +1729,8 @@ const StatsTabStateSchema = z.object({
   variant: StatsTabVariantSchema,
   override: StatsTabOverrideSchema,
 });
+
+const LogLevelSchema = z.enum(["error", "warn", "info", "debug"]);
 
 // Feature gates (PostHog-backed)
 export const features = {
@@ -1825,7 +1802,7 @@ export const general = {
   },
   subscribeLogs: {
     input: z.object({
-      level: z.enum(["error", "warn", "info", "debug"]).nullish(),
+      level: LogLevelSchema.nullish(),
     }),
     output: eventIterator(
       z.discriminatedUnion("type", [
@@ -1835,7 +1812,7 @@ export const general = {
           entries: z.array(
             z.object({
               timestamp: z.number(),
-              level: z.enum(["error", "warn", "info", "debug"]),
+              level: LogLevelSchema,
               message: z.string(),
               location: z.string(),
             })
@@ -1847,7 +1824,7 @@ export const general = {
           entries: z.array(
             z.object({
               timestamp: z.number(),
-              level: z.enum(["error", "warn", "info", "debug"]),
+              level: LogLevelSchema,
               message: z.string(),
               location: z.string(),
             })

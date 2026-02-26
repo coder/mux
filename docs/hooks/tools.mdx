@@ -389,6 +389,32 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>mux_config_read (3)</summary>
+
+| Env var                       | JSON path       | Type   | Description                                                                                                               |
+| ----------------------------- | --------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_FILE`         | `file`          | enum   | Which configuration file to read                                                                                          |
+| `MUX_TOOL_INPUT_PATH_<INDEX>` | `path[<INDEX>]` | string | Optional path segments to read a specific nested value. If omitted, returns the full config.                              |
+| `MUX_TOOL_INPUT_PATH_COUNT`   | `path.length`   | number | Number of elements in path (Optional path segments to read a specific nested value. If omitted, returns the full config.) |
+
+</details>
+
+<details>
+<summary>mux_config_write (7)</summary>
+
+| Env var                                          | JSON path                           | Type    | Description                                                                   |
+| ------------------------------------------------ | ----------------------------------- | ------- | ----------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_CONFIRM`                         | `confirm`                           | boolean | Must be true to apply the write. Ask the user for confirmation first.         |
+| `MUX_TOOL_INPUT_FILE`                            | `file`                              | enum    | Which configuration file to write                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_OP`           | `operations[<INDEX>].op`            | literal | —                                                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_PATH_<INDEX>` | `operations[<INDEX>].path[<INDEX>]` | string  | —                                                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_PATH_COUNT`   | `operations[<INDEX>].path.length`   | number  | Number of elements in operations[&lt;INDEX&gt;].path                          |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_VALUE`        | `operations[<INDEX>].value`         | unknown | —                                                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_COUNT`                | `operations.length`                 | number  | Number of elements in operations (Operations to apply to the config document) |
+
+</details>
+
+<details>
 <summary>mux_global_agents_write (2)</summary>
 
 | Env var                      | JSON path    | Type    | Description                                                                            |

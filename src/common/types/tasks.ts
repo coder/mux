@@ -1,48 +1,29 @@
+import type {
+  PlanSubagentExecutorRouting,
+  TaskSettings as TaskSettingsOnDisk,
+} from "@/common/config/schemas/taskSettings";
+import {
+  SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
+  TASK_SETTINGS_LIMITS,
+} from "@/common/config/schemas/taskSettings";
+import type {
+  SubagentAiDefaults,
+  SubagentAiDefaultsEntry,
+} from "@/common/config/schemas/appConfigOnDisk";
 import assert from "@/common/utils/assert";
 import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
-export const PLAN_SUBAGENT_EXECUTOR_ROUTING_VALUES = ["exec", "orchestrator", "auto"] as const;
+export type { PlanSubagentExecutorRouting, SubagentAiDefaults, SubagentAiDefaultsEntry };
+export {
+  SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
+  TASK_SETTINGS_LIMITS,
+} from "@/common/config/schemas/taskSettings";
 
-export type PlanSubagentExecutorRouting = (typeof PLAN_SUBAGENT_EXECUTOR_ROUTING_VALUES)[number];
-
-export interface TaskSettings {
-  maxParallelAgentTasks: number;
-  maxTaskNestingDepth: number;
-
-  /**
-   * When enabled, clicking "Implement" in propose_plan first replaces chat history with the plan
-   * (same behavior as "Start Here").
-   */
-  proposePlanImplementReplacesChatHistory?: boolean;
-
-  /** Controls plan sub-agent propose_plan handoff target: Exec, Orchestrator, or auto routing. */
-  planSubagentExecutorRouting?: PlanSubagentExecutorRouting;
-
-  /**
-   * @deprecated Use planSubagentExecutorRouting instead.
-   * Kept for downgrade compatibility with older config files.
-   */
-  planSubagentDefaultsToOrchestrator?: boolean;
-
-  // System 1: bash output compaction (log filtering)
-  bashOutputCompactionMinLines?: number;
-  bashOutputCompactionMinTotalBytes?: number;
-  bashOutputCompactionMaxKeptLines?: number;
-  bashOutputCompactionTimeoutMs?: number;
-  bashOutputCompactionHeuristicFallback?: boolean;
-}
-
-export const TASK_SETTINGS_LIMITS = {
-  maxParallelAgentTasks: { min: 1, max: 256, default: 3 },
-  maxTaskNestingDepth: { min: 1, max: 5, default: 3 },
-} as const;
-
-export const SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS = {
-  bashOutputCompactionMinLines: { min: 0, max: 1_000, default: 10 },
-  bashOutputCompactionMinTotalBytes: { min: 0, max: 16 * 1024, default: 4 * 1024 },
-  bashOutputCompactionMaxKeptLines: { min: 1, max: 1_000, default: 40 },
-  bashOutputCompactionTimeoutMs: { min: 1_000, max: 120_000, default: 5_000 },
-} as const;
+// Normalized runtime settings always include numeric task limits.
+export type TaskSettings = Required<
+  Pick<TaskSettingsOnDisk, "maxParallelAgentTasks" | "maxTaskNestingDepth">
+> &
+  Omit<TaskSettingsOnDisk, "maxParallelAgentTasks" | "maxTaskNestingDepth">;
 
 export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
@@ -62,13 +43,6 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   bashOutputCompactionHeuristicFallback: true,
 };
 
-export interface SubagentAiDefaultsEntry {
-  modelString?: string;
-  thinkingLevel?: ThinkingLevel;
-}
-
-export type SubagentAiDefaults = Record<string, SubagentAiDefaultsEntry>;
-
 export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : ({} as const);
 
@@ -87,7 +61,7 @@ export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
         ? entry.modelString.trim()
         : undefined;
 
-    const thinkingLevel = coerceThinkingLevel(entry.thinkingLevel);
+    const thinkingLevel: ThinkingLevel | undefined = coerceThinkingLevel(entry.thinkingLevel);
 
     if (!modelString && !thinkingLevel) {
       continue;
@@ -113,10 +87,7 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
 export function isPlanSubagentExecutorRouting(
   value: unknown
 ): value is PlanSubagentExecutorRouting {
-  return (
-    typeof value === "string" &&
-    PLAN_SUBAGENT_EXECUTOR_ROUTING_VALUES.some((candidate) => candidate === value)
-  );
+  return value === "exec" || value === "orchestrator" || value === "auto";
 }
 
 export function normalizeTaskSettings(raw: unknown): TaskSettings {

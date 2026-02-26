@@ -1,0 +1,733 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "anthropic": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "cacheTtl": {
+          "type": "string",
+          "enum": ["5m", "1h"]
+        }
+      },
+      "additionalProperties": {}
+    },
+    "openai": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "serviceTier": {
+          "type": "string",
+          "enum": ["auto", "default", "flex", "priority"]
+        },
+        "organization": {
+          "type": "string"
+        },
+        "codexOauthDefaultAuth": {
+          "type": "string",
+          "enum": ["oauth", "apiKey"]
+        },
+        "codexOauth": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "defaultModel": {
+          "type": "string"
+        },
+        "apiVersion": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "bedrock": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "region": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "bearerToken": {
+          "type": "string"
+        },
+        "accessKeyId": {
+          "type": "string"
+        },
+        "secretAccessKey": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "openrouter": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "order": {
+          "type": "string"
+        },
+        "allow_fallbacks": {
+          "type": "boolean"
+        },
+        "only": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "require_parameters": {
+          "type": "boolean"
+        },
+        "data_collection": {
+          "type": "string"
+        },
+        "sort": {
+          "type": "string"
+        },
+        "quantizations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": {}
+    },
+    "xai": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "searchParameters": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": {}
+    },
+    "mux-gateway": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "couponCode": {
+          "type": "string"
+        },
+        "voucher": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {}
+    },
+    "google": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": {}
+    },
+    "deepseek": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": {}
+    },
+    "ollama": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": {}
+    },
+    "github-copilot": {
+      "type": "object",
+      "properties": {
+        "apiKey": {
+          "type": "string"
+        },
+        "baseUrl": {
+          "type": "string"
+        },
+        "baseURL": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contextWindowTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "mappedToModel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": {}
+    }
+  },
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "apiKey": {
+        "type": "string"
+      },
+      "baseUrl": {
+        "type": "string"
+      },
+      "baseURL": {
+        "type": "string"
+      },
+      "headers": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "models": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "contextWindowTokens": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "mappedToModel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": ["id"],
+              "additionalProperties": false
+            }
+          ]
+        }
+      }
+    },
+    "additionalProperties": {}
+  }
+}

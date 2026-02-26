@@ -3,14 +3,7 @@ import { CoderWorkspaceConfigSchema } from "./coder";
 
 export const RuntimeModeSchema = z.enum(["local", "worktree", "ssh", "docker", "devcontainer"]);
 
-export const RuntimeEnablementIdSchema = z.enum([
-  "local",
-  "worktree",
-  "ssh",
-  "coder",
-  "docker",
-  "devcontainer",
-]);
+export { RuntimeEnablementIdSchema } from "@/common/schemas/ids";
 
 /**
  * Runtime configuration union type.

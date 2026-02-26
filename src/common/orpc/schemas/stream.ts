@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AgentIdSchema } from "./agentDefinition";
+import { ThinkingLevelSchema } from "../../types/thinking";
 import { AgentModeSchema } from "../../types/mode";
-import { THINKING_LEVELS } from "../../types/thinking";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
@@ -130,8 +130,6 @@ export const DeleteMessageSchema = z.object({
   type: z.literal("delete"),
   historySequences: z.array(z.number()),
 });
-
-const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
@@ -580,9 +578,9 @@ export const ExperimentsSchema = z.object({
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+  thinkingLevel: ThinkingLevelSchema.optional(),
   model: z.string("No model specified"),
-  system1ThinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+  system1ThinkingLevel: ThinkingLevelSchema.optional(),
   system1Model: z.string().optional(),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),

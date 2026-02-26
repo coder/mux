@@ -3,16 +3,17 @@
  * Kept lightweight for preload script usage.
  */
 
+import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
   ProjectConfigSchema,
   SectionConfigSchema,
   WorkspaceConfigSchema,
 } from "../orpc/schemas";
-import type { TaskSettings, SubagentAiDefaults } from "./tasks";
-import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { AgentAiDefaults } from "./agentAiDefaults";
 import type { RuntimeEnablementId } from "./runtime";
+import type { TaskSettings, SubagentAiDefaults } from "./tasks";
+import type { LayoutPresetsConfig } from "./uiLayouts";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -20,13 +21,7 @@ export type SectionConfig = z.infer<typeof SectionConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
-export type FeatureFlagOverride = "default" | "on" | "off";
-
-/**
- * Update channel preference for Electron desktop app.
- * Keep in sync with `UpdateChannelSchema` in `src/common/orpc/schemas/api.ts`.
- */
-export type UpdateChannel = "stable" | "nightly";
+export type { FeatureFlagOverride, UpdateChannel };
 
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;

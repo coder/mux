@@ -1,8 +1,7 @@
 import { z } from "zod";
+import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
-
-const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 export const WorkspaceMetadataSchema = z.object({
   id: z.string().meta({

@@ -514,6 +514,47 @@ export default defineConfig([
     },
   },
   {
+    // ORPC must import config schemas via direct file paths, never the schemas barrel
+    files: ["src/common/orpc/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/common/config/schemas",
+              message:
+                "Import config schemas via direct file paths (e.g., @/common/config/schemas/appConfigOnDisk), not the barrel.",
+            },
+            {
+              name: "@/common/config/schemas/index",
+              message:
+                "Import config schemas via direct file paths (e.g., @/common/config/schemas/appConfigOnDisk), not the barrel.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Config schemas must remain independent from ORPC schema definitions
+    files: ["src/common/config/schemas/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/common/orpc/schemas/*", "**/orpc/schemas/*"],
+              message:
+                "Config schemas must not import from ORPC; use @/common/schemas/* or @/common/config/schemas/* instead.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Renderer process (frontend) architectural boundary - prevent Node.js API usage
     files: ["src/**/*.ts", "src/**/*.tsx"],
     ignores: [

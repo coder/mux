@@ -1,0 +1,145 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
+import * as jsonc from "jsonc-parser";
+import type { z } from "zod";
+import writeFileAtomic from "write-file-atomic";
+
+import {
+  CONFIG_FILE_REGISTRY,
+  type ConfigDocumentFor,
+  type ConfigFileKey,
+} from "@/common/config/schemaRegistry";
+
+// Tools operate on raw on-disk documents (no Config class normalization), so reads/writes
+// intentionally parse and serialize the exact file formats used on disk.
+const PROVIDERS_JSONC_COMMENT_HEADER = `// Providers configuration for mux
+// Configure your AI providers here
+// Example:
+// {
+//   "anthropic": {
+//     "apiKey": "sk-ant-..."
+//   },
+//   "openai": {
+//     "apiKey": "sk-..."
+//   },
+//   "xai": {
+//     "apiKey": "sk-xai-..."
+//   },
+//   "ollama": {
+//     "baseUrl": "http://localhost:11434/api"  // Optional - only needed for remote/custom URL
+//   }
+// }
+`;
+
+interface JsonParseErrorLike {
+  message?: unknown;
+}
+
+export function getConfigDocumentPath(muxHomeDir: string, fileKey: ConfigFileKey): string {
+  const entry = CONFIG_FILE_REGISTRY[fileKey];
+  return path.join(muxHomeDir, entry.fileName);
+}
+
+export async function readConfigDocument<TKey extends ConfigFileKey>(
+  muxHomeDir: string,
+  fileKey: TKey
+): Promise<ConfigDocumentFor<TKey>> {
+  const entry = CONFIG_FILE_REGISTRY[fileKey];
+  const filePath = getConfigDocumentPath(muxHomeDir, fileKey);
+
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return parseAndValidateDocument(fileKey, entry.schema, {}, `${filePath} (default)`);
+    }
+
+    throw error;
+  }
+
+  const parsed =
+    entry.fileKind === "jsonc"
+      ? parseJsoncDocument(raw, filePath)
+      : parseJsonDocument(raw, filePath);
+
+  return parseAndValidateDocument(fileKey, entry.schema, parsed, filePath);
+}
+
+export async function writeConfigDocument<TKey extends ConfigFileKey>(
+  muxHomeDir: string,
+  fileKey: TKey,
+  document: unknown
+): Promise<ConfigDocumentFor<TKey>> {
+  const entry = CONFIG_FILE_REGISTRY[fileKey];
+  const filePath = getConfigDocumentPath(muxHomeDir, fileKey);
+  const validatedDocument = parseAndValidateDocument(fileKey, entry.schema, document, filePath);
+  const serialized = JSON.stringify(validatedDocument, null, 2);
+
+  await fs.mkdir(muxHomeDir, { recursive: true });
+
+  if (entry.fileKind === "jsonc") {
+    writeFileAtomic.sync(filePath, `${PROVIDERS_JSONC_COMMENT_HEADER}${serialized}`, {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+
+    return validatedDocument;
+  }
+
+  await writeFileAtomic(filePath, serialized, "utf-8");
+  return validatedDocument;
+}
+
+function parseAndValidateDocument<TKey extends ConfigFileKey>(
+  fileKey: TKey,
+  schema: z.ZodTypeAny,
+  document: unknown,
+  sourceLabel: string
+): ConfigDocumentFor<TKey> {
+  const parseResult = schema.safeParse(document);
+  if (parseResult.success) {
+    return parseResult.data as ConfigDocumentFor<TKey>;
+  }
+
+  throw new Error(
+    `Config schema validation failed for "${fileKey}" (${sourceLabel}): ${parseResult.error.message}`
+  );
+}
+
+function parseJsonDocument(raw: string, filePath: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `Unable to parse JSON config at ${filePath}: ${formatParseErrorMessage(error)}`
+    );
+  }
+}
+
+function parseJsoncDocument(raw: string, filePath: string): unknown {
+  const parseErrors: jsonc.ParseError[] = [];
+  const parsed: unknown = jsonc.parse(raw, parseErrors);
+
+  if (parseErrors.length === 0) {
+    return parsed;
+  }
+
+  const firstError = parseErrors[0];
+  const errorCode = jsonc.printParseErrorCode(firstError.error);
+  throw new Error(
+    `Unable to parse JSONC config at ${filePath}: ${errorCode} (offset ${firstError.offset}, length ${firstError.length})`
+  );
+}
+
+function formatParseErrorMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const maybeMessage = (error as JsonParseErrorLike).message;
+    if (typeof maybeMessage === "string") {
+      return maybeMessage;
+    }
+  }
+
+  return "Unknown parsing error";
+}

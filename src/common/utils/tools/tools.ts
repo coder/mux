@@ -26,6 +26,8 @@ import { createAgentSkillWriteTool } from "@/node/services/tools/agent_skill_wri
 import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_delete";
 import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
 import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
+import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
+import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { createSwitchAgentTool } from "@/node/services/tools/switch_agent";
 import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
@@ -82,6 +84,8 @@ export interface ToolConfiguration {
   workspaceId?: string;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => void;
+  /** Callback to notify that provider/config was written (triggers hot-reload). */
+  onConfigChanged?: () => void;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
   /** Enable agent_report tool (only valid for child task workspaces) */
@@ -333,6 +337,8 @@ export async function getToolsForModel(
     agent_skill_list: createAgentSkillListTool(config),
     agent_skill_write: createAgentSkillWriteTool(config),
     agent_skill_delete: createAgentSkillDeleteTool(config),
+    mux_config_read: createMuxConfigReadTool(config),
+    mux_config_write: createMuxConfigWriteTool(config),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     // propose_name is intentionally NOT registered here — it's only used by
