@@ -9,6 +9,7 @@ import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/m
 import { expandProjects } from "./storyHelpers";
 import { createArchivedWorkspace, NOW } from "./mockFactory";
 import type { ProjectConfig } from "@/node/config";
+import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
 /** Helper to create session usage data with a specific total cost */
 function createSessionUsage(cost: number): MockSessionUsage {
@@ -528,15 +529,28 @@ export const SingleProviderConfigured: AppStory = {
  * Verifies the section selector renders on its own row below the
  * project-name / workspace-name header (not crammed into the same line).
  *
- * NOTE: no mobile chromatic modes here because the play function interacts
- * with the sidebar to navigate to the creation view, which doesn't work
- * reliably in Chromatic's mobile viewport (sidebar may be collapsed).
+ * Includes mobile chromatic modes: the sidebar starts expanded via
+ * localStorage so the play function can click the project row, then
+ * collapses it so the creation form is the main visible content.
  */
 export const CreateWorkspaceWithSections: AppStory = {
+  parameters: {
+    chromatic: {
+      modes: {
+        dark: { theme: "dark" },
+        light: { theme: "light" },
+        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
+        "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
+      },
+    },
+  },
   render: () => (
     <AppWithMocks
       setup={() => {
         expandProjects(["/Users/dev/my-project"]);
+        // Ensure the sidebar starts expanded so the play function can click
+        // the project row even in mobile viewport modes.
+        localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
         return createMockORPCClient({
           projects: new Map([
             [
@@ -559,6 +573,16 @@ export const CreateWorkspaceWithSections: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openFirstProjectCreationView(storyRoot);
+
+    // Collapse the sidebar after navigating so the creation form is the
+    // main content in the Chromatic screenshot (especially on mobile).
+    const collapseBtn = storyRoot.querySelector<HTMLElement>(
+      "[data-testid='left-sidebar'] [aria-label='Toggle sidebar']"
+    );
+    if (collapseBtn) {
+      await userEvent.click(collapseBtn);
+    }
+
     const canvas = within(storyRoot);
 
     // Wait for the section selector and assert it renders on its own row
