@@ -294,7 +294,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               vimEnabled ? "font-monospace" : "font-sans",
               "placeholder:text-placeholder",
               "focus:outline-none",
-              trailingAction && "pr-10",
+              trailingAction && "pr-16",
               isEditing
                 ? "bg-editing-mode-alpha border-editing-mode focus:border-editing-mode"
                 : "bg-dark border-border-light focus:border-[var(--focus-border-color)]",

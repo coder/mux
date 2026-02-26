@@ -83,6 +83,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal } from "lucide-react";
+import { AttachFileButton } from "./AttachFileButton";
 import { VimTextArea } from "../VimTextArea";
 import { ChatAttachments, type ChatAttachment } from "../ChatAttachments";
 import {
@@ -1669,6 +1670,40 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setAttachments]
   );
 
+  // Handle files selected via the attach file picker.
+  // Process each file individually so unsupported files (e.g. user switched the
+  // native picker to "All files") don't reject the entire batch — valid files
+  // still get attached and only failures are toasted.
+  const handleAttachFiles = (files: File[]) => {
+    if (editingMessage) {
+      pushToast({
+        type: "error",
+        message: "Attachments cannot be added while editing a message.",
+      });
+      return;
+    }
+    const results = files.map((file) =>
+      processAttachmentFiles([file]).then(
+        (attachments) => ({ ok: true as const, attachments }),
+        (error: unknown) => ({ ok: false as const, error })
+      )
+    );
+    void Promise.all(results).then((outcomes) => {
+      const successes = outcomes.flatMap((o) => (o.ok ? o.attachments : []));
+      if (successes.length > 0) {
+        setAttachments((prev) => [...prev, ...successes]);
+      }
+      for (const outcome of outcomes) {
+        if (!outcome.ok) {
+          const msg =
+            outcome.error instanceof Error ? outcome.error.message : "Failed to process attachment";
+          console.error("Failed to process attached file:", outcome.error);
+          pushToast({ type: "error", message: msg });
+        }
+      }
+    });
+  };
+
   // Shared slash command execution for creation + workspace inputs.
   const commandWorkspaceId = variant === "workspace" ? props.workspaceId : undefined;
   const commandProjectPath =
@@ -2523,10 +2558,27 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     (showAtMentionSuggestions && atMentionSuggestions.length > 0)
                   }
                   className={variant === "creation" ? "min-h-28" : "min-h-16"}
+                  trailingAction={
+                    <div className="flex items-center gap-1">
+                      <AttachFileButton
+                        onFiles={handleAttachFiles}
+                        disabled={disabled || sendInFlightBlocksInput || !!editingMessage}
+                      />
+                      <VoiceInputButton
+                        state={voiceInput.state}
+                        isAvailable={voiceInput.isAvailable}
+                        shouldShowUI={voiceInput.shouldShowUI}
+                        requiresSecureContext={voiceInput.requiresSecureContext}
+                        onToggle={voiceInput.toggle}
+                        disabled={disabled || sendInFlightBlocksInput}
+                        agentColor={focusBorderColor}
+                      />
+                    </div>
+                  }
                 />
                 {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                 {input.trim() === "" && !editingMessage && (
-                  <div className="mobile-hide-shortcut-hints text-muted pointer-events-none absolute right-12 bottom-3 left-2 flex items-center gap-4 text-[11px]">
+                  <div className="mobile-hide-shortcut-hints text-muted pointer-events-none absolute right-18 bottom-3 left-2 flex items-center gap-4 text-[11px]">
                     <span>
                       <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
                       <span> - focus chat</span>
@@ -2543,19 +2595,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     )}
                   </div>
                 )}
-
-                {/* Floating voice input button inside textarea */}
-                <div className="absolute right-2 bottom-2">
-                  <VoiceInputButton
-                    state={voiceInput.state}
-                    isAvailable={voiceInput.isAvailable}
-                    shouldShowUI={voiceInput.shouldShowUI}
-                    requiresSecureContext={voiceInput.requiresSecureContext}
-                    onToggle={voiceInput.toggle}
-                    disabled={disabled || sendInFlightBlocksInput}
-                    agentColor={focusBorderColor}
-                  />
-                </div>
               </>
             )}
           </div>
