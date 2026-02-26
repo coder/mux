@@ -8,6 +8,7 @@ import { APICallError, RetryError, type ModelMessage } from "ai";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { countTokens } from "@/node/utils/main/tokenizer";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
@@ -938,7 +939,6 @@ describe("StreamManager - TTFT metadata persistence", () => {
       totalTokens: number;
       reasoningTokens?: number;
     };
-    reasoningTokensByDelta?: number;
   }) {
     const streamManager = new StreamManager(historyService);
     // Suppress error events from bubbling up as uncaught exceptions during tests
@@ -1003,7 +1003,6 @@ describe("StreamManager - TTFT metadata persistence", () => {
       runtimeTempDir: "",
       runtime,
       cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      reasoningTokensByDelta: params.reasoningTokensByDelta ?? 0,
       cumulativeProviderMetadata: undefined,
       didRetryPreviousResponseIdAtStep: false,
       currentStepStartIndex: 0,
@@ -1078,20 +1077,30 @@ describe("StreamManager - TTFT metadata persistence", () => {
   });
 
   describe("StreamManager - reasoning token backfill", () => {
-    test("backfills reasoningTokens from delta count when provider reports undefined", async () => {
+    test("backfills reasoningTokens from concatenated reasoning text when provider reports undefined", async () => {
       const startTime = Date.now() - 1000;
+      const reasoningSegments = ["Thinking through ", "tradeoffs"];
+      const expectedReasoningTokens = await countTokens(
+        KNOWN_MODELS.SONNET.id,
+        reasoningSegments.join("")
+      );
+
       const updatedMessage = await finalizeStreamAndReadMessage({
         workspaceId: "reasoning-backfill-workspace",
         messageId: "reasoning-backfill-message",
         historySequence: 1,
         startTime,
         usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-        reasoningTokensByDelta: 42,
         parts: [
           {
             type: "reasoning",
-            text: "Thinking through tradeoffs",
+            text: reasoningSegments[0],
             timestamp: startTime + 100,
+          },
+          {
+            type: "reasoning",
+            text: reasoningSegments[1],
+            timestamp: startTime + 150,
           },
           {
             type: "text",
@@ -1101,7 +1110,7 @@ describe("StreamManager - TTFT metadata persistence", () => {
         ],
       });
 
-      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBe(42);
+      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBe(expectedReasoningTokens);
     });
 
     test("preserves provider-reported reasoningTokens when present", async () => {
@@ -1112,7 +1121,6 @@ describe("StreamManager - TTFT metadata persistence", () => {
         historySequence: 1,
         startTime,
         usage: { inputTokens: 100, outputTokens: 250, totalTokens: 350, reasoningTokens: 200 },
-        reasoningTokensByDelta: 190,
         parts: [
           {
             type: "reasoning",
@@ -1138,7 +1146,6 @@ describe("StreamManager - TTFT metadata persistence", () => {
         historySequence: 1,
         startTime,
         usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-        reasoningTokensByDelta: 0,
         parts: [
           {
             type: "text",

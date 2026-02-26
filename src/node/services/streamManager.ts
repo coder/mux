@@ -330,10 +330,6 @@ interface WorkspaceStreamInfo {
   runtime: Runtime;
   // Cumulative usage across all steps (for live cost display during streaming)
   cumulativeUsage: LanguageModelV2Usage;
-  // Tokenizer-counted reasoning tokens accumulated during streaming.
-  // Used to backfill usage.reasoningTokens when the provider SDK doesn't report it
-  // (e.g., @ai-sdk/anthropic sets reasoning: undefined).
-  reasoningTokensByDelta: number;
   // Cumulative provider metadata across all steps (for live cost display with cache tokens)
   cumulativeProviderMetadata?: Record<string, unknown>;
   // Last step's usage (for context window display during streaming)
@@ -684,6 +680,35 @@ export class StreamManager extends EventEmitter {
     return totalUsage;
   }
 
+  private async backfillReasoningTokensFromParts(
+    streamInfo: Pick<WorkspaceStreamInfo, "parts" | "metadataModel" | "model">,
+    usage: LanguageModelV2Usage | undefined
+  ): Promise<void> {
+    // Backfill reasoningTokens from the full reasoning text when the provider
+    // doesn't report them. @ai-sdk/anthropic sets reasoning: undefined even for
+    // extended-thinking models. Tokenizing concatenated text (not per-delta
+    // sums) avoids BPE chunk-boundary inflation.
+    if (!usage || usage.reasoningTokens) {
+      return;
+    }
+
+    const reasoningText = streamInfo.parts
+      .filter(
+        (part): part is Extract<CompletedMessagePart, { type: "reasoning" }> =>
+          part.type === "reasoning"
+      )
+      .map((part) => part.text)
+      .join("");
+    if (!reasoningText) {
+      return;
+    }
+
+    usage.reasoningTokens = await countTokens(
+      streamInfo.metadataModel ?? streamInfo.model,
+      reasoningText
+    );
+  }
+
   private resolveTtftMsForStreamEnd(streamInfo: WorkspaceStreamInfo): number | undefined {
     const firstTokenPart = streamInfo.parts.find(
       (
@@ -809,17 +834,6 @@ export class StreamManager extends EventEmitter {
       });
     } else if (part.type === "reasoning") {
       const tokens = await this.tokenTracker.countTokens(part.text);
-      if (!isReplay) {
-        const streamInfo = this.workspaceStreams.get(workspaceId);
-        if (streamInfo) {
-          // Use metadataModel (provider-mapped model) when available for accurate
-          // tokenizer selection, matching how StreamingTokenTracker.setModel resolves.
-          streamInfo.reasoningTokensByDelta += await countTokens(
-            streamInfo.metadataModel ?? streamInfo.model,
-            part.text
-          );
-        }
-      }
       this.emit("reasoning-delta", {
         type: "reasoning-delta",
         workspaceId: workspaceId as string,
@@ -963,9 +977,7 @@ export class StreamManager extends EventEmitter {
     const duration = Date.now() - streamInfo.startTime;
     const hasCumulativeUsage = (streamInfo.cumulativeUsage.totalTokens ?? 0) > 0;
     const usage = hasCumulativeUsage ? streamInfo.cumulativeUsage : undefined;
-    if (usage && !usage.reasoningTokens && streamInfo.reasoningTokensByDelta > 0) {
-      usage.reasoningTokens = streamInfo.reasoningTokensByDelta;
-    }
+    await this.backfillReasoningTokensFromParts(streamInfo, usage);
 
     // For context window display, use last step's usage (inputTokens = current context size)
     const contextUsage = streamInfo.lastStepUsage;
@@ -1315,7 +1327,6 @@ export class StreamManager extends EventEmitter {
       runtime, // Runtime for temp directory cleanup
       // Initialize cumulative tracking for multi-step streams
       cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      reasoningTokensByDelta: 0,
       cumulativeProviderMetadata: undefined,
     };
 
@@ -1972,17 +1983,7 @@ export class StreamManager extends EventEmitter {
               streamInfo,
               streamMeta.totalUsage
             );
-            // Backfill reasoningTokens from tokenizer-counted deltas when provider
-            // doesn't report them. @ai-sdk/anthropic sets reasoning: undefined even
-            // for extended-thinking models; our per-delta tokenizer count is the best
-            // available signal.
-            if (
-              totalUsage &&
-              !totalUsage.reasoningTokens &&
-              streamInfo.reasoningTokensByDelta > 0
-            ) {
-              totalUsage.reasoningTokens = streamInfo.reasoningTokensByDelta;
-            }
+            await this.backfillReasoningTokensFromParts(streamInfo, totalUsage);
             const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
             const contextProviderMetadata =
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
@@ -2348,7 +2349,6 @@ export class StreamManager extends EventEmitter {
 
     if (!preserveUsage) {
       streamInfo.cumulativeUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-      streamInfo.reasoningTokensByDelta = 0;
       streamInfo.cumulativeProviderMetadata = undefined;
       streamInfo.lastStepUsage = undefined;
       streamInfo.lastStepProviderMetadata = undefined;
