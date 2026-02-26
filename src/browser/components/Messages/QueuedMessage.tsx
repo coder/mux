@@ -51,10 +51,10 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
           data-component="QueuedMessageCard"
         >
           <div>
-            <span className="text-muted shrink-0 text-[11px] font-semibold uppercase tracking-wide">
+            <span className="text-muted shrink-0 text-[11px] font-semibold tracking-wide uppercase">
               Queued
             </span>
-            <div className="text-secondary mt-0.5 whitespace-pre-wrap break-words text-xs">
+            <div className="text-secondary mt-0.5 text-xs break-words whitespace-pre-wrap">
               {previewText}
             </div>
           </div>
