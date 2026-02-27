@@ -124,17 +124,17 @@ export function useAutoScroll() {
     const threshold = 100;
     const isAtBottom = element.scrollHeight - currentScrollTop - element.clientHeight < threshold;
 
-    // Safety net: when auto-scroll is disabled and *downward* scrolling stops at
-    // the bottom, re-enable it. Only armed on downward movement so that a small
-    // upward scroll near the bottom (< threshold) doesn't get its disable undone.
-    // The 150ms debounce is long enough that upward momentum from the bottom will
-    // keep resetting the timer before it fires.
+    // Safety net: when auto-scroll is disabled and scrolling stops at the bottom,
+    // re-enable it. Only armed on downward movement, but NOT cleared on upward
+    // events — on iOS, rubber-band bounce and momentum deceleration produce
+    // upward scroll events at the tail end, which would cancel the timer and
+    // prevent recovery. The timer always re-checks position when it fires, so
+    // stale timers from earlier downward events are harmless.
     const isMovingDown = currentScrollTop > lastScrollTopRef.current;
-    if (scrollSettledTimerRef.current) {
-      clearTimeout(scrollSettledTimerRef.current);
-      scrollSettledTimerRef.current = null;
-    }
     if (!autoScrollRef.current && isMovingDown && !programmaticDisableRef.current) {
+      if (scrollSettledTimerRef.current) {
+        clearTimeout(scrollSettledTimerRef.current);
+      }
       scrollSettledTimerRef.current = setTimeout(() => {
         scrollSettledTimerRef.current = null;
         if (contentRef.current && !autoScrollRef.current) {
