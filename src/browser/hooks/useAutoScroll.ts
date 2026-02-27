@@ -160,8 +160,13 @@ export function useAutoScroll() {
     const isScrollingUp = currentScrollTop < lastScrollTopRef.current;
     const isScrollingDown = currentScrollTop > lastScrollTopRef.current;
 
-    if (isScrollingUp) {
-      // Always disable auto-scroll when scrolling up
+    if (isScrollingUp && !isAtBottom) {
+      // Disable auto-scroll when scrolling up, but NOT when we're still within
+      // the bottom threshold. On iOS, rubber-band overscroll at the bottom causes
+      // scrollTop to bounce past the max and then decrease back — this looks like
+      // "scrolling up" but the user is actually at the bottom. Without the
+      // isAtBottom guard, this bounce-back falsely disables auto-scroll and shows
+      // the jump-to-bottom button permanently.
       setAutoScroll(false);
       autoScrollRef.current = false;
     } else if (isScrollingDown && isAtBottom) {
