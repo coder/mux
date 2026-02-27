@@ -709,6 +709,8 @@ const RAW_QUERY_DISALLOWED_PATTERNS: RegExp[] = [
   /(^|[;(])\s*set\b/i,
 ];
 
+const RAW_QUERY_REPLACEMENT_SCAN_PATTERN = /\b(?:FROM|JOIN)\s+['"]/i;
+
 function maskRawQueryLiteralsAndComments(sql: string): string {
   const characters = Array.from(sql);
   let index = 0;
@@ -775,11 +777,18 @@ function maskRawQueryLiteralsAndComments(sql: string): string {
 
 /**
  * Security model for raw analytics SQL validation:
- * 1) mask literals/comments before regex matching,
- * 2) block dangerous functions/statements via RAW_QUERY_DISALLOWED_PATTERNS,
- * 3) rely on executeRawQuery subquery wrapping plus read-only DuckDB connections.
+ * 1) block DuckDB replacement scans that use string literals as table sources,
+ * 2) mask literals/comments before regex matching,
+ * 3) block dangerous functions/statements via RAW_QUERY_DISALLOWED_PATTERNS,
+ * 4) rely on executeRawQuery subquery wrapping plus read-only DuckDB connections.
  */
 function validateRawQuerySql(cleanSql: string): void {
+  if (RAW_QUERY_REPLACEMENT_SCAN_PATTERN.test(cleanSql)) {
+    throw new Error(
+      "String literals cannot be used as table sources (DuckDB replacement scans are not allowed)"
+    );
+  }
+
   const masked = maskRawQueryLiteralsAndComments(cleanSql);
 
   for (const pattern of RAW_QUERY_DISALLOWED_PATTERNS) {

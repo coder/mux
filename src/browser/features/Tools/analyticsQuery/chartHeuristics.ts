@@ -61,6 +61,7 @@ export function inferAxes(
   const numericColumns = columns
     .filter((column) => isNumericType(column.type))
     .map((column) => column.name);
+  const numericColumnNames = new Set(numericColumns);
 
   const xAxis =
     (explicitX && allColumnNames.has(explicitX) ? explicitX : undefined) ??
@@ -70,7 +71,7 @@ export function inferAxes(
 
   const explicitNumericYAxes =
     explicitY
-      ?.filter((columnName) => allColumnNames.has(columnName))
+      ?.filter((columnName) => numericColumnNames.has(columnName))
       .filter((columnName) => columnName !== xAxis) ?? [];
 
   const inferredNumericYAxes = numericColumns.filter((columnName) => columnName !== xAxis);

@@ -127,6 +127,19 @@ describe("inferAxes", () => {
     });
   });
 
+  test("falls back to inferred numeric y-axes when explicit y-axis hints are non-numeric", () => {
+    const columns: ColumnMeta[] = [
+      { name: "bucket", type: "DATE" },
+      { name: "model", type: "VARCHAR" },
+      { name: "total_cost_usd", type: "DOUBLE" },
+    ];
+
+    expect(inferAxes(columns, "bucket", ["model"])).toEqual({
+      xAxis: "bucket",
+      yAxes: ["total_cost_usd"],
+    });
+  });
+
   test("infers non-numeric x-axis and numeric y-axes", () => {
     const columns: ColumnMeta[] = [
       { name: "model", type: "VARCHAR" },
