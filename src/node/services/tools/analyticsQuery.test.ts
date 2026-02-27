@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
-import { createAnalyticsQueryTool } from "./analyticsQuery";
+import { createAnalyticsQueryTool, TOOL_RESULT_ROW_LIMIT } from "./analyticsQuery";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
 const mockToolCallOptions: ToolExecutionOptions = {
@@ -105,6 +105,48 @@ describe("createAnalyticsQueryTool", () => {
       success: false,
       error: "SQL parse error at line 1",
     });
+  });
+
+  test("caps rows at TOOL_RESULT_ROW_LIMIT and sets truncated flag", async () => {
+    using tempDir = new TestTempDir("analytics-query-tool-row-cap");
+    const config = createTestToolConfig(tempDir.path);
+
+    // Generate rows exceeding the tool result limit
+    const oversizedRows = Array.from({ length: TOOL_RESULT_ROW_LIMIT + 50 }, (_, i) => ({
+      id: i,
+      value: i * 0.01,
+    }));
+
+    const executeRawQuery = mock(() =>
+      Promise.resolve({
+        columns: [
+          { name: "id", type: "INTEGER" },
+          { name: "value", type: "DOUBLE" },
+        ],
+        rows: oversizedRows,
+        truncated: false,
+        rowCount: oversizedRows.length,
+        durationMs: 3,
+      })
+    );
+
+    const tool = createAnalyticsQueryTool({
+      ...config,
+      analyticsService: { executeRawQuery },
+    });
+
+    const result = (await tool.execute!({ sql: "SELECT * FROM events" }, mockToolCallOptions)) as {
+      success: boolean;
+      rows: unknown[];
+      rowCount: number;
+      truncated: boolean;
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.rows).toHaveLength(TOOL_RESULT_ROW_LIMIT);
+    // rowCount reflects the full query result size, not the capped size
+    expect(result.rowCount).toBe(TOOL_RESULT_ROW_LIMIT + 50);
+    expect(result.truncated).toBe(true);
   });
 
   test("throws when analyticsService is missing from configuration", async () => {
