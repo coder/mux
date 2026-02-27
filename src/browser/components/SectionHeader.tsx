@@ -123,8 +123,8 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         </button>
       )}
 
-      {/* Action Buttons (visible on hover) */}
-      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100">
+      {/* Action Buttons — color/rename/delete are hover-only (hidden + non-interactive on touch) */}
+      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none">
         {/* Color Picker */}
         <div className="relative" ref={colorPickerRef}>
           <Tooltip>
@@ -215,21 +215,21 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
           </TooltipTrigger>
           <TooltipContent>Delete section</TooltipContent>
         </Tooltip>
-
-        {/* Add Workspace */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={onAddWorkspace}
-              className="text-secondary hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-sm transition-colors"
-              aria-label="New workspace in section"
-            >
-              +
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>New workspace</TooltipContent>
-        </Tooltip>
       </div>
+
+      {/* Add Workspace — always visible on touch devices */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={onAddWorkspace}
+            className="text-secondary hover:text-foreground hover:bg-hover flex h-5 w-5 cursor-pointer items-center justify-center rounded border-none bg-transparent p-0 text-sm opacity-0 transition-[colors,opacity] group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:opacity-100"
+            aria-label="New workspace in section"
+          >
+            +
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>New workspace</TooltipContent>
+      </Tooltip>
     </div>
   );
 };
