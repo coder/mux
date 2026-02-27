@@ -188,8 +188,9 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
-      # Clean up sandboxes created during this run only (compare against
-      # pre-run snapshot to avoid deleting sandboxes from parallel jobs).
+      # Clean up sandboxes created during this run. Compares against the
+      # pre-run snapshot and only deletes stopped/errored sandboxes, so
+      # active sandboxes from parallel jobs are never touched.
       - name: Cleanup Daytona sandboxes
         if: always() && inputs.env == 'daytona'
         env:
@@ -199,21 +200,29 @@ jobs:
             echo "No DAYTONA_API_KEY, skipping cleanup"
             exit 0
           fi
+          if [ ! -f /tmp/daytona-pre-existing.txt ]; then
+            echo "No pre-run snapshot found, skipping cleanup to avoid deleting unrelated sandboxes"
+            exit 0
+          fi
           pip install --quiet daytona
           python3 -c "
+          import os
           from daytona import Daytona
-          pre_existing = set()
-          try:
-              with open('/tmp/daytona-pre-existing.txt') as f:
-                  pre_existing = {line.strip() for line in f if line.strip()}
-          except FileNotFoundError:
-              pass
+          with open('/tmp/daytona-pre-existing.txt') as f:
+              pre_existing = {line.strip() for line in f if line.strip()}
           d = Daytona()
-          to_delete = [sb for sb in d.list() if sb.id not in pre_existing]
+          # Only consider sandboxes created after our snapshot (not pre-existing)
+          # and only delete ones that are no longer running (safe for parallel jobs).
+          ACTIVE_STATES = {'started', 'creating', 'starting'}
+          candidates = [sb for sb in d.list() if sb.id not in pre_existing]
+          to_delete = [sb for sb in candidates if str(sb.state).lower() not in ACTIVE_STATES]
+          skipped = len(candidates) - len(to_delete)
+          if skipped:
+              print(f'Skipping {skipped} still-active sandbox(es)')
           if not to_delete:
-              print('No new sandboxes to clean up')
+              print('No stopped sandboxes to clean up')
           else:
-              print(f'Found {len(to_delete)} sandbox(es) created during this run, cleaning up...')
+              print(f'Cleaning up {len(to_delete)} stopped sandbox(es) from this run...')
               for sb in to_delete:
                   try:
                       print(f'  Deleting {sb.id} (state={sb.state})...')
