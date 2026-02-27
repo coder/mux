@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { cleanup, render, waitFor } from "@testing-library/react";
+import { installDom } from "../../../../tests/ui/dom";
 
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { consumeWorkspaceModelChange } from "@/browser/utils/modelChange";
@@ -15,6 +15,8 @@ import {
 import { WorkspaceModeAISync } from "../WorkspaceModeAISync/WorkspaceModeAISync";
 
 let workspaceCounter = 0;
+
+let cleanupDom: (() => void) | null = null;
 
 function nextWorkspaceId(): string {
   workspaceCounter += 1;
@@ -52,17 +54,14 @@ function renderSync(props: { workspaceId: string; agentId: string }) {
 
 describe("WorkspaceModeAISync", () => {
   beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-    globalThis.localStorage = globalThis.window.localStorage;
+    cleanupDom = installDom();
     globalThis.localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-    globalThis.localStorage = undefined as unknown as Storage;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("only records explicit model changes when agentId changes", async () => {

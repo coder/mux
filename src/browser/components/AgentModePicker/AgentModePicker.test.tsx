@@ -1,7 +1,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { installDom } from "../../../../tests/ui/dom";
 
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
@@ -62,17 +62,18 @@ const defaultContextProps = {
   setDisableWorkspaceAgents: noop,
 };
 
+let cleanupDom: (() => void) | null = null;
+
 describe("AgentModePicker", () => {
   beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
     globalThis.window.localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("renders a stable label for explore before agent definitions load", () => {

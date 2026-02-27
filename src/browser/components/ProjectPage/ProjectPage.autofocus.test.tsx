@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
+import { installDom } from "../../../../tests/ui/dom";
 
+let cleanupDom: (() => void) | null = null;
 let focusMock: ReturnType<typeof mock> | null = null;
 let readyCalls = 0;
 
@@ -87,9 +88,7 @@ import { ProjectPage } from "../ProjectPage/ProjectPage";
 
 describe("ProjectPage", () => {
   beforeEach(() => {
-    const dom = new GlobalWindow();
-    globalThis.window = dom as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
 
     readyCalls = 0;
     focusMock = mock(() => undefined);
@@ -97,9 +96,9 @@ describe("ProjectPage", () => {
 
   afterEach(() => {
     cleanup();
+    cleanupDom?.();
+    cleanupDom = null;
     focusMock = null;
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
   });
 
   test("auto-focuses the creation input only once even if ChatInput re-initializes", async () => {
