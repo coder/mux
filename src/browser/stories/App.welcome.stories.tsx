@@ -583,21 +583,24 @@ export const CreateWorkspaceWithSections: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    await openFirstProjectCreationView(storyRoot);
 
-    // On mobile, handleAddWorkspace auto-collapses the sidebar after the
-    // project click. On desktop it stays open — collapse it so the creation
-    // form dominates the Chromatic screenshot.
-    const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
-    const sidebarIsExpanded = sidebar && sidebar.getBoundingClientRect().width > 40;
-    if (sidebarIsExpanded) {
-      const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Collapse sidebar']");
-      if (collapseBtn) {
-        await userEvent.click(collapseBtn);
-      }
-    }
-
+    // Wrap the entire interaction in try/finally so localStorage cleanup
+    // runs even if navigation or assertions fail (prevents cross-story leaks).
     try {
+      await openFirstProjectCreationView(storyRoot);
+
+      // On mobile, handleAddWorkspace auto-collapses the sidebar after the
+      // project click. On desktop it stays open — collapse it so the creation
+      // form dominates the Chromatic screenshot.
+      const sidebar = storyRoot.querySelector<HTMLElement>("[data-testid='left-sidebar']");
+      const sidebarIsExpanded = sidebar && sidebar.getBoundingClientRect().width > 40;
+      if (sidebarIsExpanded) {
+        const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Collapse sidebar']");
+        if (collapseBtn) {
+          await userEvent.click(collapseBtn);
+        }
+      }
+
       // Wait for the section selector to be visible. Two instances exist in
       // the DOM (one for desktop inline, one for mobile own-row via
       // hidden/md:hidden). Find the one that's actually rendered.
