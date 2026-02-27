@@ -33,7 +33,7 @@ interface DynamicChartProps {
   onDrillDown?: (context: DrillDownContext) => void;
 }
 
-type ChartRow = Record<string, string | number>;
+type ChartRow = Record<string, string | number | null>;
 
 function normalizeChartRows(data: Array<Record<string, unknown>>, yAxes: string[]): ChartRow[] {
   const rows: ChartRow[] = [];
@@ -60,13 +60,16 @@ function normalizeChartRows(data: Array<Record<string, unknown>>, yAxes: string[
     }
 
     // DuckDB sometimes returns numeric-looking values as strings. Normalize Y axes to numbers
-    // so recharts can scale them reliably.
+    // so recharts can scale them reliably while preserving NULLs as gaps.
     for (const yAxis of yAxes) {
       const raw = row[yAxis];
-      const numericValue = typeof raw === "number" ? raw : Number(raw);
-      if (Number.isFinite(numericValue)) {
-        normalized[yAxis] = numericValue;
+      if (raw === null || raw === undefined) {
+        normalized[yAxis] = null;
+        continue;
       }
+
+      const numericValue = typeof raw === "number" ? raw : Number(raw);
+      normalized[yAxis] = Number.isFinite(numericValue) ? numericValue : null;
     }
 
     rows.push(normalized);

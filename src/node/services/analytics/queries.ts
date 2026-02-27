@@ -680,8 +680,11 @@ export async function executeRawQuery(
     "executeRawQuery requires non-empty SQL"
   );
 
+  const cleanSql = sql.trim().replace(/;+$/, "").trim();
+  assert(cleanSql.length > 0, "executeRawQuery requires SQL with at least one statement");
+
   const fetchLimit = RAW_QUERY_ROW_LIMIT + 1;
-  const wrappedSql = `SELECT * FROM (${sql}) AS __q LIMIT ${fetchLimit}`;
+  const wrappedSql = `SELECT * FROM (${cleanSql}) AS __q LIMIT ${fetchLimit}`;
 
   const startMs = performance.now();
   const result = await conn.run(wrappedSql);

@@ -105,6 +105,22 @@ describe("executeRawQuery", () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  test("strips trailing semicolons before wrapping SQL", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "value", type: "INTEGER" }],
+        rows: [{ value: 1 }],
+      })
+    );
+
+    const result = await executeRawQuery(conn, "  SELECT value FROM sample_table;;   ");
+
+    expect(runMock).toHaveBeenCalledWith(
+      "SELECT * FROM (SELECT value FROM sample_table) AS __q LIMIT 10001"
+    );
+    expect(result.rows).toEqual([{ value: 1 }]);
+  });
+
   test("throws when SQL execution fails", async () => {
     const { conn } = createMockConn(() => {
       throw new Error("Parser Error: syntax error at or near FRM");
