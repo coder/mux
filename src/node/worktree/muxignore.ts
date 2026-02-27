@@ -34,8 +34,19 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
   // but git pathspec treats a leading slash as an absolute filesystem path.
   // Normalize to repo-relative pathspecs for prefiltering.
   const includePathspecs = includePatterns
-    .map((pattern) => pattern.replace(/^\.\//, "").replace(/^\/+/, ""))
-    .filter((pattern) => pattern.length > 0);
+    .flatMap((pattern) => {
+      const normalized = pattern.replace(/^\.\//, "").replace(/^\/+/, "");
+      if (normalized.length === 0) return [];
+
+      // gitignore-style basename patterns (no slash) match at any depth.
+      // Add both root and recursive pathspecs so prefiltering preserves that behavior.
+      if (!normalized.includes("/")) {
+        return [normalized, `**/${normalized}`];
+      }
+
+      return [normalized];
+    })
+    .filter((pattern, index, all) => all.indexOf(pattern) === index);
   if (includePathspecs.length === 0) return [];
 
   using proc = execFileAsync("git", [

@@ -83,6 +83,20 @@ describe("syncMuxignoreFiles", () => {
     expect(copied).toBe("SECRET=abc\n");
   });
 
+  it("matches basename patterns recursively across subdirectories", async () => {
+    execSync(
+      [`cd ${projectPath}`, "mkdir -p packages/api", 'echo "NESTED=true" > packages/api/.env'].join(
+        " && "
+      )
+    );
+    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!.env\n");
+
+    await syncMuxignoreFiles(projectPath, worktreePath);
+
+    const nested = await fsPromises.readFile(path.join(worktreePath, "packages/api/.env"), "utf-8");
+    expect(nested).toBe("NESTED=true\n");
+  });
+
   it("does nothing when .muxignore is missing", async () => {
     // No .muxignore — should silently return
     await syncMuxignoreFiles(projectPath, worktreePath);
