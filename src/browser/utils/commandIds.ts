@@ -26,6 +26,7 @@ export const CommandIds = {
   workspaceRemoveAny: () => "ws:remove-any" as const,
   workspaceEditTitle: () => "ws:edit-title" as const,
   workspaceEditTitleAny: () => "ws:edit-title-any" as const,
+  workspaceChangeSSHHost: () => "ws:change-ssh-host" as const,
   workspaceGenerateTitle: () => "ws:generate-title" as const,
   workspaceOpenTerminal: () => "ws:open-terminal" as const,
   workspaceOpenTerminalCurrent: () => "ws:open-terminal-current" as const,

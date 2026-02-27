@@ -96,6 +96,7 @@ function AppInner() {
     setWorkspaceMetadata,
     removeWorkspace,
     updateWorkspaceTitle,
+    updateWorkspaceRuntimeConfig,
     refreshWorkspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace,
@@ -571,6 +572,20 @@ function AppInner() {
     [updateWorkspaceTitle]
   );
 
+  const changeSSHHostFromPalette = useCallback(
+    async (workspaceId: string, newHost: string) => {
+      const meta = workspaceMetadata.get(workspaceId);
+      if (meta?.runtimeConfig?.type !== "ssh") {
+        return { success: false, error: "Workspace is not an SSH workspace" };
+      }
+      return updateWorkspaceRuntimeConfig(workspaceId, {
+        ...meta.runtimeConfig,
+        host: newHost,
+      });
+    },
+    [workspaceMetadata, updateWorkspaceRuntimeConfig]
+  );
+
   const addProjectFromPalette = useCallback(() => {
     openProjectCreateModal();
   }, [openProjectCreateModal]);
@@ -606,6 +621,7 @@ function AppInner() {
     onSelectWorkspace: selectWorkspaceFromPalette,
     onRemoveWorkspace: removeWorkspaceFromPalette,
     onUpdateTitle: updateTitleFromPalette,
+    onChangeSSHHost: changeSSHHostFromPalette,
     onAddProject: addProjectFromPalette,
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,

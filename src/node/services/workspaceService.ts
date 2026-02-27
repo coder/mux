@@ -2341,6 +2341,52 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async updateRuntimeConfig(
+    workspaceId: string,
+    runtimeConfig: RuntimeConfig
+  ): Promise<Result<void>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const { projectPath, workspacePath } = workspace;
+
+      // Use editConfig with path-fallback (same pattern as updateTitle) so
+      // legacy workspaces that don't yet have w.id in config are still found.
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (projectConfig) {
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
+          if (workspaceEntry) {
+            workspaceEntry.runtimeConfig = runtimeConfig;
+          }
+        }
+        return config;
+      });
+
+      // Emit updated metadata (same pattern as updateTitle)
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(enrichedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+        }
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to update runtime config: ${message}`);
+    }
+  }
+
   /**
    * Regenerate the workspace title from chat history using AI.
    * Uses the first user message as the durable objective, plus a context block with

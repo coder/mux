@@ -2604,6 +2604,15 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
         }),
+      updateRuntimeConfig: t
+        .input(schemas.workspace.updateRuntimeConfig.input)
+        .output(schemas.workspace.updateRuntimeConfig.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateRuntimeConfig(
+            input.workspaceId,
+            input.runtimeConfig
+          );
+        }),
       regenerateTitle: t
         .input(schemas.workspace.regenerateTitle.input)
         .output(schemas.workspace.regenerateTitle.output)

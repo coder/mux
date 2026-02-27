@@ -432,6 +432,10 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
     workspaceId: string,
     newTitle: string
   ) => Promise<{ success: boolean; error?: string }>;
+  updateWorkspaceRuntimeConfig: (
+    workspaceId: string,
+    runtimeConfig: RuntimeConfig
+  ) => Promise<{ success: boolean; error?: string }>;
   archiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   unarchiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   refreshWorkspaceMetadata: () => Promise<void>;
@@ -1247,6 +1251,29 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [api]
   );
 
+  const updateWorkspaceRuntimeConfig = useCallback(
+    async (
+      workspaceId: string,
+      runtimeConfig: RuntimeConfig
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
+      try {
+        const result = await api.workspace.updateRuntimeConfig({ workspaceId, runtimeConfig });
+        if (result.success) {
+          return { success: true };
+        } else {
+          console.error("Failed to update runtime config:", result.error);
+          return { success: false, error: result.error };
+        }
+      } catch (error) {
+        const errorMessage = getErrorMessage(error);
+        console.error("Failed to update runtime config:", errorMessage);
+        return { success: false, error: errorMessage };
+      }
+    },
+    [api]
+  );
+
   const archiveWorkspace = useCallback(
     async (workspaceId: string): Promise<{ success: boolean; error?: string }> => {
       if (!api) return { success: false, error: "API not connected" };
@@ -1520,6 +1547,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       createWorkspace,
       removeWorkspace,
       updateWorkspaceTitle,
+      updateWorkspaceRuntimeConfig,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,
@@ -1543,6 +1571,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       createWorkspace,
       removeWorkspace,
       updateWorkspaceTitle,
+      updateWorkspaceRuntimeConfig,
       archiveWorkspace,
       unarchiveWorkspace,
       refreshWorkspaceMetadata,

@@ -74,6 +74,10 @@ export interface BuildSourcesParams {
     workspaceId: string,
     newName: string
   ) => Promise<{ success: boolean; error?: string }>;
+  onChangeSSHHost: (
+    workspaceId: string,
+    newHost: string
+  ) => Promise<{ success: boolean; error?: string }>;
   onAddProject: () => void;
   onRemoveProject: (path: string) => void;
   onToggleSidebar: () => void;
@@ -451,6 +455,56 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           },
         },
       });
+
+      // Change SSH host (only visible when SSH workspaces exist)
+      const sshWorkspaces = Array.from(p.workspaceMetadata.values()).filter(
+        (m) => m.runtimeConfig?.type === "ssh"
+      );
+      if (sshWorkspaces.length > 0) {
+        list.push({
+          id: CommandIds.workspaceChangeSSHHost(),
+          title: "Change SSH Host…",
+          section: section.workspaces,
+          run: () => undefined,
+          prompt: {
+            title: "Change SSH Host",
+            fields: [
+              {
+                type: "select",
+                name: "workspaceId",
+                label: "Select workspace",
+                placeholder: "Search SSH workspaces…",
+                getOptions: () =>
+                  sshWorkspaces.map((meta) => ({
+                    id: meta.id,
+                    label: `${meta.projectName} / ${meta.title ?? meta.name}`,
+                    keywords: [
+                      meta.name,
+                      meta.projectName,
+                      meta.namedWorkspacePath,
+                      meta.id,
+                      meta.title,
+                    ].filter((k): k is string => !!k),
+                  })),
+              },
+              {
+                type: "text",
+                name: "newHost",
+                label: "New SSH host",
+                getInitialValue: (values) => {
+                  const meta = sshWorkspaces.find((m) => m.id === values.workspaceId);
+                  return meta?.runtimeConfig?.type === "ssh" ? meta.runtimeConfig.host : "";
+                },
+                validate: (v) => (!v.trim() ? "Host is required" : null),
+              },
+            ],
+            onSubmit: async (vals) => {
+              await p.onChangeSSHHost(vals.workspaceId, vals.newHost.trim());
+            },
+          },
+        });
+      }
+
       list.push({
         id: CommandIds.workspaceRemoveAny(),
         title: "Remove Workspace…",
