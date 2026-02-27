@@ -104,12 +104,12 @@ export function useAutoScroll() {
     const isUserScroll = Date.now() - lastUserInteractionRef.current < 100;
 
     if (!isUserScroll) {
-      // Even for non-user-initiated scrolls (e.g. iOS momentum scrolling after
-      // the finger lifts), re-enable auto-scroll when the scroll position reaches
-      // the bottom. This is safe because our own programmatic scrolls
-      // (performAutoScroll, jumpToBottom) already set autoScroll=true before
-      // scrolling, so this only fires for momentum / inertial scrolling.
-      if (isAtBottom && !autoScrollRef.current) {
+      // Re-enable auto-scroll for iOS momentum scrolling that carries the user
+      // to the bottom. Require downward movement to avoid re-enabling during
+      // upward inertia that starts near the bottom (which would snap the view
+      // back down while the user is trying to read older content).
+      const isMovingDown = currentScrollTop > lastScrollTopRef.current;
+      if (isMovingDown && isAtBottom && !autoScrollRef.current) {
         setAutoScroll(true);
         autoScrollRef.current = true;
       }
