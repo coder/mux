@@ -134,6 +134,13 @@ describe("executeRawQuery", () => {
     await expectValidationFailure("SELECT * FROM duckdb_tables()", /disallowed table or source/i);
   });
 
+  test("rejects comma-joined sources outside the analytics allowlist", async () => {
+    await expectValidationFailure(
+      "SELECT 1 FROM events, duckdb_tables()",
+      /disallowed table or source/i
+    );
+  });
+
   test("rejects queries using read_csv_auto", async () => {
     await expectValidationFailure(
       "SELECT * FROM read_csv_auto('/etc/passwd')",

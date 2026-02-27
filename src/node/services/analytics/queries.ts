@@ -700,12 +700,34 @@ const RAW_QUERY_DISALLOWED_PATTERNS: RawQueryDisallowedPattern[] = [
   { label: "SET", pattern: /(^|[;(])\s*set\b/i },
 ];
 
-const RAW_QUERY_TABLE_REFERENCE_PATTERN =
-  /\b(?:from|join)\s+((?:"(?:[^"]|"")+"|[a-zA-Z_][a-zA-Z0-9_$]*)(?:\s*\.\s*(?:"(?:[^"]|"")+"|[a-zA-Z_][a-zA-Z0-9_$]*))*)/gi;
+const RAW_QUERY_FROM_CLAUSE_BOUNDARY_KEYWORDS = new Set([
+  "where",
+  "group",
+  "order",
+  "having",
+  "limit",
+  "qualify",
+  "window",
+  "union",
+  "intersect",
+  "except",
+]);
+
+const RAW_QUERY_RELATION_PREFIX_KEYWORDS = new Set(["lateral"]);
 
 interface ParsedSqlToken {
   value: string;
   nextIndex: number;
+}
+
+interface ParsedRawQueryRelationSource {
+  source: string;
+  nextIndex: number;
+}
+
+interface RawQueryFromClauseContext {
+  depth: number;
+  expectingSource: boolean;
 }
 
 function skipSqlWhitespace(sql: string, startIndex: number): number {
@@ -782,6 +804,143 @@ function normalizeQualifiedSqlIdentifier(identifier: string): string {
   const lastSegment = segments.at(-1);
   assert(lastSegment != null, "Raw analytics query identifier must include a table name");
   return lastSegment;
+}
+
+function parseRawQueryRelationSource(
+  sql: string,
+  startIndex: number
+): ParsedRawQueryRelationSource | null {
+  let index = skipSqlWhitespace(sql, startIndex);
+  const firstSegment = parseSqlIdentifier(sql, index);
+  if (firstSegment == null) {
+    return null;
+  }
+
+  let source = firstSegment.value;
+  index = skipSqlWhitespace(sql, firstSegment.nextIndex);
+
+  while (sql[index] === ".") {
+    index = skipSqlWhitespace(sql, index + 1);
+    const segment = parseSqlIdentifier(sql, index);
+    if (segment == null) {
+      throw new Error("Raw analytics query contains malformed qualified table reference");
+    }
+
+    source = `${source}.${segment.value}`;
+    index = skipSqlWhitespace(sql, segment.nextIndex);
+  }
+
+  return {
+    source,
+    nextIndex: index,
+  };
+}
+
+function collectRawQueryRelationSources(maskedSql: string): string[] {
+  const sources: string[] = [];
+  const fromClauseContexts: RawQueryFromClauseContext[] = [];
+
+  let depth = 0;
+  let index = 0;
+
+  while (index < maskedSql.length) {
+    index = skipSqlWhitespace(maskedSql, index);
+    if (index >= maskedSql.length) {
+      break;
+    }
+
+    const currentContext = fromClauseContexts.at(-1);
+    const currentContextAtDepth = currentContext?.depth === depth ? currentContext : null;
+    const char = maskedSql[index];
+
+    if (char === "(") {
+      if (currentContextAtDepth?.expectingSource) {
+        currentContextAtDepth.expectingSource = false;
+      }
+
+      depth += 1;
+      index += 1;
+      continue;
+    }
+
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      while (fromClauseContexts.length > 0 && fromClauseContexts.at(-1)!.depth > depth) {
+        fromClauseContexts.pop();
+      }
+      index += 1;
+      continue;
+    }
+
+    if (char === "," && currentContextAtDepth != null) {
+      currentContextAtDepth.expectingSource = true;
+      index += 1;
+      continue;
+    }
+
+    const token = parseUnquotedSqlToken(maskedSql, index);
+    if (token == null) {
+      if (currentContextAtDepth?.expectingSource) {
+        const source = parseRawQueryRelationSource(maskedSql, index);
+        if (source != null) {
+          sources.push(source.source);
+          currentContextAtDepth.expectingSource = false;
+          index = source.nextIndex;
+          continue;
+        }
+      }
+
+      index += 1;
+      continue;
+    }
+
+    const keyword = token.value.toLowerCase();
+
+    if (keyword === "from") {
+      fromClauseContexts.push({
+        depth,
+        expectingSource: true,
+      });
+      index = token.nextIndex;
+      continue;
+    }
+
+    const activeContext = fromClauseContexts.at(-1);
+    const activeContextAtDepth = activeContext?.depth === depth ? activeContext : null;
+
+    if (activeContextAtDepth != null) {
+      if (RAW_QUERY_FROM_CLAUSE_BOUNDARY_KEYWORDS.has(keyword)) {
+        fromClauseContexts.pop();
+        index = token.nextIndex;
+        continue;
+      }
+
+      if (keyword === "join") {
+        activeContextAtDepth.expectingSource = true;
+        index = token.nextIndex;
+        continue;
+      }
+
+      if (activeContextAtDepth.expectingSource) {
+        if (RAW_QUERY_RELATION_PREFIX_KEYWORDS.has(keyword)) {
+          index = token.nextIndex;
+          continue;
+        }
+
+        const source = parseRawQueryRelationSource(maskedSql, index);
+        if (source != null) {
+          sources.push(source.source);
+          activeContextAtDepth.expectingSource = false;
+          index = source.nextIndex;
+          continue;
+        }
+      }
+    }
+
+    index = token.nextIndex;
+  }
+
+  return sources;
 }
 
 function maskSqlCommentsAndStringLiterals(sql: string): string {
@@ -960,17 +1119,17 @@ function validateRawQuerySql(sql: string): void {
   }
 
   const cteNames = collectRawQueryCteNames(maskedSql);
+  const relationSources = collectRawQueryRelationSources(maskedSql);
 
-  for (const tableMatch of maskedSql.matchAll(RAW_QUERY_TABLE_REFERENCE_PATTERN)) {
-    const matchedSource = tableMatch[1];
-    const normalizedSourceName = normalizeQualifiedSqlIdentifier(matchedSource);
+  for (const source of relationSources) {
+    const normalizedSourceName = normalizeQualifiedSqlIdentifier(source);
 
     if (RAW_QUERY_ALLOWED_TABLES.has(normalizedSourceName) || cteNames.has(normalizedSourceName)) {
       continue;
     }
 
     throw new Error(
-      `Query references disallowed table or source: ${matchedSource.trim()}. Allowed tables: ${RAW_QUERY_ALLOWED_TABLE_NAMES}`
+      `Query references disallowed table or source: ${source.trim()}. Allowed tables: ${RAW_QUERY_ALLOWED_TABLE_NAMES}`
     );
   }
 }
