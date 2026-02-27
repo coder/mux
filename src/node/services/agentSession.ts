@@ -85,7 +85,10 @@ import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 
-import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
+import {
+  extractEditedFileDiffs,
+  type FileEditDiff,
+} from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
 import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilities";
@@ -4490,46 +4493,7 @@ export class AgentSession {
       // Clear file state cache since history context is gone
       this.fileChangeTracker.clear();
 
-      // Load exclusions and persistent TODO state (local workspace session data)
-      const excludedItems = await this.loadExcludedItems();
-      const todoAttachment = await this.loadTodoListAttachment(excludedItems);
-
-      // Get runtime for reading plan file
-      const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-      if (!metadataResult.success) {
-        // Can't get metadata, skip plan reference but still include other attachments
-        const attachments: PostCompactionAttachment[] = [];
-
-        if (todoAttachment) {
-          attachments.push(todoAttachment);
-        }
-
-        const editedFilesRef = AttachmentService.generateEditedFilesAttachment(pendingDiffs);
-        if (editedFilesRef) {
-          attachments.push(editedFilesRef);
-        }
-
-        return attachments;
-      }
-      const runtime = createRuntimeForWorkspace(metadataResult.data);
-
-      const attachments = await AttachmentService.generatePostCompactionAttachments(
-        metadataResult.data.name,
-        metadataResult.data.projectName,
-        this.workspaceId,
-        pendingDiffs,
-        runtime,
-        excludedItems
-      );
-
-      if (todoAttachment) {
-        // Insert TODO after plan (if present), otherwise first.
-        const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
-        const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
-        attachments.splice(insertIndex, 0, todoAttachment);
-      }
-
-      return attachments;
+      return this.buildAttachmentsFromDiffs(pendingDiffs);
     }
 
     // Increment turn counter
@@ -4556,22 +4520,30 @@ export class AgentSession {
     }
 
     const fileDiffs = extractEditedFileDiffs(historyResult.data);
+    return this.buildAttachmentsFromDiffs(fileDiffs);
+  }
 
-    // Load exclusions and persistent TODO state (local workspace session data)
+  /**
+   * Shared logic for assembling post-compaction attachments from file diffs.
+   * Loads exclusions, TODO state, workspace metadata, and plan references,
+   * then combines them into the final attachment list.
+   */
+  private async buildAttachmentsFromDiffs(
+    diffs: FileEditDiff[]
+  ): Promise<PostCompactionAttachment[]> {
     const excludedItems = await this.loadExcludedItems();
     const todoAttachment = await this.loadTodoListAttachment(excludedItems);
 
-    // Get runtime for reading plan file
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
     if (!metadataResult.success) {
-      // Can't get metadata, skip plan reference but still include other attachments
+      // Can't get metadata — skip plan reference but still include other attachments.
       const attachments: PostCompactionAttachment[] = [];
 
       if (todoAttachment) {
         attachments.push(todoAttachment);
       }
 
-      const editedFilesRef = AttachmentService.generateEditedFilesAttachment(fileDiffs);
+      const editedFilesRef = AttachmentService.generateEditedFilesAttachment(diffs);
       if (editedFilesRef) {
         attachments.push(editedFilesRef);
       }
@@ -4584,7 +4556,7 @@ export class AgentSession {
       metadataResult.data.name,
       metadataResult.data.projectName,
       this.workspaceId,
-      fileDiffs,
+      diffs,
       runtime,
       excludedItems
     );
