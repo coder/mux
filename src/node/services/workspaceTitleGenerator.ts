@@ -224,10 +224,8 @@ export async function generateWorkspaceIdentity(
         model: modelResult.data,
         prompt: buildWorkspaceIdentityPrompt(message, conversationContext, latestUserMessage),
         tools: {
-          // Defined inline (not via createProposeNameTool factory) so that
-          // TypeScript preserves full schema inference on toolResult.output.
-          // The factory exists for the tools system / agent sessions; here we
-          // need strict typing for the direct streamText consumer path.
+          // Defined inline so TypeScript preserves full schema inference on
+          // toolResult.output (the propose_name tool is only used here).
           propose_name: tool({
             description: TOOL_DEFINITIONS.propose_name.description,
             inputSchema: ProposeNameToolArgsSchema,
