@@ -33,6 +33,8 @@ import {
   AGENT_AI_DEFAULTS_KEY,
   DEFAULT_MODEL_KEY,
   DEFAULT_RUNTIME_KEY,
+  GATEWAY_ENABLED_KEY,
+  GATEWAY_MODELS_KEY,
   HIDDEN_MODELS_KEY,
   RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
@@ -124,16 +126,16 @@ function migrateLocalGatewayPrefsToBackend(
   // Only migrate if the backend doesn't have these values yet
   if (cfg.muxGatewayEnabled !== undefined && cfg.muxGatewayModels !== undefined) return;
 
-  // Read legacy localStorage keys (inline strings — these constants were removed from storage.ts)
-  const localEnabled = readPersistedState<boolean>("gateway-enabled", true);
-  const localModels = readPersistedState<string[]>("gateway-models", []);
+  // Read legacy localStorage keys
+  const localEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
+  const localModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
 
   const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
   const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
 
   const clearLegacyGatewayPrefs = () => {
-    updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
-    updatePersistedState<string[] | undefined>("gateway-models", undefined);
+    updatePersistedState<boolean | undefined>(GATEWAY_ENABLED_KEY, undefined);
+    updatePersistedState<string[] | undefined>(GATEWAY_MODELS_KEY, undefined);
   };
 
   if (shouldMigrateEnabled || shouldMigrateModels) {

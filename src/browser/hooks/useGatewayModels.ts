@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { GATEWAY_ENABLED_KEY, GATEWAY_MODELS_KEY } from "@/common/constants/storage";
 import { useProvidersConfig } from "./useProvidersConfig";
 import {
   MUX_GATEWAY_SUPPORTED_PROVIDERS,
@@ -23,8 +24,8 @@ const gatewayEnrollmentFlushListeners = new Set<() => void>();
 function clearLegacyGatewayLocalPrefs(): void {
   // Gateway localStorage keys are deprecated; clear stale values so migration
   // logic doesn't overwrite newer backend-driven user preferences.
-  updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
-  updatePersistedState<string[] | undefined>("gateway-models", undefined);
+  updatePersistedState<boolean | undefined>(GATEWAY_ENABLED_KEY, undefined);
+  updatePersistedState<string[] | undefined>(GATEWAY_MODELS_KEY, undefined);
 }
 
 // ============================================================================
