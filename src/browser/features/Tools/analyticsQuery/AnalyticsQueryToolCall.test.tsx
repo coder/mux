@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
-import { TooltipProvider } from "@/browser/components/ui/tooltip";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { AnalyticsQueryToolCall } from "./AnalyticsQueryToolCall";
 import type { AnalyticsQueryResult } from "./types";
 

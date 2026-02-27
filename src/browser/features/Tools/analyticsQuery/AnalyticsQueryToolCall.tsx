@@ -21,13 +21,13 @@ import {
   ToolHeader,
   ToolIcon,
   ToolName,
-} from "../shared/ToolPrimitives";
+} from "../Shared/ToolPrimitives";
 import {
   getStatusDisplay,
   isToolErrorResult,
   type ToolStatus,
   useToolExpansion,
-} from "../shared/toolUtils";
+} from "../Shared/toolUtils";
 import { inferAxes, inferChartType } from "./chartHeuristics";
 import { DynamicChart } from "./DynamicChart";
 import { ResultTable } from "./ResultTable";

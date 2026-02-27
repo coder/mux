@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { cn } from "@/common/lib/utils";
-import { formatCompactNumber, formatUsd } from "@/browser/components/analytics/analyticsUtils";
-import { HeaderButton } from "../shared/ToolPrimitives";
+import { formatCompactNumber, formatUsd } from "@/browser/features/Analytics/analyticsUtils";
+import { HeaderButton } from "../Shared/ToolPrimitives";
 import { isNumericType } from "./chartHeuristics";
 import type { ChartType, ColumnMeta, DrillDownContext } from "./types";
 

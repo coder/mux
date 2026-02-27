@@ -22,7 +22,7 @@ import {
   CHART_TOOLTIP_CONTENT_STYLE,
   formatCompactNumber,
   formatUsd,
-} from "@/browser/components/analytics/analyticsUtils";
+} from "@/browser/features/Analytics/analyticsUtils";
 import type { ChartType, DrillDownContext } from "./types";
 
 interface DynamicChartProps {
