@@ -41,26 +41,26 @@ export { createReadOnlyChatHostContext } from "./readOnlyChatHostContext";
 // Chat rendering components (re-exported from Mux)
 // ============================================================================
 
-export { MessageRenderer } from "../../../src/browser/components/Messages/MessageRenderer";
+export { MessageRenderer } from "../../../src/browser/features/Messages/MessageRenderer";
 export {
   MessageWindow,
   type ButtonConfig,
-} from "../../../src/browser/components/Messages/MessageWindow";
-export { UserMessage } from "../../../src/browser/components/Messages/UserMessage";
-export { AssistantMessage } from "../../../src/browser/components/Messages/AssistantMessage";
-export { ToolMessage } from "../../../src/browser/components/Messages/ToolMessage";
-export { ReasoningMessage } from "../../../src/browser/components/Messages/ReasoningMessage";
-export { MarkdownCore } from "../../../src/browser/components/Messages/MarkdownCore";
-export { MarkdownRenderer } from "../../../src/browser/components/Messages/MarkdownRenderer";
-export { markdownComponents } from "../../../src/browser/components/Messages/MarkdownComponents";
-export { Mermaid } from "../../../src/browser/components/Messages/Mermaid";
+} from "../../../src/browser/features/Messages/MessageWindow";
+export { UserMessage } from "../../../src/browser/features/Messages/UserMessage";
+export { AssistantMessage } from "../../../src/browser/features/Messages/AssistantMessage";
+export { ToolMessage } from "../../../src/browser/features/Messages/ToolMessage";
+export { ReasoningMessage } from "../../../src/browser/features/Messages/ReasoningMessage";
+export { MarkdownCore } from "../../../src/browser/features/Messages/MarkdownCore";
+export { MarkdownRenderer } from "../../../src/browser/features/Messages/MarkdownRenderer";
+export { markdownComponents } from "../../../src/browser/features/Messages/MarkdownComponents";
+export { Mermaid } from "../../../src/browser/features/Messages/Mermaid";
 
 // Shared renderers
-export { DiffRenderer } from "../../../src/browser/components/shared/DiffRenderer";
+export { DiffRenderer } from "../../../src/browser/features/Shared/DiffRenderer";
 
 // ============================================================================
 // Tools (re-exported from Mux)
 // ============================================================================
 
-export { getToolComponent } from "../../../src/browser/components/tools/shared/getToolComponent";
-export * from "../../../src/browser/components/tools/shared/ToolPrimitives";
+export { getToolComponent } from "../../../src/browser/features/Tools/Shared/getToolComponent";
+export * from "../../../src/browser/features/Tools/Shared/ToolPrimitives";
