@@ -71,6 +71,8 @@ async function expectValidationFailure(sql: string, errorPattern: RegExp): Promi
 }
 
 describe("executeRawQuery", () => {
+  // Security model: regex blocklist rejects dangerous functions/statements,
+  // while subquery wrapping + read-only connections prevent writes.
   test("wraps SQL with limit, normalizes rows, and returns metadata", async () => {
     const { conn, runMock } = createMockConn(() =>
       createMockResult({
@@ -133,92 +135,29 @@ describe("executeRawQuery", () => {
   test("rejects duckdb system functions", async () => {
     await expectValidationFailure(
       "SELECT * FROM duckdb_tables()",
-      /disallowed function or statement: duckdb_tables/i
+      /disallowed SQL: .*duckdb_tables/i
     );
   });
 
   test("rejects parenthesized table function in FROM", async () => {
     await expectValidationFailure(
       "SELECT * FROM (duckdb_tables()) AS t",
-      /disallowed function or statement: duckdb_tables/i
+      /disallowed SQL: .*duckdb_tables/i
     );
   });
 
-  test("rejects parenthesized non-allowed table reference", async () => {
-    await expectValidationFailure(
-      "SELECT * FROM (ingest_watermarks)",
-      /disallowed table or source/i
-    );
-  });
-
-  test("allows parenthesized allowed table reference", async () => {
-    const { conn, runMock } = createMockConn(() =>
-      createMockResult({
-        columns: [{ name: "request_count", type: "BIGINT" }],
-        rows: [{ request_count: 2n }],
-      })
-    );
-
-    const sql = "SELECT COUNT(*) AS request_count FROM (events)";
-
-    const result = await executeRawQuery(conn, sql);
-
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
-    expect(result.rows).toEqual([{ request_count: 2 }]);
-  });
-
-  test("rejects comma-joined sources outside the analytics allowlist", async () => {
+  test("rejects comma-joined source containing blocked function", async () => {
     await expectValidationFailure(
       "SELECT 1 FROM events, duckdb_tables()",
-      /disallowed function or statement: duckdb_tables/i
+      /disallowed SQL: .*duckdb_tables/i
     );
   });
 
-  test("rejects CTE-shadowed function call", async () => {
+  test("rejects blocked function call even when a CTE shadows the name", async () => {
     await expectValidationFailure(
       "WITH duckdb_tables AS (SELECT * FROM events) SELECT * FROM duckdb_tables()",
-      /disallowed function or statement: duckdb_tables/i
+      /disallowed SQL: .*duckdb_tables/i
     );
-  });
-
-  test("rejects qualified table name matching CTE name", async () => {
-    await expectValidationFailure(
-      "WITH ingest_watermarks AS (SELECT * FROM events) SELECT * FROM main.ingest_watermarks",
-      /disallowed table or source/i
-    );
-  });
-
-  test("allows unqualified CTE reference", async () => {
-    const { conn, runMock } = createMockConn(() =>
-      createMockResult({
-        columns: [{ name: "event_count", type: "BIGINT" }],
-        rows: [{ event_count: 4n }],
-      })
-    );
-
-    const sql = "WITH daily AS (SELECT * FROM events) SELECT COUNT(*) AS event_count FROM daily";
-
-    const result = await executeRawQuery(conn, sql);
-
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
-    expect(result.rows).toEqual([{ event_count: 4 }]);
-  });
-
-  test("allows subquery-local CTEs", async () => {
-    const { conn, runMock } = createMockConn(() =>
-      createMockResult({
-        columns: [{ name: "event_count", type: "BIGINT" }],
-        rows: [{ event_count: 6n }],
-      })
-    );
-
-    const sql =
-      "SELECT COUNT(*) AS event_count FROM (WITH scoped AS (SELECT * FROM events) SELECT * FROM scoped) AS scoped_rows";
-
-    const result = await executeRawQuery(conn, sql);
-
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
-    expect(result.rows).toEqual([{ event_count: 6 }]);
   });
 
   test("allows parenthesized subquery", async () => {
@@ -237,89 +176,46 @@ describe("executeRawQuery", () => {
     expect(result.rows).toEqual([{ request_count: 3 }]);
   });
 
-  test("rejects nested CTE name used as outer source", async () => {
-    await expectValidationFailure(
-      "SELECT * FROM (WITH ingest_watermarks AS (SELECT 1) SELECT 1) sub, ingest_watermarks",
-      /disallowed table or source/i
-    );
-  });
-
-  test("rejects CTE name used in sibling subquery", async () => {
-    await expectValidationFailure(
-      "SELECT * FROM (WITH ingest_watermarks AS (SELECT 1) SELECT 1) a, (SELECT * FROM ingest_watermarks) b",
-      /disallowed table or source/i
-    );
-  });
-
-  test("allows nested WITH in subquery", async () => {
-    const { conn, runMock } = createMockConn(() =>
-      createMockResult({
-        columns: [{ name: "event_count", type: "BIGINT" }],
-        rows: [{ event_count: 8n }],
-      })
-    );
-
-    const sql =
-      "SELECT COUNT(*) AS event_count FROM (WITH outer_scoped AS (WITH inner_scoped AS (SELECT * FROM events) SELECT * FROM inner_scoped) SELECT * FROM outer_scoped) AS nested_rows";
-
-    const result = await executeRawQuery(conn, sql);
-
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
-    expect(result.rows).toEqual([{ event_count: 8 }]);
-  });
-
   test("rejects queries using read_csv_auto", async () => {
     await expectValidationFailure(
       "SELECT * FROM read_csv_auto('/etc/passwd')",
-      /disallowed function or statement: read_csv_auto/i
+      /disallowed SQL: .*read_csv_auto/i
     );
   });
 
   test("rejects queries using read_parquet", async () => {
     await expectValidationFailure(
       "SELECT * FROM read_parquet('file.parquet')",
-      /disallowed function or statement: read_parquet/i
+      /disallowed SQL: .*read_parquet/i
     );
   });
 
   test("rejects queries using read_json", async () => {
     await expectValidationFailure(
       "SELECT * FROM read_json('/tmp/data.json')",
-      /disallowed function or statement: read_json/i
+      /disallowed SQL: .*read_json/i
     );
   });
 
   test("rejects COPY statements", async () => {
-    await expectValidationFailure(
-      "COPY events TO '/tmp/out.csv'",
-      /disallowed function or statement: COPY/i
-    );
+    await expectValidationFailure("COPY events TO '/tmp/out.csv'", /disallowed SQL: .*copy/i);
   });
 
   test("rejects ATTACH statements", async () => {
-    await expectValidationFailure(
-      "ATTACH '/tmp/db.duckdb' AS stolen",
-      /disallowed function or statement: ATTACH/i
-    );
+    await expectValidationFailure("ATTACH '/tmp/db.duckdb' AS stolen", /disallowed SQL: .*attach/i);
   });
 
   test("rejects PRAGMA statements", async () => {
-    await expectValidationFailure(
-      "PRAGMA database_list",
-      /disallowed function or statement: PRAGMA/i
-    );
+    await expectValidationFailure("PRAGMA database_list", /disallowed SQL: .*pragma/i);
   });
 
   test("rejects SET statements", async () => {
-    await expectValidationFailure(
-      "SET access_mode = 'read_write'",
-      /disallowed function or statement: SET/i
-    );
+    await expectValidationFailure("SET access_mode = 'read_write'", /disallowed SQL: .*set/i);
   });
 
   test("rejects INSTALL and LOAD statements", async () => {
-    await expectValidationFailure("INSTALL httpfs", /disallowed function or statement: INSTALL/i);
-    await expectValidationFailure("LOAD httpfs", /disallowed function or statement: LOAD/i);
+    await expectValidationFailure("INSTALL httpfs", /disallowed SQL: .*install/i);
+    await expectValidationFailure("LOAD httpfs", /disallowed SQL: .*load/i);
   });
 
   test("allows normal SELECT from events", async () => {
@@ -355,23 +251,6 @@ describe("executeRawQuery", () => {
       "SELECT * FROM (SELECT COUNT(*) AS delegation_count FROM delegation_rollups) AS __q LIMIT 10001"
     );
     expect(result.rows).toEqual([{ delegation_count: 2 }]);
-  });
-
-  test("allows CTEs and subqueries that only reference allowed analytics tables", async () => {
-    const { conn, runMock } = createMockConn(() =>
-      createMockResult({
-        columns: [{ name: "total_rows", type: "BIGINT" }],
-        rows: [{ total_rows: 3n }],
-      })
-    );
-
-    const sql =
-      "WITH scoped_events AS (SELECT * FROM events), scoped_rollups AS (SELECT * FROM delegation_rollups) SELECT COUNT(*) AS total_rows FROM (SELECT * FROM scoped_events) AS e JOIN scoped_rollups AS d ON TRUE";
-
-    const result = await executeRawQuery(conn, sql);
-
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
-    expect(result.rows).toEqual([{ total_rows: 3 }]);
   });
 
   test("false positive check: a column named read_count is allowed", async () => {

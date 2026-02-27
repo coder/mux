@@ -666,472 +666,50 @@ export interface RawQueryResult {
   durationMs: number;
 }
 
-const RAW_QUERY_ALLOWED_TABLES = new Set(["events", "delegation_rollups"]);
-const RAW_QUERY_ALLOWED_TABLE_NAMES = Array.from(RAW_QUERY_ALLOWED_TABLES).join(", ");
-
-interface RawQueryDisallowedPattern {
-  label: string;
-  pattern: RegExp;
-}
-
-const RAW_QUERY_DISALLOWED_PATTERNS: RawQueryDisallowedPattern[] = [
-  { label: "read_csv", pattern: /\bread_csv\s*\(/i },
-  { label: "read_csv_auto", pattern: /\bread_csv_auto\s*\(/i },
-  { label: "read_parquet", pattern: /\bread_parquet\s*\(/i },
-  { label: "read_json", pattern: /\bread_json\s*\(/i },
-  { label: "read_json_auto", pattern: /\bread_json_auto\s*\(/i },
-  { label: "read_ndjson", pattern: /\bread_ndjson\s*\(/i },
-  { label: "read_ndjson_auto", pattern: /\bread_ndjson_auto\s*\(/i },
-  { label: "read_blob", pattern: /\bread_blob\s*\(/i },
-  { label: "read_text", pattern: /\bread_text\s*\(/i },
-  { label: "http_get", pattern: /\bhttp_get\s*\(/i },
-  { label: "http_post", pattern: /\bhttp_post\s*\(/i },
-  { label: "glob", pattern: /\bglob\s*\(/i },
-  { label: "list_files", pattern: /\blist_files\s*\(/i },
-  { label: "duckdb_tables", pattern: /\bduckdb_tables\s*\(/i },
-  { label: "duckdb_columns", pattern: /\bduckdb_columns\s*\(/i },
-  { label: "duckdb_views", pattern: /\bduckdb_views\s*\(/i },
-  { label: "duckdb_indexes", pattern: /\bduckdb_indexes\s*\(/i },
-  { label: "duckdb_constraints", pattern: /\bduckdb_constraints\s*\(/i },
-  { label: "duckdb_dependencies", pattern: /\bduckdb_dependencies\s*\(/i },
-  { label: "duckdb_functions", pattern: /\bduckdb_functions\s*\(/i },
-  { label: "duckdb_keywords", pattern: /\bduckdb_keywords\s*\(/i },
-  { label: "duckdb_types", pattern: /\bduckdb_types\s*\(/i },
-  { label: "duckdb_settings", pattern: /\bduckdb_settings\s*\(/i },
-  { label: "duckdb_databases", pattern: /\bduckdb_databases\s*\(/i },
-  { label: "duckdb_schemas", pattern: /\bduckdb_schemas\s*\(/i },
-  { label: "duckdb_sequences", pattern: /\bduckdb_sequences\s*\(/i },
-  { label: "duckdb_extensions", pattern: /\bduckdb_extensions\s*\(/i },
-  { label: "information_schema", pattern: /\binformation_schema\s*\./i },
-  { label: "pg_catalog", pattern: /\bpg_catalog\s*\./i },
-  { label: "generate_series", pattern: /\bgenerate_series\s*\(/i },
-  { label: "scan_*", pattern: /\b[a-zA-Z_][a-zA-Z0-9_]*_scan\s*\(/i },
-  { label: "COPY", pattern: /(^|[;(])\s*copy\b/i },
-  { label: "EXPORT", pattern: /(^|[;(])\s*export\b/i },
-  { label: "IMPORT", pattern: /(^|[;(])\s*import\b/i },
-  { label: "ATTACH", pattern: /(^|[;(])\s*attach\b/i },
-  { label: "DETACH", pattern: /(^|[;(])\s*detach\b/i },
-  { label: "INSTALL", pattern: /(^|[;(])\s*install\b/i },
-  { label: "LOAD", pattern: /(^|[;(])\s*load\b/i },
-  { label: "PRAGMA", pattern: /(^|[;(])\s*pragma\b/i },
-  { label: "SET", pattern: /(^|[;(])\s*set\b/i },
+const RAW_QUERY_DISALLOWED_PATTERNS: RegExp[] = [
+  /\bread_csv\s*\(/i,
+  /\bread_csv_auto\s*\(/i,
+  /\bread_parquet\s*\(/i,
+  /\bread_json\s*\(/i,
+  /\bread_json_auto\s*\(/i,
+  /\bread_ndjson\s*\(/i,
+  /\bread_ndjson_auto\s*\(/i,
+  /\bread_blob\s*\(/i,
+  /\bread_text\s*\(/i,
+  /\bhttp_get\s*\(/i,
+  /\bhttp_post\s*\(/i,
+  /\bglob\s*\(/i,
+  /\blist_files\s*\(/i,
+  /\bduckdb_tables\s*\(/i,
+  /\bduckdb_columns\s*\(/i,
+  /\bduckdb_views\s*\(/i,
+  /\bduckdb_indexes\s*\(/i,
+  /\bduckdb_constraints\s*\(/i,
+  /\bduckdb_dependencies\s*\(/i,
+  /\bduckdb_functions\s*\(/i,
+  /\bduckdb_keywords\s*\(/i,
+  /\bduckdb_types\s*\(/i,
+  /\bduckdb_settings\s*\(/i,
+  /\bduckdb_databases\s*\(/i,
+  /\bduckdb_schemas\s*\(/i,
+  /\bduckdb_sequences\s*\(/i,
+  /\bduckdb_extensions\s*\(/i,
+  /\binformation_schema\s*\./i,
+  /\bpg_catalog\s*\./i,
+  /\bgenerate_series\s*\(/i,
+  /\b[a-zA-Z_][a-zA-Z0-9_]*_scan\s*\(/i,
+  /(^|[;(])\s*copy\b/i,
+  /(^|[;(])\s*export\b/i,
+  /(^|[;(])\s*import\b/i,
+  /(^|[;(])\s*attach\b/i,
+  /(^|[;(])\s*detach\b/i,
+  /(^|[;(])\s*install\b/i,
+  /(^|[;(])\s*load\b/i,
+  /(^|[;(])\s*pragma\b/i,
+  /(^|[;(])\s*set\b/i,
 ];
 
-const RAW_QUERY_FROM_CLAUSE_BOUNDARY_KEYWORDS = new Set([
-  "where",
-  "group",
-  "order",
-  "having",
-  "limit",
-  "qualify",
-  "window",
-  "union",
-  "intersect",
-  "except",
-]);
-
-const RAW_QUERY_RELATION_PREFIX_KEYWORDS = new Set(["lateral"]);
-
-interface ParsedSqlToken {
-  value: string;
-  nextIndex: number;
-}
-
-interface RawQueryRelationSource {
-  source: string;
-  isFunctionCall: boolean;
-  isQualifiedName: boolean;
-}
-
-interface RawQueryRelationSourceWithScope extends RawQueryRelationSource {
-  scopeId: number;
-}
-
-interface ParsedRawQueryRelationSource extends RawQueryRelationSource {
-  nextIndex: number;
-}
-
-interface RawQueryFromClauseContext {
-  scopeId: number;
-  expectingSource: boolean;
-}
-
-interface RawQueryScopeTree {
-  scopeByIndex: number[];
-  scopeParents: Map<number, number>;
-}
-
-function skipSqlWhitespace(sql: string, startIndex: number): number {
-  let index = startIndex;
-  while (index < sql.length && /\s/.test(sql[index])) {
-    index += 1;
-  }
-  return index;
-}
-
-function isSqlIdentifierStart(char: string): boolean {
-  return /[a-zA-Z_]/.test(char);
-}
-
-function isSqlIdentifierPart(char: string): boolean {
-  return /[a-zA-Z0-9_$]/.test(char);
-}
-
-function parseUnquotedSqlToken(sql: string, startIndex: number): ParsedSqlToken | null {
-  const firstChar = sql[startIndex];
-  if (firstChar == null || !isSqlIdentifierStart(firstChar)) {
-    return null;
-  }
-
-  let index = startIndex + 1;
-  while (index < sql.length && isSqlIdentifierPart(sql[index])) {
-    index += 1;
-  }
-
-  return {
-    value: sql.slice(startIndex, index),
-    nextIndex: index,
-  };
-}
-
-function parseSqlIdentifier(sql: string, startIndex: number): ParsedSqlToken | null {
-  if (sql[startIndex] !== '"') {
-    return parseUnquotedSqlToken(sql, startIndex);
-  }
-
-  let index = startIndex + 1;
-  while (index < sql.length) {
-    if (sql[index] !== '"') {
-      index += 1;
-      continue;
-    }
-
-    if (sql[index + 1] === '"') {
-      index += 2;
-      continue;
-    }
-
-    return {
-      value: sql.slice(startIndex, index + 1),
-      nextIndex: index + 1,
-    };
-  }
-
-  throw new Error("Raw analytics query contains unterminated quoted identifier");
-}
-
-function normalizeSqlIdentifier(identifier: string): string {
-  const trimmed = identifier.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1).replaceAll('""', '"').toLowerCase();
-  }
-
-  return trimmed.toLowerCase();
-}
-
-function normalizeQualifiedSqlIdentifier(identifier: string): string {
-  const segments = identifier.split(".").map((segment) => normalizeSqlIdentifier(segment));
-  assert(segments.length > 0, "Raw analytics query identifier must have at least one segment");
-  const lastSegment = segments.at(-1);
-  assert(lastSegment != null, "Raw analytics query identifier must include a table name");
-  return lastSegment;
-}
-
-function parseRawQueryRelationSource(
-  sql: string,
-  startIndex: number
-): ParsedRawQueryRelationSource | null {
-  let index = skipSqlWhitespace(sql, startIndex);
-  const firstSegment = parseSqlIdentifier(sql, index);
-  if (firstSegment == null) {
-    return null;
-  }
-
-  let source = firstSegment.value;
-  let segmentCount = 1;
-  index = skipSqlWhitespace(sql, firstSegment.nextIndex);
-
-  while (sql[index] === ".") {
-    index = skipSqlWhitespace(sql, index + 1);
-    const segment = parseSqlIdentifier(sql, index);
-    if (segment == null) {
-      throw new Error("Raw analytics query contains malformed qualified table reference");
-    }
-
-    segmentCount += 1;
-    source = `${source}.${segment.value}`;
-    index = skipSqlWhitespace(sql, segment.nextIndex);
-  }
-
-  return {
-    source,
-    isFunctionCall: sql[index] === "(",
-    isQualifiedName: segmentCount > 1,
-    nextIndex: index,
-  };
-}
-
-function parseParenthesizedRawQueryFunctionSource(
-  maskedSql: string,
-  openingParenthesisIndex: number
-): ParsedRawQueryRelationSource | null {
-  assert(
-    maskedSql[openingParenthesisIndex] === "(",
-    "Expected opening parenthesis while parsing parenthesized raw query source"
-  );
-
-  let sourceStartIndex = skipSqlWhitespace(maskedSql, openingParenthesisIndex + 1);
-  while (maskedSql[sourceStartIndex] === "(") {
-    sourceStartIndex = skipSqlWhitespace(maskedSql, sourceStartIndex + 1);
-  }
-
-  const firstToken = parseUnquotedSqlToken(maskedSql, sourceStartIndex);
-  const firstKeyword = firstToken?.value.toLowerCase();
-  if (firstKeyword === "select" || firstKeyword === "with") {
-    return null;
-  }
-
-  const source = parseRawQueryRelationSource(maskedSql, sourceStartIndex);
-  if (source == null) {
-    return null;
-  }
-
-  return source;
-}
-
-function getCurrentRawQueryScopeId(scopeStack: number[]): number {
-  const currentScopeId = scopeStack.at(-1);
-  assert(currentScopeId != null, "Raw analytics query scope stack must not be empty");
-  return currentScopeId;
-}
-
-function buildRawQueryScopeTree(maskedSql: string): RawQueryScopeTree {
-  const scopeByIndex = new Array<number>(maskedSql.length);
-  const scopeParents = new Map<number, number>([[0, -1]]);
-  const scopeStack = [0];
-
-  let scopeCounter = 0;
-  let index = 0;
-
-  while (index < maskedSql.length) {
-    const currentScopeId = getCurrentRawQueryScopeId(scopeStack);
-    scopeByIndex[index] = currentScopeId;
-
-    if (maskedSql[index] === '"') {
-      const quotedIdentifier = parseSqlIdentifier(maskedSql, index);
-      assert(
-        quotedIdentifier != null,
-        "Expected quoted identifier while building raw analytics scope tree"
-      );
-
-      for (
-        let quotedIndex = index + 1;
-        quotedIndex < quotedIdentifier.nextIndex;
-        quotedIndex += 1
-      ) {
-        scopeByIndex[quotedIndex] = currentScopeId;
-      }
-
-      index = quotedIdentifier.nextIndex;
-      continue;
-    }
-
-    if (maskedSql[index] === "(") {
-      scopeCounter += 1;
-      scopeParents.set(scopeCounter, currentScopeId);
-      scopeStack.push(scopeCounter);
-    } else if (maskedSql[index] === ")") {
-      if (scopeStack.length > 1) {
-        scopeStack.pop();
-      }
-    }
-
-    index += 1;
-  }
-
-  if (scopeStack.length !== 1) {
-    throw new Error("Raw analytics query contains unbalanced parentheses");
-  }
-
-  return {
-    scopeByIndex,
-    scopeParents,
-  };
-}
-
-function getRawQueryScopeIdAtIndex(scopeTree: RawQueryScopeTree, index: number): number {
-  const scopeId = scopeTree.scopeByIndex[index];
-  assert(scopeId != null, `Missing raw query scope at SQL index ${index}`);
-  return scopeId;
-}
-
-function isScopeAncestorOrSelf(
-  ancestorScopeId: number,
-  childScopeId: number,
-  scopeParents: Map<number, number>
-): boolean {
-  let currentScopeId = childScopeId;
-
-  while (currentScopeId >= 0) {
-    if (currentScopeId === ancestorScopeId) {
-      return true;
-    }
-
-    const parentScopeId = scopeParents.get(currentScopeId);
-    assert(parentScopeId != null, `Missing parent scope for raw query scope ${currentScopeId}`);
-    currentScopeId = parentScopeId;
-  }
-
-  return false;
-}
-
-function collectRawQueryRelationSources(
-  maskedSql: string,
-  scopeTree: RawQueryScopeTree
-): RawQueryRelationSourceWithScope[] {
-  const sources: RawQueryRelationSourceWithScope[] = [];
-  const fromClauseContexts: RawQueryFromClauseContext[] = [];
-
-  let index = 0;
-
-  while (index < maskedSql.length) {
-    index = skipSqlWhitespace(maskedSql, index);
-    if (index >= maskedSql.length) {
-      break;
-    }
-
-    const currentScopeId = getRawQueryScopeIdAtIndex(scopeTree, index);
-
-    while (
-      fromClauseContexts.length > 0 &&
-      !isScopeAncestorOrSelf(
-        fromClauseContexts.at(-1)!.scopeId,
-        currentScopeId,
-        scopeTree.scopeParents
-      )
-    ) {
-      fromClauseContexts.pop();
-    }
-
-    const currentContext = fromClauseContexts.at(-1);
-    const currentContextAtScope =
-      currentContext?.scopeId === currentScopeId ? currentContext : null;
-    const char = maskedSql[index];
-
-    if (char === "(") {
-      if (currentContextAtScope?.expectingSource) {
-        const parenthesizedFunctionSource = parseParenthesizedRawQueryFunctionSource(
-          maskedSql,
-          index
-        );
-        if (parenthesizedFunctionSource != null) {
-          sources.push({
-            source: parenthesizedFunctionSource.source,
-            isFunctionCall: parenthesizedFunctionSource.isFunctionCall,
-            isQualifiedName: parenthesizedFunctionSource.isQualifiedName,
-            scopeId: currentScopeId,
-          });
-        }
-
-        currentContextAtScope.expectingSource = false;
-      }
-
-      index += 1;
-      continue;
-    }
-
-    if (char === "," && currentContextAtScope != null) {
-      currentContextAtScope.expectingSource = true;
-      index += 1;
-      continue;
-    }
-
-    const token = parseUnquotedSqlToken(maskedSql, index);
-    if (token == null) {
-      if (char === '"') {
-        const quotedIdentifier = parseSqlIdentifier(maskedSql, index);
-        assert(
-          quotedIdentifier != null,
-          "Expected quoted identifier while collecting raw analytics relation sources"
-        );
-        index = quotedIdentifier.nextIndex;
-        continue;
-      }
-
-      if (currentContextAtScope?.expectingSource) {
-        const source = parseRawQueryRelationSource(maskedSql, index);
-        if (source != null) {
-          sources.push({
-            source: source.source,
-            isFunctionCall: source.isFunctionCall,
-            isQualifiedName: source.isQualifiedName,
-            scopeId: currentScopeId,
-          });
-          currentContextAtScope.expectingSource = false;
-          index = source.nextIndex;
-          continue;
-        }
-      }
-
-      index += 1;
-      continue;
-    }
-
-    const keyword = token.value.toLowerCase();
-
-    if (keyword === "from") {
-      fromClauseContexts.push({
-        scopeId: currentScopeId,
-        expectingSource: true,
-      });
-      index = token.nextIndex;
-      continue;
-    }
-
-    const activeContext = fromClauseContexts.at(-1);
-    const activeContextAtScope = activeContext?.scopeId === currentScopeId ? activeContext : null;
-
-    if (activeContextAtScope != null) {
-      if (RAW_QUERY_FROM_CLAUSE_BOUNDARY_KEYWORDS.has(keyword)) {
-        fromClauseContexts.pop();
-        index = token.nextIndex;
-        continue;
-      }
-
-      if (keyword === "join") {
-        activeContextAtScope.expectingSource = true;
-        index = token.nextIndex;
-        continue;
-      }
-
-      if (activeContextAtScope.expectingSource) {
-        if (RAW_QUERY_RELATION_PREFIX_KEYWORDS.has(keyword)) {
-          index = token.nextIndex;
-          continue;
-        }
-
-        const source = parseRawQueryRelationSource(maskedSql, index);
-        if (source != null) {
-          sources.push({
-            source: source.source,
-            isFunctionCall: source.isFunctionCall,
-            isQualifiedName: source.isQualifiedName,
-            scopeId: currentScopeId,
-          });
-          activeContextAtScope.expectingSource = false;
-          index = source.nextIndex;
-          continue;
-        }
-      }
-    }
-
-    index = token.nextIndex;
-  }
-
-  return sources;
-}
-
-function maskSqlCommentsAndStringLiterals(sql: string): string {
+function maskRawQueryLiteralsAndComments(sql: string): string {
   const characters = Array.from(sql);
   let index = 0;
 
@@ -1195,196 +773,27 @@ function maskSqlCommentsAndStringLiterals(sql: string): string {
   return characters.join("");
 }
 
-function skipBalancedParentheses(sql: string, startIndex: number): number {
-  assert(sql[startIndex] === "(", "Expected open parenthesis while parsing raw analytics SQL");
+/**
+ * Security model for raw analytics SQL validation:
+ * 1) mask literals/comments before regex matching,
+ * 2) block dangerous functions/statements via RAW_QUERY_DISALLOWED_PATTERNS,
+ * 3) rely on executeRawQuery subquery wrapping plus read-only DuckDB connections.
+ */
+function validateRawQuerySql(cleanSql: string): void {
+  const masked = maskRawQueryLiteralsAndComments(cleanSql);
 
-  let depth = 0;
-  let index = startIndex;
-
-  while (index < sql.length) {
-    const char = sql[index];
-
-    if (char === '"') {
-      const quotedIdentifier = parseSqlIdentifier(sql, index);
-      assert(
-        quotedIdentifier != null,
-        "Expected quoted identifier while parsing raw analytics SQL"
-      );
-      index = quotedIdentifier.nextIndex;
-      continue;
+  for (const pattern of RAW_QUERY_DISALLOWED_PATTERNS) {
+    if (pattern.test(masked)) {
+      throw new Error(`Query contains disallowed SQL: ${pattern.source.replace(/\b/g, "")}`);
     }
-
-    if (char === "(") {
-      depth += 1;
-    } else if (char === ")") {
-      depth -= 1;
-      if (depth === 0) {
-        return index + 1;
-      }
-    }
-
-    index += 1;
-  }
-
-  throw new Error("Raw analytics query contains unbalanced parentheses");
-}
-
-function parseRawQueryWithClauseCteNames(maskedSql: string, withTokenStartIndex: number): string[] {
-  const cteNames: string[] = [];
-  const withKeyword = parseUnquotedSqlToken(maskedSql, withTokenStartIndex);
-  assert(
-    withKeyword != null && withKeyword.value.toLowerCase() === "with",
-    "Expected WITH keyword while collecting raw analytics CTE names"
-  );
-
-  let index = skipSqlWhitespace(maskedSql, withKeyword.nextIndex);
-
-  const recursiveKeyword = parseUnquotedSqlToken(maskedSql, index);
-  if (recursiveKeyword?.value.toLowerCase() === "recursive") {
-    index = skipSqlWhitespace(maskedSql, recursiveKeyword.nextIndex);
-  }
-
-  while (index < maskedSql.length) {
-    const cteName = parseSqlIdentifier(maskedSql, index);
-    if (cteName == null) {
-      throw new Error("Raw analytics query contains malformed WITH clause");
-    }
-
-    cteNames.push(normalizeSqlIdentifier(cteName.value));
-    index = skipSqlWhitespace(maskedSql, cteName.nextIndex);
-
-    if (maskedSql[index] === "(") {
-      index = skipBalancedParentheses(maskedSql, index);
-      index = skipSqlWhitespace(maskedSql, index);
-    }
-
-    const asKeyword = parseUnquotedSqlToken(maskedSql, index);
-    if (asKeyword == null || asKeyword.value.toLowerCase() !== "as") {
-      throw new Error("Raw analytics query contains malformed WITH clause");
-    }
-
-    index = skipSqlWhitespace(maskedSql, asKeyword.nextIndex);
-
-    const maybeModifier = parseUnquotedSqlToken(maskedSql, index);
-    if (maybeModifier?.value.toLowerCase() === "not") {
-      index = skipSqlWhitespace(maskedSql, maybeModifier.nextIndex);
-      const materializedKeyword = parseUnquotedSqlToken(maskedSql, index);
-      if (materializedKeyword?.value.toLowerCase() !== "materialized") {
-        throw new Error("Raw analytics query contains malformed WITH clause");
-      }
-      index = skipSqlWhitespace(maskedSql, materializedKeyword.nextIndex);
-    } else if (maybeModifier?.value.toLowerCase() === "materialized") {
-      index = skipSqlWhitespace(maskedSql, maybeModifier.nextIndex);
-    }
-
-    if (maskedSql[index] !== "(") {
-      throw new Error("Raw analytics query contains malformed WITH clause");
-    }
-
-    index = skipBalancedParentheses(maskedSql, index);
-    index = skipSqlWhitespace(maskedSql, index);
-
-    if (maskedSql[index] !== ",") {
-      break;
-    }
-
-    index = skipSqlWhitespace(maskedSql, index + 1);
-  }
-
-  return cteNames;
-}
-
-function collectRawQueryCteNames(
-  maskedSql: string,
-  scopeTree: RawQueryScopeTree
-): Map<string, number[]> {
-  const cteScopesByName = new Map<string, number[]>();
-  let index = 0;
-
-  while (index < maskedSql.length) {
-    const char = maskedSql[index];
-
-    if (char === '"') {
-      const quotedIdentifier = parseSqlIdentifier(maskedSql, index);
-      assert(
-        quotedIdentifier != null,
-        "Expected quoted identifier while collecting raw analytics CTE names"
-      );
-      index = quotedIdentifier.nextIndex;
-      continue;
-    }
-
-    const token = parseUnquotedSqlToken(maskedSql, index);
-    if (token == null) {
-      index += 1;
-      continue;
-    }
-
-    if (token.value.toLowerCase() === "with") {
-      const cteScopeId = getRawQueryScopeIdAtIndex(scopeTree, index);
-
-      for (const cteName of parseRawQueryWithClauseCteNames(maskedSql, index)) {
-        const existingScopes = cteScopesByName.get(cteName);
-        if (existingScopes == null) {
-          cteScopesByName.set(cteName, [cteScopeId]);
-          continue;
-        }
-
-        if (!existingScopes.includes(cteScopeId)) {
-          existingScopes.push(cteScopeId);
-        }
-      }
-    }
-
-    index = token.nextIndex;
-  }
-
-  return cteScopesByName;
-}
-
-function validateRawQuerySql(sql: string): void {
-  const maskedSql = maskSqlCommentsAndStringLiterals(sql);
-
-  for (const disallowedPattern of RAW_QUERY_DISALLOWED_PATTERNS) {
-    if (disallowedPattern.pattern.test(maskedSql)) {
-      throw new Error(
-        `Query contains disallowed function or statement: ${disallowedPattern.label}`
-      );
-    }
-  }
-
-  const scopeTree = buildRawQueryScopeTree(maskedSql);
-  const cteScopesByName = collectRawQueryCteNames(maskedSql, scopeTree);
-  const relationSources = collectRawQueryRelationSources(maskedSql, scopeTree);
-
-  for (const relationSource of relationSources) {
-    const normalizedSourceName = normalizeQualifiedSqlIdentifier(relationSource.source);
-
-    if (RAW_QUERY_ALLOWED_TABLES.has(normalizedSourceName)) {
-      continue;
-    }
-
-    const cteScopeIds = cteScopesByName.get(normalizedSourceName);
-    if (
-      !relationSource.isFunctionCall &&
-      !relationSource.isQualifiedName &&
-      cteScopeIds?.some((cteScopeId) =>
-        isScopeAncestorOrSelf(cteScopeId, relationSource.scopeId, scopeTree.scopeParents)
-      ) === true
-    ) {
-      continue;
-    }
-
-    throw new Error(
-      `Query references disallowed table or source: ${relationSource.source.trim()}. Allowed tables: ${RAW_QUERY_ALLOWED_TABLE_NAMES}`
-    );
   }
 }
 
 /**
  * Execute arbitrary user SQL as a read-only subquery with a hard row cap.
- * Wrapping the statement in a subquery prevents DML/DDL execution, and
- * validateRawQuerySql enforces a strict analytics-only table/function surface.
+ * Wrapping the statement in a subquery prevents DML/DDL execution,
+ * validateRawQuerySql blocks dangerous functions/statements, and
+ * the DuckDB connection remains read-only.
  */
 export async function executeRawQuery(
   conn: DuckDBConnection,
