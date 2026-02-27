@@ -30,6 +30,14 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
   const includePatterns = patterns.filter((pattern) => !pattern.startsWith("!"));
   if (includePatterns.length === 0) return [];
 
+  // Root-anchored ignore patterns (e.g. `/.env`) are valid in .muxignore,
+  // but git pathspec treats a leading slash as an absolute filesystem path.
+  // Normalize to repo-relative pathspecs for prefiltering.
+  const includePathspecs = includePatterns
+    .map((pattern) => pattern.replace(/^\.\//, "").replace(/^\/+/, ""))
+    .filter((pattern) => pattern.length > 0);
+  if (includePathspecs.length === 0) return [];
+
   using proc = execFileAsync("git", [
     "-C",
     projectPath,
@@ -39,7 +47,7 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
     "--exclude-standard",
     "-z",
     "--",
-    ...includePatterns,
+    ...includePathspecs,
   ]);
   const { stdout } = await proc.result;
   const ignoredFiles = stdout

@@ -74,6 +74,15 @@ describe("syncMuxignoreFiles", () => {
     expect(copied).toBe("SECRET=abc\n");
   });
 
+  it("supports root-anchored include patterns", async () => {
+    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!/.env\n");
+
+    await syncMuxignoreFiles(projectPath, worktreePath);
+
+    const copied = await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8");
+    expect(copied).toBe("SECRET=abc\n");
+  });
+
   it("does nothing when .muxignore is missing", async () => {
     // No .muxignore — should silently return
     await syncMuxignoreFiles(projectPath, worktreePath);
