@@ -146,7 +146,8 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
               {successResult.truncated && (
                 <div className="text-warning mb-2 flex items-center gap-1 text-[10px]">
                   <AlertTriangle className="size-3" />
-                  Results truncated to {successResult.rowCount.toLocaleString()} rows.
+                  Showing {successResult.rows.length.toLocaleString()} of{" "}
+                  {successResult.rowCount.toLocaleString()} rows (results truncated).
                 </div>
               )}
 

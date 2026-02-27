@@ -131,7 +131,7 @@ describe("AnalyticsQueryToolCall", () => {
       />
     );
 
-    expect(view.getByText(/Results truncated to 500 rows/i)).toBeTruthy();
+    expect(view.getByText(/Showing 1 of 500 rows/i)).toBeTruthy();
   });
 
   test("renders chart selector controls", () => {
