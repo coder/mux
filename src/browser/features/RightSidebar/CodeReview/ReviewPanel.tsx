@@ -1563,6 +1563,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               isLoading={diffState.status === "loading" || isLoadingTree}
               isRead={isRead}
               onToggleRead={handleToggleRead}
+              onMarkFileAsRead={handleMarkFileAsRead}
               selectedHunkId={selectedHunkId}
               onSelectHunk={setSelectedHunkId}
               onExit={toggleImmersive}

@@ -56,6 +56,7 @@ interface ImmersiveReviewViewProps {
   isLoading?: boolean;
   isRead: (hunkId: string) => boolean;
   onToggleRead: (hunkId: string) => void;
+  onMarkFileAsRead: (hunkId: string) => void;
   selectedHunkId: string | null;
   onSelectHunk: (hunkId: string | null) => void;
   /** Whether immersive review should use touch/mobile UX affordances. */
@@ -389,6 +390,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     selectedHunkId,
     onSelectHunk,
     onToggleRead,
+    onMarkFileAsRead,
     onExit,
     onReviewNote,
     isTouchImmersive,
@@ -1332,6 +1334,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
+      // Mark entire file as read (Shift+M) — check before TOGGLE_HUNK_READ
+      // since matchesKeybind for 'm' could match if shift isn't checked first
+      if (matchesKeybind(e, KEYBINDS.MARK_FILE_READ)) {
+        e.preventDefault();
+        if (selectedHunkId) onMarkFileAsRead(selectedHunkId);
+        return;
+      }
+
       // Toggle hunk read
       if (matchesKeybind(e, KEYBINDS.TOGGLE_HUNK_READ)) {
         e.preventDefault();
@@ -1356,6 +1366,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     openComposer,
     selectedHunkId,
     onToggleRead,
+    onMarkFileAsRead,
     isTouchExperience,
   ]);
 
