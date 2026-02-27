@@ -169,6 +169,33 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
+      - name: Cleanup Daytona sandboxes
+        if: always() && inputs.env == 'daytona'
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            echo "No DAYTONA_API_KEY, skipping cleanup"
+            exit 0
+          fi
+          pip install --quiet daytona
+          python3 -c "
+          from daytona import Daytona
+          d = Daytona()
+          sandboxes = d.list()
+          if not sandboxes:
+              print('No sandboxes found')
+          else:
+              print(f'Found {len(sandboxes)} sandbox(es), cleaning up...')
+              for sb in sandboxes:
+                  try:
+                      print(f'  Deleting {sb.id} (state={sb.state})...')
+                      d.delete(sb)
+                      print(f'  Deleted {sb.id}')
+                  except Exception as e:
+                      print(f'  Failed to delete {sb.id}: {e}')
+          "
+
       - name: Print results summary
         if: always()
         run: |
