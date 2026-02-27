@@ -723,6 +723,7 @@ interface ParsedSqlToken {
 interface RawQueryRelationSource {
   source: string;
   isFunctionCall: boolean;
+  isQualifiedName: boolean;
 }
 
 interface ParsedRawQueryRelationSource extends RawQueryRelationSource {
@@ -821,6 +822,7 @@ function parseRawQueryRelationSource(
   }
 
   let source = firstSegment.value;
+  let segmentCount = 1;
   index = skipSqlWhitespace(sql, firstSegment.nextIndex);
 
   while (sql[index] === ".") {
@@ -830,6 +832,7 @@ function parseRawQueryRelationSource(
       throw new Error("Raw analytics query contains malformed qualified table reference");
     }
 
+    segmentCount += 1;
     source = `${source}.${segment.value}`;
     index = skipSqlWhitespace(sql, segment.nextIndex);
   }
@@ -837,6 +840,7 @@ function parseRawQueryRelationSource(
   return {
     source,
     isFunctionCall: sql[index] === "(",
+    isQualifiedName: segmentCount > 1,
     nextIndex: index,
   };
 }
@@ -888,7 +892,11 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
       if (currentContextAtDepth?.expectingSource) {
         const source = parseRawQueryRelationSource(maskedSql, index);
         if (source != null) {
-          sources.push({ source: source.source, isFunctionCall: source.isFunctionCall });
+          sources.push({
+            source: source.source,
+            isFunctionCall: source.isFunctionCall,
+            isQualifiedName: source.isQualifiedName,
+          });
           currentContextAtDepth.expectingSource = false;
           index = source.nextIndex;
           continue;
@@ -934,7 +942,11 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
 
         const source = parseRawQueryRelationSource(maskedSql, index);
         if (source != null) {
-          sources.push({ source: source.source, isFunctionCall: source.isFunctionCall });
+          sources.push({
+            source: source.source,
+            isFunctionCall: source.isFunctionCall,
+            isQualifiedName: source.isQualifiedName,
+          });
           activeContextAtDepth.expectingSource = false;
           index = source.nextIndex;
           continue;
@@ -1046,16 +1058,15 @@ function skipBalancedParentheses(sql: string, startIndex: number): number {
   throw new Error("Raw analytics query contains unbalanced parentheses");
 }
 
-function collectRawQueryCteNames(maskedSql: string): Set<string> {
-  const cteNames = new Set<string>();
-  let index = skipSqlWhitespace(maskedSql, 0);
+function parseRawQueryWithClauseCteNames(maskedSql: string, withTokenStartIndex: number): string[] {
+  const cteNames: string[] = [];
+  const withKeyword = parseUnquotedSqlToken(maskedSql, withTokenStartIndex);
+  assert(
+    withKeyword != null && withKeyword.value.toLowerCase() === "with",
+    "Expected WITH keyword while collecting raw analytics CTE names"
+  );
 
-  const withKeyword = parseUnquotedSqlToken(maskedSql, index);
-  if (withKeyword == null || withKeyword.value.toLowerCase() !== "with") {
-    return cteNames;
-  }
-
-  index = skipSqlWhitespace(maskedSql, withKeyword.nextIndex);
+  let index = skipSqlWhitespace(maskedSql, withKeyword.nextIndex);
 
   const recursiveKeyword = parseUnquotedSqlToken(maskedSql, index);
   if (recursiveKeyword?.value.toLowerCase() === "recursive") {
@@ -1068,7 +1079,7 @@ function collectRawQueryCteNames(maskedSql: string): Set<string> {
       throw new Error("Raw analytics query contains malformed WITH clause");
     }
 
-    cteNames.add(normalizeSqlIdentifier(cteName.value));
+    cteNames.push(normalizeSqlIdentifier(cteName.value));
     index = skipSqlWhitespace(maskedSql, cteName.nextIndex);
 
     if (maskedSql[index] === "(") {
@@ -1112,6 +1123,39 @@ function collectRawQueryCteNames(maskedSql: string): Set<string> {
   return cteNames;
 }
 
+function collectRawQueryCteNames(maskedSql: string): Set<string> {
+  const cteNames = new Set<string>();
+  let index = 0;
+
+  while (index < maskedSql.length) {
+    if (maskedSql[index] === '"') {
+      const quotedIdentifier = parseSqlIdentifier(maskedSql, index);
+      assert(
+        quotedIdentifier != null,
+        "Expected quoted identifier while collecting raw analytics CTE names"
+      );
+      index = quotedIdentifier.nextIndex;
+      continue;
+    }
+
+    const token = parseUnquotedSqlToken(maskedSql, index);
+    if (token == null) {
+      index += 1;
+      continue;
+    }
+
+    if (token.value.toLowerCase() === "with") {
+      for (const cteName of parseRawQueryWithClauseCteNames(maskedSql, index)) {
+        cteNames.add(cteName);
+      }
+    }
+
+    index = token.nextIndex;
+  }
+
+  return cteNames;
+}
+
 function validateRawQuerySql(sql: string): void {
   const maskedSql = maskSqlCommentsAndStringLiterals(sql);
 
@@ -1133,7 +1177,11 @@ function validateRawQuerySql(sql: string): void {
       continue;
     }
 
-    if (!relationSource.isFunctionCall && cteNames.has(normalizedSourceName)) {
+    if (
+      !relationSource.isFunctionCall &&
+      !relationSource.isQualifiedName &&
+      cteNames.has(normalizedSourceName)
+    ) {
       continue;
     }
 

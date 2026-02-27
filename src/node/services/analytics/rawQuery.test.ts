@@ -148,7 +148,14 @@ describe("executeRawQuery", () => {
     );
   });
 
-  test("allows legitimate CTE reference", async () => {
+  test("rejects qualified table name matching CTE name", async () => {
+    await expectValidationFailure(
+      "WITH ingest_watermarks AS (SELECT * FROM events) SELECT * FROM main.ingest_watermarks",
+      /disallowed table or source/i
+    );
+  });
+
+  test("allows unqualified CTE reference", async () => {
     const { conn, runMock } = createMockConn(() =>
       createMockResult({
         columns: [{ name: "event_count", type: "BIGINT" }],
@@ -162,6 +169,40 @@ describe("executeRawQuery", () => {
 
     expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
     expect(result.rows).toEqual([{ event_count: 4 }]);
+  });
+
+  test("allows subquery-local CTEs", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "event_count", type: "BIGINT" }],
+        rows: [{ event_count: 6n }],
+      })
+    );
+
+    const sql =
+      "SELECT COUNT(*) AS event_count FROM (WITH scoped AS (SELECT * FROM events) SELECT * FROM scoped) AS scoped_rows";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(result.rows).toEqual([{ event_count: 6 }]);
+  });
+
+  test("allows nested WITH in subquery", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "event_count", type: "BIGINT" }],
+        rows: [{ event_count: 8n }],
+      })
+    );
+
+    const sql =
+      "SELECT COUNT(*) AS event_count FROM (WITH outer_scoped AS (WITH inner_scoped AS (SELECT * FROM events) SELECT * FROM inner_scoped) SELECT * FROM outer_scoped) AS nested_rows";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(result.rows).toEqual([{ event_count: 8 }]);
   });
 
   test("rejects queries using read_csv_auto", async () => {
