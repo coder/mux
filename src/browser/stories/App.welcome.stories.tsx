@@ -598,16 +598,17 @@ export const CreateWorkspaceWithSections: AppStory = {
     }
 
     try {
-      const canvas = within(storyRoot);
-
-      // Wait for the section selector to be visible. On desktop it's inline
-      // in the header row; on mobile (<768px) it drops to its own row.
-      // Chromatic screenshots catch visual regressions in both modes — the
-      // play function just verifies the element renders and, on mobile, that
-      // it sits below the header (not overlapping).
+      // Wait for the section selector to be visible. Two instances exist in
+      // the DOM (one for desktop inline, one for mobile own-row via
+      // hidden/md:hidden). Find the one that's actually rendered.
       await waitFor(
         () => {
-          const sectionSelector = canvas.queryByTestId("section-selector");
+          const allSelectors = storyRoot.querySelectorAll<HTMLElement>(
+            "[data-testid='section-selector']"
+          );
+          const sectionSelector = Array.from(allSelectors).find(
+            (el) => el.offsetWidth > 0 && el.offsetHeight > 0
+          );
           if (!sectionSelector) {
             throw new Error("Section selector not visible");
           }
