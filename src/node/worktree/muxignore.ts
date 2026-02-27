@@ -24,6 +24,12 @@ export function parseMuxignorePatterns(content: string): string[] {
  * Uses `git ls-files` for consistency with the project's git-first philosophy.
  */
 async function getFilesToSync(projectPath: string, patterns: string[]): Promise<string[]> {
+  // Patterns that start with ! are "negative" entries (e.g. from `!!foo`) and
+  // cannot select candidate files on their own, so only positive patterns are
+  // used for git prefiltering.
+  const includePatterns = patterns.filter((pattern) => !pattern.startsWith("!"));
+  if (includePatterns.length === 0) return [];
+
   using proc = execFileAsync("git", [
     "-C",
     projectPath,
@@ -31,11 +37,18 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
     "--others",
     "--ignored",
     "--exclude-standard",
+    "-z",
+    "--",
+    ...includePatterns,
   ]);
   const { stdout } = await proc.result;
-  const ignoredFiles = stdout.split("\n").filter(Boolean);
+  const ignoredFiles = stdout
+    .split("\0")
+    .map((line) => line.replace(/\r$/, ""))
+    .filter(Boolean);
 
-  // Use the `ignore` package to match files against our patterns
+  // Use the `ignore` package to preserve .muxignore-style matching semantics
+  // after git's pathspec prefiltering.
   const ig = ignore().add(patterns);
   return ignoredFiles.filter((file) => ig.ignores(file));
 }
@@ -45,7 +58,7 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
  * Runs after `git worktree add` so that files like `.env` are available
  * before `.mux/init` hooks execute.
  *
- * Best-effort: logs warnings but never throws.
+ * Best-effort: logs debug details but never throws.
  */
 export async function syncMuxignoreFiles(
   projectPath: string,

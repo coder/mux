@@ -24,6 +24,11 @@ describe("parseMuxignorePatterns", () => {
   it("handles lone ! without crashing", () => {
     expect(parseMuxignorePatterns("!\n!.env")).toEqual([".env"]);
   });
+
+  it("preserves negative patterns produced by double-bang entries", () => {
+    const content = "!.env*\n!!.env.example\n";
+    expect(parseMuxignorePatterns(content)).toEqual([".env*", "!.env.example"]);
+  });
 });
 
 describe("syncMuxignoreFiles", () => {
@@ -113,5 +118,56 @@ describe("syncMuxignoreFiles", () => {
       "utf-8"
     );
     expect(secretContent).toBe("key=val\n");
+  });
+
+  it("supports directory patterns for syncing ignored folders", async () => {
+    execSync(
+      [
+        `cd ${projectPath}`,
+        'echo "config/" >> .gitignore',
+        "mkdir -p config/nested",
+        'echo "top=true" > config/secrets.json',
+        'echo "nested=true" > config/nested/inner.env',
+      ].join(" && ")
+    );
+    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!config/\n");
+
+    await syncMuxignoreFiles(projectPath, worktreePath);
+
+    const topLevel = await fsPromises.readFile(
+      path.join(worktreePath, "config/secrets.json"),
+      "utf-8"
+    );
+    expect(topLevel).toBe("top=true\n");
+
+    const nested = await fsPromises.readFile(
+      path.join(worktreePath, "config/nested/inner.env"),
+      "utf-8"
+    );
+    expect(nested).toBe("nested=true\n");
+  });
+
+  it("respects negative patterns produced by double-bang exclusions", async () => {
+    execSync(
+      [
+        `cd ${projectPath}`,
+        'echo ".env*" >> .gitignore',
+        'echo "EXAMPLE=true" > .env.example',
+      ].join(" && ")
+    );
+    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!.env*\n!!.env.example\n");
+
+    await syncMuxignoreFiles(projectPath, worktreePath);
+
+    const envContent = await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8");
+    expect(envContent).toBe("SECRET=abc\n");
+
+    let envExampleExists = true;
+    try {
+      await fsPromises.access(path.join(worktreePath, ".env.example"));
+    } catch {
+      envExampleExists = false;
+    }
+    expect(envExampleExists).toBe(false);
   });
 });

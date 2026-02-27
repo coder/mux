@@ -112,6 +112,7 @@ export class WorktreeManager {
 
       // Sync gitignored files declared in .muxignore (e.g. .env)
       // before init hooks run so they have access to secrets/config
+      initLogger.logStep("Syncing .muxignore files...");
       await syncMuxignoreFiles(projectPath, workspacePath);
 
       // For existing branches, fast-forward to latest origin (best-effort)
