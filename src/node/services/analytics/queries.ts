@@ -726,8 +726,8 @@ interface RawQueryRelationSource {
   isQualifiedName: boolean;
 }
 
-interface RawQueryRelationSourceWithDepth extends RawQueryRelationSource {
-  depth: number;
+interface RawQueryRelationSourceWithScope extends RawQueryRelationSource {
+  scopeId: number;
 }
 
 interface ParsedRawQueryRelationSource extends RawQueryRelationSource {
@@ -735,8 +735,13 @@ interface ParsedRawQueryRelationSource extends RawQueryRelationSource {
 }
 
 interface RawQueryFromClauseContext {
-  depth: number;
+  scopeId: number;
   expectingSource: boolean;
+}
+
+interface RawQueryScopeTree {
+  scopeByIndex: number[];
+  scopeParents: Map<number, number>;
 }
 
 function skipSqlWhitespace(sql: string, startIndex: number): number {
@@ -849,11 +854,99 @@ function parseRawQueryRelationSource(
   };
 }
 
-function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSourceWithDepth[] {
-  const sources: RawQueryRelationSourceWithDepth[] = [];
+function getCurrentRawQueryScopeId(scopeStack: number[]): number {
+  const currentScopeId = scopeStack.at(-1);
+  assert(currentScopeId != null, "Raw analytics query scope stack must not be empty");
+  return currentScopeId;
+}
+
+function buildRawQueryScopeTree(maskedSql: string): RawQueryScopeTree {
+  const scopeByIndex = new Array<number>(maskedSql.length);
+  const scopeParents = new Map<number, number>([[0, -1]]);
+  const scopeStack = [0];
+
+  let scopeCounter = 0;
+  let index = 0;
+
+  while (index < maskedSql.length) {
+    const currentScopeId = getCurrentRawQueryScopeId(scopeStack);
+    scopeByIndex[index] = currentScopeId;
+
+    if (maskedSql[index] === '"') {
+      const quotedIdentifier = parseSqlIdentifier(maskedSql, index);
+      assert(
+        quotedIdentifier != null,
+        "Expected quoted identifier while building raw analytics scope tree"
+      );
+
+      for (
+        let quotedIndex = index + 1;
+        quotedIndex < quotedIdentifier.nextIndex;
+        quotedIndex += 1
+      ) {
+        scopeByIndex[quotedIndex] = currentScopeId;
+      }
+
+      index = quotedIdentifier.nextIndex;
+      continue;
+    }
+
+    if (maskedSql[index] === "(") {
+      scopeCounter += 1;
+      scopeParents.set(scopeCounter, currentScopeId);
+      scopeStack.push(scopeCounter);
+    } else if (maskedSql[index] === ")") {
+      if (scopeStack.length > 1) {
+        scopeStack.pop();
+      }
+    }
+
+    index += 1;
+  }
+
+  if (scopeStack.length !== 1) {
+    throw new Error("Raw analytics query contains unbalanced parentheses");
+  }
+
+  return {
+    scopeByIndex,
+    scopeParents,
+  };
+}
+
+function getRawQueryScopeIdAtIndex(scopeTree: RawQueryScopeTree, index: number): number {
+  const scopeId = scopeTree.scopeByIndex[index];
+  assert(scopeId != null, `Missing raw query scope at SQL index ${index}`);
+  return scopeId;
+}
+
+function isScopeAncestorOrSelf(
+  ancestorScopeId: number,
+  childScopeId: number,
+  scopeParents: Map<number, number>
+): boolean {
+  let currentScopeId = childScopeId;
+
+  while (currentScopeId >= 0) {
+    if (currentScopeId === ancestorScopeId) {
+      return true;
+    }
+
+    const parentScopeId = scopeParents.get(currentScopeId);
+    assert(parentScopeId != null, `Missing parent scope for raw query scope ${currentScopeId}`);
+    currentScopeId = parentScopeId;
+  }
+
+  return false;
+}
+
+function collectRawQueryRelationSources(
+  maskedSql: string,
+  scopeTree: RawQueryScopeTree
+): RawQueryRelationSourceWithScope[] {
+  const sources: RawQueryRelationSourceWithScope[] = [];
   const fromClauseContexts: RawQueryFromClauseContext[] = [];
 
-  let depth = 0;
   let index = 0;
 
   while (index < maskedSql.length) {
@@ -862,47 +955,61 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
       break;
     }
 
+    const currentScopeId = getRawQueryScopeIdAtIndex(scopeTree, index);
+
+    while (
+      fromClauseContexts.length > 0 &&
+      !isScopeAncestorOrSelf(
+        fromClauseContexts.at(-1)!.scopeId,
+        currentScopeId,
+        scopeTree.scopeParents
+      )
+    ) {
+      fromClauseContexts.pop();
+    }
+
     const currentContext = fromClauseContexts.at(-1);
-    const currentContextAtDepth = currentContext?.depth === depth ? currentContext : null;
+    const currentContextAtScope =
+      currentContext?.scopeId === currentScopeId ? currentContext : null;
     const char = maskedSql[index];
 
     if (char === "(") {
-      if (currentContextAtDepth?.expectingSource) {
-        currentContextAtDepth.expectingSource = false;
+      if (currentContextAtScope?.expectingSource) {
+        currentContextAtScope.expectingSource = false;
       }
 
-      depth += 1;
       index += 1;
       continue;
     }
 
-    if (char === ")") {
-      depth = Math.max(0, depth - 1);
-      while (fromClauseContexts.length > 0 && fromClauseContexts.at(-1)!.depth > depth) {
-        fromClauseContexts.pop();
-      }
-      index += 1;
-      continue;
-    }
-
-    if (char === "," && currentContextAtDepth != null) {
-      currentContextAtDepth.expectingSource = true;
+    if (char === "," && currentContextAtScope != null) {
+      currentContextAtScope.expectingSource = true;
       index += 1;
       continue;
     }
 
     const token = parseUnquotedSqlToken(maskedSql, index);
     if (token == null) {
-      if (currentContextAtDepth?.expectingSource) {
+      if (char === '"') {
+        const quotedIdentifier = parseSqlIdentifier(maskedSql, index);
+        assert(
+          quotedIdentifier != null,
+          "Expected quoted identifier while collecting raw analytics relation sources"
+        );
+        index = quotedIdentifier.nextIndex;
+        continue;
+      }
+
+      if (currentContextAtScope?.expectingSource) {
         const source = parseRawQueryRelationSource(maskedSql, index);
         if (source != null) {
           sources.push({
             source: source.source,
             isFunctionCall: source.isFunctionCall,
             isQualifiedName: source.isQualifiedName,
-            depth,
+            scopeId: currentScopeId,
           });
-          currentContextAtDepth.expectingSource = false;
+          currentContextAtScope.expectingSource = false;
           index = source.nextIndex;
           continue;
         }
@@ -916,7 +1023,7 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
 
     if (keyword === "from") {
       fromClauseContexts.push({
-        depth,
+        scopeId: currentScopeId,
         expectingSource: true,
       });
       index = token.nextIndex;
@@ -924,9 +1031,9 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
     }
 
     const activeContext = fromClauseContexts.at(-1);
-    const activeContextAtDepth = activeContext?.depth === depth ? activeContext : null;
+    const activeContextAtScope = activeContext?.scopeId === currentScopeId ? activeContext : null;
 
-    if (activeContextAtDepth != null) {
+    if (activeContextAtScope != null) {
       if (RAW_QUERY_FROM_CLAUSE_BOUNDARY_KEYWORDS.has(keyword)) {
         fromClauseContexts.pop();
         index = token.nextIndex;
@@ -934,12 +1041,12 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
       }
 
       if (keyword === "join") {
-        activeContextAtDepth.expectingSource = true;
+        activeContextAtScope.expectingSource = true;
         index = token.nextIndex;
         continue;
       }
 
-      if (activeContextAtDepth.expectingSource) {
+      if (activeContextAtScope.expectingSource) {
         if (RAW_QUERY_RELATION_PREFIX_KEYWORDS.has(keyword)) {
           index = token.nextIndex;
           continue;
@@ -951,9 +1058,9 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
             source: source.source,
             isFunctionCall: source.isFunctionCall,
             isQualifiedName: source.isQualifiedName,
-            depth,
+            scopeId: currentScopeId,
           });
-          activeContextAtDepth.expectingSource = false;
+          activeContextAtScope.expectingSource = false;
           index = source.nextIndex;
           continue;
         }
@@ -1129,9 +1236,11 @@ function parseRawQueryWithClauseCteNames(maskedSql: string, withTokenStartIndex:
   return cteNames;
 }
 
-function collectRawQueryCteNames(maskedSql: string): Map<string, number> {
-  const cteMinDepthByName = new Map<string, number>();
-  let depth = 0;
+function collectRawQueryCteNames(
+  maskedSql: string,
+  scopeTree: RawQueryScopeTree
+): Map<string, number[]> {
+  const cteScopesByName = new Map<string, number[]>();
   let index = 0;
 
   while (index < maskedSql.length) {
@@ -1147,18 +1256,6 @@ function collectRawQueryCteNames(maskedSql: string): Map<string, number> {
       continue;
     }
 
-    if (char === "(") {
-      depth += 1;
-      index += 1;
-      continue;
-    }
-
-    if (char === ")") {
-      depth = Math.max(0, depth - 1);
-      index += 1;
-      continue;
-    }
-
     const token = parseUnquotedSqlToken(maskedSql, index);
     if (token == null) {
       index += 1;
@@ -1166,10 +1263,17 @@ function collectRawQueryCteNames(maskedSql: string): Map<string, number> {
     }
 
     if (token.value.toLowerCase() === "with") {
+      const cteScopeId = getRawQueryScopeIdAtIndex(scopeTree, index);
+
       for (const cteName of parseRawQueryWithClauseCteNames(maskedSql, index)) {
-        const existingDepth = cteMinDepthByName.get(cteName);
-        if (existingDepth == null || depth < existingDepth) {
-          cteMinDepthByName.set(cteName, depth);
+        const existingScopes = cteScopesByName.get(cteName);
+        if (existingScopes == null) {
+          cteScopesByName.set(cteName, [cteScopeId]);
+          continue;
+        }
+
+        if (!existingScopes.includes(cteScopeId)) {
+          existingScopes.push(cteScopeId);
         }
       }
     }
@@ -1177,7 +1281,7 @@ function collectRawQueryCteNames(maskedSql: string): Map<string, number> {
     index = token.nextIndex;
   }
 
-  return cteMinDepthByName;
+  return cteScopesByName;
 }
 
 function validateRawQuerySql(sql: string): void {
@@ -1191,8 +1295,9 @@ function validateRawQuerySql(sql: string): void {
     }
   }
 
-  const cteMinDepthByName = collectRawQueryCteNames(maskedSql);
-  const relationSources = collectRawQueryRelationSources(maskedSql);
+  const scopeTree = buildRawQueryScopeTree(maskedSql);
+  const cteScopesByName = collectRawQueryCteNames(maskedSql, scopeTree);
+  const relationSources = collectRawQueryRelationSources(maskedSql, scopeTree);
 
   for (const relationSource of relationSources) {
     const normalizedSourceName = normalizeQualifiedSqlIdentifier(relationSource.source);
@@ -1201,12 +1306,13 @@ function validateRawQuerySql(sql: string): void {
       continue;
     }
 
-    const cteMinDepth = cteMinDepthByName.get(normalizedSourceName);
+    const cteScopeIds = cteScopesByName.get(normalizedSourceName);
     if (
       !relationSource.isFunctionCall &&
       !relationSource.isQualifiedName &&
-      cteMinDepth != null &&
-      cteMinDepth <= relationSource.depth
+      cteScopeIds?.some((cteScopeId) =>
+        isScopeAncestorOrSelf(cteScopeId, relationSource.scopeId, scopeTree.scopeParents)
+      ) === true
     ) {
       continue;
     }

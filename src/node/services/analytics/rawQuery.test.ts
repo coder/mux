@@ -195,6 +195,13 @@ describe("executeRawQuery", () => {
     );
   });
 
+  test("rejects CTE name used in sibling subquery", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM (WITH ingest_watermarks AS (SELECT 1) SELECT 1) a, (SELECT * FROM ingest_watermarks) b",
+      /disallowed table or source/i
+    );
+  });
+
   test("allows nested WITH in subquery", async () => {
     const { conn, runMock } = createMockConn(() =>
       createMockResult({
