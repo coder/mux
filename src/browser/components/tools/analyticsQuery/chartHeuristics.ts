@@ -58,7 +58,9 @@ export function inferAxes(
   assert(Array.isArray(columns), "inferAxes requires a columns array");
 
   const allColumnNames = new Set(columns.map((column) => column.name));
-  const numericColumns = columns.filter((column) => isNumericType(column.type)).map((column) => column.name);
+  const numericColumns = columns
+    .filter((column) => isNumericType(column.type))
+    .map((column) => column.name);
 
   const xAxis =
     (explicitX && allColumnNames.has(explicitX) ? explicitX : undefined) ??

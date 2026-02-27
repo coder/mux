@@ -23,8 +23,8 @@ function createMockResult(input: MockResultInput) {
     columnType(index: number): string | { toString(): string } {
       return input.columns[index].type;
     },
-    async getRowObjectsJS(): Promise<Array<Record<string, unknown>>> {
-      return input.rows;
+    getRowObjectsJS(): Promise<Array<Record<string, unknown>>> {
+      return Promise.resolve(input.rows);
     },
   };
 }
@@ -48,9 +48,22 @@ function createMockConn(
   };
 }
 
+async function expectQueryFailure(promise: Promise<unknown>, errorPattern: RegExp): Promise<void> {
+  try {
+    await promise;
+    throw new Error("Expected query to fail");
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    if (!(error instanceof Error)) {
+      throw error;
+    }
+    expect(error.message).toMatch(errorPattern);
+  }
+}
+
 describe("executeRawQuery", () => {
   test("wraps SQL with limit, normalizes rows, and returns metadata", async () => {
-    const { conn, runMock } = createMockConn(async () =>
+    const { conn, runMock } = createMockConn(() =>
       createMockResult({
         columns: [
           { name: "model", type: "VARCHAR" },
@@ -93,11 +106,12 @@ describe("executeRawQuery", () => {
   });
 
   test("throws when SQL execution fails", async () => {
-    const { conn } = createMockConn(async () => {
+    const { conn } = createMockConn(() => {
       throw new Error("Parser Error: syntax error at or near FRM");
     });
 
-    await expect(executeRawQuery(conn, "SELECT * FRM events")).rejects.toThrow(
+    await expectQueryFailure(
+      executeRawQuery(conn, "SELECT * FRM events"),
       /syntax error at or near FRM/i
     );
   });
@@ -107,7 +121,7 @@ describe("executeRawQuery", () => {
       rank: index,
     }));
 
-    const { conn } = createMockConn(async () =>
+    const { conn } = createMockConn(() =>
       createMockResult({
         columns: [{ name: "rank", type: "BIGINT" }],
         rows: oversizedRows,
@@ -124,7 +138,7 @@ describe("executeRawQuery", () => {
   });
 
   test("returns empty rows with column metadata for empty result sets", async () => {
-    const { conn } = createMockConn(async () =>
+    const { conn } = createMockConn(() =>
       createMockResult({
         columns: [
           { name: "workspace_id", type: "VARCHAR" },
@@ -149,7 +163,7 @@ describe("executeRawQuery", () => {
   });
 
   test("uses DuckDB type toString output for complex type names", async () => {
-    const { conn } = createMockConn(async () =>
+    const { conn } = createMockConn(() =>
       createMockResult({
         columns: [{ name: "cost", type: { toString: () => "DECIMAL(18,4)" } }],
         rows: [{ cost: 12.34 }],
@@ -162,7 +176,7 @@ describe("executeRawQuery", () => {
   });
 
   test("preserves CTE SQL and relies on subquery wrapping for write prevention", async () => {
-    const { conn, runMock } = createMockConn(async (sql) => {
+    const { conn, runMock } = createMockConn((sql) => {
       if (sql.includes("INSERT INTO events")) {
         throw new Error('Parser Error: syntax error at or near "INSERT"');
       }
@@ -173,12 +187,13 @@ describe("executeRawQuery", () => {
       });
     });
 
-    await expect(
+    await expectQueryFailure(
       executeRawQuery(
         conn,
         "WITH cte AS (INSERT INTO events (workspace_id) VALUES ('x')) SELECT * FROM cte"
-      )
-    ).rejects.toThrow(/syntax error at or near "INSERT"/i);
+      ),
+      /syntax error at or near "INSERT"/i
+    );
 
     expect(runMock).toHaveBeenCalledWith(
       "SELECT * FROM (WITH cte AS (INSERT INTO events (workspace_id) VALUES ('x')) SELECT * FROM cte) AS __q LIMIT 10001"

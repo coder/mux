@@ -82,7 +82,9 @@ describe("AnalyticsQueryToolCall", () => {
 
     const view = renderWithTooltip(
       <AnalyticsQueryToolCall
-        args={{ sql: "SELECT model, sum(input_tokens + output_tokens) AS total_tokens FROM events GROUP BY model" }}
+        args={{
+          sql: "SELECT model, sum(input_tokens + output_tokens) AS total_tokens FROM events GROUP BY model",
+        }}
         result={result}
         status="completed"
       />
@@ -152,7 +154,10 @@ describe("AnalyticsQueryToolCall", () => {
     };
 
     const view = renderWithTooltip(
-      <AnalyticsQueryToolCall args={{ sql: "SELECT model, total_cost_usd FROM events" }} result={result} />
+      <AnalyticsQueryToolCall
+        args={{ sql: "SELECT model, total_cost_usd FROM events" }}
+        result={result}
+      />
     );
 
     expect(view.getByRole("button", { name: /Table/i })).toBeTruthy();

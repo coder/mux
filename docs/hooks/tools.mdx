@@ -281,6 +281,20 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>analytics_query (6)</summary>
+
+| Env var                         | JSON path         | Type   | Description                                                                         |
+| ------------------------------- | ----------------- | ------ | ----------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_SQL`            | `sql`             | string | DuckDB SQL query to execute                                                         |
+| `MUX_TOOL_INPUT_TITLE`          | `title`           | string | Optional chart title                                                                |
+| `MUX_TOOL_INPUT_VISUALIZATION`  | `visualization`   | enum   | Optional visualization type for rendering the query result                          |
+| `MUX_TOOL_INPUT_X_AXIS`         | `x_axis`          | string | Optional column name for the visualization X axis                                   |
+| `MUX_TOOL_INPUT_Y_AXIS_<INDEX>` | `y_axis[<INDEX>]` | string | Optional column name(s) for the visualization Y axis                                |
+| `MUX_TOOL_INPUT_Y_AXIS_COUNT`   | `y_axis.length`   | number | Number of elements in y_axis (Optional column name(s) for the visualization Y axis) |
+
+</details>
+
+<details>
 <summary>ask_user_question (8)</summary>
 
 | Env var                                                        | JSON path                                         | Type    | Description                                            |

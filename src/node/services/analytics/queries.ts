@@ -660,7 +660,7 @@ export interface RawQueryColumn {
 
 export interface RawQueryResult {
   columns: RawQueryColumn[];
-  rows: Record<string, unknown>[];
+  rows: Array<Record<string, unknown>>;
   truncated: boolean;
   rowCount: number;
   durationMs: number;
