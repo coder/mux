@@ -1003,10 +1003,15 @@ export class AIService extends EventEmitter {
         truncationMode
       );
 
-      // Build per-request HTTP headers (e.g., anthropic-beta for 1M context).
-      // This is the single injection site for provider-specific headers, handling
-      // both direct and gateway-routed models identically.
-      const requestHeaders = buildRequestHeaders(modelString, effectiveMuxProviderOptions);
+      // Build per-request HTTP headers (e.g., workspace correlation and
+      // anthropic-beta for 1M context). This is the single injection site for
+      // provider-specific headers, handling both direct and gateway-routed models
+      // identically.
+      const requestHeaders = buildRequestHeaders(
+        modelString,
+        effectiveMuxProviderOptions,
+        workspaceId
+      );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {

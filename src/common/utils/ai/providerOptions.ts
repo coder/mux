@@ -382,31 +382,44 @@ export function buildProviderOptions(
 /** Header value for Anthropic 1M context beta */
 export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
 
+/** HTTP header sent on AI requests for workspace-level observability. */
+export const MUX_WORKSPACE_ID_HEADER = "X-Mux-Workspace-Id";
+
 /**
  * Build per-request HTTP headers for provider-specific features.
  *
  * These flow through streamText({ headers }) to the provider SDK, which merges
  * them with provider-creation-time headers via combineHeaders(). This is the
- * single injection site for features like the Anthropic 1M context beta header,
- * regardless of whether the model is direct or gateway-routed.
+ * single injection site for headers like the workspace correlation header and
+ * Anthropic's 1M context beta header, regardless of direct vs gateway routing.
  */
 export function buildRequestHeaders(
   modelString: string,
-  muxProviderOptions?: MuxProviderOptions
+  muxProviderOptions?: MuxProviderOptions,
+  workspaceId?: string
 ): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+
+  if (workspaceId != null) {
+    headers[MUX_WORKSPACE_ID_HEADER] = workspaceId;
+  }
+
   const normalized = normalizeGatewayModel(modelString);
   const [provider] = normalized.split(":", 2);
 
-  if (provider !== "anthropic") return undefined;
+  if (provider === "anthropic") {
+    // ZDR: skip all Anthropic beta headers when beta features are disabled.
+    if (!muxProviderOptions?.anthropic?.disableBetaFeatures) {
+      const is1MEnabled =
+        ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
+          muxProviderOptions?.anthropic?.use1MContext === true) &&
+        supports1MContext(normalized);
 
-  // ZDR: skip all Anthropic beta headers when beta features are disabled.
-  if (muxProviderOptions?.anthropic?.disableBetaFeatures) return undefined;
+      if (is1MEnabled) {
+        headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
+      }
+    }
+  }
 
-  const is1MEnabled =
-    ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
-      muxProviderOptions?.anthropic?.use1MContext === true) &&
-    supports1MContext(normalized);
-
-  if (!is1MEnabled) return undefined;
-  return { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
