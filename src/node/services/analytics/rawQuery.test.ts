@@ -141,6 +141,29 @@ describe("executeRawQuery", () => {
     );
   });
 
+  test("rejects CTE-shadowed function call", async () => {
+    await expectValidationFailure(
+      "WITH duckdb_tables AS (SELECT * FROM events) SELECT * FROM duckdb_tables()",
+      /disallowed table or source/i
+    );
+  });
+
+  test("allows legitimate CTE reference", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "event_count", type: "BIGINT" }],
+        rows: [{ event_count: 4n }],
+      })
+    );
+
+    const sql = "WITH daily AS (SELECT * FROM events) SELECT COUNT(*) AS event_count FROM daily";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(result.rows).toEqual([{ event_count: 4 }]);
+  });
+
   test("rejects queries using read_csv_auto", async () => {
     await expectValidationFailure(
       "SELECT * FROM read_csv_auto('/etc/passwd')",

@@ -720,8 +720,12 @@ interface ParsedSqlToken {
   nextIndex: number;
 }
 
-interface ParsedRawQueryRelationSource {
+interface RawQueryRelationSource {
   source: string;
+  isFunctionCall: boolean;
+}
+
+interface ParsedRawQueryRelationSource extends RawQueryRelationSource {
   nextIndex: number;
 }
 
@@ -832,12 +836,13 @@ function parseRawQueryRelationSource(
 
   return {
     source,
+    isFunctionCall: sql[index] === "(",
     nextIndex: index,
   };
 }
 
-function collectRawQueryRelationSources(maskedSql: string): string[] {
-  const sources: string[] = [];
+function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSource[] {
+  const sources: RawQueryRelationSource[] = [];
   const fromClauseContexts: RawQueryFromClauseContext[] = [];
 
   let depth = 0;
@@ -883,7 +888,7 @@ function collectRawQueryRelationSources(maskedSql: string): string[] {
       if (currentContextAtDepth?.expectingSource) {
         const source = parseRawQueryRelationSource(maskedSql, index);
         if (source != null) {
-          sources.push(source.source);
+          sources.push({ source: source.source, isFunctionCall: source.isFunctionCall });
           currentContextAtDepth.expectingSource = false;
           index = source.nextIndex;
           continue;
@@ -929,7 +934,7 @@ function collectRawQueryRelationSources(maskedSql: string): string[] {
 
         const source = parseRawQueryRelationSource(maskedSql, index);
         if (source != null) {
-          sources.push(source.source);
+          sources.push({ source: source.source, isFunctionCall: source.isFunctionCall });
           activeContextAtDepth.expectingSource = false;
           index = source.nextIndex;
           continue;
@@ -1121,15 +1126,19 @@ function validateRawQuerySql(sql: string): void {
   const cteNames = collectRawQueryCteNames(maskedSql);
   const relationSources = collectRawQueryRelationSources(maskedSql);
 
-  for (const source of relationSources) {
-    const normalizedSourceName = normalizeQualifiedSqlIdentifier(source);
+  for (const relationSource of relationSources) {
+    const normalizedSourceName = normalizeQualifiedSqlIdentifier(relationSource.source);
 
-    if (RAW_QUERY_ALLOWED_TABLES.has(normalizedSourceName) || cteNames.has(normalizedSourceName)) {
+    if (RAW_QUERY_ALLOWED_TABLES.has(normalizedSourceName)) {
+      continue;
+    }
+
+    if (!relationSource.isFunctionCall && cteNames.has(normalizedSourceName)) {
       continue;
     }
 
     throw new Error(
-      `Query references disallowed table or source: ${source.trim()}. Allowed tables: ${RAW_QUERY_ALLOWED_TABLE_NAMES}`
+      `Query references disallowed table or source: ${relationSource.source.trim()}. Allowed tables: ${RAW_QUERY_ALLOWED_TABLE_NAMES}`
     );
   }
 }
