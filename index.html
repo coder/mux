@@ -85,6 +85,27 @@
       :root[data-theme$="-light"] .boot-loader__text {
         color: var(--color-text-secondary, #607081);
       }
+
+      /* Animated "..." after the loading text. Uses ::after so it works in
+         both the static HTML boot loader and the React LoadingScreen. */
+      @keyframes boot-ellipsis {
+        0%, 20%  { content: ""; }
+        40%      { content: "."; }
+        60%      { content: ".."; }
+        80%, 100% { content: "..."; }
+      }
+
+      .boot-loader__dots::after {
+        content: "";
+        animation: boot-ellipsis 1.2s steps(1) infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .boot-loader__dots::after {
+          content: "...";
+          animation: none;
+        }
+      }
     </style>
     <script>
       (function () {
@@ -163,7 +184,7 @@
   />
   <rect x="109" y="13" width="26" height="35" fill="currentColor" />
 </svg>
-          <p class="boot-loader__text">Loading Mux</p>
+          <p class="boot-loader__text">Loading Mux<span class="boot-loader__dots"></span></p>
         </div>
       </div>
     </div>

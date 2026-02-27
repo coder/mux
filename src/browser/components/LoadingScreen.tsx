@@ -12,7 +12,13 @@ export function LoadingScreen(props: { statusText?: string }) {
     <div className="boot-loader" role="status" aria-live="polite" aria-busy="true">
       <div className="boot-loader__inner">
         <MuxLogo className="boot-loader__logo" aria-hidden="true" />
-        <p className="boot-loader__text">{props.statusText ?? "Loading Mux"}</p>
+        <p className="boot-loader__text">
+          {props.statusText ?? "Loading Mux"}
+          {/* Animated "..." dots — only for default text; custom statusText
+              (e.g. "Reconnecting...") supplies its own punctuation. CSS in
+              index.html drives the animation via boot-loader__dots::after. */}
+          {!props.statusText && <span className="boot-loader__dots" />}
+        </p>
       </div>
     </div>
   );

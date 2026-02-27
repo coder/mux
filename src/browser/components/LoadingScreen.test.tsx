@@ -34,8 +34,8 @@ describe("LoadingScreen", () => {
     cleanupDom = null;
   });
 
-  test("renders boot loader markup with Mux logo", () => {
-    const { getByRole, getByTestId, getByText } = render(
+  test("renders boot loader markup with Mux logo and animated dots", () => {
+    const { container, getByRole, getByTestId, getByText } = render(
       <ThemeProvider>
         <LoadingScreen />
       </ThemeProvider>
@@ -44,15 +44,19 @@ describe("LoadingScreen", () => {
     expect(getByRole("status")).toBeTruthy();
     expect(getByTestId("mux-logo-mock")).toBeTruthy();
     expect(getByText("Loading Mux")).toBeTruthy();
+    // Animated dots span is present for default text
+    expect(container.querySelector(".boot-loader__dots")).toBeTruthy();
   });
 
-  test("renders custom statusText", () => {
-    const { getByText } = render(
+  test("renders custom statusText without animated dots", () => {
+    const { container, getByText } = render(
       <ThemeProvider>
         <LoadingScreen statusText="Reconnecting..." />
       </ThemeProvider>
     );
 
     expect(getByText("Reconnecting...")).toBeTruthy();
+    // Custom statusText supplies its own punctuation — no animated dots
+    expect(container.querySelector(".boot-loader__dots")).toBeNull();
   });
 });
