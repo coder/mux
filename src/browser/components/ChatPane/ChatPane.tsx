@@ -345,6 +345,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     innerRef,
     autoScroll,
     setAutoScroll,
+    disableAutoScroll,
     performAutoScroll,
     jumpToBottom,
     handleScroll,
@@ -355,13 +356,13 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const handleNavigateToMessage = useCallback(
     (historyId: string) => {
       // Disable auto-scroll so the navigation isn't undone by streaming content
-      setAutoScroll(false);
+      disableAutoScroll();
       requestAnimationFrame(() => {
         const element = contentRef.current?.querySelector(`[data-message-id="${historyId}"]`);
         element?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     },
-    [contentRef, setAutoScroll]
+    [contentRef, disableAutoScroll]
   );
 
   // Precompute per-user navigation objects so MessageRenderer rows receive stable prop
@@ -530,7 +531,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     }
 
     setEditingMessage(buildEditingStateFromDisplayed(lastUserMessage));
-    setAutoScroll(false); // Show jump-to-bottom indicator
+    disableAutoScroll(); // Show jump-to-bottom indicator
 
     // Scroll to the message being edited
     requestAnimationFrame(() => {
@@ -539,7 +540,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       );
       element?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-  }, [restoreQueuedDraft, contentRef, setAutoScroll, setEditingMessage]);
+  }, [restoreQueuedDraft, contentRef, disableAutoScroll, setEditingMessage]);
 
   const handleEditLastUserMessageClick = useCallback(() => {
     void handleEditLastUserMessage();

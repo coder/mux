@@ -98,6 +98,21 @@ export function useAutoScroll() {
     }
   }, []);
 
+  // Programmatic disable — clears any pending scroll-settled recovery timer so
+  // intentional disables (navigate-to-message, edit-message) aren't undone by the
+  // debounced re-enable. Use this instead of setAutoScroll(false) for explicit
+  // code-driven disables; the scroll handler's own disable (user scrolls up)
+  // deliberately does NOT clear the timer so the debounce can recover when the
+  // user scrolls back to the bottom.
+  const disableAutoScroll = useCallback(() => {
+    setAutoScroll(false);
+    autoScrollRef.current = false;
+    if (scrollSettledTimerRef.current) {
+      clearTimeout(scrollSettledTimerRef.current);
+      scrollSettledTimerRef.current = null;
+    }
+  }, []);
+
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const element = e.currentTarget;
     const currentScrollTop = element.scrollTop;
@@ -164,6 +179,7 @@ export function useAutoScroll() {
     innerRef,
     autoScroll,
     setAutoScroll,
+    disableAutoScroll,
     performAutoScroll,
     jumpToBottom,
     handleScroll,
