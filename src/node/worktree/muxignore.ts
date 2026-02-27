@@ -30,21 +30,23 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
   const includePatterns = patterns.filter((pattern) => !pattern.startsWith("!"));
   if (includePatterns.length === 0) return [];
 
-  // Root-anchored ignore patterns (e.g. `/.env`) are valid in .muxignore,
+  // Root-anchored ignore patterns (e.g. `!/.env`) are valid in .muxignore,
   // but git pathspec treats a leading slash as an absolute filesystem path.
   // Normalize to repo-relative pathspecs for prefiltering.
   const includePathspecs = includePatterns
-    .flatMap((pattern) => {
-      const normalized = pattern.replace(/^\.\//, "").replace(/^\/+/, "");
+    .flatMap((rawPattern) => {
+      const normalized = rawPattern.replace(/^\.\//, "").replace(/^\/+/, "");
       if (normalized.length === 0) return [];
 
-      // gitignore-style basename patterns (no slash) match at any depth.
-      // Add both root and recursive pathspecs so prefiltering preserves that behavior.
-      if (!normalized.includes("/")) {
-        return [normalized, `**/${normalized}`];
-      }
+      // `git ls-files` returns files, not directories. Expand directory patterns
+      // (e.g. `config/`) to file pathspecs so nested files are discovered.
+      const pathspec = normalized.endsWith("/") ? `${normalized}**` : normalized;
 
-      return [normalized];
+      // Non-rooted gitignore patterns can match at any depth (e.g. `!.env`,
+      // `!config/`). Include recursive pathspecs so git prefiltering doesn't
+      // drop nested candidates before ignore-based matching runs.
+      const isRootAnchored = rawPattern.startsWith("/") || rawPattern.startsWith("./");
+      return isRootAnchored ? [pathspec] : [pathspec, `**/${pathspec}`];
     })
     .filter((pattern, index, all) => all.indexOf(pattern) === index);
   if (includePathspecs.length === 0) return [];

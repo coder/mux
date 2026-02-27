@@ -148,9 +148,10 @@ describe("syncMuxignoreFiles", () => {
       [
         `cd ${projectPath}`,
         'echo "config/" >> .gitignore',
-        "mkdir -p config/nested",
+        "mkdir -p config/nested packages/api/config",
         'echo "top=true" > config/secrets.json',
         'echo "nested=true" > config/nested/inner.env',
+        'echo "deep=true" > packages/api/config/local.env',
       ].join(" && ")
     );
     await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!config/\n");
@@ -168,6 +169,12 @@ describe("syncMuxignoreFiles", () => {
       "utf-8"
     );
     expect(nested).toBe("nested=true\n");
+
+    const nestedConfigDir = await fsPromises.readFile(
+      path.join(worktreePath, "packages/api/config/local.env"),
+      "utf-8"
+    );
+    expect(nestedConfigDir).toBe("deep=true\n");
   });
 
   it("respects negative patterns produced by double-bang exclusions", async () => {
