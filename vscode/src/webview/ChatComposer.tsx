@@ -20,7 +20,7 @@ import { VimTextArea } from "mux/browser/components/VimTextArea";
 import { ModelSelector } from "mux/browser/components/ModelSelector";
 import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider";
 import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton";
-import { Tooltip, TooltipTrigger, TooltipContent } from "mux/browser/components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "mux/browser/components/Tooltip/Tooltip";
 
 import type { AgentId } from "mux/common/orpc/schemas";
 

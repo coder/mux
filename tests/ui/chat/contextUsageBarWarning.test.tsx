@@ -3,7 +3,7 @@ import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
 
 import { ContextUsageBar } from "@/browser/components/RightSidebar/ContextUsageBar";
-import { TooltipProvider } from "@/browser/components/ui/tooltip";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 
 describe("ContextUsageBar compaction warning", () => {
