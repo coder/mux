@@ -536,7 +536,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
             <SelectTrigger
               aria-label="Workspace type"
               className={cn(
-                "h-7 w-[168px] justify-between gap-2 rounded-md border px-2.5 text-xs font-medium shadow-none",
+                "h-7 w-full justify-between gap-2 rounded-md border px-2.5 text-xs font-medium shadow-none md:w-[168px]",
                 selectedOption?.triggerClass
               )}
             >
@@ -939,157 +939,181 @@ export function CreationControls(props: CreationControlsProps) {
           </div>
           {nameState.error && <NameErrorDisplay error={nameState.error} />}
         </div>
+
+        {/* Section selector - inline on desktop, hidden on mobile (shown separately below) */}
+        {props.sections && props.sections.length > 0 && props.onSectionChange && (
+          <>
+            <div className="hidden flex-1 md:block" />
+            <div className="hidden md:block">
+              <SectionPicker
+                sections={props.sections}
+                selectedSectionId={props.selectedSectionId ?? null}
+                onSectionChange={props.onSectionChange}
+                disabled={props.disabled}
+              />
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Section selector - own row below the project / workspace-name header */}
+      {/* Section selector - own row on mobile only, hidden on desktop */}
       {props.sections && props.sections.length > 0 && props.onSectionChange && (
-        <SectionPicker
-          sections={props.sections}
-          selectedSectionId={props.selectedSectionId ?? null}
-          onSectionChange={props.onSectionChange}
-          disabled={props.disabled}
-        />
+        <div className="md:hidden">
+          <SectionPicker
+            sections={props.sections}
+            selectedSectionId={props.selectedSectionId ?? null}
+            onSectionChange={props.onSectionChange}
+            disabled={props.disabled}
+          />
+        </div>
       )}
 
       {/* Runtime and source branch controls */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
         <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <div className="flex items-center gap-1.5">
-              <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
-                <Blocks className="h-3.5 w-3.5" />
-                Workspace Type
-              </label>
-              {/* Keep this compact while preserving quick access to project runtime defaults. */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      settings.open("runtimes", { runtimesProjectPath: props.projectPath })
+          {/* Workspace Type + Source Branch share a row on mobile */}
+          <div className="flex w-full items-end gap-3 md:contents md:w-auto">
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5 md:flex-initial">
+              <div className="flex items-center gap-1.5">
+                <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
+                  <Blocks className="h-3.5 w-3.5" />
+                  Workspace Type
+                </label>
+                {/* Keep this compact while preserving quick access to project runtime defaults. */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        settings.open("runtimes", { runtimesProjectPath: props.projectPath })
+                      }
+                      className={cn(
+                        "text-muted-foreground hover:text-foreground inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm transition-colors",
+                        runtimeChoice !== props.defaultRuntimeMode &&
+                          "text-warning hover:text-warning"
+                      )}
+                      aria-label="Configure runtimes"
+                    >
+                      <Cog className="h-3 w-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent align="center">
+                    {runtimeChoice !== props.defaultRuntimeMode
+                      ? "Set project runtime defaults"
+                      : "Configure runtimes"}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <RuntimeButtonGroup
+                value={runtimeChoice}
+                onChange={(mode) => {
+                  if (mode === "coder") {
+                    if (!props.coderProps) {
+                      return;
                     }
-                    className={cn(
-                      "text-muted-foreground hover:text-foreground inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm transition-colors",
-                      runtimeChoice !== props.defaultRuntimeMode &&
-                        "text-warning hover:text-warning"
-                    )}
-                    aria-label="Configure runtimes"
-                  >
-                    <Cog className="h-3 w-3" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {runtimeChoice !== props.defaultRuntimeMode
-                    ? "Set project runtime defaults"
-                    : "Configure runtimes"}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <RuntimeButtonGroup
-              value={runtimeChoice}
-              onChange={(mode) => {
-                if (mode === "coder") {
-                  if (!props.coderProps) {
-                    return;
-                  }
-                  // Switch to SSH mode with the last known Coder config so prior selections restore.
-                  onSelectedRuntimeChange({
-                    mode: "ssh",
-                    host: CODER_RUNTIME_PLACEHOLDER,
-                    coder: props.coderConfigFallback,
-                  });
-                  return;
-                }
-                // Convert mode to ParsedRuntime with appropriate defaults
-                switch (mode) {
-                  case RUNTIME_MODE.SSH: {
-                    const sshHost =
-                      selectedRuntime.mode === "ssh" &&
-                      selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
-                        ? selectedRuntime.host
-                        : props.sshHostFallback;
+                    // Switch to SSH mode with the last known Coder config so prior selections restore.
                     onSelectedRuntimeChange({
                       mode: "ssh",
-                      host: sshHost,
+                      host: CODER_RUNTIME_PLACEHOLDER,
+                      coder: props.coderConfigFallback,
                     });
-                    break;
+                    return;
                   }
-                  case RUNTIME_MODE.DOCKER:
-                    onSelectedRuntimeChange({
-                      mode: "docker",
-                      image: selectedRuntime.mode === "docker" ? selectedRuntime.image : "",
-                    });
-                    break;
-                  case RUNTIME_MODE.DEVCONTAINER: {
-                    // Use resolver to get initial config path (prefers first available config)
-                    const initialSelection = resolveDevcontainerSelection({
-                      selectedRuntime: { mode: "devcontainer", configPath: "" },
-                      availabilityState: runtimeAvailabilityState,
-                    });
-                    onSelectedRuntimeChange({
-                      mode: "devcontainer",
-                      configPath:
-                        selectedRuntime.mode === "devcontainer"
-                          ? selectedRuntime.configPath
-                          : initialSelection.configPath,
-                      shareCredentials:
-                        selectedRuntime.mode === "devcontainer"
-                          ? selectedRuntime.shareCredentials
-                          : false,
-                    });
-                    break;
+                  // Convert mode to ParsedRuntime with appropriate defaults
+                  switch (mode) {
+                    case RUNTIME_MODE.SSH: {
+                      const sshHost =
+                        selectedRuntime.mode === "ssh" &&
+                        selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
+                          ? selectedRuntime.host
+                          : props.sshHostFallback;
+                      onSelectedRuntimeChange({
+                        mode: "ssh",
+                        host: sshHost,
+                      });
+                      break;
+                    }
+                    case RUNTIME_MODE.DOCKER:
+                      onSelectedRuntimeChange({
+                        mode: "docker",
+                        image: selectedRuntime.mode === "docker" ? selectedRuntime.image : "",
+                      });
+                      break;
+                    case RUNTIME_MODE.DEVCONTAINER: {
+                      // Use resolver to get initial config path (prefers first available config)
+                      const initialSelection = resolveDevcontainerSelection({
+                        selectedRuntime: { mode: "devcontainer", configPath: "" },
+                        availabilityState: runtimeAvailabilityState,
+                      });
+                      onSelectedRuntimeChange({
+                        mode: "devcontainer",
+                        configPath:
+                          selectedRuntime.mode === "devcontainer"
+                            ? selectedRuntime.configPath
+                            : initialSelection.configPath,
+                        shareCredentials:
+                          selectedRuntime.mode === "devcontainer"
+                            ? selectedRuntime.shareCredentials
+                            : false,
+                      });
+                      break;
+                    }
+                    case RUNTIME_MODE.LOCAL:
+                      onSelectedRuntimeChange({ mode: "local" });
+                      break;
+                    case RUNTIME_MODE.WORKTREE:
+                    default:
+                      onSelectedRuntimeChange({ mode: "worktree" });
+                      break;
                   }
-                  case RUNTIME_MODE.LOCAL:
-                    onSelectedRuntimeChange({ mode: "local" });
-                    break;
-                  case RUNTIME_MODE.WORKTREE:
-                  default:
-                    onSelectedRuntimeChange({ mode: "worktree" });
-                    break;
-                }
-              }}
-              defaultMode={props.defaultRuntimeMode}
-              onSetDefault={props.onSetDefaultRuntime}
-              disabled={props.disabled}
-              runtimeAvailabilityState={runtimeAvailabilityState}
-              runtimeEnablement={props.runtimeEnablement}
-              coderInfo={coderInfo}
-              allowedRuntimeModes={props.allowedRuntimeModes}
-              allowSshHost={props.allowSshHost}
-              allowSshCoder={props.allowSshCoder}
-            />
-          </div>
+                }}
+                defaultMode={props.defaultRuntimeMode}
+                onSetDefault={props.onSetDefaultRuntime}
+                disabled={props.disabled}
+                runtimeAvailabilityState={runtimeAvailabilityState}
+                runtimeEnablement={props.runtimeEnablement}
+                coderInfo={coderInfo}
+                allowedRuntimeModes={props.allowedRuntimeModes}
+                allowSshHost={props.allowSshHost}
+                allowSshCoder={props.allowSshCoder}
+              />
+            </div>
 
-          <div
-            className="flex min-w-0 flex-col gap-1.5"
-            data-component="BranchSelector"
-            data-tutorial="trunk-branch"
-          >
-            <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
-              <GitBranch className="h-3.5 w-3.5" />
-              Source Branch
-            </label>
-            {props.branchesLoaded ? (
-              <RadixSelect
-                value={props.trunkBranch}
-                onValueChange={props.onTrunkBranchChange}
-                disabled={isBranchSelectorDisabled}
-              >
-                <SelectTrigger className={INLINE_CONTROL_CLASSES} aria-label="Select source branch">
-                  <SelectValue placeholder="Select source branch" />
-                </SelectTrigger>
-                <SelectContent className="border-border-medium">
-                  {branchOptions.map((branch) => (
-                    <SelectItem key={branch} value={branch}>
-                      {branch}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </RadixSelect>
-            ) : (
-              <Skeleton className="h-7 w-[140px] rounded" />
-            )}
+            <div
+              className="flex min-w-0 flex-1 flex-col gap-1.5 md:flex-initial"
+              data-component="BranchSelector"
+              data-tutorial="trunk-branch"
+            >
+              <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
+                <GitBranch className="h-3.5 w-3.5" />
+                Source Branch
+              </label>
+              {props.branchesLoaded ? (
+                <RadixSelect
+                  value={props.trunkBranch}
+                  onValueChange={props.onTrunkBranchChange}
+                  disabled={isBranchSelectorDisabled}
+                >
+                  <SelectTrigger
+                    className={cn(INLINE_CONTROL_CLASSES, "w-full md:w-[140px]")}
+                    aria-label="Select source branch"
+                  >
+                    <SelectValue placeholder="Select source branch" />
+                  </SelectTrigger>
+                  <SelectContent className="border-border-medium">
+                    {branchOptions.map((branch) => (
+                      <SelectItem key={branch} value={branch}>
+                        {branch}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </RadixSelect>
+              ) : (
+                <Skeleton className="h-7 w-full rounded md:w-[140px]" />
+              )}
+            </div>
           </div>
+          {/* end mobile row wrapper */}
 
           {/* SSH Host Input - shown in the same row when SSH (non-Coder) is selected */}
           {selectedRuntime.mode === "ssh" &&

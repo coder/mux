@@ -537,8 +537,8 @@ export const SingleProviderConfigured: AppStory = {
 
 /**
  * Creation view with project sections configured.
- * Verifies the section selector renders on its own row below the
- * project-name / workspace-name header (not crammed into the same line).
+ * On desktop the section selector is inline / right-aligned in the header row.
+ * On mobile it drops to its own row below the header.
  *
  * Includes mobile chromatic modes: the sidebar starts expanded via
  * localStorage so the play function can click the project row, then
@@ -600,24 +600,32 @@ export const CreateWorkspaceWithSections: AppStory = {
     try {
       const canvas = within(storyRoot);
 
-      // Wait for the section selector and assert it renders on its own row
-      // (below the workspace-name header, not crammed into the same line).
+      // Wait for the section selector to be visible. On desktop it's inline
+      // in the header row; on mobile (<768px) it drops to its own row.
+      // Chromatic screenshots catch visual regressions in both modes — the
+      // play function just verifies the element renders and, on mobile, that
+      // it sits below the header (not overlapping).
       await waitFor(
         () => {
           const sectionSelector = canvas.queryByTestId("section-selector");
           if (!sectionSelector) {
             throw new Error("Section selector not visible");
           }
-          const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
-          if (!headerRow) {
-            throw new Error("Workspace name header row not found");
-          }
-          const headerBottom = headerRow.getBoundingClientRect().bottom;
-          const sectionTop = sectionSelector.getBoundingClientRect().top;
-          if (sectionTop < headerBottom) {
-            throw new Error(
-              `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
-            );
+
+          // On narrow viewports, verify the section selector sits below
+          // the header row (mobile-only own-row layout).
+          if (window.innerWidth < 768) {
+            const headerRow = storyRoot.querySelector("[data-component='WorkspaceNameGroup']");
+            if (!headerRow) {
+              throw new Error("Workspace name header row not found");
+            }
+            const headerBottom = headerRow.getBoundingClientRect().bottom;
+            const sectionTop = sectionSelector.getBoundingClientRect().top;
+            if (sectionTop < headerBottom) {
+              throw new Error(
+                `Section selector overlaps header row (section top=${sectionTop}, header bottom=${headerBottom})`
+              );
+            }
           }
         },
         { timeout: 10000 }
