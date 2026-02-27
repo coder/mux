@@ -130,21 +130,31 @@ describe("executeRawQuery", () => {
     expect(result.rows).toEqual([{ value: 1 }]);
   });
 
-  test("rejects queries referencing tables outside the analytics allowlist", async () => {
-    await expectValidationFailure("SELECT * FROM duckdb_tables()", /disallowed table or source/i);
+  test("rejects duckdb system functions", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM duckdb_tables()",
+      /disallowed function or statement: duckdb_tables/i
+    );
+  });
+
+  test("rejects parenthesized table function in FROM", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM (duckdb_tables()) AS t",
+      /disallowed function or statement: duckdb_tables/i
+    );
   });
 
   test("rejects comma-joined sources outside the analytics allowlist", async () => {
     await expectValidationFailure(
       "SELECT 1 FROM events, duckdb_tables()",
-      /disallowed table or source/i
+      /disallowed function or statement: duckdb_tables/i
     );
   });
 
   test("rejects CTE-shadowed function call", async () => {
     await expectValidationFailure(
       "WITH duckdb_tables AS (SELECT * FROM events) SELECT * FROM duckdb_tables()",
-      /disallowed table or source/i
+      /disallowed function or statement: duckdb_tables/i
     );
   });
 
@@ -186,6 +196,22 @@ describe("executeRawQuery", () => {
 
     expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
     expect(result.rows).toEqual([{ event_count: 6 }]);
+  });
+
+  test("allows parenthesized subquery", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 3n }],
+      })
+    );
+
+    const sql = "SELECT COUNT(*) AS request_count FROM (SELECT * FROM events) AS sub";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(result.rows).toEqual([{ request_count: 3 }]);
   });
 
   test("rejects nested CTE name used as outer source", async () => {

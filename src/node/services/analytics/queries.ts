@@ -688,6 +688,23 @@ const RAW_QUERY_DISALLOWED_PATTERNS: RawQueryDisallowedPattern[] = [
   { label: "http_post", pattern: /\bhttp_post\s*\(/i },
   { label: "glob", pattern: /\bglob\s*\(/i },
   { label: "list_files", pattern: /\blist_files\s*\(/i },
+  { label: "duckdb_tables", pattern: /\bduckdb_tables\s*\(/i },
+  { label: "duckdb_columns", pattern: /\bduckdb_columns\s*\(/i },
+  { label: "duckdb_views", pattern: /\bduckdb_views\s*\(/i },
+  { label: "duckdb_indexes", pattern: /\bduckdb_indexes\s*\(/i },
+  { label: "duckdb_constraints", pattern: /\bduckdb_constraints\s*\(/i },
+  { label: "duckdb_dependencies", pattern: /\bduckdb_dependencies\s*\(/i },
+  { label: "duckdb_functions", pattern: /\bduckdb_functions\s*\(/i },
+  { label: "duckdb_keywords", pattern: /\bduckdb_keywords\s*\(/i },
+  { label: "duckdb_types", pattern: /\bduckdb_types\s*\(/i },
+  { label: "duckdb_settings", pattern: /\bduckdb_settings\s*\(/i },
+  { label: "duckdb_databases", pattern: /\bduckdb_databases\s*\(/i },
+  { label: "duckdb_schemas", pattern: /\bduckdb_schemas\s*\(/i },
+  { label: "duckdb_sequences", pattern: /\bduckdb_sequences\s*\(/i },
+  { label: "duckdb_extensions", pattern: /\bduckdb_extensions\s*\(/i },
+  { label: "information_schema", pattern: /\binformation_schema\s*\./i },
+  { label: "pg_catalog", pattern: /\bpg_catalog\s*\./i },
+  { label: "generate_series", pattern: /\bgenerate_series\s*\(/i },
   { label: "scan_*", pattern: /\b[a-zA-Z_][a-zA-Z0-9_]*_scan\s*\(/i },
   { label: "COPY", pattern: /(^|[;(])\s*copy\b/i },
   { label: "EXPORT", pattern: /(^|[;(])\s*export\b/i },
@@ -854,6 +871,34 @@ function parseRawQueryRelationSource(
   };
 }
 
+function parseParenthesizedRawQueryFunctionSource(
+  maskedSql: string,
+  openingParenthesisIndex: number
+): ParsedRawQueryRelationSource | null {
+  assert(
+    maskedSql[openingParenthesisIndex] === "(",
+    "Expected opening parenthesis while parsing parenthesized raw query source"
+  );
+
+  let sourceStartIndex = skipSqlWhitespace(maskedSql, openingParenthesisIndex + 1);
+  while (maskedSql[sourceStartIndex] === "(") {
+    sourceStartIndex = skipSqlWhitespace(maskedSql, sourceStartIndex + 1);
+  }
+
+  const firstToken = parseUnquotedSqlToken(maskedSql, sourceStartIndex);
+  const firstKeyword = firstToken?.value.toLowerCase();
+  if (firstKeyword === "select" || firstKeyword === "with") {
+    return null;
+  }
+
+  const source = parseRawQueryRelationSource(maskedSql, sourceStartIndex);
+  if (!source?.isFunctionCall) {
+    return null;
+  }
+
+  return source;
+}
+
 function getCurrentRawQueryScopeId(scopeStack: number[]): number {
   const currentScopeId = scopeStack.at(-1);
   assert(currentScopeId != null, "Raw analytics query scope stack must not be empty");
@@ -975,6 +1020,19 @@ function collectRawQueryRelationSources(
 
     if (char === "(") {
       if (currentContextAtScope?.expectingSource) {
+        const parenthesizedFunctionSource = parseParenthesizedRawQueryFunctionSource(
+          maskedSql,
+          index
+        );
+        if (parenthesizedFunctionSource != null) {
+          sources.push({
+            source: parenthesizedFunctionSource.source,
+            isFunctionCall: parenthesizedFunctionSource.isFunctionCall,
+            isQualifiedName: parenthesizedFunctionSource.isQualifiedName,
+            scopeId: currentScopeId,
+          });
+        }
+
         currentContextAtScope.expectingSource = false;
       }
 
