@@ -738,6 +738,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             <div
               ref={contentRef}
               onWheel={markUserInteraction}
+              onTouchStart={markUserInteraction}
               onTouchMove={markUserInteraction}
               onScroll={handleScroll}
               onContextMenu={handleTranscriptContextMenu}

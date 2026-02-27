@@ -28,6 +28,10 @@ export function useAutoScroll() {
   const observerRef = useRef<ResizeObserver | null>(null);
   // Track pending RAF to coalesce rapid resize events
   const rafIdRef = useRef<number | null>(null);
+  // Debounce timer for "scroll settled" detection — fires after scrolling stops
+  // to catch cases where iOS momentum/inertial scrolling reaches the bottom but
+  // the user-interaction window (100ms after last touchmove) has already expired.
+  const scrollSettledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync ref with state to ensure callbacks always have latest value
   autoScrollRef.current = autoScroll;
@@ -100,21 +104,36 @@ export function useAutoScroll() {
     const threshold = 100;
     const isAtBottom = element.scrollHeight - currentScrollTop - element.clientHeight < threshold;
 
+    // Safety net: when auto-scroll is disabled and scrolling stops at the bottom,
+    // re-enable it. This debounced check fires 150ms after the last scroll event,
+    // covering all edge cases where iOS momentum/inertial scrolling, slow drags,
+    // or any other scroll lands at the bottom but the touchmove-based user
+    // interaction window (100ms) has already expired. The 150ms delay is long
+    // enough that upward momentum from the bottom will still be producing scroll
+    // events (resetting the timer) before it clears the bottom threshold.
+    if (scrollSettledTimerRef.current) {
+      clearTimeout(scrollSettledTimerRef.current);
+    }
+    if (!autoScrollRef.current) {
+      scrollSettledTimerRef.current = setTimeout(() => {
+        scrollSettledTimerRef.current = null;
+        if (contentRef.current && !autoScrollRef.current) {
+          const el = contentRef.current;
+          const settledAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+          if (settledAtBottom) {
+            setAutoScroll(true);
+            autoScrollRef.current = true;
+          }
+        }
+      }, 150);
+    }
+
     // Only process user-initiated scrolls (within 100ms of interaction)
     const isUserScroll = Date.now() - lastUserInteractionRef.current < 100;
 
     if (!isUserScroll) {
-      // Re-enable auto-scroll for iOS momentum scrolling that carries the user
-      // to the bottom. Require downward movement to avoid re-enabling during
-      // upward inertia that starts near the bottom (which would snap the view
-      // back down while the user is trying to read older content).
-      const isMovingDown = currentScrollTop > lastScrollTopRef.current;
-      if (isMovingDown && isAtBottom && !autoScrollRef.current) {
-        setAutoScroll(true);
-        autoScrollRef.current = true;
-      }
       lastScrollTopRef.current = currentScrollTop;
-      return;
+      return; // Ignore programmatic scrolls
     }
 
     // Detect scroll direction
