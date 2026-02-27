@@ -197,6 +197,29 @@ describe("executeRawQuery", () => {
     );
   });
 
+  test("rejects replacement scan with comment gap", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM /*gap*/ '/etc/passwd'",
+      /string literals cannot be used as table sources/i
+    );
+  });
+
+  test("allows double-quoted table identifiers", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 1n }],
+      })
+    );
+
+    const sql = 'SELECT COUNT(*) AS request_count FROM "events"';
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(result.rows).toEqual([{ request_count: 1 }]);
+  });
+
   test("allows string literals in WHERE clauses", async () => {
     const { conn, runMock } = createMockConn(() =>
       createMockResult({

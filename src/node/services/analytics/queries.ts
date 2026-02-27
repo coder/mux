@@ -709,25 +709,35 @@ const RAW_QUERY_DISALLOWED_PATTERNS: RegExp[] = [
   /(^|[;(])\s*set\b/i,
 ];
 
-const RAW_QUERY_REPLACEMENT_SCAN_PATTERN = /\b(?:FROM|JOIN)\s+['"]/i;
+const RAW_QUERY_REPLACEMENT_SCAN_PATTERN = /\b(?:FROM|JOIN)\s+'/i;
 
-function maskRawQueryLiteralsAndComments(sql: string): string {
+function maskRawQueryLiteralsAndComments(
+  sql: string,
+  options: { maskStrings: boolean } = { maskStrings: true }
+): string {
   const characters = Array.from(sql);
   let index = 0;
+  const shouldMaskStrings = options.maskStrings;
 
   while (index < characters.length) {
     const char = characters[index];
     const nextChar = characters[index + 1];
 
     if (char === "'") {
-      characters[index] = " ";
+      if (shouldMaskStrings) {
+        characters[index] = " ";
+      }
       index += 1;
       while (index < characters.length) {
         const current = characters[index];
         const following = characters[index + 1];
-        characters[index] = " ";
+        if (shouldMaskStrings) {
+          characters[index] = " ";
+        }
         if (current === "'" && following === "'") {
-          characters[index + 1] = " ";
+          if (shouldMaskStrings) {
+            characters[index + 1] = " ";
+          }
           index += 2;
           continue;
         }
@@ -777,22 +787,27 @@ function maskRawQueryLiteralsAndComments(sql: string): string {
 
 /**
  * Security model for raw analytics SQL validation:
- * 1) block DuckDB replacement scans that use string literals as table sources,
- * 2) mask literals/comments before regex matching,
- * 3) block dangerous functions/statements via RAW_QUERY_DISALLOWED_PATTERNS,
- * 4) rely on executeRawQuery subquery wrapping plus read-only DuckDB connections.
+ * 1) mask comments while preserving string literals,
+ * 2) block DuckDB replacement scans that use string literals as table sources,
+ * 3) mask string literals/comments before regex matching,
+ * 4) block dangerous functions/statements via RAW_QUERY_DISALLOWED_PATTERNS,
+ * 5) rely on executeRawQuery subquery wrapping plus read-only DuckDB connections.
  */
 function validateRawQuerySql(cleanSql: string): void {
-  if (RAW_QUERY_REPLACEMENT_SCAN_PATTERN.test(cleanSql)) {
+  const commentMaskedSql = maskRawQueryLiteralsAndComments(cleanSql, {
+    maskStrings: false,
+  });
+
+  if (RAW_QUERY_REPLACEMENT_SCAN_PATTERN.test(commentMaskedSql)) {
     throw new Error(
       "String literals cannot be used as table sources (DuckDB replacement scans are not allowed)"
     );
   }
 
-  const masked = maskRawQueryLiteralsAndComments(cleanSql);
+  const fullyMaskedSql = maskRawQueryLiteralsAndComments(commentMaskedSql);
 
   for (const pattern of RAW_QUERY_DISALLOWED_PATTERNS) {
-    if (pattern.test(masked)) {
+    if (pattern.test(fullyMaskedSql)) {
       throw new Error(`Query contains disallowed SQL: ${pattern.source.replace(/\b/g, "")}`);
     }
   }
