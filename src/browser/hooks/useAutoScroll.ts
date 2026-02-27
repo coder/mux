@@ -172,6 +172,12 @@ export function useAutoScroll() {
       // rubber-band bounce-back from the bottom edge.
       setAutoScroll(false);
       autoScrollRef.current = false;
+      // Cancel any pending scroll-settled timer — the user explicitly scrolled
+      // up, so we should not re-enable auto-scroll even if we're near the bottom.
+      if (scrollSettledTimerRef.current) {
+        clearTimeout(scrollSettledTimerRef.current);
+        scrollSettledTimerRef.current = null;
+      }
     } else if (isScrollingDown && isAtBottom) {
       // Only enable auto-scroll if scrolling down AND reached the bottom
       setAutoScroll(true);
