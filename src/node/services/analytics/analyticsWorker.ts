@@ -267,12 +267,57 @@ async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
   return watermarkWorkspaceIds;
 }
 
+/** Pure predicate: should we issue a CHECKPOINT after this sync? */
+export function shouldCheckpointAfterSync(
+  action: SyncAction,
+  workspacesIngested: number,
+  workspacesPurged: number
+): boolean {
+  assert(
+    Number.isInteger(workspacesIngested) && workspacesIngested >= 0,
+    "shouldCheckpointAfterSync requires non-negative integer workspacesIngested"
+  );
+  assert(
+    Number.isInteger(workspacesPurged) && workspacesPurged >= 0,
+    "shouldCheckpointAfterSync requires non-negative integer workspacesPurged"
+  );
+
+  // full_rebuild always truncates tables, so always checkpoint even if nothing was re-ingested.
+  if (action === "full_rebuild") {
+    return true;
+  }
+
+  // incremental: only checkpoint if we actually wrote or deleted rows.
+  return action === "incremental" && (workspacesIngested > 0 || workspacesPurged > 0);
+}
+
+async function checkpointIfNeeded(
+  action: SyncAction,
+  workspacesIngested: number,
+  workspacesPurged: number
+): Promise<void> {
+  if (!shouldCheckpointAfterSync(action, workspacesIngested, workspacesPurged)) {
+    return;
+  }
+
+  try {
+    await getConn().run("CHECKPOINT");
+  } catch (error) {
+    // Non-fatal: DuckDB will auto-checkpoint eventually or on next clean shutdown.
+    process.stderr.write(
+      `[analytics-worker] Post-sync checkpoint failed (non-fatal): ${getErrorMessage(error)}\n`
+    );
+  }
+}
+
 async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
   assert(data.sessionsDir.trim().length > 0, "syncCheck requires sessionsDir");
   assert(
     isRecord(data.workspaceMetaById) && !Array.isArray(data.workspaceMetaById),
     "syncCheck workspaceMetaById must be an object"
   );
+
+  const syncStartMs = performance.now();
 
   const result = await getConn().run(`
     SELECT
@@ -314,6 +359,11 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
   });
 
   if (plan.action === "noop") {
+    const elapsedMs = Math.round(performance.now() - syncStartMs);
+    process.stderr.write(
+      `[analytics-worker] syncCheck: plan=noop, workspacesOnDisk=${knownWorkspaceIds.size}, watermarksInDB=${watermarkWorkspaceIds.size} (${elapsedMs}ms)\n`
+    );
+
     return {
       action: "noop",
       workspacesIngested: 0,
@@ -327,6 +377,13 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
       data.sessionsDir,
       data.workspaceMetaById
     );
+    await checkpointIfNeeded(plan.action, workspacesIngested, 0);
+
+    const elapsedMs = Math.round(performance.now() - syncStartMs);
+    process.stderr.write(
+      `[analytics-worker] syncCheck: plan=full_rebuild, workspacesIngested=${workspacesIngested}, workspacesOnDisk=${knownWorkspaceIds.size} (${elapsedMs}ms)\n`
+    );
+
     return {
       action: "full_rebuild",
       workspacesIngested,
@@ -377,6 +434,13 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
       );
     }
   }
+
+  await checkpointIfNeeded(plan.action, workspacesIngested, workspacesPurged);
+
+  const elapsedMs = Math.round(performance.now() - syncStartMs);
+  process.stderr.write(
+    `[analytics-worker] syncCheck: plan=incremental, ingested=${workspacesIngested}, purged=${workspacesPurged}, toIngest=${plan.workspaceIdsToIngest.length}, toPurge=${plan.workspaceIdsToPurge.length} (${elapsedMs}ms)\n`
+  );
 
   return {
     action: "incremental",
@@ -431,6 +495,7 @@ function handleShutdown(): void {
   let exitCode = 0;
 
   try {
+    process.stderr.write("[analytics-worker] Shutting down, closing DuckDB\n");
     closeDuckDb();
   } catch (error) {
     exitCode = 1;
