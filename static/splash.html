@@ -48,6 +48,12 @@
         80%, 100% { content: "..."; }
       }
 
+      .dots {
+        display: inline-block;
+        width: 1.5ch;
+        text-align: left;
+      }
+
       .dots::after {
         content: "";
         animation: boot-ellipsis 1.2s steps(1) infinite;
