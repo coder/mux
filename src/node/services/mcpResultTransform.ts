@@ -45,9 +45,11 @@ type AISDKContentPart =
   | { type: "media"; data: string; mediaType: string };
 
 /**
- * Format byte size as human-readable string (KB or MB)
+ * Format byte size as human-readable string (KB or MB).
+ * Uses decimal (SI) units (1000-based) — intentionally different from the shared
+ * binary-unit formatBytes in @/common/utils/formatBytes which uses 1024-based thresholds.
  */
-function formatBytes(bytes: number): string {
+function formatBytesSI(bytes: number): string {
   if (bytes >= 1_000_000) {
     return `${(bytes / 1_000_000).toFixed(1)} MB`;
   }
@@ -101,7 +103,7 @@ export function transformMCPResult(result: MCPCallToolResult): unknown {
         });
         return {
           type: "text" as const,
-          text: `[Image omitted: ${formatBytes(dataLength)} exceeds per-image guard of ${formatBytes(MAX_IMAGE_DATA_BYTES)}. Reduce resolution or quality and retry.]`,
+          text: `[Image omitted: ${formatBytesSI(dataLength)} exceeds per-image guard of ${formatBytesSI(MAX_IMAGE_DATA_BYTES)}. Reduce resolution or quality and retry.]`,
         };
       }
       // Ensure mediaType is present - default to image/png if missing

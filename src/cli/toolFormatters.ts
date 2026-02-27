@@ -7,6 +7,7 @@
 
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import { formatDuration } from "../common/utils/formatDuration";
+import { formatBytes } from "@/common/utils/formatBytes";
 import chalk from "chalk";
 import type { ToolCallStartEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type {
@@ -77,12 +78,6 @@ function formatDiff(diff: string): string {
       return line;
     })
     .join("\n");
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 function indent(text: string, spaces = 2): string {
