@@ -8,6 +8,7 @@ import type { ComponentType } from "react";
 import { z, type ZodSchema } from "zod";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
+import { AnalyticsQueryToolCall } from "../analyticsQuery/AnalyticsQueryToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { BashToolCall } from "../BashToolCall";
 import { FileEditToolCall } from "../FileEditToolCall";
@@ -96,6 +97,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     schema: TOOL_DEFINITIONS.switch_agent.schema,
   },
   notify: { component: NotifyToolCall, schema: TOOL_DEFINITIONS.notify.schema },
+  analytics_query: {
+    component: AnalyticsQueryToolCall,
+    schema: TOOL_DEFINITIONS.analytics_query.schema,
+  },
   web_fetch: { component: WebFetchToolCall, schema: TOOL_DEFINITIONS.web_fetch.schema },
   bash_background_list: {
     component: BashBackgroundListToolCall,

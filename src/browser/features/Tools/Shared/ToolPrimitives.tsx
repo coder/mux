@@ -5,6 +5,7 @@ import {
   ArrowRightLeft,
   Bell,
   BookOpen,
+  Database,
   FileText,
   GitCommit,
   Globe,
@@ -221,6 +222,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   web_fetch: Globe,
   web_search: Globe,
   notify: Bell,
+  analytics_query: Database,
   task_apply_git_patch: GitCommit,
 };
 
