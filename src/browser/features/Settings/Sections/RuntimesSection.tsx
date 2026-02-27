@@ -5,7 +5,7 @@ import {
   CoderWorkspaceForm,
   resolveCoderAvailability,
 } from "@/browser/features/Runtime/CoderControls";
-import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput";
+import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
 import {
   Select,
   SelectContent,

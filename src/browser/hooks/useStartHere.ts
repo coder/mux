@@ -1,6 +1,6 @@
 import { useState } from "react";
 import React from "react";
-import { StartHereModal } from "@/browser/components/StartHereModal";
+import { StartHereModal } from "@/browser/components/StartHereModal/StartHereModal";
 import { createMuxMessage } from "@/common/types/message";
 import { useAPI } from "@/browser/contexts/API";
 

@@ -16,7 +16,7 @@ import {
 import { useAPI } from "@/browser/contexts/API";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { JsonHighlight } from "@/browser/features/Tools/Shared/HighlightedCode";
-import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import { getStoredAuthToken } from "@/browser/components/AuthTokenModal/AuthTokenModal";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { getErrorMessage } from "@/common/utils/errors";
 

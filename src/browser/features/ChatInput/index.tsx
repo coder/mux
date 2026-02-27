@@ -5,11 +5,11 @@ import {
   FILE_SUGGESTION_KEYS,
 } from "@/browser/features/ChatInput/CommandSuggestions";
 import type { Toast } from "@/browser/features/ChatInput/ChatInputToast";
-import { ConnectionStatusToast } from "@/browser/components/ConnectionStatusToast";
+import { ConnectionStatusToast } from "@/browser/components/ConnectionStatusToast/ConnectionStatusToast";
 import { ChatInputToast } from "@/browser/features/ChatInput/ChatInputToast";
 import type { SendMessageError } from "@/common/types/errors";
 import { createErrorToast } from "@/browser/features/ChatInput/ChatInputToasts";
-import { ConfirmationModal } from "@/browser/components/ConfirmationModal";
+import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import {
@@ -21,7 +21,7 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
-import { ThinkingSliderComponent } from "@/browser/components/ThinkingSlider";
+import { ThinkingSliderComponent } from "@/browser/components/ThinkingSlider/ThinkingSlider";
 import {
   getAllowedRuntimeModesForUi,
   isParsedRuntimeAllowedByPolicy,
@@ -65,8 +65,8 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
-import { AgentModePicker } from "@/browser/components/AgentModePicker";
-import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton";
+import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
+import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
@@ -80,11 +80,14 @@ import {
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { ModelSelector, type ModelSelectorRef } from "@/browser/components/ModelSelector";
+import {
+  ModelSelector,
+  type ModelSelectorRef,
+} from "@/browser/components/ModelSelector/ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal } from "lucide-react";
 import { AttachFileButton } from "./AttachFileButton";
-import { VimTextArea } from "@/browser/components/VimTextArea";
+import { VimTextArea } from "@/browser/components/VimTextArea/VimTextArea";
 import { ChatAttachments, type ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
 import {
   extractAttachmentsFromClipboard,

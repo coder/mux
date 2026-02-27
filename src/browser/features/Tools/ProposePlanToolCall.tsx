@@ -28,7 +28,7 @@ import { useAgent } from "@/browser/contexts/AgentContext";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
-import { PopoverError } from "@/browser/components/PopoverError";
+import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import {
   AGENT_AI_DEFAULTS_KEY,
   getAgentIdKey,
@@ -59,7 +59,7 @@ import {
   Workflow,
   X,
 } from "lucide-react";
-import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
+import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**

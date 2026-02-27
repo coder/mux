@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { installBrowserLogCapture } from "@/browser/utils/browserLog";
-import { AppLoader } from "@/browser/components/AppLoader";
+import { AppLoader } from "@/browser/components/AppLoader/AppLoader";
 import { initTelemetry, trackAppStarted } from "@/common/telemetry";
 import { initTitlebarInsets } from "@/browser/hooks/useDesktopTitlebar";
 

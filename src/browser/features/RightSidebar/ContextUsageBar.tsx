@@ -3,7 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import { TokenMeter } from "./TokenMeter";
 import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
-import { Toggle1MContext } from "@/browser/components/Toggle1MContext";
+import { Toggle1MContext } from "@/browser/components/Toggle1MContext/Toggle1MContext";
 
 interface ContextUsageBarProps {
   data: TokenMeterData;

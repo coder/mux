@@ -12,7 +12,7 @@ import {
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";

@@ -4,7 +4,7 @@ import type { WorkspaceStatsSnapshot } from "@/common/orpc/types";
 
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
-import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup";
+import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { computeTimingPercentages } from "@/browser/utils/timingPercentages";
 import { calculateAverageTPS } from "@/browser/utils/messages/StreamingTPSCalculator";

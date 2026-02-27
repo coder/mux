@@ -3,7 +3,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 import { cn } from "mux/common/lib/utils";
-import { LocalIcon, SSHIcon, WorktreeIcon } from "mux/browser/components/icons/RuntimeIcons";
+import {
+  LocalIcon,
+  SSHIcon,
+  WorktreeIcon,
+} from "mux/browser/components/icons/RuntimeIcons/RuntimeIcons";
 import { Shimmer } from "mux/browser/features/AIElements/Shimmer";
 import { Button } from "mux/browser/components/Button/Button";
 import { Input } from "mux/browser/components/Input/Input";
@@ -91,7 +95,7 @@ export function WorkspacePicker(props: {
   }, [open]);
 
   const selectedWorkspace = props.selectedWorkspaceId
-    ? props.workspaces.find((workspace) => workspace.id === props.selectedWorkspaceId) ?? null
+    ? (props.workspaces.find((workspace) => workspace.id === props.selectedWorkspaceId) ?? null)
     : null;
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -100,7 +104,8 @@ export function WorkspacePicker(props: {
     : props.workspaces;
 
   const projectGroups = (() => {
-    const groups: Array<{ projectName: string; projectPath: string; workspaces: UiWorkspace[] }> = [];
+    const groups: Array<{ projectName: string; projectPath: string; workspaces: UiWorkspace[] }> =
+      [];
     const byProjectPath = new Map<string, (typeof groups)[number]>();
 
     for (const workspace of filteredWorkspaces) {
@@ -122,7 +127,6 @@ export function WorkspacePicker(props: {
 
     return groups;
   })();
-
 
   const shouldGroupByProject = projectGroups.length > 1;
   const showProjectNameInRow = !shouldGroupByProject;
@@ -170,7 +174,9 @@ export function WorkspacePicker(props: {
           {showProjectNameInRow ? (
             <div className="text-muted truncate text-xs">
               {workspace.projectName}
-              {workspace.runtimeType === "ssh" && workspace.sshHost ? ` · ssh:${workspace.sshHost}` : null}
+              {workspace.runtimeType === "ssh" && workspace.sshHost
+                ? ` · ssh:${workspace.sshHost}`
+                : null}
             </div>
           ) : workspace.runtimeType === "ssh" && workspace.sshHost ? (
             <div className="text-muted truncate text-xs">ssh:{workspace.sshHost}</div>

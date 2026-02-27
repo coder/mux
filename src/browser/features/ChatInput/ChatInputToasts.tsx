@@ -1,6 +1,6 @@
 import type { Toast } from "./ChatInputToast";
 import { SolutionLabel } from "./ChatInputToast";
-import { DocsLink } from "@/browser/components/DocsLink";
+import { DocsLink } from "@/browser/components/DocsLink/DocsLink";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import type { SendMessageError as SendMessageErrorType } from "@/common/types/errors";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
-import { FileIcon } from "@/browser/components/FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 
 // Keys for navigating slash command suggestions.
 // Enter or Tab accepts the highlighted suggestion; Shift+Enter inserts a newline.

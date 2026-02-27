@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from "react";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "./usePersistedState";
 

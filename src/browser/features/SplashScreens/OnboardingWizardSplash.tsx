@@ -10,20 +10,23 @@ import {
 } from "lucide-react";
 import { SplashScreen } from "./SplashScreen";
 import { useOnboardingPause } from "./SplashScreenProvider";
-import { DocsLink } from "@/browser/components/DocsLink";
-import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { DocsLink } from "@/browser/components/DocsLink/DocsLink";
+import { ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
 import {
   CoderIcon,
   DockerIcon,
   LocalIcon,
   SSHIcon,
   WorktreeIcon,
-} from "@/browser/components/icons/RuntimeIcons";
-import { ProjectAddForm, type ProjectAddFormHandle } from "@/browser/components/ProjectCreateModal";
+} from "@/browser/components/icons/RuntimeIcons/RuntimeIcons";
+import {
+  ProjectAddForm,
+  type ProjectAddFormHandle,
+} from "@/browser/components/ProjectCreateModal/ProjectCreateModal";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { Button } from "@/browser/components/Button/Button";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import { getStoredAuthToken } from "@/browser/components/AuthTokenModal/AuthTokenModal";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { useAPI } from "@/browser/contexts/API";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";

@@ -1,5 +1,5 @@
 import React from "react";
-import { FileIcon } from "@/browser/components/FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 import type { AgentSkillReadFileToolArgs } from "@/common/types/tools";
 import {
   ToolContainer,

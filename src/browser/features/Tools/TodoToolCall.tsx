@@ -9,7 +9,7 @@ import {
   ToolIcon,
 } from "./Shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
-import { TodoList } from "@/browser/components/TodoList";
+import { TodoList } from "@/browser/components/TodoList/TodoList";
 
 interface TodoToolCallProps {
   args: TodoWriteToolArgs;

@@ -1,10 +1,10 @@
 import { Check, Eye, Info, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton";
+import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton/GatewayToggleButton";
 import { SearchableModelSelect } from "@/browser/features/Settings/Components/SearchableModelSelect";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { Button } from "@/browser/components/Button/Button";
-import { ProviderIcon, ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { ProviderIcon, ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { cn } from "@/common/lib/utils";
 import { getModelStats, type ModelStats } from "@/common/utils/tokens/modelStats";

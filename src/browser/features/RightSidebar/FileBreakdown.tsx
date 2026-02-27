@@ -1,5 +1,5 @@
 import React from "react";
-import { FileIcon } from "@/browser/components/FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
 

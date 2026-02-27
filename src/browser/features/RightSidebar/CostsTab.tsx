@@ -10,7 +10,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup";
+import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { supports1MContext } from "@/common/utils/ai/models";

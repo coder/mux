@@ -31,14 +31,14 @@ import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { CachedMCPTestResult, MCPServerInfo, MCPServerTransport } from "@/common/types/mcp";
 import type { MCPOAuthPendingServerConfig } from "@/common/types/mcpOauth";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
-import { MCPHeadersEditor } from "@/browser/components/MCPHeadersEditor";
+import { MCPHeadersEditor } from "@/browser/components/MCPHeadersEditor/MCPHeadersEditor";
 import {
   mcpHeaderRowsToRecord,
   mcpHeadersRecordToRows,
   type MCPHeaderRow,
 } from "@/browser/utils/mcpHeaders";
-import { ToolSelector } from "@/browser/components/ToolSelector";
-import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
+import { ToolSelector } from "@/browser/components/ToolSelector/ToolSelector";
+import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
 import { getErrorMessage } from "@/common/utils/errors";
 
 /** Component for managing tool allowlist for a single MCP server */

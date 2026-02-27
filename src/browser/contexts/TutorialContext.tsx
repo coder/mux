@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { TutorialTooltip, type TutorialStep } from "@/browser/components/TutorialTooltip";
+import {
+  TutorialTooltip,
+  type TutorialStep,
+} from "@/browser/components/TutorialTooltip/TutorialTooltip";
 import {
   TUTORIAL_STATE_KEY,
   DEFAULT_TUTORIAL_STATE,

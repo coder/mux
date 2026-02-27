@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ArrowRight, Info, Loader2, Plus, ShieldCheck } from "lucide-react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { Button } from "@/browser/components/Button/Button";
-import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
+import { ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
 import {
   Select,
   SelectContent,

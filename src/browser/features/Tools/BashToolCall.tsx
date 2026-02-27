@@ -26,7 +26,7 @@ import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/store
 import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashStore";
 import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
-import { BackgroundBashOutputDialog } from "@/browser/components/BackgroundBashOutputDialog";
+import { BackgroundBashOutputDialog } from "@/browser/components/BackgroundBashOutputDialog/BackgroundBashOutputDialog";
 
 interface BashToolCallProps {
   workspaceId?: string;

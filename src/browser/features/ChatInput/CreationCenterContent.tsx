@@ -1,6 +1,6 @@
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { Shimmer } from "@/browser/features/AIElements/Shimmer";
-import { LoadingAnimation } from "@/browser/components/LoadingAnimation";
+import { LoadingAnimation } from "@/browser/components/LoadingAnimation/LoadingAnimation";
 
 interface CreationCenterContentProps {
   projectName: string;

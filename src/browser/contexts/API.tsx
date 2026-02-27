@@ -14,7 +14,7 @@ import {
   getStoredAuthToken,
   setStoredAuthToken,
   clearStoredAuthToken,
-} from "@/browser/components/AuthTokenModal";
+} from "@/browser/components/AuthTokenModal/AuthTokenModal";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { getErrorMessage } from "@/common/utils/errors";
 

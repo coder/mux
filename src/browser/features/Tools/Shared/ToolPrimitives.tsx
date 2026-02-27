@@ -16,7 +16,7 @@ import {
   Square,
   Wrench,
 } from "lucide-react";
-import { EmojiIcon } from "@/browser/components/icons/EmojiIcon";
+import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 
 /**

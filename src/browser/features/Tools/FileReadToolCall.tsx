@@ -1,5 +1,5 @@
 import React from "react";
-import { FileIcon } from "@/browser/components/FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type { FileReadToolArgs, FileReadToolResult } from "@/common/types/tools";
 import {

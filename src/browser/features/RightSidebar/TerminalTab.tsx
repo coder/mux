@@ -1,5 +1,5 @@
 import React from "react";
-import { TerminalView } from "@/browser/components/TerminalView";
+import { TerminalView } from "@/browser/components/TerminalView/TerminalView";
 import type { TabType } from "@/browser/types/rightSidebar";
 import { getTerminalSessionId } from "@/browser/types/rightSidebar";
 

@@ -10,7 +10,7 @@
 import React from "react";
 import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
-import { FileIcon } from "@/browser/components/FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 import { formatTabDuration, type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";

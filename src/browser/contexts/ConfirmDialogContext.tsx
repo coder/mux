@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useRef, useState, useCallback } from "react";
-import { ConfirmationModal } from "@/browser/components/ConfirmationModal";
+import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
 
 type ConfirmVariant = "default" | "destructive" | "secondary" | "outline" | "ghost" | "link";
 

@@ -8,7 +8,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { FC } from "react";
 import { useRef } from "react";
-import { AppLoader } from "../components/AppLoader";
+import { AppLoader } from "../components/AppLoader/AppLoader";
 import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
 import type { APIClient } from "@/browser/contexts/API";
 

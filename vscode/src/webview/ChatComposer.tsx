@@ -16,10 +16,10 @@ import { migrateGatewayModel } from "mux/browser/hooks/useGatewayModels";
 import { useProviderOptions } from "mux/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "mux/browser/hooks/useAutoCompactionSettings";
 
-import { VimTextArea } from "mux/browser/components/VimTextArea";
-import { ModelSelector } from "mux/browser/components/ModelSelector";
-import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider";
-import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton";
+import { VimTextArea } from "mux/browser/components/VimTextArea/VimTextArea";
+import { ModelSelector } from "mux/browser/components/ModelSelector/ModelSelector";
+import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider/ThinkingSlider";
+import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "mux/browser/components/Tooltip/Tooltip";
 
 import type { AgentId } from "mux/common/orpc/schemas";

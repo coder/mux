@@ -25,12 +25,12 @@ import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput";
+import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
 import { cn } from "@/common/lib/utils";
 import { formatNameGenerationError } from "@/common/utils/errors/formatNameGenerationError";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
-import { DocsLink } from "@/browser/components/DocsLink";
+import { DocsLink } from "@/browser/components/DocsLink/DocsLink";
 import {
   RUNTIME_CHOICE_UI,
   RUNTIME_OPTION_FIELDS,

@@ -1,5 +1,5 @@
 import React from "react";
-import { FileIcon } from "@/browser/components/FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 import { parsePatch } from "diff";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import type {
@@ -26,7 +26,7 @@ import {
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { DiffContainer, DiffRenderer, SelectableDiffRenderer } from "../Shared/DiffRenderer";
-import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
+import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
 import { JsonHighlight } from "./Shared/HighlightedCode";
 import type { ReviewNoteData } from "@/common/types/review";
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { formatAgentIdLabel } from "@/browser/components/AgentModePicker";
+import { formatAgentIdLabel } from "@/browser/components/AgentModePicker/AgentModePicker";
 import {
   ToolContainer,
   ToolHeader,

@@ -11,9 +11,9 @@ import {
   REVIEW_FILE_TREE_VIEW_MODE_KEY,
 } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
-import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup";
+import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
-import { FileIcon } from "@/browser/components/FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 
 /**
  * Compute read status for a directory by recursively checking all descendant files

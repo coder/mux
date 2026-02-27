@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/To
 import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
 import { Button } from "@/browser/components/Button/Button";
-import { ModelSelector } from "@/browser/components/ModelSelector";
+import { ModelSelector } from "@/browser/components/ModelSelector/ModelSelector";
 import {
   Select,
   SelectContent,

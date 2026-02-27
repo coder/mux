@@ -3,7 +3,7 @@ import { useStartHere } from "@/browser/hooks/useStartHere";
 import type { DisplayedMessage } from "@/common/types/message";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { Clipboard, ClipboardCheck, FileText, ListStart, Moon, Package } from "lucide-react";
-import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
+import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Button } from "@/browser/components/Button/Button";
 import React, { useState } from "react";
