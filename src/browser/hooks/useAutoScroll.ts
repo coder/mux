@@ -119,17 +119,17 @@ export function useAutoScroll() {
     const threshold = 100;
     const isAtBottom = element.scrollHeight - currentScrollTop - element.clientHeight < threshold;
 
-    // Safety net: when auto-scroll is disabled and scrolling stops at the bottom,
-    // re-enable it. This debounced check fires 150ms after the last scroll event,
-    // covering all edge cases where iOS momentum/inertial scrolling, slow drags,
-    // or any other scroll lands at the bottom but the touchmove-based user
-    // interaction window (100ms) has already expired. The 150ms delay is long
-    // enough that upward momentum from the bottom will still be producing scroll
-    // events (resetting the timer) before it clears the bottom threshold.
+    // Safety net: when auto-scroll is disabled and *downward* scrolling stops at
+    // the bottom, re-enable it. Only armed on downward movement so that a small
+    // upward scroll near the bottom (< threshold) doesn't get its disable undone.
+    // The 150ms debounce is long enough that upward momentum from the bottom will
+    // keep resetting the timer before it fires.
+    const isMovingDown = currentScrollTop > lastScrollTopRef.current;
     if (scrollSettledTimerRef.current) {
       clearTimeout(scrollSettledTimerRef.current);
+      scrollSettledTimerRef.current = null;
     }
-    if (!autoScrollRef.current) {
+    if (!autoScrollRef.current && isMovingDown) {
       scrollSettledTimerRef.current = setTimeout(() => {
         scrollSettledTimerRef.current = null;
         if (contentRef.current && !autoScrollRef.current) {
