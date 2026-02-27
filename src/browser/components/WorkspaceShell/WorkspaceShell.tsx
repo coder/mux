@@ -146,6 +146,15 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     );
   }
 
+  // Web-only: during workspace switches, the WebSocket subscription needs time to
+  // catch up. Show a splash instead of flashing stale cached messages.
+  // Electron's MessageChannel is near-instant so this gate is unnecessary there.
+  if (workspaceState.isHydratingTranscript && !window.api) {
+    return (
+      <WorkspacePlaceholder title="Catching up with the agent..." className={props.className} />
+    );
+  }
+
   if (!props.projectName || !props.workspaceName) {
     return (
       <WorkspacePlaceholder
