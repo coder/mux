@@ -1378,15 +1378,13 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const firstLineType = highlightedLineData[0]?.type;
     const lastLineType = highlightedLineData[highlightedLineData.length - 1]?.type;
 
-    const hasPendingInlineReview = parsedInlineReviews.some(
-      ({ review }) => review.status === "pending"
-    );
-    const shouldCullOffscreenDiffRows =
-      isComposing &&
-      lineData.length >= 500 &&
-      // Pending inline notes render as subgrid rows; combining them with
-      // content-visibility row culling can desync immersive column alignment.
-      !hasPendingInlineReview;
+    // Keep selectable diff rows free of layout containment styles.
+    //
+    // Why: each row is a `grid-cols-subgrid` participant and shares a 3-column
+    // contract with inline composer/review-note rows. Applying `content-visibility`
+    // (which implies layout containment) on these rows can break subgrid sizing and
+    // misalign pending review note layout. By construction we only apply outline
+    // visuals to row containers; no row-level culling styles are allowed here.
 
     const cursorLikeOutlineColor = "hsl(from var(--color-review-accent) h s l / 0.45)";
     const normalizedSelectedLineRange = selectedLineRange
@@ -1401,7 +1399,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       isLineInSelection(index, renderSelection) ||
       isLineInSelection(index, normalizedSelectedLineRange);
 
-    const getCursorLikeOutlineStyle = (index: number): React.CSSProperties | undefined => {
+    type DiffRowRenderStyle = Pick<React.CSSProperties, "boxShadow">;
+
+    const getCursorLikeOutlineStyle = (index: number): DiffRowRenderStyle | undefined => {
       if (!isCursorHighlightedLine(index)) {
         return undefined;
       }
@@ -1431,22 +1431,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isComposerSelected = isLineInSelection(displayIndex, renderSelection);
           const isRangeSelected = isLineInSelection(displayIndex, normalizedSelectedLineRange);
-          const lineOutlineStyle = getCursorLikeOutlineStyle(displayIndex);
-          const shouldCullLine =
-            shouldCullOffscreenDiffRows &&
-            !isComposerSelected &&
-            !isRangeSelected &&
-            displayIndex !== activeLineIndex &&
-            displayIndex !== (composerAfterIndex ?? -1);
-          const lineRenderStyle: React.CSSProperties | undefined = shouldCullLine
-            ? {
-                ...lineOutlineStyle,
-                // Restrict offscreen layout/paint work to keep large immersive files responsive
-                // while users type in the inline composer.
-                contentVisibility: "auto",
-                containIntrinsicSize: "auto 1.4em",
-              }
-            : lineOutlineStyle;
+          const lineRenderStyle = getCursorLikeOutlineStyle(displayIndex);
           const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
           const baseCodeBg = getDiffLineBackground(lineInfo.type);
           const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
