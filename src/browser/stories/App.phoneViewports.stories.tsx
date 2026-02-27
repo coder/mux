@@ -10,9 +10,23 @@ import type { ComponentType } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 
+import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createAssistantMessage, createUserMessage, STABLE_TIMESTAMP } from "./mockFactory";
-import { setupSimpleChatStory } from "./storyHelpers";
+import {
+  createAssistantMessage,
+  createUserMessage,
+  createWorkspace,
+  groupWorkspacesByProject,
+  STABLE_TIMESTAMP,
+} from "./mockFactory";
+import {
+  clearWorkspaceSelection,
+  collapseRightSidebar,
+  expandProjects,
+  setupSimpleChatStory,
+} from "./storyHelpers";
+import { createMockORPCClient } from "./mocks/orpc";
 import {
   blurActiveElement,
   waitForChatInputAutofocusDone,
@@ -217,6 +231,95 @@ export const IPhone17ProMaxTouchReviewImmersive: AppStory = {
         if (canvas.queryByRole("heading", { name: "Notes" })) {
           throw new Error("Touch immersive mode should hide the desktop notes sidebar.");
         }
+      },
+      { timeout: 10_000 }
+    );
+
+    blurActiveElement();
+  },
+};
+
+/**
+ * Mobile sidebar with a project containing a custom section.
+ * Verifies section header action buttons (+, color, rename, delete) are visible
+ * on touch devices where hover state doesn't exist.
+ */
+export const IPhone16eSidebarWithSections: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/my-app";
+        const sectionId = "sec00001";
+
+        const workspaces = [
+          createWorkspace({
+            id: "ws-unsectioned",
+            name: "main",
+            projectName: "my-app",
+            projectPath,
+          }),
+          {
+            ...createWorkspace({
+              id: "ws-in-section-1",
+              name: "feature/auth",
+              projectName: "my-app",
+              projectPath,
+            }),
+            sectionId,
+          },
+          {
+            ...createWorkspace({
+              id: "ws-in-section-2",
+              name: "feature/payments",
+              projectName: "my-app",
+              projectPath,
+            }),
+            sectionId,
+          },
+        ];
+
+        // Build project config with a custom section
+        const projects = groupWorkspacesByProject(workspaces);
+        const projectConfig = projects.get(projectPath)!;
+        projects.set(projectPath, {
+          ...projectConfig,
+          sections: [{ id: sectionId, name: "Features", color: "#6366f1", nextId: null }],
+        });
+
+        // Sidebar open with no workspace selected so the sidebar content is visible
+        clearWorkspaceSelection();
+        collapseRightSidebar();
+        expandProjects([projectPath]);
+        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+
+        return createMockORPCClient({ projects, workspaces });
+      }}
+    />
+  ),
+  decorators: [IPhone16eDecorator],
+  parameters: {
+    ...appMeta.parameters,
+    chromatic: {
+      ...(appMeta.parameters?.chromatic ?? {}),
+      cropToViewport: true,
+      modes: {
+        dark: { theme: "dark", viewport: IPHONE_16E, hasTouch: true },
+        light: { theme: "light", viewport: IPHONE_16E, hasTouch: true },
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    // No workspace is selected so there's no ChatInput to wait for;
+    // skip stabilizePhoneViewportStory and wait for the section directly.
+    await waitFor(
+      () => {
+        const sectionHeader = canvasElement.querySelector('[data-section-id="sec00001"]');
+        if (!sectionHeader) throw new Error("Section header not found");
+        // Verify the section header action buttons are in the DOM.
+        // The actual visibility assertion (opacity via CSS media query) is
+        // validated by the Chromatic snapshot in touch mode — the Storybook
+        // test runner doesn't emulate pointer:coarse media queries.
+        within(sectionHeader as HTMLElement).getByLabelText("New workspace in section");
       },
       { timeout: 10_000 }
     );
