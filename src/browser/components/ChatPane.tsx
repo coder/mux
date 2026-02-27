@@ -7,12 +7,18 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
-import { Clipboard, Lightbulb, TextQuote } from "lucide-react";
+import { ChevronDown, ChevronUp, Clipboard, Lightbulb, Search, TextQuote, X } from "lucide-react";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import {
   formatTranscriptTextAsQuote,
   getTranscriptContextMenuText,
 } from "@/browser/utils/messages/transcriptContextMenu";
+import {
+  findTranscriptTextMatches,
+  focusTranscriptTextMatch,
+  type TranscriptTextMatch,
+} from "@/browser/utils/messages/transcriptSearch";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
 import { MessageListProvider } from "./Messages/MessageListContext";
@@ -39,7 +45,7 @@ import {
   getInterruptionContext,
   getLastNonDecorativeMessage,
 } from "@/common/utils/messages/retryEligibility";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { formatKeybind, isDialogOpen, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -435,6 +441,191 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     transcriptMenu.close();
   }, [transcriptMenu]);
 
+  const transcriptFindInputRef = useRef<HTMLInputElement>(null);
+  const transcriptFindMatchesRef = useRef<TranscriptTextMatch[]>([]);
+  const transcriptFindFocusRequestedRef = useRef(false);
+  const [transcriptFindOpen, setTranscriptFindOpen] = useState(false);
+  const [transcriptFindQuery, setTranscriptFindQuery] = useState("");
+  const [transcriptFindMatchCount, setTranscriptFindMatchCount] = useState(0);
+  const [transcriptFindActiveIndex, setTranscriptFindActiveIndex] = useState(-1);
+
+  const focusTranscriptFindInput = useCallback(() => {
+    requestAnimationFrame(() => {
+      transcriptFindInputRef.current?.focus();
+      transcriptFindInputRef.current?.select();
+    });
+  }, []);
+
+  const closeTranscriptFind = useCallback(() => {
+    setTranscriptFindOpen(false);
+    setTranscriptFindActiveIndex(-1);
+    transcriptFindFocusRequestedRef.current = false;
+
+    const transcriptRoot = contentRef.current;
+    const selection = typeof window === "undefined" ? null : window.getSelection();
+    if (!selection || selection.rangeCount === 0 || !transcriptRoot) {
+      return;
+    }
+
+    const anchorNode = selection.anchorNode;
+    if (anchorNode && transcriptRoot.contains(anchorNode)) {
+      selection.removeAllRanges();
+    }
+  }, [contentRef]);
+
+  const openTranscriptFind = useCallback(() => {
+    const transcriptRoot = contentRef.current;
+    const selection = typeof window === "undefined" ? null : window.getSelection();
+
+    // Reuse the quote-in-input transcript selection rules so Cmd/Ctrl+F picks up
+    // the active transcript selection when available.
+    const selectedText = transcriptRoot
+      ? getTranscriptContextMenuText({ transcriptRoot, target: null, selection })
+      : null;
+
+    setTranscriptFindOpen(true);
+    setTranscriptFindQuery((previousQuery) => {
+      const preferredQuery = selectedText?.trim();
+      if (preferredQuery && preferredQuery.length > 0) {
+        return preferredQuery;
+      }
+
+      return previousQuery;
+    });
+    setTranscriptFindActiveIndex(-1);
+    transcriptFindFocusRequestedRef.current = false;
+    focusTranscriptFindInput();
+  }, [contentRef, focusTranscriptFindInput]);
+
+  const stepTranscriptFindMatch = useCallback((direction: -1 | 1) => {
+    const matches = transcriptFindMatchesRef.current;
+    if (matches.length === 0) {
+      return;
+    }
+
+    // Keep query typing focused in the input and only shift transcript focus
+    // when navigation is explicit (Enter, Shift+Enter, or arrow buttons).
+    transcriptFindFocusRequestedRef.current = true;
+    setTranscriptFindActiveIndex((currentIndex) => {
+      if (currentIndex < 0) {
+        return direction > 0 ? 0 : matches.length - 1;
+      }
+
+      return (currentIndex + direction + matches.length) % matches.length;
+    });
+  }, []);
+
+  const handleTranscriptFindInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+
+        if (transcriptFindQuery.trim().length === 0) {
+          closeTranscriptFind();
+          contentRef.current?.focus();
+          return;
+        }
+
+        stepTranscriptFindMatch(event.shiftKey ? -1 : 1);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        stopKeyboardPropagation(event);
+        closeTranscriptFind();
+        contentRef.current?.focus();
+      }
+    },
+    [closeTranscriptFind, contentRef, stepTranscriptFindMatch, transcriptFindQuery]
+  );
+
+  useEffect(() => {
+    const handleFindKeyDownCapture = (event: KeyboardEvent) => {
+      if (!matchesKeybind(event, KEYBINDS.FOCUS_TRANSCRIPT_SEARCH)) {
+        return;
+      }
+
+      if (event.defaultPrevented || isDialogOpen()) {
+        return;
+      }
+
+      const chatRoot = chatAreaRef.current;
+      const target = event.target;
+      if (!chatRoot || !(target instanceof Node) || !chatRoot.contains(target)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      openTranscriptFind();
+    };
+
+    // Capture phase ensures transcript search wins over other Ctrl/Cmd+F handlers
+    // whenever focus is currently inside the chat pane.
+    window.addEventListener("keydown", handleFindKeyDownCapture, { capture: true });
+
+    return () => {
+      window.removeEventListener("keydown", handleFindKeyDownCapture, { capture: true });
+    };
+  }, [openTranscriptFind]);
+
+  useEffect(() => {
+    if (!transcriptFindOpen) {
+      transcriptFindMatchesRef.current = [];
+      setTranscriptFindMatchCount(0);
+      setTranscriptFindActiveIndex(-1);
+      return;
+    }
+
+    const transcriptRoot = contentRef.current;
+    if (!transcriptRoot || transcriptFindQuery.length === 0) {
+      transcriptFindMatchesRef.current = [];
+      setTranscriptFindMatchCount(0);
+      setTranscriptFindActiveIndex(-1);
+      return;
+    }
+
+    const matches = findTranscriptTextMatches({ transcriptRoot, query: transcriptFindQuery });
+    transcriptFindMatchesRef.current = matches;
+    setTranscriptFindMatchCount(matches.length);
+
+    setTranscriptFindActiveIndex((currentIndex) => {
+      if (matches.length === 0) {
+        return -1;
+      }
+
+      // Keep the initial index unset so the first Enter lands on match #1.
+      // If we eagerly set 0 here, first Enter skips to #2 and single-hit
+      // searches cannot trigger focus because the index never changes.
+      if (currentIndex < 0) {
+        return -1;
+      }
+
+      return Math.min(currentIndex, matches.length - 1);
+    });
+  }, [contentRef, deferredMessages, transcriptFindOpen, transcriptFindQuery]);
+
+  useEffect(() => {
+    if (!transcriptFindOpen || transcriptFindActiveIndex < 0) {
+      return;
+    }
+
+    if (!transcriptFindFocusRequestedRef.current) {
+      return;
+    }
+
+    const match = transcriptFindMatchesRef.current[transcriptFindActiveIndex];
+    if (!match) {
+      transcriptFindFocusRequestedRef.current = false;
+      return;
+    }
+
+    transcriptFindFocusRequestedRef.current = false;
+    setAutoScroll(false);
+    focusTranscriptTextMatch(match);
+  }, [setAutoScroll, transcriptFindActiveIndex, transcriptFindOpen]);
+
   // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
   // resets on workspace switches. Clear background errors so they don't leak across workspaces.
   useEffect(() => {
@@ -710,6 +901,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     }
   }
 
+  const transcriptFindShortcutLabel = formatKeybind(KEYBINDS.FOCUS_TRANSCRIPT_SEARCH);
+  const transcriptFindDisplayIndex =
+    transcriptFindActiveIndex >= 0 ? transcriptFindActiveIndex + 1 : 1;
+  const transcriptFindMatchLabel =
+    transcriptFindQuery.length === 0
+      ? "Type to search"
+      : transcriptFindMatchCount === 0
+        ? "No matches"
+        : `${transcriptFindDisplayIndex}/${transcriptFindMatchCount}`;
+
   return (
     <PerfRenderMarker id="chat-pane">
       <div
@@ -735,6 +936,63 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         <PerfRenderMarker id="chat-pane.transcript">
           {/* Spacer for fixed mobile header - mobile-header-spacer adds padding-top on touch devices */}
           <div className="mobile-header-spacer relative flex-1 overflow-hidden">
+            {transcriptFindOpen && (
+              <div
+                className="bg-background-secondary border-border-medium absolute top-3 right-4 z-30 flex items-center gap-1 rounded-md border px-2 py-1 shadow-sm"
+                data-testid="transcript-find-bar"
+              >
+                <Search aria-hidden="true" className="text-muted h-3 w-3 shrink-0" />
+                <input
+                  ref={transcriptFindInputRef}
+                  type="text"
+                  value={transcriptFindQuery}
+                  onChange={(event) => {
+                    transcriptFindFocusRequestedRef.current = false;
+                    setTranscriptFindQuery(event.target.value);
+                    setTranscriptFindActiveIndex(-1);
+                  }}
+                  onKeyDown={handleTranscriptFindInputKeyDown}
+                  placeholder={`Find in transcript (${transcriptFindShortcutLabel})`}
+                  className="text-foreground placeholder:text-muted w-56 bg-transparent text-xs outline-none"
+                  aria-label="Find in transcript"
+                />
+                <span className="text-muted min-w-14 text-right text-[11px] tabular-nums">
+                  {transcriptFindMatchLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => stepTranscriptFindMatch(-1)}
+                  disabled={transcriptFindMatchCount === 0}
+                  className="text-muted hover:text-foreground disabled:text-muted/50 rounded p-0.5"
+                  aria-label="Previous transcript match"
+                  title="Previous match (Shift+Enter)"
+                >
+                  <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => stepTranscriptFindMatch(1)}
+                  disabled={transcriptFindMatchCount === 0}
+                  className="text-muted hover:text-foreground disabled:text-muted/50 rounded p-0.5"
+                  aria-label="Next transcript match"
+                  title="Next match (Enter)"
+                >
+                  <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeTranscriptFind();
+                    contentRef.current?.focus();
+                  }}
+                  className="text-muted hover:text-foreground rounded p-0.5"
+                  aria-label="Close transcript find"
+                  title="Close"
+                >
+                  <X aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
             <div
               ref={contentRef}
               onWheel={markUserInteraction}
