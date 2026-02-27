@@ -3,6 +3,7 @@ import { parentPort } from "node:worker_threads";
 import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
 import { decideSyncPlan, type SyncAction } from "./backfillDecision";
+import { shouldCheckpointAfterSync } from "./checkpointDecision";
 import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
 import { discoverAllWorkspaces } from "./workspaceDiscovery";
 import { executeNamedQuery } from "./queries";
@@ -265,30 +266,6 @@ async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
   }
 
   return watermarkWorkspaceIds;
-}
-
-/** Pure predicate: should we issue a CHECKPOINT after this sync? */
-export function shouldCheckpointAfterSync(
-  action: SyncAction,
-  workspacesIngested: number,
-  workspacesPurged: number
-): boolean {
-  assert(
-    Number.isInteger(workspacesIngested) && workspacesIngested >= 0,
-    "shouldCheckpointAfterSync requires non-negative integer workspacesIngested"
-  );
-  assert(
-    Number.isInteger(workspacesPurged) && workspacesPurged >= 0,
-    "shouldCheckpointAfterSync requires non-negative integer workspacesPurged"
-  );
-
-  // full_rebuild always truncates tables, so always checkpoint even if nothing was re-ingested.
-  if (action === "full_rebuild") {
-    return true;
-  }
-
-  // incremental: only checkpoint if we actually wrote or deleted rows.
-  return action === "incremental" && (workspacesIngested > 0 || workspacesPurged > 0);
 }
 
 async function checkpointIfNeeded(
