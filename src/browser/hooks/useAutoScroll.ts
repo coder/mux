@@ -32,6 +32,10 @@ export function useAutoScroll() {
   // to catch cases where iOS momentum/inertial scrolling reaches the bottom but
   // the user-interaction window (100ms after last touchmove) has already expired.
   const scrollSettledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set by disableAutoScroll() to prevent the scroll-settled debounce from
+  // re-arming after programmatic scrolls (scrollIntoView, etc.). Cleared when
+  // the user touches the scroll container (markUserInteraction).
+  const programmaticDisableRef = useRef(false);
 
   // Sync ref with state to ensure callbacks always have latest value
   autoScrollRef.current = autoScroll;
@@ -107,6 +111,7 @@ export function useAutoScroll() {
   const disableAutoScroll = useCallback(() => {
     setAutoScroll(false);
     autoScrollRef.current = false;
+    programmaticDisableRef.current = true;
     if (scrollSettledTimerRef.current) {
       clearTimeout(scrollSettledTimerRef.current);
       scrollSettledTimerRef.current = null;
@@ -129,7 +134,7 @@ export function useAutoScroll() {
       clearTimeout(scrollSettledTimerRef.current);
       scrollSettledTimerRef.current = null;
     }
-    if (!autoScrollRef.current && isMovingDown) {
+    if (!autoScrollRef.current && isMovingDown && !programmaticDisableRef.current) {
       scrollSettledTimerRef.current = setTimeout(() => {
         scrollSettledTimerRef.current = null;
         if (contentRef.current && !autoScrollRef.current) {
@@ -172,6 +177,9 @@ export function useAutoScroll() {
 
   const markUserInteraction = useCallback(() => {
     lastUserInteractionRef.current = Date.now();
+    // Clear programmatic disable flag — the user is now interacting with the
+    // scroll container, so the debounced scroll-settled recovery can re-arm.
+    programmaticDisableRef.current = false;
   }, []);
 
   return {
