@@ -524,6 +524,15 @@ describe("buildRequestHeaders", () => {
     expect(result).toEqual({ [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" });
   });
 
+  test("should encode non-header-safe workspace IDs before attaching request header", () => {
+    const workspaceId = "workspace-😀";
+    const result = buildRequestHeaders("openai:gpt-5.2", undefined, workspaceId);
+
+    expect(result).toEqual({
+      [MUX_WORKSPACE_ID_HEADER]: `b64:${Buffer.from(workspaceId, "utf8").toString("base64url")}`,
+    });
+  });
+
   test("should include both X-Mux-Workspace-Id and anthropic-beta when both apply", () => {
     const result = buildRequestHeaders(
       "anthropic:claude-opus-4-6",

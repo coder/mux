@@ -385,6 +385,24 @@ export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
 /** HTTP header sent on AI requests for workspace-level observability. */
 export const MUX_WORKSPACE_ID_HEADER = "X-Mux-Workspace-Id";
 
+const HTTP_HEADER_VALUE_SAFE_PATTERN = /^[\t\x20-\x7E\x80-\xFF]+$/;
+
+/**
+ * Encode workspace IDs that contain non-header-safe bytes.
+ *
+ * Legacy workspace IDs may include non-Latin-1 characters (e.g., emoji from
+ * project/workspace names). Fetch rejects such header values, which would abort
+ * the request before it reaches the provider. We keep safe IDs unchanged for
+ * readability and encode unsafe ones into a stable URL-safe base64 form.
+ */
+function toWorkspaceHeaderValue(workspaceId: string): string {
+  if (HTTP_HEADER_VALUE_SAFE_PATTERN.test(workspaceId)) {
+    return workspaceId;
+  }
+
+  return `b64:${Buffer.from(workspaceId, "utf8").toString("base64url")}`;
+}
+
 /**
  * Build per-request HTTP headers for provider-specific features.
  *
@@ -401,7 +419,7 @@ export function buildRequestHeaders(
   const headers: Record<string, string> = {};
 
   if (workspaceId != null) {
-    headers[MUX_WORKSPACE_ID_HEADER] = workspaceId;
+    headers[MUX_WORKSPACE_ID_HEADER] = toWorkspaceHeaderValue(workspaceId);
   }
 
   const normalized = normalizeGatewayModel(modelString);
