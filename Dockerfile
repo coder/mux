@@ -80,8 +80,9 @@ WORKDIR /app
 # Install runtime dependencies
 # - git: required for workspace operations (clone, worktree, etc.)
 # - openssh-client: required for SSH runtime support
+# - ca-certificates: required for HTTPS (git clone, API calls, etc.)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git openssh-client && \
+    apt-get install -y --no-install-recommends git openssh-client ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy runtime dependencies first so app-code changes don't invalidate these layers.
