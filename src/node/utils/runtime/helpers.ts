@@ -1,6 +1,7 @@
 import type { Runtime, ExecOptions } from "@/node/runtime/Runtime";
 import { PlatformPaths } from "@/node/utils/paths.main";
 import { getLegacyPlanFilePath, getPlanFilePath } from "@/common/utils/planStorage";
+import { shellQuote } from "@/common/utils/shell";
 
 /**
  * Convenience helpers for working with streaming Runtime APIs.
@@ -162,10 +163,14 @@ export async function readPlanFile(
       // Migrate: move to new location
       try {
         const planDir = planPath.substring(0, planPath.lastIndexOf("/"));
-        await execBuffered(runtime, `mkdir -p "${planDir}" && mv "${legacyPath}" "${planPath}"`, {
-          cwd: "/tmp",
-          timeout: 5,
-        });
+        await execBuffered(
+          runtime,
+          `mkdir -p ${shellQuote(planDir)} && mv ${shellQuote(legacyPath)} ${shellQuote(planPath)}`,
+          {
+            cwd: "/tmp",
+            timeout: 5,
+          }
+        );
       } catch {
         // Migration failed, but we have the content
       }
@@ -230,10 +235,14 @@ export async function movePlanFile(
     // Resolve tildes to absolute paths - bash doesn't expand ~ inside quotes
     const resolvedOldPath = await runtime.resolvePath(oldPath);
     const resolvedNewPath = await runtime.resolvePath(newPath);
-    await execBuffered(runtime, `mv "${resolvedOldPath}" "${resolvedNewPath}"`, {
-      cwd: "/tmp",
-      timeout: 5,
-    });
+    await execBuffered(
+      runtime,
+      `mv ${shellQuote(resolvedOldPath)} ${shellQuote(resolvedNewPath)}`,
+      {
+        cwd: "/tmp",
+        timeout: 5,
+      }
+    );
   } catch {
     // No plan file to move, that's fine
   }
