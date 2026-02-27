@@ -7,9 +7,11 @@ import type {
   InitLogger,
 } from "@/node/runtime/Runtime";
 import { listLocalBranches, cleanStaleLock, getCurrentBranch } from "@/node/git";
-import { execFileAsync } from "@/node/utils/disposableExec";
+import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
+import { getBashPath } from "@/node/utils/main/bashPath";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { toPosixPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
@@ -493,8 +495,11 @@ export class WorktreeManager {
             // Ignore prune errors - we'll still try rm -rf
           }
 
-          // Force delete the directory via execFile (no shell interpolation)
-          using rmProc = execFileAsync("rm", ["-rf", toPosixPath(deletedPath)]);
+          // Force delete the directory (use bash shell for rm -rf on Windows)
+          // shellQuote prevents command injection from malicious workspace paths
+          using rmProc = execAsync(`rm -rf ${shellQuote(toPosixPath(deletedPath))}`, {
+            shell: getBashPath(),
+          });
           await rmProc.result;
 
           // Best-effort: also delete the local branch.
