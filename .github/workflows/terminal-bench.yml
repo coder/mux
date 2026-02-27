@@ -147,6 +147,25 @@ jobs:
       - name: Build dist/ (skip icons - not needed for benchmark)
         run: make build-main build-preload
 
+      # Snapshot existing Daytona sandboxes so post-run cleanup only deletes
+      # sandboxes created by *this* job, not ones from parallel jobs.
+      - name: Snapshot Daytona sandboxes
+        if: inputs.env == 'daytona'
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            exit 0
+          fi
+          pip install --quiet daytona
+          python3 -c "
+          from daytona import Daytona
+          d = Daytona()
+          ids = [sb.id for sb in d.list()]
+          print('\n'.join(ids))
+          " > /tmp/daytona-pre-existing.txt
+          echo "Snapshot $(wc -l < /tmp/daytona-pre-existing.txt) pre-existing sandbox(es)"
+
       - name: Run Terminal-Bench
         run: make benchmark-terminal 2>&1 | tee benchmark.log
         env:
@@ -169,6 +188,8 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
+      # Clean up sandboxes created during this run only (compare against
+      # pre-run snapshot to avoid deleting sandboxes from parallel jobs).
       - name: Cleanup Daytona sandboxes
         if: always() && inputs.env == 'daytona'
         env:
@@ -181,13 +202,19 @@ jobs:
           pip install --quiet daytona
           python3 -c "
           from daytona import Daytona
+          pre_existing = set()
+          try:
+              with open('/tmp/daytona-pre-existing.txt') as f:
+                  pre_existing = {line.strip() for line in f if line.strip()}
+          except FileNotFoundError:
+              pass
           d = Daytona()
-          sandboxes = d.list()
-          if not sandboxes:
-              print('No sandboxes found')
+          to_delete = [sb for sb in d.list() if sb.id not in pre_existing]
+          if not to_delete:
+              print('No new sandboxes to clean up')
           else:
-              print(f'Found {len(sandboxes)} sandbox(es), cleaning up...')
-              for sb in sandboxes:
+              print(f'Found {len(to_delete)} sandbox(es) created during this run, cleaning up...')
+              for sb in to_delete:
                   try:
                       print(f'  Deleting {sb.id} (state={sb.state})...')
                       d.delete(sb)
