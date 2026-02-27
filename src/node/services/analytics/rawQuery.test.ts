@@ -144,6 +144,29 @@ describe("executeRawQuery", () => {
     );
   });
 
+  test("rejects parenthesized non-allowed table reference", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM (ingest_watermarks)",
+      /disallowed table or source/i
+    );
+  });
+
+  test("allows parenthesized allowed table reference", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 2n }],
+      })
+    );
+
+    const sql = "SELECT COUNT(*) AS request_count FROM (events)";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(result.rows).toEqual([{ request_count: 2 }]);
+  });
+
   test("rejects comma-joined sources outside the analytics allowlist", async () => {
     await expectValidationFailure(
       "SELECT 1 FROM events, duckdb_tables()",

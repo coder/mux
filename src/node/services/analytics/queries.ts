@@ -892,7 +892,7 @@ function parseParenthesizedRawQueryFunctionSource(
   }
 
   const source = parseRawQueryRelationSource(maskedSql, sourceStartIndex);
-  if (!source?.isFunctionCall) {
+  if (source == null) {
     return null;
   }
 
