@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import assert from "@/common/utils/assert";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";

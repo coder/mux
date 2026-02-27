@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useRef, useEffect } from "react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { formatRelativeTimeCompact } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";

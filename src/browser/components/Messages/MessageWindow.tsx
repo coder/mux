@@ -5,8 +5,8 @@ import { Code2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import React, { useMemo, useState } from "react";
 import { useChatHostContext } from "@/browser/contexts/ChatHostContext";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
-import { Button } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { Button } from "../Button/Button";
 
 export interface ButtonConfig {
   label: string;

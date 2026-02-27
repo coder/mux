@@ -5,7 +5,7 @@ import {
   TooltipTrigger,
   TooltipContent,
   HelpIndicator,
-} from "@/browser/components/ui/tooltip";
+} from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 import type { SigningCapabilities } from "@/common/orpc/schemas";
 

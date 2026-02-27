@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ShieldCheck, ShieldOff } from "lucide-react";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAPI } from "@/browser/contexts/API";
 

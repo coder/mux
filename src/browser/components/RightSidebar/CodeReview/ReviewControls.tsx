@@ -6,7 +6,7 @@ import React from "react";
 import { ArrowLeft, Maximize2 } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";

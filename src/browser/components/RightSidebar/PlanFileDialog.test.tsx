@@ -15,7 +15,7 @@ interface MockApiClient {
 
 let mockApi: MockApiClient | null = null;
 
-void mock.module("@/browser/components/ui/dialog", () => ({
+void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: { open: boolean; children: ReactNode }) =>
     props.open ? <div>{props.children}</div> : null,
   DialogContent: (props: { children: ReactNode; className?: string }) => (

@@ -60,7 +60,7 @@ import {
   markPendingWorkspaceAiSettings,
 } from "@/browser/utils/workspaceAiSettingsSync";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
-import { Button } from "./components/ui/button";
+import { Button } from "./components/Button/Button";
 import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
@@ -74,7 +74,7 @@ import { SshPromptDialog } from "./components/SshPromptDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
-import { TooltipProvider } from "./components/ui/tooltip";
+import { TooltipProvider } from "./components/Tooltip/Tooltip";
 import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";

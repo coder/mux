@@ -14,7 +14,7 @@ import { ConsoleOutputDisplay } from "./shared/ConsoleOutput";
 import { NestedToolsContainer } from "./shared/NestedToolsContainer";
 import type { CodeExecutionResult, NestedToolCall } from "./shared/codeExecutionTypes";
 import { cn } from "@/common/lib/utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 
 type ViewMode = "tools" | "result" | "code" | "console";
 

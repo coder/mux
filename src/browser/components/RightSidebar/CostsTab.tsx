@@ -26,7 +26,7 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";

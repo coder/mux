@@ -2,17 +2,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, Trash2 } from "lucide-react";
 
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
-import { Button } from "@/browser/components/ui/button";
-import { Checkbox } from "@/browser/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/Button/Button";
+import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/browser/components/Dialog/Dialog";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { useAPI } from "@/browser/contexts/API";
 import { copyToClipboard } from "@/browser/utils/clipboard";

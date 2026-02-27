@@ -28,7 +28,7 @@ import { ProvidersSection } from "./sections/ProvidersSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { System1Section } from "./sections/System1Section";
 import { GovernorSection } from "./sections/GovernorSection";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { MCPSettingsSection } from "./sections/MCPSettingsSection";
 import { SecretsSection } from "./sections/SecretsSection";
 import { LayoutsSection } from "./sections/LayoutsSection";

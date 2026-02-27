@@ -1,5 +1,5 @@
 import React from "react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 
 interface SidebarCollapseButtonProps {
   collapsed: boolean;

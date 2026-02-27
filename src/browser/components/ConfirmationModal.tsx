@@ -9,8 +9,8 @@ import {
   WarningBox,
   WarningTitle,
   WarningText,
-} from "@/browser/components/ui/dialog";
-import { Button } from "@/browser/components/ui/button";
+} from "@/browser/components/Dialog/Dialog";
+import { Button } from "@/browser/components/Button/Button";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 

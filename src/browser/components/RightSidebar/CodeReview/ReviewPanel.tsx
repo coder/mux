@@ -45,7 +45,7 @@ import {
   getReviewSearchStateKey,
   REVIEW_SORT_ORDER_KEY,
 } from "@/common/constants/storage";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
 import { parseNameStatus } from "@/common/utils/git/nameStatusParser";
 import type {

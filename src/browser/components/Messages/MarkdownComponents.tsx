@@ -6,7 +6,7 @@ import { useOptionalMessageListContext } from "./MessageListContext";
 import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClient";
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
-import { CopyButton } from "@/browser/components/ui/CopyButton";
+import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
 
 interface CodeProps {
   node?: unknown;

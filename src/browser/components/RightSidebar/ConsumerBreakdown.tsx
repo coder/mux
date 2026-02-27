@@ -1,7 +1,7 @@
 import React from "react";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
-import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../Tooltip/Tooltip";
 
 interface ConsumerBreakdownProps {
   consumers: TokenConsumer[];

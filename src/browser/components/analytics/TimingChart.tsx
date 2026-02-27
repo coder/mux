@@ -1,5 +1,5 @@
-import { Button } from "@/browser/components/ui/button";
-import { Skeleton } from "@/browser/components/ui/skeleton";
+import { Button } from "@/browser/components/Button/Button";
+import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import type { TimingDistribution } from "@/browser/hooks/useAnalytics";
 import {
   Bar,

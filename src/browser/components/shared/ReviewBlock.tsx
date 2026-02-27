@@ -9,8 +9,8 @@
 import React, { useState, useCallback, useRef, useMemo } from "react";
 import { Pencil, Check, Trash2, Unlink } from "lucide-react";
 import { DiffRenderer } from "./DiffRenderer";
-import { Button } from "../ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Button } from "../Button/Button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";

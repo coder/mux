@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
 export interface KebabMenuItem {

@@ -8,9 +8,9 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
-import { Checkbox } from "@/browser/components/ui/checkbox";
+import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
 import { cn } from "@/common/lib/utils";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import {
   ErrorBox,
   ExpandIcon,

@@ -26,7 +26,7 @@ import {
 import { FileIcon } from "../FileIcon";
 import { cn } from "@/common/lib/utils";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 import {
   validateRelativePath,
   buildListDirScript,

@@ -7,10 +7,13 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/browser/components/ui/dialog";
+} from "@/browser/components/Dialog/Dialog";
 import { DirectoryPickerModal } from "./DirectoryPickerModal";
-import { Button } from "@/browser/components/ui/button";
-import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
+import { Button } from "@/browser/components/Button/Button";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/browser/components/ToggleGroupPrimitive/ToggleGroupPrimitive";
 import type { ProjectConfig } from "@/node/config";
 import { useAPI } from "@/browser/contexts/API";
 

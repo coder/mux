@@ -9,7 +9,7 @@
 
 import React from "react";
 import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../Tooltip/Tooltip";
 import { FileIcon } from "../../FileIcon";
 import { formatTabDuration, type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";

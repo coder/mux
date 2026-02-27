@@ -1,6 +1,6 @@
 import React from "react";
 import type { ContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
-import { Popover, PopoverAnchor, PopoverContent } from "./popover";
+import { Popover, PopoverAnchor, PopoverContent } from "@/browser/components/Popover/Popover";
 import { cn } from "@/common/lib/utils";
 
 // ---------------------------------------------------------------------------

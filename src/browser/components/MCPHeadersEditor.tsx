@@ -1,7 +1,10 @@
 import React from "react";
 import { ChevronDown } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
-import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/Popover/Popover";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/browser/components/ToggleGroupPrimitive/ToggleGroupPrimitive";
 import {
   createMCPHeaderRow,
   mcpHeaderRowsToRecord,

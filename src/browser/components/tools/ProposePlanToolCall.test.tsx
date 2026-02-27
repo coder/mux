@@ -14,7 +14,7 @@ import {
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 
-import { TooltipProvider } from "../ui/tooltip";
+import { TooltipProvider } from "../Tooltip/Tooltip";
 
 import { ProposePlanToolCall } from "./ProposePlanToolCall";
 

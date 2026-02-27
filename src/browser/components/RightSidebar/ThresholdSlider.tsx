@@ -3,7 +3,7 @@ import {
   AUTO_COMPACTION_THRESHOLD_MIN,
   AUTO_COMPACTION_THRESHOLD_MAX,
 } from "@/common/constants/ui";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 
 // ----- Types -----
 

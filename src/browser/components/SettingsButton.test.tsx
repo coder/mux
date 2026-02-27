@@ -4,7 +4,7 @@ import { GlobalWindow } from "happy-dom";
 import { useLocation } from "react-router-dom";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
-import { TooltipProvider } from "@/browser/components/ui/tooltip";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { SettingsButton } from "./SettingsButton";
 
 function SettingsButtonTestHarness() {

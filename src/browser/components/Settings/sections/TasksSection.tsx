@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
-import { Input } from "@/browser/components/ui/input";
-import { Switch } from "@/browser/components/ui/switch";
-import { Button } from "@/browser/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
+import { Input } from "@/browser/components/Input/Input";
+import { Switch } from "@/browser/components/Switch/Switch";
+import { Button } from "@/browser/components/Button/Button";
 import { ModelSelector } from "@/browser/components/ModelSelector";
 import {
   Select,
@@ -12,7 +12,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { getDefaultModel, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";

@@ -5,7 +5,7 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { hasProviderIcon, ProviderIcon } from "./ProviderIcon";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip/Tooltip";
 
 interface ConfiguredProvidersBarProps {
   providersConfig: ProvidersConfigMap;

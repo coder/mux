@@ -2,7 +2,7 @@ import * as React from "react";
 
 import { cn } from "@/common/lib/utils";
 
-import { Popover, PopoverAnchor, PopoverContent } from "./popover";
+import { Popover, PopoverAnchor, PopoverContent } from "@/browser/components/Popover/Popover";
 
 type PopoverContentProps = React.ComponentPropsWithoutRef<typeof PopoverContent>;
 

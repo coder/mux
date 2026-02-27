@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/Popover/Popover";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
-import { Button } from "@/browser/components/ui/button";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+import { Button } from "@/browser/components/Button/Button";
 import { Check, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";

@@ -7,8 +7,8 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/browser/components/ui/dialog";
-import { Button } from "@/browser/components/ui/button";
+} from "@/browser/components/Dialog/Dialog";
+import { Button } from "@/browser/components/Button/Button";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { getErrorMessage } from "@/common/utils/errors";
 

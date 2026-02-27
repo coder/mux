@@ -1,6 +1,6 @@
 import { cn } from "@/common/lib/utils";
 import { GatewayIcon } from "./icons/GatewayIcon";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip/Tooltip";
 
 interface GatewayToggleButtonProps {
   /** Whether gateway is currently enabled for this model */

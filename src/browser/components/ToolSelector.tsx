@@ -1,6 +1,6 @@
 import React from "react";
-import { Checkbox } from "@/browser/components/ui/checkbox";
-import { Button } from "@/browser/components/ui/button";
+import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
+import { Button } from "@/browser/components/Button/Button";
 
 interface ToolSelectorProps {
   /** All available tools for this server */

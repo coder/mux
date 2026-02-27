@@ -56,7 +56,7 @@ import {
   processSlashCommand,
   type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
-import { Button } from "../ui/button";
+import { Button } from "../Button/Button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import { getCommandGhostHint } from "@/browser/utils/slashCommands/registry";
@@ -64,7 +64,7 @@ import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { AgentModePicker } from "../AgentModePicker";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";

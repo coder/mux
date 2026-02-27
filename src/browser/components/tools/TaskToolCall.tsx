@@ -20,7 +20,7 @@ import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { useOptionalMessageListContext } from "../Messages/MessageListContext";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { cn } from "@/common/lib/utils";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import {
   useOptionalWorkspaceContext,
   toWorkspaceSelection,

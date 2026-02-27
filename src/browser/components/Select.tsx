@@ -4,7 +4,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
 
 interface SelectOption {
   value: string;

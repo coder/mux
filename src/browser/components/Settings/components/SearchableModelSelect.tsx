@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/Popover/Popover";
 import { ProviderIcon } from "@/browser/components/ProviderIcon";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";

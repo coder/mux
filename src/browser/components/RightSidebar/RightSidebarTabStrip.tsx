@@ -1,6 +1,6 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDroppable, useDndContext } from "@dnd-kit/core";

@@ -17,7 +17,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { EmojiIcon } from "../../icons/EmojiIcon";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../../Tooltip/Tooltip";
 
 /**
  * Shared styled components for tool UI

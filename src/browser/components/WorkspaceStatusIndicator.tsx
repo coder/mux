@@ -3,8 +3,8 @@ import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon";
 import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
 import { memo } from "react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { Button } from "./ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
+import { Button } from "./Button/Button";
 
 export const WorkspaceStatusIndicator = memo<{
   workspaceId: string;

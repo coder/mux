@@ -29,7 +29,7 @@ import {
   isDialogOpen,
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
-import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
+import { SidebarCollapseButton } from "./SidebarCollapseButton/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
 import { TerminalTab } from "./RightSidebar/TerminalTab";

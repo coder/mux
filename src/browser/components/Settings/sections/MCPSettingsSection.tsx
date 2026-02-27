@@ -15,17 +15,17 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-import { Switch } from "@/browser/components/ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { Switch } from "@/browser/components/Switch/Switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { CachedMCPTestResult, MCPServerInfo, MCPServerTransport } from "@/common/types/mcp";

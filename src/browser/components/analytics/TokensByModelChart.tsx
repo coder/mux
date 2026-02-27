@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Skeleton } from "@/browser/components/ui/skeleton";
+import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import type { TokensByModelItem } from "@/browser/hooks/useAnalytics";
 import {
   CHART_AXIS_STROKE,

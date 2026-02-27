@@ -28,23 +28,26 @@ import {
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
-import { Switch } from "@/browser/components/ui/switch";
-import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { Switch } from "@/browser/components/Switch/Switch";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/browser/components/ToggleGroupPrimitive/ToggleGroupPrimitive";
 import {
   HelpIndicator,
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/browser/components/ui/tooltip";
+} from "@/browser/components/Tooltip/Tooltip";
 import { getErrorMessage } from "@/common/utils/errors";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";

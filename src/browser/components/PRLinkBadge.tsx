@@ -12,8 +12,8 @@ import {
   CircleDot,
 } from "lucide-react";
 import type { GitHubPRLinkWithStatus } from "@/common/types/links";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { Button } from "./ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
+import { Button } from "./Button/Button";
 import { cn } from "@/common/lib/utils";
 
 interface PRLinkBadgeProps {

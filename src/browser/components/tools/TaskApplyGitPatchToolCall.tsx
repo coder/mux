@@ -16,7 +16,7 @@ import {
   ToolName,
 } from "./shared/ToolPrimitives";
 import { getStatusDisplay, useToolExpansion, type ToolStatus } from "./shared/toolUtils";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { cn } from "@/common/lib/utils";
 

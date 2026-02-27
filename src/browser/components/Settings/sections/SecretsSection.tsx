@@ -4,15 +4,18 @@ import type { Secret } from "@/common/types/secrets";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { Button } from "@/browser/components/ui/button";
-import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
+import { Button } from "@/browser/components/Button/Button";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/browser/components/ToggleGroupPrimitive/ToggleGroupPrimitive";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
 
 type SecretsScope = "global" | "project";
 

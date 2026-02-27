@@ -16,7 +16,7 @@ import {
 import { DESKTOP_TITLEBAR_HEIGHT_CLASS, isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { cn } from "@/common/lib/utils";
 import { AgentCostChart } from "./AgentCostChart";
 import { DelegationChart } from "./DelegationChart";

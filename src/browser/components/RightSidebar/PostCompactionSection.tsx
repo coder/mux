@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { ChevronRight, FileText, ExternalLink, Eye, EyeOff, Info } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { PlanFileDialog } from "./PlanFileDialog";
 

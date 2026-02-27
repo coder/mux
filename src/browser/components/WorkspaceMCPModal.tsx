@@ -1,12 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Server, Loader2 } from "lucide-react";
-import { Button } from "@/browser/components/ui/button";
-import { Switch } from "@/browser/components/ui/switch";
+import { Button } from "@/browser/components/Button/Button";
+import { Switch } from "@/browser/components/Switch/Switch";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { cn } from "@/common/lib/utils";
 import type { MCPServerInfo, WorkspaceMCPOverrides } from "@/common/types/mcp";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/browser/components/Dialog/Dialog";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
 import { ToolSelector } from "@/browser/components/ToolSelector";
 

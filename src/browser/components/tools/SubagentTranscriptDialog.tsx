@@ -4,7 +4,12 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ChatMuxMessage } from "@/common/orpc/types";
 import { useAPI } from "@/browser/contexts/API";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/browser/components/Dialog/Dialog";
 import { ErrorBox, LoadingDots } from "./shared/ToolPrimitives";
 import { MessageRenderer } from "@/browser/components/Messages/MessageRenderer";
 import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";

@@ -2,8 +2,13 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Download } from "lucide-react";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import { useAPI } from "@/browser/contexts/API";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
-import { Button } from "@/browser/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/browser/components/Dialog/Dialog";
+import { Button } from "@/browser/components/Button/Button";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { getErrorMessage } from "@/common/utils/errors";

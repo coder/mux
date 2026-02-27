@@ -21,7 +21,7 @@ import {
 } from "@/browser/components/icons/RuntimeIcons";
 import { ProjectAddForm, type ProjectAddFormHandle } from "@/browser/components/ProjectCreateModal";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";

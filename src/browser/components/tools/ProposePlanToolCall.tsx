@@ -15,8 +15,8 @@ import {
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
-import { Button } from "../ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Button } from "../Button/Button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";

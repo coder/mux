@@ -1,6 +1,6 @@
 import React from "react";
 import { X } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
 import type { Review } from "@/common/types/review";
 

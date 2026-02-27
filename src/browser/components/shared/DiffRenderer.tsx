@@ -11,7 +11,7 @@ import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
 import { InlineReviewNote, type ReviewActionCallbacks } from "./InlineReviewNote";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {

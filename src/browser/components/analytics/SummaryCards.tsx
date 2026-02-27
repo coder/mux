@@ -1,4 +1,4 @@
-import { Skeleton } from "@/browser/components/ui/skeleton";
+import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import type { Summary } from "@/browser/hooks/useAnalytics";
 import { formatCompactNumber, formatPercent, formatUsd } from "./analyticsUtils";
 

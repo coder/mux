@@ -12,9 +12,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
-import { Switch } from "@/browser/components/ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { Switch } from "@/browser/components/Switch/Switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";

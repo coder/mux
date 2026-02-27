@@ -17,7 +17,7 @@ import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-rea
 import { GatewayToggleButton } from "./GatewayToggleButton";
 
 import { ProviderIcon } from "./ProviderIcon";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
@@ -25,7 +25,7 @@ import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getModelName, getModelProvider } from "@/common/utils/ai/models";
-import { Button } from "./ui/button";
+import { Button } from "./Button/Button";
 interface ModelSelectorProps {
   value: string;
   onChange: (value: string) => void;

@@ -20,7 +20,7 @@ import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
 import { buildNewLineNumberToIndexMap, buildOldLineNumberToIndexMap } from "./immersiveMinimapMath";
-import { KeycapGroup } from "@/browser/components/ui/Keycap";
+import { KeycapGroup } from "@/browser/components/Keycap/Keycap";
 import { useAPI } from "@/browser/contexts/API";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import {

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { cn } from "@/common/lib/utils";
 import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
 

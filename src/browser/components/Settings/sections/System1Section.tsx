@@ -1,15 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-import { Switch } from "@/browser/components/ui/switch";
-import { Input } from "@/browser/components/ui/input";
+import { Switch } from "@/browser/components/Switch/Switch";
+import { Input } from "@/browser/components/Input/Input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { useAPI } from "@/browser/contexts/API";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { getDefaultModel, getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";

@@ -1,4 +1,4 @@
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 
 interface StartupConnectionErrorProps {
   error: string;

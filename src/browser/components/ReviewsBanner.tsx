@@ -23,8 +23,8 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { Button } from "./Button/Button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
 import type { Review } from "@/common/types/review";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";

@@ -1,6 +1,6 @@
 import { Settings, Zap } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { Button } from "./ui/button";
+import { Button } from "./Button/Button";
 
 /**
  * Large prompt displayed when no providers are configured.

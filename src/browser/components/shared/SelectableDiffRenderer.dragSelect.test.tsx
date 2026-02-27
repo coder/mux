@@ -3,7 +3,7 @@ import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
-import { TooltipProvider } from "@/browser/components/ui/tooltip";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { SelectableDiffRenderer } from "./DiffRenderer";
 
 describe("SelectableDiffRenderer drag selection", () => {

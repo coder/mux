@@ -4,7 +4,7 @@ import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
 import type { QueuedMessage as QueuedMessageType } from "@/common/types/message";
 import { Pencil } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 
 interface QueuedMessageProps {
   message: QueuedMessageType;

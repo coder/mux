@@ -4,7 +4,12 @@ import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 import { cn } from "@/common/lib/utils";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
-import { HoverCard, HoverCardContent, HoverCardPortal, HoverCardTrigger } from "../ui/hover-card";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardPortal,
+  HoverCardTrigger,
+} from "../HoverCard/HoverCard";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 

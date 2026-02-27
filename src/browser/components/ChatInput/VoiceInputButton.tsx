@@ -5,7 +5,7 @@
 
 import React from "react";
 import { Mic, Loader2 } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import type { VoiceInputState } from "@/browser/hooks/useVoiceInput";

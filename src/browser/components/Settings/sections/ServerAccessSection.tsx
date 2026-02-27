@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { useAPI } from "@/browser/contexts/API";
 import type { ServerAuthSession } from "@/common/orpc/types";
 import { getErrorMessage } from "@/common/utils/errors";

@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import assert from "@/common/utils/assert";
-import { Skeleton } from "@/browser/components/ui/skeleton";
+import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import type { DelegationSummary } from "@/browser/hooks/useAnalytics";
 import {
   CHART_AXIS_STROKE,

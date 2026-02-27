@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 // ShareTranscriptDialog.test.tsx registers an incomplete stub that omits
 // DialogDescription/DialogFooter/Warning*. Our own complete mock prevents
 // Radix context errors when tests run in the same bun process.
-void mock.module("@/browser/components/ui/dialog", () => ({
+void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: { open: boolean; children: ReactNode }) =>
     props.open ? <div>{props.children}</div> : null,
   DialogContent: (props: { children: ReactNode }) => <div>{props.children}</div>,

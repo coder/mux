@@ -1,5 +1,10 @@
 import React, { useState } from "react";
-import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  VisuallyHidden,
+} from "@/browser/components/Dialog/Dialog";
 
 /**
  * Image content from MCP tool results (transformed from MCP's image type to AI SDK's media type)

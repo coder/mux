@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
 
-import { TooltipProvider } from "../ui/tooltip";
+import { TooltipProvider } from "../Tooltip/Tooltip";
 import { AgentReportToolCall } from "./AgentReportToolCall";
 
 describe("AgentReportToolCall", () => {

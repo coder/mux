@@ -12,7 +12,7 @@ import {
 } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { FileIcon } from "@/browser/components/FileIcon";
 
 /**

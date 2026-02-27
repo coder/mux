@@ -6,9 +6,9 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
-import { Input } from "@/browser/components/ui/input";
-import { Switch } from "@/browser/components/ui/switch";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { Input } from "@/browser/components/Input/Input";
+import { Switch } from "@/browser/components/Switch/Switch";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";

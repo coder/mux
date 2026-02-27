@@ -12,7 +12,7 @@ import {
   type SearchHighlightConfig,
   escapeRegex,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../../Tooltip/Tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";

@@ -15,9 +15,9 @@ import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { cn } from "@/common/lib/utils";
 import { DocsLink } from "@/browser/components/DocsLink";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
-import { Button } from "@/browser/components/ui/button";
-import { Switch } from "@/browser/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
+import { Button } from "@/browser/components/Button/Button";
+import { Switch } from "@/browser/components/Switch/Switch";
 import {
   formatKeybind,
   formatNumberedKeybind,

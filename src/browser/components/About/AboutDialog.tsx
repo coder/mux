@@ -8,9 +8,12 @@ import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
-import { Button } from "@/browser/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/browser/components/ui/dialog";
-import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
+import { Button } from "@/browser/components/Button/Button";
+import { Dialog, DialogContent, DialogTitle } from "@/browser/components/Dialog/Dialog";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/browser/components/ToggleGroupPrimitive/ToggleGroupPrimitive";
 
 interface VersionRecord {
   buildTime?: unknown;

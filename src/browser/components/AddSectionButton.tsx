@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Plus } from "lucide-react";
-// import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+// import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
 
 interface AddSectionButtonProps {
   onCreateSection: (name: string) => void;

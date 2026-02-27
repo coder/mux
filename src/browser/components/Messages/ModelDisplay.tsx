@@ -1,5 +1,5 @@
 import React from "react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { ProviderIcon } from "@/browser/components/ProviderIcon";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 

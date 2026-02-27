@@ -5,9 +5,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, ShieldCheck, X } from "lucide-react";
-import { Button } from "@/browser/components/ui/button";
-import { Input } from "@/browser/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import { Button } from "@/browser/components/Button/Button";
+import { Input } from "@/browser/components/Input/Input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/browser/components/Dialog/Dialog";
 import { useAPI } from "@/browser/contexts/API";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { JsonHighlight } from "@/browser/components/tools/shared/HighlightedCode";

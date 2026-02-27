@@ -6,10 +6,10 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/browser/components/ui/dialog";
-import { Button } from "@/browser/components/ui/button";
-import { Checkbox } from "./ui/checkbox";
-import { Input } from "@/browser/components/ui/input";
+} from "@/browser/components/Dialog/Dialog";
+import { Button } from "@/browser/components/Button/Button";
+import { Checkbox } from "./Checkbox/Checkbox";
+import { Input } from "@/browser/components/Input/Input";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { DirectoryTree } from "./DirectoryTree";
 import { useAPI } from "@/browser/contexts/API";

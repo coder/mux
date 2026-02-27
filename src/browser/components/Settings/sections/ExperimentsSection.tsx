@@ -10,18 +10,18 @@ import {
   type ExperimentId,
 } from "@/common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
-import { Switch } from "@/browser/components/ui/switch";
-import { Button } from "@/browser/components/ui/button";
-import { CopyButton } from "@/browser/components/ui/CopyButton";
+import { Switch } from "@/browser/components/Switch/Switch";
+import { Button } from "@/browser/components/Button/Button";
+import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import type { ApiServerStatus } from "@/common/orpc/types";
-import { Input } from "@/browser/components/ui/input";
+import { Input } from "@/browser/components/Input/Input";
 import { useAPI } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 

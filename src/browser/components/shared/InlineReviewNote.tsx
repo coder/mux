@@ -7,8 +7,8 @@
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Pencil, Check, Trash2, Unlink, MessageSquare } from "lucide-react";
-import { Button } from "../ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Button } from "../Button/Button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";

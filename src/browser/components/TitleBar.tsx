@@ -3,8 +3,8 @@ import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
 import { GatewayIcon } from "./icons/GatewayIcon";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { Button } from "./Button/Button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
 import {
   AlertTriangle,

@@ -19,7 +19,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../ui/select";
+} from "../SelectPrimitive/SelectPrimitive";
 import { Blocks, Cog, GitBranch, Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -28,8 +28,8 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput";
 import { cn } from "@/common/lib/utils";
 import { formatNameGenerationError } from "@/common/utils/errors/formatNameGenerationError";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
-import { Skeleton } from "../ui/skeleton";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { Skeleton } from "../Skeleton/Skeleton";
 import { DocsLink } from "../DocsLink";
 import {
   RUNTIME_CHOICE_UI,
@@ -364,7 +364,7 @@ function SectionPicker(props: SectionPickerProps) {
     >
       <RadixSelect
         value={normalizedSelectedSectionId ?? ""}
-        onValueChange={(value) => onSectionChange(value.trim() ? value : null)}
+        onValueChange={(value: string) => onSectionChange(value.trim() ? value : null)}
         disabled={disabled}
       >
         {/* Trigger IS the full pill so Radix aligns the dropdown to it. */}
@@ -843,7 +843,7 @@ export function CreationControls(props: CreationControlsProps) {
         {userProjects.size > 1 ? (
           <RadixSelect
             value={props.projectPath}
-            onValueChange={(path) => beginWorkspaceCreation(path)}
+            onValueChange={(path: string) => beginWorkspaceCreation(path)}
           >
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1174,7 +1174,7 @@ export function CreationControls(props: CreationControlsProps) {
               ) : devcontainerSelection.uiMode === "dropdown" ? (
                 <RadixSelect
                   value={devcontainerSelection.configPath}
-                  onValueChange={(value) =>
+                  onValueChange={(value: string) =>
                     onSelectedRuntimeChange({
                       mode: "devcontainer",
                       configPath: value,

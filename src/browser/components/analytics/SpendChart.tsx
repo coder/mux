@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Skeleton } from "@/browser/components/ui/skeleton";
+import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import type { SpendOverTimeItem } from "@/browser/hooks/useAnalytics";
 import {
   ANALYTICS_CHART_COLORS,

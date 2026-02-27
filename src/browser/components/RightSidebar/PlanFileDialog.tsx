@@ -3,7 +3,12 @@ import assert from "@/common/utils/assert";
 import { useAPI } from "@/browser/contexts/API";
 import { MarkdownCore } from "@/browser/components/Messages/MarkdownCore";
 import { PlanMarkdownContainer } from "@/browser/components/Messages/MarkdownRenderer";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/browser/components/Dialog/Dialog";
 import { getErrorMessage } from "@/common/utils/errors";
 
 interface PlanFileDialogProps {

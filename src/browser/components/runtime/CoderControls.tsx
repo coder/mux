@@ -11,8 +11,14 @@ import type {
 import type { CoderWorkspaceConfig } from "@/common/types/runtime";
 import { cn } from "@/common/lib/utils";
 import { Loader2 } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../SelectPrimitive/SelectPrimitive";
 
 export interface CoderControlsProps {
   /** Whether Coder is enabled for this workspace */

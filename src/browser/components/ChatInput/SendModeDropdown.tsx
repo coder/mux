@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { Button } from "../ui/button";
+import { Button } from "../Button/Button";
 import { formatKeybind } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import type { QueueDispatchMode } from "./types";

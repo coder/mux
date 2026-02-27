@@ -12,10 +12,10 @@ import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
+import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./Popover/Popover";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
-import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
+import { PositionedMenu, PositionedMenuItem } from "./PositionedMenu/PositionedMenu";
 import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
@@ -558,7 +558,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   style={{
                     visibility: !ctxMenu.isOpen || isOverflowMenuPlaced ? "visible" : "hidden",
                   }}
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(event: React.MouseEvent<HTMLDivElement>) => {
+                    event.stopPropagation();
+                  }}
                 >
                   <WorkspaceActionsMenuContent
                     onEditTitle={startEditing}

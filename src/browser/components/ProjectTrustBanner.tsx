@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ShieldAlert } from "lucide-react";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { ConfirmationModal } from "@/browser/components/ConfirmationModal";
 import { useAPI } from "@/browser/contexts/API";
 

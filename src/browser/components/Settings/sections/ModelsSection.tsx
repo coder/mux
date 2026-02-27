@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { ArrowRight, Info, Loader2, Plus, ShieldCheck } from "lucide-react";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
   Select,
@@ -9,7 +9,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/browser/components/ui/select";
+} from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";

@@ -51,8 +51,8 @@ import {
   getSectionTierKey,
   sortSectionsByLinkedList,
 } from "@/browser/utils/ui/workspaceFiltering";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
+import { SidebarCollapseButton } from "./SidebarCollapseButton/SidebarCollapseButton";
 import { ConfirmationModal } from "./ConfirmationModal";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 

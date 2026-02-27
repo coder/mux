@@ -38,7 +38,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/browser/components/ui/tooltip";
+} from "@/browser/components/Tooltip/Tooltip";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   PLAN_AUTO_ROUTING_STATUS_EMOJI,

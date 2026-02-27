@@ -3,8 +3,8 @@ import type { GitStatus } from "@/common/types/workspace";
 import type { GitCommit, GitBranchHeader } from "@/common/utils/git/parseGitLog";
 import { cn } from "@/common/lib/utils";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { ToggleGroup, ToggleGroupItem } from "./ToggleGroupPrimitive/ToggleGroupPrimitive";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./Dialog/Dialog";
 import { BaseSelectorPopover } from "./RightSidebar/CodeReview/BaseSelectorPopover";
 
 // Helper for indicator colors

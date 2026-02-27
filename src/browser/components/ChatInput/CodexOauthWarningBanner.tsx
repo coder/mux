@@ -1,5 +1,5 @@
 import { AlertTriangle } from "lucide-react";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 
 interface Props {

@@ -10,9 +10,9 @@ import {
   WarningBox,
   WarningTitle,
   WarningText,
-} from "@/browser/components/ui/dialog";
-import { Button } from "@/browser/components/ui/button";
-import { Input } from "@/browser/components/ui/input";
+} from "@/browser/components/Dialog/Dialog";
+import { Button } from "@/browser/components/Button/Button";
+import { Input } from "@/browser/components/Input/Input";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 
 export function SshPromptDialog() {

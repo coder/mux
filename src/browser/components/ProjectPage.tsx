@@ -30,8 +30,8 @@ import {
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
-import { Button } from "@/browser/components/ui/button";
-import { Skeleton } from "@/browser/components/ui/skeleton";
+import { Button } from "@/browser/components/Button/Button";
+import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {

@@ -1,7 +1,7 @@
 import { Settings, X } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { Button } from "@/browser/components/ui/button";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
+import { Button } from "@/browser/components/Button/Button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 interface SettingsButtonProps {

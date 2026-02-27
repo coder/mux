@@ -1,16 +1,16 @@
 import React from "react";
 import { Hourglass } from "lucide-react";
 import { TokenMeter } from "./RightSidebar/TokenMeter";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./Dialog/Dialog";
 import {
   HorizontalThresholdSlider,
   type AutoCompactionConfig,
 } from "./RightSidebar/ThresholdSlider";
-import { Switch } from "./ui/switch";
+import { Switch } from "./Switch/Switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { cn } from "@/common/lib/utils";
 import { Toggle1MContext } from "./Toggle1MContext";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./Tooltip/Tooltip";
 
 /** Compact threshold tick mark for the button view */
 const CompactThresholdIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {

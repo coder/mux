@@ -4,13 +4,13 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { WorkspaceStore } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { APIProvider } from "@/browser/contexts/API";
-import { TooltipProvider } from "@/browser/components/ui/tooltip";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import * as muxMd from "@/common/lib/muxMd";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 
-void mock.module("@/browser/components/ui/dialog", () => ({
+void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: { open: boolean; children: ReactNode }) =>
     props.open ? <div>{props.children}</div> : null,
   DialogContent: (props: { children: ReactNode }) => <div>{props.children}</div>,

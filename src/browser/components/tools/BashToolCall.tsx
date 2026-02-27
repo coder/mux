@@ -25,7 +25,7 @@ import { cn } from "@/common/lib/utils";
 import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/stores/WorkspaceStore";
 import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashStore";
 import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { BackgroundBashOutputDialog } from "../BackgroundBashOutputDialog";
 
 interface BashToolCallProps {

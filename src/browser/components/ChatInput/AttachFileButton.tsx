@@ -5,7 +5,7 @@
 
 import React, { useRef } from "react";
 import { Paperclip } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
 /** Accept filter for the file picker: images, SVGs, and PDFs */

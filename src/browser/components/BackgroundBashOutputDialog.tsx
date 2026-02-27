@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { CopyButton } from "./ui/CopyButton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { CopyButton } from "./CopyButton/CopyButton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./Dialog/Dialog";
 import { DetailContent } from "./tools/shared/ToolPrimitives";
 import { useAPI } from "@/browser/contexts/API";
 import {

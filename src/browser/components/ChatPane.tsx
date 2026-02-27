@@ -14,7 +14,7 @@ import {
   getTranscriptContextMenuText,
 } from "@/browser/utils/messages/transcriptContextMenu";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
-import { PositionedMenu, PositionedMenuItem } from "./ui/positioned-menu";
+import { PositionedMenu, PositionedMenuItem } from "./PositionedMenu/PositionedMenu";
 import { MessageListProvider } from "./Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "./Messages/MessageRenderer";

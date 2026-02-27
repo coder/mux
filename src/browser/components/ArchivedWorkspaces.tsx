@@ -8,9 +8,9 @@ import { getArchivedWorkspacesExpandedKey } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
 import { ChevronDown, ChevronRight, Loader2, Search, Trash2 } from "lucide-react";
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
 import { RuntimeBadge } from "./RuntimeBadge";
-import { Skeleton } from "./ui/skeleton";
+import { Skeleton } from "./Skeleton/Skeleton";
 import {
   Dialog,
   DialogContent,
@@ -18,9 +18,9 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/browser/components/ui/dialog";
+} from "@/browser/components/Dialog/Dialog";
 import { ForceDeleteModal } from "./ForceDeleteModal";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import {

@@ -14,13 +14,13 @@ import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
 import { WorkspaceMCPModal } from "./WorkspaceMCPModal";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
-import { Checkbox } from "./ui/checkbox";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./Tooltip/Tooltip";
+import { Popover, PopoverTrigger, PopoverContent } from "./Popover/Popover";
+import { Checkbox } from "./Checkbox/Checkbox";
 import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
-import { Button } from "@/browser/components/ui/button";
+import { Button } from "@/browser/components/Button/Button";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
@@ -523,7 +523,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             align="end"
             sideOffset={6}
             className="w-[240px] !min-w-0 p-1"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event: React.MouseEvent<HTMLDivElement>) => {
+              event.stopPropagation();
+            }}
           >
             {/* Keep MCP configuration in the more actions menu to keep the workspace menu bar lean. */}
             <WorkspaceActionsMenuContent

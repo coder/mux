@@ -5,7 +5,7 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { Clipboard, ClipboardCheck, FileText, ListStart, Moon, Package } from "lucide-react";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { Button } from "../ui/button";
+import { Button } from "../Button/Button";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
