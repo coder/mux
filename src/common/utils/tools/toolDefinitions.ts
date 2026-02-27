@@ -1187,6 +1187,82 @@ export const TOOL_DEFINITIONS = {
       process_id: z.string().describe("Background process ID to terminate"),
     }),
   },
+  analytics_query: {
+    description: `Execute a DuckDB SQL query against Mux analytics tables and optionally provide visualization hints.
+Use read-only SELECT queries over analytics data.
+
+DuckDB SQL guidelines:
+- Use SELECT queries only; do not write, alter, or drop tables.
+- Prefer explicit column lists and aliases so result sets are easy to understand.
+- Use ORDER BY and LIMIT for exploratory queries over large datasets.
+- Use DuckDB date/time helpers (for example date_trunc, CAST(... AS DATE), and interval arithmetic) for time series.
+
+Available tables:
+
+CREATE TABLE IF NOT EXISTS events (
+  workspace_id VARCHAR NOT NULL,
+  project_path VARCHAR,
+  project_name VARCHAR,
+  workspace_name VARCHAR,
+  parent_workspace_id VARCHAR,
+  agent_id VARCHAR,
+  timestamp BIGINT,
+  date DATE,
+  model VARCHAR,
+  thinking_level VARCHAR,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  reasoning_tokens INTEGER DEFAULT 0,
+  cached_tokens INTEGER DEFAULT 0,
+  cache_create_tokens INTEGER DEFAULT 0,
+  input_cost_usd DOUBLE DEFAULT 0,
+  output_cost_usd DOUBLE DEFAULT 0,
+  reasoning_cost_usd DOUBLE DEFAULT 0,
+  cached_cost_usd DOUBLE DEFAULT 0,
+  total_cost_usd DOUBLE DEFAULT 0,
+  duration_ms DOUBLE,
+  ttft_ms DOUBLE,
+  streaming_ms DOUBLE,
+  tool_execution_ms DOUBLE,
+  output_tps DOUBLE,
+  response_index INTEGER,
+  is_sub_agent BOOLEAN DEFAULT false
+)
+
+CREATE TABLE IF NOT EXISTS delegation_rollups (
+  parent_workspace_id VARCHAR NOT NULL,
+  child_workspace_id VARCHAR NOT NULL,
+  project_path VARCHAR,
+  project_name VARCHAR,
+  agent_type VARCHAR,
+  model VARCHAR,
+  total_tokens INTEGER DEFAULT 0,
+  context_tokens INTEGER DEFAULT 0,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  reasoning_tokens INTEGER DEFAULT 0,
+  cached_tokens INTEGER DEFAULT 0,
+  cache_create_tokens INTEGER DEFAULT 0,
+  report_token_estimate INTEGER DEFAULT 0,
+  total_cost_usd DOUBLE DEFAULT 0,
+  rolled_up_at_ms BIGINT,
+  date DATE,
+  PRIMARY KEY (parent_workspace_id, child_workspace_id)
+)`,
+    schema: z.object({
+      sql: z.string().min(1).describe("DuckDB SQL query to execute"),
+      visualization: z
+        .enum(["table", "bar", "line", "pie", "area", "stacked_bar"])
+        .nullish()
+        .describe("Optional visualization type for rendering the query result"),
+      title: z.string().nullish().describe("Optional chart title"),
+      x_axis: z.string().nullish().describe("Optional column name for the visualization X axis"),
+      y_axis: z
+        .array(z.string())
+        .nullish()
+        .describe("Optional column name(s) for the visualization Y axis"),
+    }),
+  },
   web_fetch: {
     description:
       `Fetch a web page and extract its main content as clean markdown. ` +
