@@ -666,10 +666,319 @@ export interface RawQueryResult {
   durationMs: number;
 }
 
+const RAW_QUERY_ALLOWED_TABLES = new Set(["events", "delegation_rollups"]);
+const RAW_QUERY_ALLOWED_TABLE_NAMES = Array.from(RAW_QUERY_ALLOWED_TABLES).join(", ");
+
+interface RawQueryDisallowedPattern {
+  label: string;
+  pattern: RegExp;
+}
+
+const RAW_QUERY_DISALLOWED_PATTERNS: RawQueryDisallowedPattern[] = [
+  { label: "read_csv", pattern: /\bread_csv\s*\(/i },
+  { label: "read_csv_auto", pattern: /\bread_csv_auto\s*\(/i },
+  { label: "read_parquet", pattern: /\bread_parquet\s*\(/i },
+  { label: "read_json", pattern: /\bread_json\s*\(/i },
+  { label: "read_json_auto", pattern: /\bread_json_auto\s*\(/i },
+  { label: "read_ndjson", pattern: /\bread_ndjson\s*\(/i },
+  { label: "read_ndjson_auto", pattern: /\bread_ndjson_auto\s*\(/i },
+  { label: "read_blob", pattern: /\bread_blob\s*\(/i },
+  { label: "read_text", pattern: /\bread_text\s*\(/i },
+  { label: "http_get", pattern: /\bhttp_get\s*\(/i },
+  { label: "http_post", pattern: /\bhttp_post\s*\(/i },
+  { label: "glob", pattern: /\bglob\s*\(/i },
+  { label: "list_files", pattern: /\blist_files\s*\(/i },
+  { label: "scan_*", pattern: /\b[a-zA-Z_][a-zA-Z0-9_]*_scan\s*\(/i },
+  { label: "COPY", pattern: /(^|[;(])\s*copy\b/i },
+  { label: "EXPORT", pattern: /(^|[;(])\s*export\b/i },
+  { label: "IMPORT", pattern: /(^|[;(])\s*import\b/i },
+  { label: "ATTACH", pattern: /(^|[;(])\s*attach\b/i },
+  { label: "DETACH", pattern: /(^|[;(])\s*detach\b/i },
+  { label: "INSTALL", pattern: /(^|[;(])\s*install\b/i },
+  { label: "LOAD", pattern: /(^|[;(])\s*load\b/i },
+  { label: "PRAGMA", pattern: /(^|[;(])\s*pragma\b/i },
+  { label: "SET", pattern: /(^|[;(])\s*set\b/i },
+];
+
+const RAW_QUERY_TABLE_REFERENCE_PATTERN =
+  /\b(?:from|join)\s+((?:"(?:[^"]|"")+"|[a-zA-Z_][a-zA-Z0-9_$]*)(?:\s*\.\s*(?:"(?:[^"]|"")+"|[a-zA-Z_][a-zA-Z0-9_$]*))*)/gi;
+
+interface ParsedSqlToken {
+  value: string;
+  nextIndex: number;
+}
+
+function skipSqlWhitespace(sql: string, startIndex: number): number {
+  let index = startIndex;
+  while (index < sql.length && /\s/.test(sql[index])) {
+    index += 1;
+  }
+  return index;
+}
+
+function isSqlIdentifierStart(char: string): boolean {
+  return /[a-zA-Z_]/.test(char);
+}
+
+function isSqlIdentifierPart(char: string): boolean {
+  return /[a-zA-Z0-9_$]/.test(char);
+}
+
+function parseUnquotedSqlToken(sql: string, startIndex: number): ParsedSqlToken | null {
+  const firstChar = sql[startIndex];
+  if (firstChar == null || !isSqlIdentifierStart(firstChar)) {
+    return null;
+  }
+
+  let index = startIndex + 1;
+  while (index < sql.length && isSqlIdentifierPart(sql[index])) {
+    index += 1;
+  }
+
+  return {
+    value: sql.slice(startIndex, index),
+    nextIndex: index,
+  };
+}
+
+function parseSqlIdentifier(sql: string, startIndex: number): ParsedSqlToken | null {
+  if (sql[startIndex] !== '"') {
+    return parseUnquotedSqlToken(sql, startIndex);
+  }
+
+  let index = startIndex + 1;
+  while (index < sql.length) {
+    if (sql[index] !== '"') {
+      index += 1;
+      continue;
+    }
+
+    if (sql[index + 1] === '"') {
+      index += 2;
+      continue;
+    }
+
+    return {
+      value: sql.slice(startIndex, index + 1),
+      nextIndex: index + 1,
+    };
+  }
+
+  throw new Error("Raw analytics query contains unterminated quoted identifier");
+}
+
+function normalizeSqlIdentifier(identifier: string): string {
+  const trimmed = identifier.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replaceAll('""', '"').toLowerCase();
+  }
+
+  return trimmed.toLowerCase();
+}
+
+function normalizeQualifiedSqlIdentifier(identifier: string): string {
+  const segments = identifier.split(".").map((segment) => normalizeSqlIdentifier(segment));
+  assert(segments.length > 0, "Raw analytics query identifier must have at least one segment");
+  const lastSegment = segments.at(-1);
+  assert(lastSegment != null, "Raw analytics query identifier must include a table name");
+  return lastSegment;
+}
+
+function maskSqlCommentsAndStringLiterals(sql: string): string {
+  const characters = Array.from(sql);
+  let index = 0;
+
+  while (index < characters.length) {
+    const char = characters[index];
+    const nextChar = characters[index + 1];
+
+    if (char === "'") {
+      characters[index] = " ";
+      index += 1;
+      while (index < characters.length) {
+        const current = characters[index];
+        const following = characters[index + 1];
+        characters[index] = " ";
+        if (current === "'" && following === "'") {
+          characters[index + 1] = " ";
+          index += 2;
+          continue;
+        }
+
+        index += 1;
+        if (current === "'") {
+          break;
+        }
+      }
+      continue;
+    }
+
+    if (char === "-" && nextChar === "-") {
+      characters[index] = " ";
+      characters[index + 1] = " ";
+      index += 2;
+      while (index < characters.length && characters[index] !== "\n") {
+        characters[index] = " ";
+        index += 1;
+      }
+      continue;
+    }
+
+    if (char === "/" && nextChar === "*") {
+      characters[index] = " ";
+      characters[index + 1] = " ";
+      index += 2;
+      while (index < characters.length) {
+        if (characters[index] === "*" && characters[index + 1] === "/") {
+          characters[index] = " ";
+          characters[index + 1] = " ";
+          index += 2;
+          break;
+        }
+
+        characters[index] = " ";
+        index += 1;
+      }
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return characters.join("");
+}
+
+function skipBalancedParentheses(sql: string, startIndex: number): number {
+  assert(sql[startIndex] === "(", "Expected open parenthesis while parsing raw analytics SQL");
+
+  let depth = 0;
+  let index = startIndex;
+
+  while (index < sql.length) {
+    const char = sql[index];
+
+    if (char === '"') {
+      const quotedIdentifier = parseSqlIdentifier(sql, index);
+      assert(
+        quotedIdentifier != null,
+        "Expected quoted identifier while parsing raw analytics SQL"
+      );
+      index = quotedIdentifier.nextIndex;
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+
+    index += 1;
+  }
+
+  throw new Error("Raw analytics query contains unbalanced parentheses");
+}
+
+function collectRawQueryCteNames(maskedSql: string): Set<string> {
+  const cteNames = new Set<string>();
+  let index = skipSqlWhitespace(maskedSql, 0);
+
+  const withKeyword = parseUnquotedSqlToken(maskedSql, index);
+  if (withKeyword == null || withKeyword.value.toLowerCase() !== "with") {
+    return cteNames;
+  }
+
+  index = skipSqlWhitespace(maskedSql, withKeyword.nextIndex);
+
+  const recursiveKeyword = parseUnquotedSqlToken(maskedSql, index);
+  if (recursiveKeyword?.value.toLowerCase() === "recursive") {
+    index = skipSqlWhitespace(maskedSql, recursiveKeyword.nextIndex);
+  }
+
+  while (index < maskedSql.length) {
+    const cteName = parseSqlIdentifier(maskedSql, index);
+    if (cteName == null) {
+      throw new Error("Raw analytics query contains malformed WITH clause");
+    }
+
+    cteNames.add(normalizeSqlIdentifier(cteName.value));
+    index = skipSqlWhitespace(maskedSql, cteName.nextIndex);
+
+    if (maskedSql[index] === "(") {
+      index = skipBalancedParentheses(maskedSql, index);
+      index = skipSqlWhitespace(maskedSql, index);
+    }
+
+    const asKeyword = parseUnquotedSqlToken(maskedSql, index);
+    if (asKeyword == null || asKeyword.value.toLowerCase() !== "as") {
+      throw new Error("Raw analytics query contains malformed WITH clause");
+    }
+
+    index = skipSqlWhitespace(maskedSql, asKeyword.nextIndex);
+
+    const maybeModifier = parseUnquotedSqlToken(maskedSql, index);
+    if (maybeModifier?.value.toLowerCase() === "not") {
+      index = skipSqlWhitespace(maskedSql, maybeModifier.nextIndex);
+      const materializedKeyword = parseUnquotedSqlToken(maskedSql, index);
+      if (materializedKeyword?.value.toLowerCase() !== "materialized") {
+        throw new Error("Raw analytics query contains malformed WITH clause");
+      }
+      index = skipSqlWhitespace(maskedSql, materializedKeyword.nextIndex);
+    } else if (maybeModifier?.value.toLowerCase() === "materialized") {
+      index = skipSqlWhitespace(maskedSql, maybeModifier.nextIndex);
+    }
+
+    if (maskedSql[index] !== "(") {
+      throw new Error("Raw analytics query contains malformed WITH clause");
+    }
+
+    index = skipBalancedParentheses(maskedSql, index);
+    index = skipSqlWhitespace(maskedSql, index);
+
+    if (maskedSql[index] !== ",") {
+      break;
+    }
+
+    index = skipSqlWhitespace(maskedSql, index + 1);
+  }
+
+  return cteNames;
+}
+
+function validateRawQuerySql(sql: string): void {
+  const maskedSql = maskSqlCommentsAndStringLiterals(sql);
+
+  for (const disallowedPattern of RAW_QUERY_DISALLOWED_PATTERNS) {
+    if (disallowedPattern.pattern.test(maskedSql)) {
+      throw new Error(
+        `Query contains disallowed function or statement: ${disallowedPattern.label}`
+      );
+    }
+  }
+
+  const cteNames = collectRawQueryCteNames(maskedSql);
+
+  for (const tableMatch of maskedSql.matchAll(RAW_QUERY_TABLE_REFERENCE_PATTERN)) {
+    const matchedSource = tableMatch[1];
+    const normalizedSourceName = normalizeQualifiedSqlIdentifier(matchedSource);
+
+    if (RAW_QUERY_ALLOWED_TABLES.has(normalizedSourceName) || cteNames.has(normalizedSourceName)) {
+      continue;
+    }
+
+    throw new Error(
+      `Query references disallowed table or source: ${matchedSource.trim()}. Allowed tables: ${RAW_QUERY_ALLOWED_TABLE_NAMES}`
+    );
+  }
+}
+
 /**
  * Execute arbitrary user SQL as a read-only subquery with a hard row cap.
- * Wrapping the statement in a subquery prevents DML/DDL execution while still
- * supporting normal SELECTs, CTEs, aggregations, and DuckDB built-ins.
+ * Wrapping the statement in a subquery prevents DML/DDL execution, and
+ * validateRawQuerySql enforces a strict analytics-only table/function surface.
  */
 export async function executeRawQuery(
   conn: DuckDBConnection,
@@ -682,6 +991,8 @@ export async function executeRawQuery(
 
   const cleanSql = sql.trim().replace(/;+$/, "").trim();
   assert(cleanSql.length > 0, "executeRawQuery requires SQL with at least one statement");
+
+  validateRawQuerySql(cleanSql);
 
   const fetchLimit = RAW_QUERY_ROW_LIMIT + 1;
   const wrappedSql = `SELECT * FROM (${cleanSql}) AS __q LIMIT ${fetchLimit}`;
