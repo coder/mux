@@ -15,6 +15,7 @@ import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { toPosixPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
+import { syncMuxignoreFiles } from "./muxignore";
 
 export class WorktreeManager {
   private readonly srcBaseDir: string;
@@ -108,6 +109,10 @@ export class WorktreeManager {
       }
 
       initLogger.logStep("Worktree created successfully");
+
+      // Sync gitignored files declared in .muxignore (e.g. .env)
+      // before init hooks run so they have access to secrets/config
+      await syncMuxignoreFiles(projectPath, workspacePath);
 
       // For existing branches, fast-forward to latest origin (best-effort)
       // Only if local can fast-forward (preserves unpushed work)
