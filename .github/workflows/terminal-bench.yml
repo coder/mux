@@ -147,10 +147,12 @@ jobs:
       - name: Build dist/ (skip icons - not needed for benchmark)
         run: make build-main build-preload
 
-      # Snapshot existing Daytona sandboxes so post-run cleanup only deletes
-      # sandboxes created by *this* job, not ones from parallel jobs.
+      # Best-effort snapshot of existing Daytona sandboxes so post-run cleanup
+      # only deletes sandboxes created by *this* job, not ones from parallel jobs.
+      # continue-on-error: transient API/pip failures must not block the benchmark.
       - name: Snapshot Daytona sandboxes
         if: inputs.env == 'daytona'
+        continue-on-error: true
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
         run: |
@@ -188,11 +190,13 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
-      # Clean up sandboxes created during this run. Compares against the
-      # pre-run snapshot and only deletes stopped/errored sandboxes, so
-      # active sandboxes from parallel jobs are never touched.
+      # Best-effort cleanup of sandboxes created during this run. Compares
+      # against the pre-run snapshot and only deletes stopped/errored sandboxes,
+      # so active sandboxes from parallel jobs are never touched.
+      # Failures here must never mark the job as failed (benchmark results matter).
       - name: Cleanup Daytona sandboxes
         if: always() && inputs.env == 'daytona'
+        continue-on-error: true
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
         run: |
@@ -206,7 +210,6 @@ jobs:
           fi
           pip install --quiet daytona
           python3 -c "
-          import os
           from daytona import Daytona
           with open('/tmp/daytona-pre-existing.txt') as f:
               pre_existing = {line.strip() for line in f if line.strip()}
