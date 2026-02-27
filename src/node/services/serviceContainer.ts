@@ -154,6 +154,7 @@ export class ServiceContainer {
     // Spread core services into class fields
     this.historyService = core.historyService;
     this.aiService = core.aiService;
+    this.aiService.setAnalyticsService(this.analyticsService);
     this.workspaceService = core.workspaceService;
     this.taskService = core.taskService;
     this.providerService = core.providerService;

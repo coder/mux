@@ -6,7 +6,7 @@ import { decideSyncPlan, type SyncAction } from "./backfillDecision";
 import { shouldCheckpointAfterSync } from "./checkpointDecision";
 import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
 import { discoverAllWorkspaces } from "./workspaceDiscovery";
-import { executeNamedQuery } from "./queries";
+import { executeNamedQuery, executeRawQuery, type RawQueryResult } from "./queries";
 
 interface WorkerTaskRequest {
   messageId: number;
@@ -73,6 +73,10 @@ interface ClearWorkspaceData {
 interface QueryData {
   queryName: string;
   params: Record<string, unknown>;
+}
+
+interface RawQueryData {
+  sql: string;
 }
 
 const CREATE_EVENTS_TABLE_SQL = `
@@ -148,6 +152,7 @@ const DELEGATION_ROLLUPS_COLUMN_MIGRATIONS_SQL = [
 
 let instance: DuckDBInstance | null = null;
 let conn: DuckDBConnection | null = null;
+let readOnlyConn: DuckDBConnection | null = null;
 let isShuttingDown = false;
 
 function getConn(): DuckDBConnection {
@@ -155,13 +160,26 @@ function getConn(): DuckDBConnection {
   return conn;
 }
 
+function getReadOnlyConn(): DuckDBConnection {
+  assert(readOnlyConn, "analytics worker read-only connection has not been initialized");
+  return readOnlyConn;
+}
+
 async function handleInit(data: InitData): Promise<void> {
   assert(data.dbPath.trim().length > 0, "init requires a non-empty dbPath");
-  assert(instance == null && conn == null, "analytics worker init must only run once per process");
+  assert(
+    instance == null && conn == null && readOnlyConn == null,
+    "analytics worker init must only run once per process"
+  );
 
   const createdInstance = await DuckDBInstance.create(data.dbPath);
   instance = createdInstance;
   conn = await createdInstance.connect();
+  readOnlyConn = await createdInstance.connect();
+
+  // DuckDB access_mode is immutable after opening a database handle. We still
+  // keep a dedicated connection for raw queries, and enforce read-only behavior
+  // in executeRawQuery by wrapping user SQL in a SELECT subquery.
 
   const activeConn = getConn();
   await activeConn.run(CREATE_EVENTS_TABLE_SQL);
@@ -199,6 +217,14 @@ async function handleClearWorkspace(data: ClearWorkspaceData): Promise<void> {
 async function handleQuery(data: QueryData): Promise<unknown> {
   assert(data.queryName.trim().length > 0, "query requires queryName");
   return executeNamedQuery(getConn(), data.queryName, data.params);
+}
+
+async function handleRawQuery(data: RawQueryData): Promise<RawQueryResult> {
+  assert(
+    typeof data.sql === "string" && data.sql.trim().length > 0,
+    "rawQuery requires non-empty sql"
+  );
+  return executeRawQuery(getReadOnlyConn(), data.sql);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -445,18 +471,26 @@ function isWorkerShutdownRequest(message: unknown): message is WorkerShutdownReq
 }
 
 function closeDuckDb(): void {
+  const activeReadOnlyConn = readOnlyConn;
   const activeConn = conn;
   const activeInstance = instance;
+  readOnlyConn = null;
   conn = null;
   instance = null;
 
   try {
-    if (activeConn != null) {
-      activeConn.disconnectSync();
+    if (activeReadOnlyConn != null) {
+      activeReadOnlyConn.disconnectSync();
     }
   } finally {
-    if (activeInstance != null) {
-      activeInstance.closeSync();
+    try {
+      if (activeConn != null) {
+        activeConn.disconnectSync();
+      }
+    } finally {
+      if (activeInstance != null) {
+        activeInstance.closeSync();
+      }
     }
   }
 }
@@ -498,6 +532,8 @@ async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
       return handleClearWorkspace(data as ClearWorkspaceData);
     case "query":
       return handleQuery(data as QueryData);
+    case "rawQuery":
+      return handleRawQuery(data as RawQueryData);
     case "syncCheck":
       return handleSyncCheck(data as SyncCheckData);
     default:

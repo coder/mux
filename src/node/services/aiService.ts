@@ -166,6 +166,7 @@ export class AIService extends EventEmitter {
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
+  private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
 
   constructor(
     config: Config,
@@ -216,6 +217,10 @@ export class AIService extends EventEmitter {
 
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  setAnalyticsService(service: { executeRawQuery(sql: string): Promise<unknown> }): void {
+    this.analyticsService = service;
   }
 
   getProvidersConfig(): ProvidersConfigMap | null {
@@ -882,6 +887,7 @@ export class AIService extends EventEmitter {
           recordFileState,
           onConfigChanged: () => this.providerService.notifyConfigChanged(),
           taskService: this.taskService,
+          analyticsService: this.analyticsService,
           // PTC experiments for inheritance to subagents
           experiments,
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)

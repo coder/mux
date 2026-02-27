@@ -650,3 +650,60 @@ export async function executeNamedQuery(
       throw new Error(`Unknown analytics query: ${queryName}`);
   }
 }
+
+export const RAW_QUERY_ROW_LIMIT = 10_000;
+
+export interface RawQueryColumn {
+  name: string;
+  type: string;
+}
+
+export interface RawQueryResult {
+  columns: RawQueryColumn[];
+  rows: Record<string, unknown>[];
+  truncated: boolean;
+  rowCount: number;
+  durationMs: number;
+}
+
+/**
+ * Execute arbitrary user SQL as a read-only subquery with a hard row cap.
+ * Wrapping the statement in a subquery prevents DML/DDL execution while still
+ * supporting normal SELECTs, CTEs, aggregations, and DuckDB built-ins.
+ */
+export async function executeRawQuery(
+  conn: DuckDBConnection,
+  sql: string
+): Promise<RawQueryResult> {
+  assert(
+    typeof sql === "string" && sql.trim().length > 0,
+    "executeRawQuery requires non-empty SQL"
+  );
+
+  const fetchLimit = RAW_QUERY_ROW_LIMIT + 1;
+  const wrappedSql = `SELECT * FROM (${sql}) AS __q LIMIT ${fetchLimit}`;
+
+  const startMs = performance.now();
+  const result = await conn.run(wrappedSql);
+  const rawRows = await result.getRowObjectsJS();
+  const durationMs = Math.round(performance.now() - startMs);
+
+  const columns: RawQueryColumn[] = [];
+  for (let index = 0; index < result.columnCount; index += 1) {
+    columns.push({
+      name: result.columnName(index),
+      type: String(result.columnType(index)),
+    });
+  }
+
+  const truncated = rawRows.length > RAW_QUERY_ROW_LIMIT;
+  const rows = truncated ? rawRows.slice(0, RAW_QUERY_ROW_LIMIT) : rawRows;
+
+  return {
+    columns,
+    rows: rows.map(normalizeDuckDbRow),
+    truncated,
+    rowCount: rows.length,
+    durationMs,
+  };
+}

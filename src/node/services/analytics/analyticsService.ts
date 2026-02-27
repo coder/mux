@@ -20,6 +20,7 @@ import type { Config } from "@/node/config";
 import { getErrorMessage } from "@/common/utils/errors";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
+import type { RawQueryResult } from "./queries";
 
 interface WorkerRequest {
   messageId: number;
@@ -642,6 +643,15 @@ export class AnalyticsService {
         cacheCreateTokens: row.cache_create_tokens,
       })),
     };
+  }
+
+  async executeRawQuery(sql: string): Promise<RawQueryResult> {
+    assert(
+      typeof sql === "string" && sql.trim().length > 0,
+      "executeRawQuery requires non-empty SQL"
+    );
+    await this.ensureWorker();
+    return this.dispatch<RawQueryResult>("rawQuery", { sql });
   }
 
   async rebuildAll(): Promise<{ success: boolean; workspacesIngested: number }> {
