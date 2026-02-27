@@ -1147,9 +1147,10 @@ export function ProvidersSection() {
                       Get API Key
                       <ExternalLink className="h-2.5 w-2.5" />
                     </a>
-                    {provider === "anthropic" &&
-                      configured &&
-                      config?.[provider]?.apiKeySet === false && (
+                    {configured &&
+                      config?.[provider]?.apiKeySet === false &&
+                      // OpenAI can be configured via ChatGPT OAuth, not just env vars
+                      !(provider === "openai" && codexOauthIsConnected) && (
                         <div className="text-muted text-xs">
                           Configured via environment variables.
                         </div>
