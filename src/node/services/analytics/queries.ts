@@ -726,6 +726,10 @@ interface RawQueryRelationSource {
   isQualifiedName: boolean;
 }
 
+interface RawQueryRelationSourceWithDepth extends RawQueryRelationSource {
+  depth: number;
+}
+
 interface ParsedRawQueryRelationSource extends RawQueryRelationSource {
   nextIndex: number;
 }
@@ -845,8 +849,8 @@ function parseRawQueryRelationSource(
   };
 }
 
-function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSource[] {
-  const sources: RawQueryRelationSource[] = [];
+function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSourceWithDepth[] {
+  const sources: RawQueryRelationSourceWithDepth[] = [];
   const fromClauseContexts: RawQueryFromClauseContext[] = [];
 
   let depth = 0;
@@ -896,6 +900,7 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
             source: source.source,
             isFunctionCall: source.isFunctionCall,
             isQualifiedName: source.isQualifiedName,
+            depth,
           });
           currentContextAtDepth.expectingSource = false;
           index = source.nextIndex;
@@ -946,6 +951,7 @@ function collectRawQueryRelationSources(maskedSql: string): RawQueryRelationSour
             source: source.source,
             isFunctionCall: source.isFunctionCall,
             isQualifiedName: source.isQualifiedName,
+            depth,
           });
           activeContextAtDepth.expectingSource = false;
           index = source.nextIndex;
@@ -1123,18 +1129,33 @@ function parseRawQueryWithClauseCteNames(maskedSql: string, withTokenStartIndex:
   return cteNames;
 }
 
-function collectRawQueryCteNames(maskedSql: string): Set<string> {
-  const cteNames = new Set<string>();
+function collectRawQueryCteNames(maskedSql: string): Map<string, number> {
+  const cteMinDepthByName = new Map<string, number>();
+  let depth = 0;
   let index = 0;
 
   while (index < maskedSql.length) {
-    if (maskedSql[index] === '"') {
+    const char = maskedSql[index];
+
+    if (char === '"') {
       const quotedIdentifier = parseSqlIdentifier(maskedSql, index);
       assert(
         quotedIdentifier != null,
         "Expected quoted identifier while collecting raw analytics CTE names"
       );
       index = quotedIdentifier.nextIndex;
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      index += 1;
       continue;
     }
 
@@ -1146,14 +1167,17 @@ function collectRawQueryCteNames(maskedSql: string): Set<string> {
 
     if (token.value.toLowerCase() === "with") {
       for (const cteName of parseRawQueryWithClauseCteNames(maskedSql, index)) {
-        cteNames.add(cteName);
+        const existingDepth = cteMinDepthByName.get(cteName);
+        if (existingDepth == null || depth < existingDepth) {
+          cteMinDepthByName.set(cteName, depth);
+        }
       }
     }
 
     index = token.nextIndex;
   }
 
-  return cteNames;
+  return cteMinDepthByName;
 }
 
 function validateRawQuerySql(sql: string): void {
@@ -1167,7 +1191,7 @@ function validateRawQuerySql(sql: string): void {
     }
   }
 
-  const cteNames = collectRawQueryCteNames(maskedSql);
+  const cteMinDepthByName = collectRawQueryCteNames(maskedSql);
   const relationSources = collectRawQueryRelationSources(maskedSql);
 
   for (const relationSource of relationSources) {
@@ -1177,10 +1201,12 @@ function validateRawQuerySql(sql: string): void {
       continue;
     }
 
+    const cteMinDepth = cteMinDepthByName.get(normalizedSourceName);
     if (
       !relationSource.isFunctionCall &&
       !relationSource.isQualifiedName &&
-      cteNames.has(normalizedSourceName)
+      cteMinDepth != null &&
+      cteMinDepth <= relationSource.depth
     ) {
       continue;
     }

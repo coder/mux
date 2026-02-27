@@ -188,6 +188,13 @@ describe("executeRawQuery", () => {
     expect(result.rows).toEqual([{ event_count: 6 }]);
   });
 
+  test("rejects nested CTE name used as outer source", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM (WITH ingest_watermarks AS (SELECT 1) SELECT 1) sub, ingest_watermarks",
+      /disallowed table or source/i
+    );
+  });
+
   test("allows nested WITH in subquery", async () => {
     const { conn, runMock } = createMockConn(() =>
       createMockResult({
