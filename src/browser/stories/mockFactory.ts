@@ -23,15 +23,13 @@ import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 type MuxPart = MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart;
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { NOW, STABLE_TIMESTAMP } from "./storyTime";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STABLE TIMESTAMPS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Fixed timestamp for deterministic visual tests (Nov 14, 2023) */
-export const NOW = 1700000000000;
-/** Timestamp for messages - 1 minute ago from NOW */
-export const STABLE_TIMESTAMP = NOW - 60000;
+export { NOW, STABLE_TIMESTAMP };
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKSPACE FACTORY
