@@ -13,9 +13,17 @@ import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "@/browser/features/Project/GitStatus/GitStatusIndicator/GitStatusIndicator";
 
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
-import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "@/browser/components/Popover/Popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  PopoverAnchor,
+} from "@/browser/components/Popover/Popover";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
-import { PositionedMenu, PositionedMenuItem } from "@/browser/components/PositionedMenu/PositionedMenu";
+import {
+  PositionedMenu,
+  PositionedMenuItem,
+} from "@/browser/components/PositionedMenu/PositionedMenu";
 import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { Shimmer } from "@/browser/components/Shimmer/Shimmer";

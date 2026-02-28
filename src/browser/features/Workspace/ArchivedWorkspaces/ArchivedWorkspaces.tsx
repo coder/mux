@@ -7,7 +7,10 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getArchivedWorkspacesExpandedKey } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
 import { ChevronDown, ChevronRight, Loader2, Search, Trash2 } from "lucide-react";
-import { ArchiveIcon, ArchiveRestoreIcon } from "@/browser/components/Icons/ArchiveIcon/ArchiveIcon";
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+} from "@/browser/components/Icons/ArchiveIcon/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { RuntimeBadge } from "@/browser/components/RuntimeBadge/RuntimeBadge";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";

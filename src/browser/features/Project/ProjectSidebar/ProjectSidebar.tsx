@@ -56,7 +56,10 @@ import { SidebarCollapseButton } from "@/browser/components/SidebarCollapseButto
 import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
-import { WorkspaceListItem, type WorkspaceSelection } from "@/browser/features/Workspace/WorkspaceListItem/WorkspaceListItem";
+import {
+  WorkspaceListItem,
+  type WorkspaceSelection,
+} from "@/browser/features/Workspace/WorkspaceListItem/WorkspaceListItem";
 import { WorkspaceStatusIndicator } from "@/browser/features/Workspace/WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
