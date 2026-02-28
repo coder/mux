@@ -36,10 +36,10 @@ export const appMeta: Meta<typeof AppLoader> = {
 
 export type AppStory = StoryObj<typeof appMeta>;
 
-export const StoryUiShell: FC<{ children: ReactNode }> = ({ children }) => {
+export const StoryUiShell: FC<{ children: ReactNode }> = (props) => {
   return (
     <ThemeProvider>
-      <TooltipProvider>{children}</TooltipProvider>
+      <TooltipProvider>{props.children}</TooltipProvider>
     </ThemeProvider>
   );
 };
