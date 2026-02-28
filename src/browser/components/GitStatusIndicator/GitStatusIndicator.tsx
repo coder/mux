@@ -8,7 +8,7 @@ import {
   GitStatusIndicatorView,
   type GitStatusIndicatorMode,
 } from "../GitStatusIndicatorView/GitStatusIndicatorView";
-import { useGitBranchDetails } from "@/browser/features/Hooks/useGitBranchDetails";
+import { useGitBranchDetails } from "@/browser/hooks/useGitBranchDetails";
 
 interface GitStatusIndicatorProps {
   gitStatus: GitStatus | null;
