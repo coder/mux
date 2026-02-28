@@ -1166,11 +1166,22 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             const next = selectTabInTabset(withFocus, fileTabsetId, fileTabType);
             // Only record the parent when the origin tab lives in the same
             // tabset as the file — cross-tabset parents would never activate.
+            // When reopening from a different tabset, clear any stale parent
+            // entry so close falls back to positional adjacency.
             const sameTabset = prev.focusedTabsetId === fileTabsetId;
             if (parentTabId && parentTabId !== fileTabType && sameTabset) {
               return {
                 ...next,
                 parentTab: { ...next.parentTab, [fileTabType]: parentTabId },
+              };
+            }
+            // Cross-tabset reopen: clear stale parent to avoid jumping to
+            // an outdated origin tab on close.
+            if (!sameTabset && next.parentTab?.[fileTabType]) {
+              const { [fileTabType]: _, ...rest } = next.parentTab;
+              return {
+                ...next,
+                parentTab: Object.keys(rest).length > 0 ? rest : undefined,
               };
             }
             return next;
