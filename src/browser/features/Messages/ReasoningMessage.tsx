@@ -4,7 +4,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
 import { normalizeReasoningMarkdown } from "./MarkdownStyles";
 import { cn } from "@/common/lib/utils";
-import { Shimmer } from "../AIElements/Shimmer";
+import { Shimmer } from "@/browser/components/Shimmer/Shimmer";
 import { Lightbulb } from "lucide-react";
 
 interface ReasoningMessageProps {

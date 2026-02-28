@@ -4,7 +4,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import {
   CoderWorkspaceForm,
   resolveCoderAvailability,
-} from "@/browser/features/Runtime/CoderControls";
+} from "@/browser/components/CoderControls/CoderControls";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
 import {
   Select,
