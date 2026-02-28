@@ -19,8 +19,8 @@ import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/Positioned
 import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { Shimmer } from "@/browser/components/Shimmer/Shimmer";
-import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
-import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
+import { ArchiveIcon } from "../Icons/ArchiveIcon/ArchiveIcon";
+import { WorkspaceTerminalIcon } from "../Icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 import {
   WORKSPACE_DRAG_TYPE,
   type WorkspaceDragItem,

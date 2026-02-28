@@ -1,5 +1,5 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
+import { ArchiveIcon } from "../Icons/ArchiveIcon/ArchiveIcon";
 import { GitBranch, Link2, Maximize2, Pencil, Server } from "lucide-react";
 import React from "react";
 

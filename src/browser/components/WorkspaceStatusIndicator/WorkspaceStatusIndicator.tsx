@@ -1,6 +1,6 @@
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { ModelDisplay } from "@/browser/features/Messages/ModelDisplay";
-import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
+import { EmojiIcon } from "@/browser/components/Icons/EmojiIcon/EmojiIcon";
 import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";

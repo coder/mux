@@ -116,9 +116,9 @@ Mobile app tests live in `mobile/src/**/*.test.ts` and use Bun's built-in test r
 ## Styling
 
 - Never use emoji characters as UI icons or status indicators; emoji rendering varies across platforms and fonts.
-- Prefer SVG icons (usually from `lucide-react`) or shared icon components under `src/browser/components/icons/`.
+- Prefer SVG icons (usually from `lucide-react`) or shared icon components under `src/browser/components/Icons/`.
 - For tool call headers, use `ToolIcon` from `src/browser/components/tools/shared/ToolPrimitives.tsx`.
-- If a tool/agent provides an emoji string (e.g., `status_set` or `displayStatus`), render via `EmojiIcon` (`src/browser/components/icons/EmojiIcon.tsx`) instead of rendering the emoji.
+- If a tool/agent provides an emoji string (e.g., `status_set` or `displayStatus`), render via `EmojiIcon` (`src/browser/components/Icons/EmojiIcon.tsx`) instead of rendering the emoji.
 - If a new emoji appears in tool output, extend `EmojiIcon` to map it to an SVG icon.
 - Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
 

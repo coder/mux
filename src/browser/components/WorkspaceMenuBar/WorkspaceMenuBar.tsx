@@ -37,7 +37,7 @@ import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptD
 import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
 import { PopoverError } from "../PopoverError/PopoverError";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
-import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
+import { WorkspaceTerminalIcon } from "../Icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 
 import { SkillIndicator } from "../SkillIndicator/SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";

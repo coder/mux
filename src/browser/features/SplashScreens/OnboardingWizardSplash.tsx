@@ -18,7 +18,7 @@ import {
   LocalIcon,
   SSHIcon,
   WorktreeIcon,
-} from "@/browser/components/icons/RuntimeIcons/RuntimeIcons";
+} from "@/browser/components/Icons/RuntimeIcons/RuntimeIcons";
 import {
   ProjectAddForm,
   type ProjectAddFormHandle,

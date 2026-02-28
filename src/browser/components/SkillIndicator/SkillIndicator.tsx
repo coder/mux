@@ -1,7 +1,7 @@
 import React from "react";
 import { AlertTriangle, Check, EyeOff, XCircle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import { SkillIcon } from "@/browser/components/icons/SkillIcon/SkillIcon";
+import { SkillIcon } from "@/browser/components/Icons/SkillIcon/SkillIcon";
 import { HoverClickPopover } from "@/browser/components/HoverClickPopover/HoverClickPopover";
 import type {
   LoadedSkill,

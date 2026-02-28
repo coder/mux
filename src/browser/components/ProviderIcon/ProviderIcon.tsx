@@ -8,7 +8,7 @@ import OllamaIcon from "@/browser/assets/icons/ollama.svg?react";
 import DeepSeekIcon from "@/browser/assets/icons/deepseek.svg?react";
 import AWSIcon from "@/browser/assets/icons/aws.svg?react";
 import GitHubIcon from "@/browser/assets/icons/github.svg?react";
-import { GatewayIcon } from "@/browser/components/icons/GatewayIcon/GatewayIcon";
+import { GatewayIcon } from "@/browser/components/Icons/GatewayIcon/GatewayIcon";
 import {
   PROVIDER_DEFINITIONS,
   PROVIDER_DISPLAY_NAMES,

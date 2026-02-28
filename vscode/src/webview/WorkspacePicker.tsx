@@ -7,7 +7,7 @@ import {
   LocalIcon,
   SSHIcon,
   WorktreeIcon,
-} from "mux/browser/components/icons/RuntimeIcons/RuntimeIcons";
+} from "mux/browser/components/Icons/RuntimeIcons/RuntimeIcons";
 import { Shimmer } from "mux/browser/features/AIElements/Shimmer";
 import { Button } from "mux/browser/components/Button/Button";
 import { Input } from "mux/browser/components/Input/Input";

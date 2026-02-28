@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { CopyIcon } from "@/browser/components/icons/CopyIcon/CopyIcon";
+import { CopyIcon } from "@/browser/components/Icons/CopyIcon/CopyIcon";
 
 interface CodeBlockSSRProps {
   code: string;

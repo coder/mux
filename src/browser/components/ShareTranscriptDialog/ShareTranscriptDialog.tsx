@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, Trash2 } from "lucide-react";
 
-import { CopyIcon } from "@/browser/components/icons/CopyIcon/CopyIcon";
+import { CopyIcon } from "@/browser/components/Icons/CopyIcon/CopyIcon";
 import { Button } from "@/browser/components/Button/Button";
 import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
 import {
