@@ -4,52 +4,33 @@
  * This tool is primarily used inside sub-agents to report back a final markdown summary.
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory } from "./storyHelpers";
-import {
-  blurActiveElement,
-  waitForChatInputAutofocusDone,
-  waitForScrollStabilization,
-} from "./storyPlayHelpers";
-import {
-  STABLE_TIMESTAMP,
-  createAssistantMessage,
-  createGenericTool,
-  createUserMessage,
-} from "./mockFactory";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { AgentReportToolCall as AgentReportToolCallCard } from "@/browser/features/Tools/AgentReportToolCall";
+import { lightweightMeta } from "./meta.js";
 
-export default {
-  ...appMeta,
+const meta = {
+  ...lightweightMeta,
   title: "App/Agent Report Tool",
-};
+  component: AgentReportToolCallCard,
+} satisfies Meta<typeof AgentReportToolCallCard>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
 
 /**
  * Renders an agent_report tool call as a proper tool card with markdown.
  *
  * This is what you should see inside a sub-agent when it emits its final report.
  */
-export const AgentReportToolCall: AppStory = {
+export const AgentReportToolCall: Story = {
   render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-agent-report",
-          workspaceName: "subagent/explore",
-          messages: [
-            createUserMessage("u1", "Investigate the tool rendering issue", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 60000,
-            }),
-            createAssistantMessage("a1", "Here's my final report:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 59000,
-              toolCalls: [
-                createGenericTool(
-                  "tc1",
-                  "agent_report",
-                  {
-                    title: "Agent report",
-                    reportMarkdown: `## Summary
+    <div className="bg-background flex min-h-screen items-start p-6">
+      <div className="w-full max-w-2xl">
+        <AgentReportToolCallCard
+          args={{
+            title: "Agent report",
+            reportMarkdown: `## Summary
 
 - The \`agent_report\` tool now renders as a first-class tool card.
 - The report body is displayed using the same markdown pipeline as \`task\` / \`task_await\`.
@@ -63,19 +44,11 @@ export const AgentReportToolCall: AppStory = {
 - Defaults to expanded since the report is the entire point of the tool.
 
 </details>`,
-                  },
-                  { success: true }
-                ),
-              ],
-            }),
-          ],
-        })
-      }
-    />
+          }}
+          result={{ success: true }}
+          status="completed"
+        />
+      </div>
+    </div>
   ),
-  play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
-  },
 };

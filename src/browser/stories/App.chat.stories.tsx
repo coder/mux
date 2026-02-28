@@ -2,7 +2,7 @@
  * Chat messages & interactions stories
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { appMeta, AppWithMocks, StoryUiShell, type AppStory } from "./meta.js";
 import {
   STABLE_TIMESTAMP,
   createUserMessage,
@@ -36,7 +36,6 @@ import {
   HelpIndicator,
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/browser/components/Tooltip/Tooltip";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -957,7 +956,7 @@ export const BackgroundProcesses: AppStory = {
  */
 export const ModeHelpTooltip: AppStory = {
   render: () => (
-    <TooltipProvider>
+    <StoryUiShell>
       <div className="bg-background flex min-h-[180px] items-start p-6">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -985,7 +984,7 @@ export const ModeHelpTooltip: AppStory = {
           </TooltipContent>
         </Tooltip>
       </div>
-    </TooltipProvider>
+    </StoryUiShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
