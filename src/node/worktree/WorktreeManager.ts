@@ -115,15 +115,15 @@ export class WorktreeManager {
       initLogger.logStep("Syncing .muxignore files...");
       await syncMuxignoreFiles(projectPath, workspacePath);
 
-      // Initialize/update submodules in the workspace so worktree mode matches
-      // the initial project clone behavior users expect.
-      await this.initializeSubmodules(workspacePath, initLogger, noHooksEnv);
-
       // For existing branches, fast-forward to latest origin (best-effort)
       // Only if local can fast-forward (preserves unpushed work)
       if (shouldUseOrigin && branchExists) {
         await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, noHooksEnv);
       }
+
+      // Initialize/update submodules after any fast-forward because FF can
+      // update submodule gitlinks without checking out the new submodule commits.
+      await this.initializeSubmodules(workspacePath, initLogger, noHooksEnv);
 
       return { success: true, workspacePath };
     } catch (error) {
