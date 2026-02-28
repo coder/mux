@@ -17,6 +17,18 @@ function initGitRepo(projectPath: string): void {
   execSync('git commit -m "init"', { cwd: projectPath, stdio: "ignore" });
 }
 
+function initGitRepoWithSubmodule(projectPath: string, submoduleSourcePath: string): void {
+  initGitRepo(projectPath);
+  execSync(`git -c protocol.file.allow=always submodule add "${submoduleSourcePath}" deps/sub`, {
+    cwd: projectPath,
+    stdio: "ignore",
+  });
+  // Local-path submodules are used only in tests; allow file transport so
+  // `git submodule update --init --recursive` can run inside worktrees.
+  execSync("git config protocol.file.allow always", { cwd: projectPath, stdio: "ignore" });
+  execSync('git commit -m "add submodule"', { cwd: projectPath, stdio: "ignore" });
+}
+
 function createNullInitLogger(): InitLogger {
   return {
     logStep: (_message: string) => undefined,
@@ -51,6 +63,50 @@ describe("WorktreeManager constructor", () => {
     const expected = path.join(os.homedir(), "project", "branch");
     expect(workspacePath).toBe(expected);
   });
+});
+
+describe("WorktreeManager.createWorkspace", () => {
+  it("initializes submodules in the created worktree", async () => {
+    const rootDir = await fsPromises.realpath(
+      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-create-"))
+    );
+
+    try {
+      const submoduleSourcePath = path.join(rootDir, "submodule-source");
+      await fsPromises.mkdir(submoduleSourcePath, { recursive: true });
+      initGitRepo(submoduleSourcePath);
+
+      const projectPath = path.join(rootDir, "repo");
+      await fsPromises.mkdir(projectPath, { recursive: true });
+      initGitRepoWithSubmodule(projectPath, submoduleSourcePath);
+
+      const srcBaseDir = path.join(rootDir, "src");
+      await fsPromises.mkdir(srcBaseDir, { recursive: true });
+
+      const manager = new WorktreeManager(srcBaseDir);
+      const initLogger = createNullInitLogger();
+
+      const createResult = await manager.createWorkspace({
+        projectPath,
+        branchName: "feature_with_submodule",
+        trunkBranch: "main",
+        initLogger,
+      });
+      expect(createResult.success).toBe(true);
+      if (!createResult.success || !createResult.workspacePath) return;
+
+      const submoduleStatus = execSync("git submodule status", {
+        cwd: createResult.workspacePath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+
+      expect(submoduleStatus.startsWith("-")).toBe(false);
+    } finally {
+      await fsPromises.rm(rootDir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe("WorktreeManager.deleteWorkspace", () => {

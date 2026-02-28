@@ -115,6 +115,10 @@ export class WorktreeManager {
       initLogger.logStep("Syncing .muxignore files...");
       await syncMuxignoreFiles(projectPath, workspacePath);
 
+      // Initialize/update submodules in the workspace so worktree mode matches
+      // the initial project clone behavior users expect.
+      await this.initializeSubmodules(workspacePath, initLogger, noHooksEnv);
+
       // For existing branches, fast-forward to latest origin (best-effort)
       // Only if local can fast-forward (preserves unpushed work)
       if (shouldUseOrigin && branchExists) {
@@ -222,6 +226,41 @@ export class WorktreeManager {
       // Fast-forward not possible (diverged branches) - just warn
       const errorMsg = getErrorMessage(mergeError);
       initLogger.logStderr(`Note: Fast-forward failed (${errorMsg}), using local branch state`);
+    }
+  }
+
+  /**
+   * Initialize submodules for newly created workspaces.
+   * Best-effort: workspace creation should still succeed when submodule auth or
+   * network setup is unavailable.
+   */
+  private async initializeSubmodules(
+    workspacePath: string,
+    initLogger: InitLogger,
+    noHooksEnv?: { env: Record<string, string> }
+  ): Promise<void> {
+    try {
+      initLogger.logStep("Initializing git submodules...");
+      using submoduleProc = execFileAsync(
+        "git",
+        [
+          "-c",
+          "protocol.file.allow=always",
+          "-C",
+          workspacePath,
+          "submodule",
+          "update",
+          "--init",
+          "--recursive",
+        ],
+        noHooksEnv
+      );
+      await submoduleProc.result;
+      initLogger.logStep("Git submodules initialized");
+    } catch (error) {
+      initLogger.logStderr(
+        `Note: Failed to initialize git submodules (${getErrorMessage(error)}), continuing`
+      );
     }
   }
 
