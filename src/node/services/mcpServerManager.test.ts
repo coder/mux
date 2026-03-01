@@ -500,9 +500,14 @@ describe("MCPServerManager", () => {
         close: mock(() => Promise.resolve(undefined)),
       };
 
-      instance.tools = wrapMCPTools({ failTool: dummyTool }, undefined, () => {
-        instance.isClosed = true;
-      });
+      instance.tools = wrapMCPTools(
+        { failTool: dummyTool },
+        {
+          onClosed: () => {
+            instance.isClosed = true;
+          },
+        }
+      );
 
       return Promise.resolve(new Map([["test-server", instance]]));
     });
@@ -607,7 +612,7 @@ describe("wrapMCPTools", () => {
       parameters: {},
     } as unknown as Tool;
 
-    const wrapped = wrapMCPTools({ myTool: tool }, undefined, onClosed);
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
 
     let executeError: unknown;
     try {
@@ -628,7 +633,7 @@ describe("wrapMCPTools", () => {
       parameters: {},
     } as unknown as Tool;
 
-    const wrapped = wrapMCPTools({ myTool: tool }, undefined, onClosed);
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
 
     let executeError: unknown;
     try {
@@ -654,7 +659,7 @@ describe("wrapMCPTools", () => {
       parameters: {},
     } as unknown as Tool;
 
-    const wrapped = wrapMCPTools({ failTool, okTool }, undefined, onClosed);
+    const wrapped = wrapMCPTools({ failTool, okTool }, { onClosed });
 
     // failTool should throw and trigger onClosed
     try {
@@ -680,7 +685,7 @@ describe("wrapMCPTools", () => {
       parameters: {},
     } as unknown as Tool;
 
-    const wrapped = wrapMCPTools({ myTool: tool }, undefined, onClosed);
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
     try {
       await wrapped.myTool.execute!({}, {} as never);
       throw new Error("Expected to throw");
@@ -702,7 +707,7 @@ describe("wrapMCPTools", () => {
       parameters: {},
     } as unknown as Tool;
 
-    const wrapped = wrapMCPTools({ myTool: tool }, onActivity, onClosed);
+    const wrapped = wrapMCPTools({ myTool: tool }, { onActivity, onClosed });
 
     let didThrow = false;
     try {

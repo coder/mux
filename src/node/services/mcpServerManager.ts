@@ -42,9 +42,9 @@ export function isClosedClientError(error: unknown): boolean {
  */
 export function wrapMCPTools(
   tools: Record<string, Tool>,
-  onActivity?: () => void,
-  onClosed?: () => void
+  options?: { onActivity?: () => void; onClosed?: () => void }
 ): Record<string, Tool> {
+  const { onActivity, onClosed } = options ?? {};
   const wrapped: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
     // Only wrap tools that have an execute function
@@ -1236,8 +1236,11 @@ export class MCPServerManager {
       await transport.start();
       const client = await createMCPClient({ transport });
       const rawTools = await client.tools();
-      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity, () => {
-        if (instanceRef.current) instanceRef.current.isClosed = true;
+      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
+        onActivity,
+        onClosed: () => {
+          if (instanceRef.current) instanceRef.current.isClosed = true;
+        },
       });
 
       log.info("[MCP] Server ready", {
@@ -1289,6 +1292,9 @@ export class MCPServerManager {
     let transportErrored = false;
 
     const onUncaughtError = (error: unknown) => {
+      if (transportErrored) {
+        return;
+      }
       log.error("[MCP] Uncaught transport error", { name, error: getErrorMessage(error) });
       if (isClosedClientError(error)) {
         transportErrored = true;
@@ -1351,8 +1357,11 @@ export class MCPServerManager {
     let clientClosed = false;
 
     const rawTools = await client.tools();
-    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity, () => {
-      if (instanceRef.current) instanceRef.current.isClosed = true;
+    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
+      onActivity,
+      onClosed: () => {
+        if (instanceRef.current) instanceRef.current.isClosed = true;
+      },
     });
 
     log.info("[MCP] Server ready", {
