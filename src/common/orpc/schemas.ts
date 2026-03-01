@@ -122,6 +122,9 @@ export {
   MCPTestResultSchema,
 } from "./schemas/mcp";
 
+// 1Password schemas
+export { onePassword } from "./schemas/onePassword";
+
 // UI Layouts schemas
 export {
   KeybindSchema,

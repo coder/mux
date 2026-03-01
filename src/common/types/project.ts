@@ -133,4 +133,7 @@ export interface ProjectsConfig {
    * Defaults to enabled; store `false` only to keep config.json minimal.
    */
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
+
+  /** Optional 1Password account name used for desktop SDK account selection. */
+  onePasswordAccountName?: string;
 }

@@ -337,6 +337,7 @@ export class Config {
             updateChannel,
             defaultRuntime,
             runtimeEnablement,
+            onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
           };
         }
       }
@@ -492,6 +493,11 @@ export class Config {
       const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
       if (defaultRuntime !== undefined) {
         data.defaultRuntime = defaultRuntime;
+      }
+
+      const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
+      if (onePasswordAccountName) {
+        data.onePasswordAccountName = onePasswordAccountName;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

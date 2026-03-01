@@ -60,6 +60,7 @@ export const AppConfigOnDiskSchema = z
     updateChannel: UpdateChannelSchema.optional(),
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
+    onePasswordAccountName: z.string().optional(),
   })
   .passthrough();
 

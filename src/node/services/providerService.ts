@@ -9,6 +9,7 @@ import type {
   ProvidersConfigMap,
 } from "@/common/orpc/types";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
+import { isOpReference } from "@/common/utils/opRef";
 import {
   getProviderModelEntryId,
   normalizeProviderModelEntries,
@@ -138,6 +139,7 @@ export class ProviderService {
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
+        apiKeyIsOpRef: isOpReference(config.apiKey) || undefined,
         // Users can disable providers without removing credentials from providers.jsonc.
         isEnabled,
         isConfigured: false, // computed below
