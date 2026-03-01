@@ -160,12 +160,15 @@ export async function readPlanFile(
     // Fall back to legacy path
     try {
       const content = await readFileString(runtime, legacyPath);
-      // Migrate: move to new location
+      // Migrate: move to new location.
+      // Resolve paths first because shellQuote() intentionally prevents ~ expansion.
       try {
         const planDir = planPath.substring(0, planPath.lastIndexOf("/"));
+        const resolvedPlanDir = await runtime.resolvePath(planDir);
+        const resolvedLegacyPath = await runtime.resolvePath(legacyPath);
         await execBuffered(
           runtime,
-          `mkdir -p ${shellQuote(planDir)} && mv ${shellQuote(legacyPath)} ${shellQuote(planPath)}`,
+          `mkdir -p ${shellQuote(resolvedPlanDir)} && mv ${shellQuote(resolvedLegacyPath)} ${shellQuote(resolvedPath)}`,
           {
             cwd: "/tmp",
             timeout: 5,
