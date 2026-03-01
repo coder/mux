@@ -31,36 +31,13 @@ function normalizeCapturedKeybind(e: KeyboardEvent): Keybind | null {
 
   return {
     key: e.key,
+    code: e.code || undefined,
     ctrl: ctrl ? true : undefined,
     alt: e.altKey ? true : undefined,
     shift: e.shiftKey ? true : undefined,
     meta: meta ? true : undefined,
   };
 }
-
-const SHIFTED_KEY_BY_UNSHIFTED: Record<string, string> = {
-  "`": "~",
-  "1": "!",
-  "2": "@",
-  "3": "#",
-  "4": "$",
-  "5": "%",
-  "6": "^",
-  "7": "&",
-  "8": "*",
-  "9": "(",
-  "0": ")",
-  "-": "_",
-  "=": "+",
-  "[": "{",
-  "]": "}",
-  "\\": "|",
-  ";": ":",
-  "'": '"',
-  ",": "<",
-  ".": ">",
-  "/": "?",
-};
 
 function collectKeybindEventCandidates(keybind: Keybind): Array<{ key: string; code?: string }> {
   const candidates: Array<{ key: string; code?: string }> = [];
@@ -76,13 +53,6 @@ function collectKeybindEventCandidates(keybind: Keybind): Array<{ key: string; c
   };
 
   pushCandidate(keybind.key, keybind.code);
-
-  if (keybind.shift) {
-    const shiftedKey = SHIFTED_KEY_BY_UNSHIFTED[keybind.key];
-    if (shiftedKey) {
-      pushCandidate(shiftedKey, keybind.code);
-    }
-  }
 
   return candidates;
 }
