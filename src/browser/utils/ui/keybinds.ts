@@ -53,14 +53,23 @@ export function matchesKeybind(
   event: React.KeyboardEvent | KeyboardEvent,
   keybind: Keybind
 ): boolean {
-  // Guard against undefined event.key (can happen with dead keys, modifier-only events, etc.)
-  if (!event.key) {
-    return false;
-  }
+  const expectedCode = keybind.code?.trim();
+  if (expectedCode) {
+    // Prefer KeyboardEvent.code when provided so shifted punctuation shortcuts
+    // remain stable even when event.key changes by layout (e.g. Shift+. => ">" on US).
+    if (!event.code || event.code.toLowerCase() !== expectedCode.toLowerCase()) {
+      return false;
+    }
+  } else {
+    // Guard against undefined event.key (can happen with dead keys, modifier-only events, etc.)
+    if (!event.key) {
+      return false;
+    }
 
-  // Check key match (case-insensitive for letters)
-  if (event.key.toLowerCase() !== keybind.key.toLowerCase()) {
-    return false;
+    // Check key match (case-insensitive for letters)
+    if (event.key.toLowerCase() !== keybind.key.toLowerCase()) {
+      return false;
+    }
   }
 
   const onMac = isMac();
@@ -262,7 +271,7 @@ export const KEYBINDS = {
   CYCLE_AGENT: { key: ".", ctrl: true },
 
   /** Toggle auto agent mode on/off */
-  TOGGLE_AUTO_AGENT: { key: ".", ctrl: true, shift: true },
+  TOGGLE_AUTO_AGENT: { key: ".", code: "Period", ctrl: true, shift: true },
 
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },

@@ -208,7 +208,8 @@ describe("AgentContext", () => {
     window.api = { platform: "darwin", versions: {} };
 
     fireEvent.keyDown(window, {
-      key: ".",
+      key: ">",
+      code: "Period",
       ctrlKey: true,
       metaKey: true,
       shiftKey: true,
@@ -219,7 +220,8 @@ describe("AgentContext", () => {
     });
 
     fireEvent.keyDown(window, {
-      key: ".",
+      key: ">",
+      code: "Period",
       ctrlKey: true,
       metaKey: true,
       shiftKey: true,

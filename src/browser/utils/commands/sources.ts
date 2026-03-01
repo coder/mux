@@ -832,7 +832,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         section: section.mode,
         shortcutHint: formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT),
         run: () => {
-          const ev = new KeyboardEvent("keydown", { key: ".", ctrlKey: true, shiftKey: true });
+          const ev = new KeyboardEvent("keydown", {
+            key: ".",
+            code: "Period",
+            ctrlKey: true,
+            shiftKey: true,
+          });
           window.dispatchEvent(ev);
         },
       },
