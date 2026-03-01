@@ -2582,23 +2582,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 />
                 {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                 {input.trim() === "" && !editingMessage && (
-                  <div className="mobile-hide-shortcut-hints text-muted pointer-events-none absolute right-18 bottom-3 left-2 flex items-center gap-4 text-[11px]">
-                    <span>
+                  <div className="mobile-hide-shortcut-hints text-muted @container pointer-events-none absolute right-18 bottom-3 left-2 flex flex-nowrap items-center gap-4 overflow-hidden text-[11px] whitespace-nowrap">
+                    <span className="shrink-0">
                       <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
                       <span> - focus chat</span>
                     </span>
-                    <span>
+                    <span className="shrink-0 [@container(max-width:520px)]:hidden">
                       <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
                       <span> - change model</span>
                     </span>
-                    <span>
+                    <span className="shrink-0 [@container(max-width:640px)]:hidden">
                       <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
-                      <span>
-                        {isAutoAgent ? " - cycle agent (turn off auto)" : " - change agent"}
-                      </span>
+                      <span>{isAutoAgent ? " - disable auto" : " - change agent"}</span>
                     </span>
                     {autoAvailable && !isAutoAgent && (
-                      <span>
+                      <span className="shrink-0 [@container(max-width:760px)]:hidden">
                         <span className="font-mono">
                           {formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT)}
                         </span>
