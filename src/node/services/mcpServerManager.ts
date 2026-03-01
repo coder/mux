@@ -29,7 +29,11 @@ const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
  *  Known patterns: "closed client", "Connection closed", "Connection closed unexpectedly". */
 export function isClosedClientError(error: unknown): boolean {
   const msg = getErrorMessage(error).toLowerCase();
-  return msg.includes("closed client") || msg.includes("connection closed");
+  return (
+    msg.includes("closed client") ||
+    msg.includes("connection closed") ||
+    msg.includes("not connected")
+  );
 }
 
 /**
@@ -62,7 +66,11 @@ export function wrapMCPTools(
           return transformMCPResult(result as MCPCallToolResult);
         } catch (error) {
           if (isClosedClientError(error)) {
-            onClosed?.();
+            try {
+              onClosed?.();
+            } catch {
+              // Swallow — original tool error takes priority.
+            }
           }
           throw error;
         }
@@ -1222,7 +1230,7 @@ export class MCPServerManager {
       transport.onclose = markClosed;
 
       transport.onerror = (error) => {
-        log.error("[MCP] Transport error", { name, error });
+        log.error("[MCP] Transport error", { name, error: getErrorMessage(error) });
       };
 
       await transport.start();
@@ -1259,6 +1267,7 @@ export class MCPServerManager {
           } catch (error) {
             log.debug("[MCP] Error closing transport", { name, error });
           }
+          instanceRef.current = null;
         },
       };
 
@@ -1277,11 +1286,15 @@ export class MCPServerManager {
     });
 
     const instanceRef: { current: MCPServerInstance | null } = { current: null };
+    let transportErrored = false;
 
     const onUncaughtError = (error: unknown) => {
       log.error("[MCP] Uncaught transport error", { name, error: getErrorMessage(error) });
-      if (instanceRef.current) {
-        instanceRef.current.isClosed = true;
+      if (isClosedClientError(error)) {
+        transportErrored = true;
+        if (instanceRef.current) {
+          instanceRef.current.isClosed = true;
+        }
       }
     };
 
@@ -1354,7 +1367,7 @@ export class MCPServerManager {
       resolvedTransport,
       autoFallbackUsed,
       tools,
-      isClosed: clientClosed,
+      isClosed: transportErrored || clientClosed,
       close: async () => {
         // Mark closed first to prevent any new tool calls from being treated as
         // valid by higher-level caching logic.
@@ -1368,6 +1381,7 @@ export class MCPServerManager {
         } catch (error) {
           log.debug("[MCP] Error closing client", { name, error });
         }
+        instanceRef.current = null;
       },
     };
 
