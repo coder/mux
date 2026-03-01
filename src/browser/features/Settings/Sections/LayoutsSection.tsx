@@ -39,24 +39,32 @@ function normalizeCapturedKeybind(e: KeyboardEvent): Keybind | null {
 }
 
 function keybindConflicts(a: Keybind, b: Keybind): boolean {
-  if (a.key.toLowerCase() !== b.key.toLowerCase()) {
-    return false;
-  }
+  const keyCandidates = Array.from(new Set([a.key, b.key]));
+  const codeCandidates = Array.from(new Set([a.code, b.code, undefined]));
 
-  for (const ctrlKey of [false, true]) {
-    for (const altKey of [false, true]) {
-      for (const shiftKey of [false, true]) {
-        for (const metaKey of [false, true]) {
-          const ev = new KeyboardEvent("keydown", {
-            key: a.key,
-            ctrlKey,
-            altKey,
-            shiftKey,
-            metaKey,
-          });
+  for (const key of keyCandidates) {
+    for (const code of codeCandidates) {
+      for (const ctrlKey of [false, true]) {
+        for (const altKey of [false, true]) {
+          for (const shiftKey of [false, true]) {
+            for (const metaKey of [false, true]) {
+              const eventInit: KeyboardEventInit = {
+                key,
+                ctrlKey,
+                altKey,
+                shiftKey,
+                metaKey,
+              };
+              if (code != null) {
+                eventInit.code = code;
+              }
 
-          if (matchesKeybind(ev, a) && matchesKeybind(ev, b)) {
-            return true;
+              const ev = new KeyboardEvent("keydown", eventInit);
+
+              if (matchesKeybind(ev, a) && matchesKeybind(ev, b)) {
+                return true;
+              }
+            }
           }
         }
       }
