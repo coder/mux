@@ -570,6 +570,22 @@ describe("isClosedClientError", () => {
     ).toBe(true);
   });
 
+  test("returns true for 'Not connected'", () => {
+    expect(isClosedClientError(new Error("MCP SSE Transport Error: Not connected"))).toBe(true);
+  });
+
+  test("returns true for chained error with closed-client cause", () => {
+    const cause = new Error("Connection closed");
+    const wrapper = new Error("Tool execution failed", { cause });
+    expect(isClosedClientError(wrapper)).toBe(true);
+  });
+
+  test("returns false for chained error without closed-client cause", () => {
+    const cause = new Error("ECONNREFUSED");
+    const wrapper = new Error("Tool execution failed", { cause });
+    expect(isClosedClientError(wrapper)).toBe(false);
+  });
+
   test("returns false for unrelated errors", () => {
     expect(isClosedClientError(new Error("timeout"))).toBe(false);
     expect(isClosedClientError(new Error("ECONNREFUSED"))).toBe(false);
@@ -623,6 +639,57 @@ describe("wrapMCPTools", () => {
 
     expect(executeError).toBe(otherError);
     expect(onClosed).toHaveBeenCalledTimes(0);
+  });
+
+  test("wraps multiple tools and failure in one does not affect others", async () => {
+    const onClosed = mock(() => undefined);
+    const failTool = {
+      execute: mock(() =>
+        Promise.reject(new Error("Attempted to send a request from a closed client"))
+      ),
+      parameters: {},
+    } as unknown as Tool;
+    const okTool = {
+      execute: mock(() => Promise.resolve({ content: [{ type: "text", text: "ok" }] })),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ failTool, okTool }, undefined, onClosed);
+
+    // failTool should throw and trigger onClosed
+    try {
+      await wrapped.failTool.execute!({}, {} as never);
+      throw new Error("Expected failTool to throw");
+    } catch (e) {
+      expect((e as Error).message).toBe("Attempted to send a request from a closed client");
+    }
+    expect(onClosed).toHaveBeenCalledTimes(1);
+
+    // okTool should still work fine
+    const result: unknown = await wrapped.okTool.execute!({}, {} as never);
+    expect(result).toBeTruthy();
+  });
+
+  test("onClosed throwing does not mask original error", async () => {
+    const onClosed = mock(() => {
+      throw new Error("onClosed exploded");
+    });
+    const closedError = new Error("Attempted to send a request from a closed client");
+    const tool = {
+      execute: mock(() => Promise.reject(closedError)),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, undefined, onClosed);
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+      throw new Error("Expected to throw");
+    } catch (e) {
+      // Original error should be preserved, NOT the onClosed error
+      expect(e).toBe(closedError);
+    }
+    // onClosed was still called (even though it threw)
+    expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
   test("calls onActivity before execute and still calls it on failure", async () => {
