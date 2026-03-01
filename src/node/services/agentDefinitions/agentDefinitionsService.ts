@@ -53,12 +53,12 @@ export function computeBaseSkipScope(
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 
-type AgentDefinitionUiFlags = {
+interface AgentDefinitionUiFlags {
   hidden?: boolean;
   selectable?: boolean;
   disabled?: boolean;
   routable?: boolean;
-};
+}
 
 function resolveUiSelectable(ui: AgentDefinitionUiFlags | undefined): boolean {
   if (!ui) {
