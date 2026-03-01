@@ -22,6 +22,10 @@ const AgentDefinitionUiSchema = z
     // UI color (CSS color value). Inherited from base agent if not specified.
     color: z.string().min(1).optional(),
 
+    // When true, this agent is eligible for switch_agent routing even when hidden.
+    // Defaults to the same policy as uiSelectable when omitted.
+    routable: z.boolean().optional(),
+
     // Requirements for this agent to be selectable in the UI.
     // Enforced in agents.list by toggling uiSelectable.
     requires: z.array(AgentDefinitionUiRequirementSchema).min(1).optional(),
@@ -109,6 +113,7 @@ export const AgentDefinitionDescriptorSchema = z
     name: z.string().min(1).max(128),
     description: z.string().min(1).max(1024).optional(),
     uiSelectable: z.boolean(),
+    uiRoutable: z.boolean(),
     uiColor: z.string().min(1).optional(),
     subagentRunnable: z.boolean(),
     // Base agent ID for inheritance (e.g., "exec", "plan", or custom agent)

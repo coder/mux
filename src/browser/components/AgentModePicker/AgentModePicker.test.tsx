@@ -13,6 +13,7 @@ const AUTO_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Auto",
   uiSelectable: true,
+  uiRoutable: true,
   subagentRunnable: false,
   uiColor: "var(--color-auto-mode)",
 };
@@ -23,6 +24,7 @@ const BUILT_INS: AgentDefinitionDescriptor[] = [
     scope: "built-in",
     name: "Exec",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: false,
   },
   {
@@ -30,6 +32,7 @@ const BUILT_INS: AgentDefinitionDescriptor[] = [
     scope: "built-in",
     name: "Plan",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: false,
     base: "plan",
   },
@@ -40,6 +43,7 @@ const HIDDEN_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Explore",
   uiSelectable: false,
+  uiRoutable: false,
   subagentRunnable: true,
   base: "exec",
 };
@@ -49,6 +53,7 @@ const CUSTOM_AGENT: AgentDefinitionDescriptor = {
   name: "Review",
   description: "Review changes",
   uiSelectable: true,
+  uiRoutable: true,
   subagentRunnable: false,
 };
 

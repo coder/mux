@@ -111,6 +111,7 @@ const TEST_AGENTS: AgentDefinitionDescriptor[] = [
     scope: "built-in",
     name: "Exec",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: true,
     aiDefaults: {
       model: "openai:gpt-5.2",
@@ -122,6 +123,7 @@ const TEST_AGENTS: AgentDefinitionDescriptor[] = [
     scope: "built-in",
     name: "Plan",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: true,
     aiDefaults: {
       model: "anthropic:claude-sonnet-4-5",
@@ -133,6 +135,7 @@ const TEST_AGENTS: AgentDefinitionDescriptor[] = [
     scope: "built-in",
     name: "Orchestrator",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: true,
     base: "exec",
     aiDefaults: {
