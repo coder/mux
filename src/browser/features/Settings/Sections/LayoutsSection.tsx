@@ -38,32 +38,85 @@ function normalizeCapturedKeybind(e: KeyboardEvent): Keybind | null {
   };
 }
 
+const SHIFTED_KEY_BY_UNSHIFTED: Record<string, string> = {
+  "`": "~",
+  "1": "!",
+  "2": "@",
+  "3": "#",
+  "4": "$",
+  "5": "%",
+  "6": "^",
+  "7": "&",
+  "8": "*",
+  "9": "(",
+  "0": ")",
+  "-": "_",
+  "=": "+",
+  "[": "{",
+  "]": "}",
+  "\\": "|",
+  ";": ":",
+  "'": '"',
+  ",": "<",
+  ".": ">",
+  "/": "?",
+};
+
+function collectKeybindEventCandidates(keybind: Keybind): Array<{ key: string; code?: string }> {
+  const candidates: Array<{ key: string; code?: string }> = [];
+  const seen = new Set<string>();
+
+  const pushCandidate = (key: string, code: string | undefined) => {
+    const token = `${key}::${code ?? ""}`;
+    if (seen.has(token)) {
+      return;
+    }
+    seen.add(token);
+    candidates.push(code ? { key, code } : { key });
+  };
+
+  pushCandidate(keybind.key, keybind.code);
+
+  if (keybind.shift) {
+    const shiftedKey = SHIFTED_KEY_BY_UNSHIFTED[keybind.key];
+    if (shiftedKey) {
+      pushCandidate(shiftedKey, keybind.code);
+    }
+  }
+
+  return candidates;
+}
+
 function keybindConflicts(a: Keybind, b: Keybind): boolean {
-  const keyCandidates = Array.from(new Set([a.key, b.key]));
-  const codeCandidates = Array.from(new Set([a.code, b.code, undefined]));
+  const candidateMap = new Map<string, { key: string; code?: string }>();
+  for (const candidate of [
+    ...collectKeybindEventCandidates(a),
+    ...collectKeybindEventCandidates(b),
+  ]) {
+    const token = `${candidate.key}::${candidate.code ?? ""}`;
+    candidateMap.set(token, candidate);
+  }
 
-  for (const key of keyCandidates) {
-    for (const code of codeCandidates) {
-      for (const ctrlKey of [false, true]) {
-        for (const altKey of [false, true]) {
-          for (const shiftKey of [false, true]) {
-            for (const metaKey of [false, true]) {
-              const eventInit: KeyboardEventInit = {
-                key,
-                ctrlKey,
-                altKey,
-                shiftKey,
-                metaKey,
-              };
-              if (code != null) {
-                eventInit.code = code;
-              }
+  for (const candidate of candidateMap.values()) {
+    for (const ctrlKey of [false, true]) {
+      for (const altKey of [false, true]) {
+        for (const shiftKey of [false, true]) {
+          for (const metaKey of [false, true]) {
+            const eventInit: KeyboardEventInit = {
+              key: candidate.key,
+              ctrlKey,
+              altKey,
+              shiftKey,
+              metaKey,
+            };
+            if (candidate.code != null) {
+              eventInit.code = candidate.code;
+            }
 
-              const ev = new KeyboardEvent("keydown", eventInit);
+            const ev = new KeyboardEvent("keydown", eventInit);
 
-              if (matchesKeybind(ev, a) && matchesKeybind(ev, b)) {
-                return true;
-              }
+            if (matchesKeybind(ev, a) && matchesKeybind(ev, b)) {
+              return true;
             }
           }
         }
