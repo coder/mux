@@ -39,24 +39,6 @@ async function writeGlobalSkill(
 }
 
 describe("agent_skill_list", () => {
-  it("rejects listing skills outside Chat with Mux workspace", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-list-reject");
-
-    const workspaceSessionDir = await createWorkspaceSessionDir(tempDir.path, "regular-workspace");
-    const config = createTestToolConfig(tempDir.path, {
-      workspaceId: "regular-workspace",
-      sessionsDir: workspaceSessionDir,
-    });
-
-    const tool = createAgentSkillListTool(config);
-    const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toMatch(/only available/i);
-    }
-  });
-
   it("lists global skills from ~/.mux/skills", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-global");
 

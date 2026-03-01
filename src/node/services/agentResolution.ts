@@ -8,13 +8,13 @@
  * - Disabled-agent enforcement (subagent workspaces error, top-level falls back)
  * - Inheritance chain resolution + plan-like detection
  * - Task nesting depth enforcement
- * - Tool policy composition (agent → caller → system workspace)
+ * - Tool policy composition (agent → caller)
  * - Sentinel tool name computation for agent transition detection
  */
 
 import * as os from "os";
 import { AgentIdSchema } from "@/common/orpc/schemas";
-import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_AGENT_ID } from "@/common/constants/muxChat";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ErrorEvent } from "@/common/types/stream";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -75,7 +75,7 @@ export interface AgentResolutionResult {
   taskSettings: ProjectsConfig["taskSettings"] & {};
   taskDepth: number;
   shouldDisableTaskToolsForDepth: boolean;
-  /** Composed tool policy: agent → caller → system workspace (in application order). */
+  /** Composed tool policy: agent → caller (in application order). */
   effectiveToolPolicy: ToolPolicy | undefined;
   /** Tool names for agent transition sentinel injection in message preparation. */
   toolNamesForSentinel: string[];
@@ -116,11 +116,11 @@ export async function resolveAgentForStream(
   // - Child workspaces (tasks) use their persisted agentId/agentType.
   // - Main workspaces use the requested agentId (frontend), falling back to exec.
   const requestedAgentIdRaw =
-    workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
-      ? MUX_HELP_CHAT_AGENT_ID
-      : ((metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
-        (typeof rawAgentId === "string" ? rawAgentId : undefined) ??
-        "exec");
+    (metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
+    // Keep mux-chat bound to the mux agent even when no explicit request is provided.
+    (metadata.agentId === MUX_HELP_CHAT_AGENT_ID ? MUX_HELP_CHAT_AGENT_ID : undefined) ??
+    (typeof rawAgentId === "string" ? rawAgentId : undefined) ??
+    "exec";
   const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
   const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
   const requestedAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
@@ -226,33 +226,6 @@ export async function resolveAgentForStream(
     disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
   });
 
-  // The Chat with Mux system workspace must remain sandboxed regardless of caller-supplied
-  // toolPolicy (defense-in-depth).
-  const systemWorkspaceToolPolicy: ToolPolicy | undefined =
-    workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
-      ? [
-          { regex_match: ".*", action: "disable" },
-
-          // Allow skill management (list/read/write/delete) and global agent
-          // config, while keeping filesystem/binary execution locked down.
-          { regex_match: "agent_skill_read", action: "enable" },
-          { regex_match: "agent_skill_read_file", action: "enable" },
-          { regex_match: "agent_skill_list", action: "enable" },
-          { regex_match: "agent_skill_write", action: "enable" },
-          { regex_match: "agent_skill_delete", action: "enable" },
-
-          { regex_match: "mux_global_agents_read", action: "enable" },
-          { regex_match: "mux_global_agents_write", action: "enable" },
-          { regex_match: "mux_config_read", action: "enable" },
-          { regex_match: "mux_config_write", action: "enable" },
-          { regex_match: "ask_user_question", action: "enable" },
-          { regex_match: "todo_read", action: "enable" },
-          { regex_match: "todo_write", action: "enable" },
-          { regex_match: "status_set", action: "enable" },
-          { regex_match: "notify", action: "enable" },
-        ]
-      : undefined;
-
   // Caller require policies (e.g. task completion enforcement) must take precedence.
   // Drop agent-level require filters in that case to avoid multiple-required-tool conflicts.
   const callerRequiresTool =
@@ -262,12 +235,8 @@ export async function resolveAgentForStream(
     : agentToolPolicy;
 
   const effectiveToolPolicy: ToolPolicy | undefined =
-    callerToolPolicy || agentToolPolicyForComposition.length > 0 || systemWorkspaceToolPolicy
-      ? [
-          ...agentToolPolicyForComposition,
-          ...(callerToolPolicy ?? []),
-          ...(systemWorkspaceToolPolicy ?? []),
-        ]
+    callerToolPolicy || agentToolPolicyForComposition.length > 0
+      ? [...agentToolPolicyForComposition, ...(callerToolPolicy ?? [])]
       : undefined;
 
   // --- Sentinel tool names for agent transition detection ---

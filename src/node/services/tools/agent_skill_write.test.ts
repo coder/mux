@@ -62,21 +62,6 @@ async function createWriteTool(muxHome: string, workspaceId: string = MUX_HELP_C
 }
 
 describe("agent_skill_write", () => {
-  it("rejects writes outside Chat with Mux workspace", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-write-reject");
-
-    const tool = await createWriteTool(tempDir.path, "regular-workspace");
-    const result = (await tool.execute!(
-      { name: "demo-skill", content: skillMarkdown("demo-skill") },
-      mockToolCallOptions
-    )) as AgentSkillWriteToolResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toMatch(/only available/i);
-    }
-  });
-
   it("creates SKILL.md for a new global skill", async () => {
     using tempDir = new TestTempDir("test-agent-skill-write-create");
 

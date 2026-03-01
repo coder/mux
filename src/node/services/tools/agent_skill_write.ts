@@ -2,7 +2,6 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import { tool } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import type { AgentSkillWriteToolResult } from "@/common/types/tools";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
@@ -72,7 +71,7 @@ function injectSkillNameIntoFrontmatter(content: string, skillName: string): str
 }
 
 /**
- * Chat-with-Mux-only tool that creates/updates files in ~/.mux/skills/<name>/.
+ * Tool that creates/updates files in ~/.mux/skills/<name>/.
  */
 export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -83,13 +82,6 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
       filePath,
       content,
     }: AgentSkillWriteToolArgs): Promise<AgentSkillWriteToolResult> => {
-      if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-        return {
-          success: false,
-          error: "agent_skill_write is only available in the Chat with Mux system workspace",
-        };
-      }
-
       const parsedName = SkillNameSchema.safeParse(name);
       if (!parsedName.success) {
         return {

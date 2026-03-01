@@ -6,10 +6,7 @@ import type { MuxGlobalAgentsReadToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import {
-  getMuxHomeFromWorkspaceSessionDir,
-  requireMuxHelpWorkspace,
-} from "@/node/services/tools/shared/configToolUtils";
+import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/shared/configToolUtils";
 import { hasErrorCode } from "./skillFileUtils";
 
 export const createMuxGlobalAgentsReadTool: ToolFactory = (config: ToolConfiguration) => {
@@ -21,9 +18,6 @@ export const createMuxGlobalAgentsReadTool: ToolFactory = (config: ToolConfigura
       { abortSignal: _abortSignal }
     ): Promise<MuxGlobalAgentsReadToolResult> => {
       try {
-        const workspaceGuard = requireMuxHelpWorkspace(config, "mux_global_agents_read");
-        if (workspaceGuard) return workspaceGuard;
-
         const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "mux_global_agents_read");
         const agentsPath = path.join(muxHome, "AGENTS.md");
 
