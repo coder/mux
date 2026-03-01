@@ -4099,8 +4099,9 @@ export class AgentSession {
           : typeof resolvedFrontmatter.ui?.selectable === "boolean"
             ? resolvedFrontmatter.ui.selectable
             : true;
+      const isRoutable = resolvedFrontmatter.ui?.routable === true;
 
-      if (!uiSelectableBase) {
+      if (!uiSelectableBase && !isRoutable) {
         log.warn("switch_agent target is not UI-selectable; skipping synthetic follow-up", {
           workspaceId: this.workspaceId,
           targetAgentId: parsedAgentId.data,
