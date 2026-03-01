@@ -7,6 +7,7 @@ import {
   EyeOff,
   ExternalLink,
   Loader2,
+  KeyRound,
   ShieldCheck,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import {
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import { Button } from "@/browser/components/Button/Button";
+import { OnePasswordPicker } from "../Components/OnePasswordPicker";
 import {
   Select,
   SelectContent,
@@ -881,6 +883,43 @@ export function ProvidersSection() {
 
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
 
+  const [opAvailable, setOpAvailable] = useState(false);
+  const [opPickerProvider, setOpPickerProvider] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!api) {
+      setOpAvailable(false);
+      setOpPickerProvider(null);
+      return;
+    }
+
+    let cancelled = false;
+    void api.onePassword
+      .isAvailable()
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+
+        setOpAvailable(result.available);
+        if (!result.available) {
+          setOpPickerProvider(null);
+        }
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setOpAvailable(false);
+        setOpPickerProvider(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
   useEffect(() => {
     if (!providersExpandedProvider) {
       return;
@@ -932,9 +971,11 @@ export function ProvidersSection() {
       return next;
     });
     setEditingField(null);
+    setOpPickerProvider(null);
   };
 
   const handleStartEdit = (provider: string, field: string, fieldConfig: FieldConfig) => {
+    setOpPickerProvider(null);
     setEditingField({ provider, field });
     // For secrets, start empty since we only show masked value
     // For text fields, show current value
@@ -955,7 +996,7 @@ export function ProvidersSection() {
 
     // Optimistic update for instant feedback
     if (field === "apiKey") {
-      updateOptimistically(provider, { apiKeySet: editValue !== "" });
+      updateOptimistically(provider, { apiKeySet: editValue !== "", apiKeyIsOpRef: false });
     } else if (field === "baseUrl") {
       updateOptimistically(provider, { baseUrl: editValue || undefined });
     }
@@ -974,7 +1015,7 @@ export function ProvidersSection() {
 
       // Optimistic update for instant feedback
       if (field === "apiKey") {
-        updateOptimistically(provider, { apiKeySet: false });
+        updateOptimistically(provider, { apiKeySet: false, apiKeyIsOpRef: false });
       } else if (field === "baseUrl") {
         updateOptimistically(provider, { baseUrl: undefined });
       }
@@ -1404,39 +1445,86 @@ export function ProvidersSection() {
                           </Button>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-between">
-                          <span className="text-foreground font-mono text-xs">
-                            {fieldConfig.type === "secret"
-                              ? fieldIsSet
-                                ? "••••••••"
-                                : "Not set"
-                              : (fieldValue ?? "Default")}
-                          </span>
-                          <div className="flex gap-2">
-                            {(fieldConfig.type === "text"
-                              ? !!fieldValue
-                              : fieldConfig.type === "secret" && fieldIsSet) && (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <span className="text-foreground flex items-center gap-1 font-mono text-xs">
+                              {fieldConfig.type === "secret" ? (
+                                fieldIsSet ? (
+                                  fieldConfig.key === "apiKey" &&
+                                  config?.[provider]?.apiKeyIsOpRef ? (
+                                    <>
+                                      <KeyRound className="h-3 w-3" />
+                                      Linked to 1Password
+                                    </>
+                                  ) : (
+                                    "••••••••"
+                                  )
+                                ) : (
+                                  "Not set"
+                                )
+                              ) : (
+                                (fieldValue ?? "Default")
+                              )}
+                            </span>
+                            <div className="flex gap-2">
+                              {(fieldConfig.type === "text"
+                                ? !!fieldValue
+                                : fieldConfig.type === "secret" && fieldIsSet) && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleClearField(provider, fieldConfig.key)}
+                                  className="text-muted hover:text-error h-auto px-1 py-0 text-xs"
+                                >
+                                  Clear
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleClearField(provider, fieldConfig.key)}
-                                className="text-muted hover:text-error h-auto px-1 py-0 text-xs"
+                                onClick={() =>
+                                  handleStartEdit(provider, fieldConfig.key, fieldConfig)
+                                }
+                                className="text-accent hover:text-accent-light h-auto px-1 py-0 text-xs"
                               >
-                                Clear
+                                {fieldIsSet || fieldValue ? "Change" : "Set"}
                               </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                handleStartEdit(provider, fieldConfig.key, fieldConfig)
-                              }
-                              className="text-accent hover:text-accent-light h-auto px-1 py-0 text-xs"
-                            >
-                              {fieldIsSet || fieldValue ? "Change" : "Set"}
-                            </Button>
+                              {opAvailable && fieldConfig.key === "apiKey" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setOpPickerProvider(provider)}
+                                  className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
+                                  title="Link to 1Password"
+                                >
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                        </div>
+                          {opPickerProvider === provider && fieldConfig.key === "apiKey" && (
+                            <OnePasswordPicker
+                              onSelect={(opRef) => {
+                                setOpPickerProvider(null);
+                                updateOptimistically(provider, {
+                                  apiKeySet: true,
+                                  apiKeyIsOpRef: true,
+                                });
+
+                                if (!api) {
+                                  return;
+                                }
+
+                                void api.providers.setProviderConfig({
+                                  provider,
+                                  keyPath: ["apiKey"],
+                                  value: opRef,
+                                });
+                              }}
+                              onCancel={() => setOpPickerProvider(null)}
+                            />
+                          )}
+                        </>
                       )}
                     </div>
                   );
