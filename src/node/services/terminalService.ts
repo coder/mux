@@ -1,7 +1,7 @@
 import { EventEmitter } from "events";
 import { spawn } from "child_process";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { secretsToRecord } from "@/common/types/secrets";
+import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import type { PTYService } from "@/node/services/ptyService";
@@ -59,7 +59,11 @@ export class TerminalService {
   private readonly noOscIdleFallbacks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly activityChangeEmitter = new EventEmitter();
 
-  constructor(config: Config, ptyService: PTYService) {
+  constructor(
+    config: Config,
+    ptyService: PTYService,
+    private readonly opResolver?: ExternalSecretResolver
+  ) {
     this.config = config;
     this.ptyService = ptyService;
   }
@@ -124,7 +128,10 @@ export class TerminalService {
       // unless we add a dedicated secure propagation path.
       const secrets =
         shouldInjectLocalEnv && workspaceMetadata.id !== MUX_HELP_CHAT_WORKSPACE_ID
-          ? await secretsToRecord(this.config.getEffectiveSecrets(workspaceMetadata.projectPath))
+          ? await secretsToRecord(
+              this.config.getEffectiveSecrets(workspaceMetadata.projectPath),
+              this.opResolver
+            )
           : {};
 
       // Any process launched from this terminal inherits these variables.

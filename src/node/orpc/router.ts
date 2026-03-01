@@ -1,6 +1,7 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
+import { OnePasswordService } from "@/node/services/onePasswordService";
 import {
   MUX_GATEWAY_ORIGIN,
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
@@ -4233,6 +4234,42 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.analyticsService.rebuildAll();
         }),
+    },
+    onePassword: {
+      isAvailable: t
+        .output(schemas.onePassword.isAvailable.output)
+        .handler(async ({ context }) => ({
+          available: (await context.onePasswordService?.isAvailable()) ?? false,
+        })),
+      listVaults: t.output(schemas.onePassword.listVaults.output).handler(async ({ context }) => {
+        if (!context.onePasswordService) return [];
+        return context.onePasswordService.listVaults();
+      }),
+      listItems: t
+        .input(schemas.onePassword.listItems.input)
+        .output(schemas.onePassword.listItems.output)
+        .handler(async ({ context, input }) => {
+          if (!context.onePasswordService) return [];
+          return context.onePasswordService.listItems(input.vaultId);
+        }),
+      getItemFields: t
+        .input(schemas.onePassword.getItemFields.input)
+        .output(schemas.onePassword.getItemFields.output)
+        .handler(async ({ context, input }) => {
+          if (!context.onePasswordService) return [];
+          return context.onePasswordService.getItemFields(input.vaultId, input.itemId);
+        }),
+      buildReference: t
+        .input(schemas.onePassword.buildReference.input)
+        .output(schemas.onePassword.buildReference.output)
+        .handler(({ input }) => ({
+          reference: OnePasswordService.buildReference(
+            input.vaultTitle,
+            input.itemTitle,
+            input.fieldTitle,
+            input.sectionTitle ?? undefined
+          ),
+        })),
     },
     ssh: {
       prompt: {

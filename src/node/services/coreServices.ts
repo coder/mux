@@ -21,6 +21,7 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
+import type { ExternalSecretResolver } from "@/common/types/secrets";
 
 export interface CoreServicesOptions {
   config: Config;
@@ -34,6 +35,7 @@ export interface CoreServicesOptions {
   telemetryService?: TelemetryService;
   experimentsService?: ExperimentsService;
   sessionTimingService?: SessionTimingService;
+  opResolver?: ExternalSecretResolver;
 }
 
 export interface CoreServices {
@@ -70,7 +72,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     sessionUsageService,
     opts.workspaceMcpOverridesService,
     opts.policyService,
-    opts.telemetryService
+    opts.telemetryService,
+    opts.opResolver
   );
 
   // MCP: allow callers to override which Config provides server definitions

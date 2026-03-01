@@ -20,6 +20,8 @@ import {
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { ExternalSecretResolver } from "@/common/types/secrets";
+import { isOpReference } from "@/common/utils/opRef";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -491,12 +493,24 @@ export class ProviderModelFactory {
     config: Config,
     providerService: ProviderService,
     policyService?: PolicyService,
-    codexOauthService?: CodexOauthService
+    codexOauthService?: CodexOauthService,
+    private readonly opResolver?: ExternalSecretResolver
   ) {
     this.config = config;
     this.providerService = providerService;
     this.policyService = policyService;
     this.codexOauthService = codexOauthService;
+  }
+
+  /**
+   * Resolve an API key that may be a 1Password op:// reference.
+   * Returns the original key for non-op:// values, or the resolved secret for op:// refs.
+   * Returns undefined if the reference cannot be resolved.
+   */
+  private async resolveApiKey(apiKey: string | undefined): Promise<string | undefined> {
+    if (!apiKey || !isOpReference(apiKey)) return apiKey;
+    if (!this.opResolver) return undefined;
+    return this.opResolver(apiKey);
   }
 
   /**
@@ -641,9 +655,15 @@ export class ProviderModelFactory {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
+        // Resolve op:// reference if API key is a 1Password reference
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+
         // Build config with resolved credentials
-        const configWithApiKey = creds.apiKey
-          ? { ...providerConfig, apiKey: creds.apiKey }
+        const configWithApiKey = resolvedApiKey
+          ? { ...providerConfig, apiKey: resolvedApiKey }
           : providerConfig;
 
         // Normalize base URL to ensure /v1 suffix (SDK expects it)
@@ -687,6 +707,10 @@ export class ProviderModelFactory {
         // Resolve credentials from config + env BEFORE OAuth checks so we can
         // fall back to an API key when OAuth is not connected.
         const creds = resolveProviderCredentials("openai", providerConfig);
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
 
         // When a model requires Codex OAuth but the user hasn't connected it,
         // fall back to their API key instead of blocking entirely.  If the model
@@ -744,7 +768,7 @@ export class ProviderModelFactory {
           ...providerConfig,
           // When using Codex OAuth, we overwrite auth headers in fetch(), so the OpenAI API key
           // isn't required. Still pass a placeholder to ensure the SDK never reads env vars.
-          apiKey: shouldRouteThroughCodexOauth ? (creds.apiKey ?? "codex-oauth") : creds.apiKey,
+          apiKey: shouldRouteThroughCodexOauth ? (resolvedApiKey ?? "codex-oauth") : resolvedApiKey,
           ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
           ...(creds.organization && { organization: creds.organization }),
         };
@@ -1029,6 +1053,10 @@ export class ProviderModelFactory {
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
 
         const baseFetch = getProviderFetch(providerConfig);
         const { apiKey: _apiKey, baseURL, headers, ...extraOptions } = providerConfig;
@@ -1049,7 +1077,7 @@ export class ProviderModelFactory {
 
         const { createXai } = await PROVIDER_REGISTRY.xai();
         const provider = createXai({
-          apiKey: creds.apiKey,
+          apiKey: resolvedApiKey,
           baseURL: creds.baseUrl ?? baseURL,
           headers,
           ...restOptions,
@@ -1079,6 +1107,10 @@ export class ProviderModelFactory {
         // Resolve credentials from config + env (single source of truth)
         const creds = resolveProviderCredentials("openrouter", providerConfig);
         if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
         const baseFetch = getProviderFetch(providerConfig);
@@ -1128,7 +1160,7 @@ export class ProviderModelFactory {
         // Lazy-load OpenRouter provider to reduce startup time
         const { createOpenRouter } = await PROVIDER_REGISTRY.openrouter();
         const provider = createOpenRouter({
-          apiKey: creds.apiKey,
+          apiKey: resolvedApiKey,
           baseURL: creds.baseUrl ?? baseUrl,
           headers,
           fetch: baseFetch,
@@ -1308,6 +1340,10 @@ export class ProviderModelFactory {
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
 
         const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
 
@@ -1317,7 +1353,7 @@ export class ProviderModelFactory {
           init?: Parameters<typeof fetch>[1]
         ) => {
           const headers = new Headers(init?.headers);
-          headers.set("Authorization", `Bearer ${creds.apiKey ?? ""}`);
+          headers.set("Authorization", `Bearer ${resolvedApiKey ?? ""}`);
           headers.set("Openai-Intent", "conversation-edits");
           headers.delete("x-api-key");
           return baseFetch(input, { ...init, headers });
@@ -1345,6 +1381,10 @@ export class ProviderModelFactory {
         if (providerDef.requiresApiKey && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
 
         // Lazy-load and create provider using factoryName from definition
         const providerModule = (await providerDef.import()) as unknown as Record<
@@ -1362,7 +1402,7 @@ export class ProviderModelFactory {
         // Merge resolved credentials into config
         const configWithCreds = {
           ...providerConfig,
-          ...(creds.apiKey && { apiKey: creds.apiKey }),
+          ...(resolvedApiKey && { apiKey: resolvedApiKey }),
           ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
         };
 

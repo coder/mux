@@ -19,6 +19,7 @@ import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService
 import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
+import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
@@ -58,6 +59,7 @@ import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/S
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
+import type { ExternalSecretResolver } from "@/common/types/secrets";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
 const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
@@ -100,6 +102,7 @@ export class ServiceContainer {
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
   public readonly copilotOauthService: CopilotOauthService;
+  public readonly onePasswordService: OnePasswordService | null;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -141,6 +144,13 @@ export class ServiceContainer {
     // the persistent config rather than creating a default with an ephemeral one.
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
 
+    // 1Password integration — create service if account name is configured
+    const opAccountName = config.loadConfigOrDefault().onePasswordAccountName;
+    this.onePasswordService = opAccountName ? new OnePasswordService(opAccountName) : null;
+    const opResolver: ExternalSecretResolver | undefined = this.onePasswordService
+      ? this.onePasswordService.resolve.bind(this.onePasswordService)
+      : undefined;
+
     const core = createCoreServices({
       config,
       extensionMetadataPath: path.join(config.rootDir, "extensionMetadata.json"),
@@ -149,6 +159,7 @@ export class ServiceContainer {
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
+      opResolver,
     });
 
     // Spread core services into class fields
@@ -199,7 +210,7 @@ export class ServiceContainer {
     this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
-    this.terminalService = new TerminalService(config, this.ptyService);
+    this.terminalService = new TerminalService(config, this.ptyService, opResolver);
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
     // Editor service for opening workspaces in code editors
@@ -455,6 +466,7 @@ export class ServiceContainer {
       muxGovernorOauthService: this.muxGovernorOauthService,
       codexOauthService: this.codexOauthService,
       copilotOauthService: this.copilotOauthService,
+      onePasswordService: this.onePasswordService,
       terminalService: this.terminalService,
       editorService: this.editorService,
       windowService: this.windowService,

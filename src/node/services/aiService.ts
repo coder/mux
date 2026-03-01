@@ -23,7 +23,7 @@ import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPr
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { secretsToRecord } from "@/common/types/secrets";
+import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -142,6 +142,7 @@ export class AIService extends EventEmitter {
   private mcpServerManager?: MCPServerManager;
   private readonly policyService?: PolicyService;
   private readonly telemetryService?: TelemetryService;
+  private readonly opResolver?: ExternalSecretResolver;
   private readonly initStateManager: InitStateManager;
   private mockModeEnabled: boolean;
   private mockAiStreamPlayer?: MockAiStreamPlayer;
@@ -176,7 +177,8 @@ export class AIService extends EventEmitter {
     sessionUsageService?: SessionUsageService,
     workspaceMcpOverridesService?: WorkspaceMcpOverridesService,
     policyService?: PolicyService,
-    telemetryService?: TelemetryService
+    telemetryService?: TelemetryService,
+    opResolver?: ExternalSecretResolver
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -191,11 +193,18 @@ export class AIService extends EventEmitter {
     this.sessionUsageService = sessionUsageService;
     this.policyService = policyService;
     this.telemetryService = telemetryService;
+    this.opResolver = opResolver;
     this.providerService = providerService;
     this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
       this.providerService.getConfig()
     );
-    this.providerModelFactory = new ProviderModelFactory(config, providerService, policyService);
+    this.providerModelFactory = new ProviderModelFactory(
+      config,
+      providerService,
+      policyService,
+      undefined,
+      opResolver
+    );
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
     this.mockModeEnabled = false;
@@ -809,7 +818,7 @@ export class AIService extends EventEmitter {
             runtime,
             workspacePath,
             overrides: mcpOverrides,
-            projectSecrets: await secretsToRecord(projectSecrets),
+            projectSecrets: await secretsToRecord(projectSecrets, this.opResolver),
           });
 
           mcpTools = result.tools;
@@ -848,7 +857,7 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
-          secrets: await secretsToRecord(projectSecrets),
+          secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv: getMuxEnv(
             metadata.projectPath,
             getRuntimeType(metadata.runtimeConfig),
