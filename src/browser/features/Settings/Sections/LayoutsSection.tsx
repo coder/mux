@@ -57,15 +57,41 @@ function collectKeybindEventCandidates(keybind: Keybind): Array<{ key: string; c
   return candidates;
 }
 
+function isLegacyShiftedSymbolKeybind(keybind: Keybind): boolean {
+  return (
+    keybind.code == null &&
+    keybind.shift === true &&
+    keybind.key.length === 1 &&
+    /[^a-z0-9]/i.test(keybind.key)
+  );
+}
+
 function keybindConflicts(a: Keybind, b: Keybind): boolean {
   const candidateMap = new Map<string, { key: string; code?: string }>();
+  const addCandidate = (key: string, code: string | undefined) => {
+    const token = `${key}::${code ?? ""}`;
+    candidateMap.set(token, code ? { key, code } : { key });
+  };
+
   for (const candidate of [
     ...collectKeybindEventCandidates(a),
     ...collectKeybindEventCandidates(b),
   ]) {
-    const token = `${candidate.key}::${candidate.code ?? ""}`;
-    candidateMap.set(token, candidate);
+    addCandidate(candidate.key, candidate.code);
   }
+
+  const addLegacyBridgeCandidate = (legacy: Keybind, coded: Keybind) => {
+    if (!isLegacyShiftedSymbolKeybind(legacy) || coded.code == null) {
+      return;
+    }
+    // Legacy (pre-code) shifted symbol bindings are still persisted for some users.
+    // Include a bridged candidate so key-only legacy bindings can still conflict
+    // with newer code-based shortcuts that share the same physical key event.
+    addCandidate(legacy.key, coded.code);
+  };
+
+  addLegacyBridgeCandidate(a, b);
+  addLegacyBridgeCandidate(b, a);
 
   for (const candidate of candidateMap.values()) {
     for (const ctrlKey of [false, true]) {
