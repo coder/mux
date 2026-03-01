@@ -1,6 +1,7 @@
 import type { Runtime, ExecOptions } from "@/node/runtime/Runtime";
 import { PlatformPaths } from "@/node/utils/paths.main";
 import { getLegacyPlanFilePath, getPlanFilePath } from "@/common/utils/planStorage";
+import { shellQuote } from "@/common/utils/shell";
 
 /**
  * Convenience helpers for working with streaming Runtime APIs.
@@ -159,13 +160,20 @@ export async function readPlanFile(
     // Fall back to legacy path
     try {
       const content = await readFileString(runtime, legacyPath);
-      // Migrate: move to new location
+      // Migrate: move to new location.
+      // Resolve paths first because shellQuote() intentionally prevents ~ expansion.
       try {
         const planDir = planPath.substring(0, planPath.lastIndexOf("/"));
-        await execBuffered(runtime, `mkdir -p "${planDir}" && mv "${legacyPath}" "${planPath}"`, {
-          cwd: "/tmp",
-          timeout: 5,
-        });
+        const resolvedPlanDir = await runtime.resolvePath(planDir);
+        const resolvedLegacyPath = await runtime.resolvePath(legacyPath);
+        await execBuffered(
+          runtime,
+          `mkdir -p ${shellQuote(resolvedPlanDir)} && mv ${shellQuote(resolvedLegacyPath)} ${shellQuote(resolvedPath)}`,
+          {
+            cwd: "/tmp",
+            timeout: 5,
+          }
+        );
       } catch {
         // Migration failed, but we have the content
       }
@@ -230,10 +238,14 @@ export async function movePlanFile(
     // Resolve tildes to absolute paths - bash doesn't expand ~ inside quotes
     const resolvedOldPath = await runtime.resolvePath(oldPath);
     const resolvedNewPath = await runtime.resolvePath(newPath);
-    await execBuffered(runtime, `mv "${resolvedOldPath}" "${resolvedNewPath}"`, {
-      cwd: "/tmp",
-      timeout: 5,
-    });
+    await execBuffered(
+      runtime,
+      `mv ${shellQuote(resolvedOldPath)} ${shellQuote(resolvedNewPath)}`,
+      {
+        cwd: "/tmp",
+        timeout: 5,
+      }
+    );
   } catch {
     // No plan file to move, that's fine
   }

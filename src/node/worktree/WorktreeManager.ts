@@ -11,6 +11,7 @@ import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { toPosixPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
@@ -501,8 +502,8 @@ export class WorktreeManager {
           }
 
           // Force delete the directory (use bash shell for rm -rf on Windows)
-          // Convert to POSIX path for Git Bash compatibility on Windows
-          using rmProc = execAsync(`rm -rf "${toPosixPath(deletedPath)}"`, {
+          // shellQuote prevents command injection from malicious workspace paths
+          using rmProc = execAsync(`rm -rf ${shellQuote(toPosixPath(deletedPath))}`, {
             shell: getBashPath(),
           });
           await rmProc.result;

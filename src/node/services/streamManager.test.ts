@@ -11,7 +11,9 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { countTokens } from "@/node/utils/main/tokenizer";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
 import { DisposableTempDir } from "@/node/services/tempDir";
+import type { ExecOptions, ExecStream, Runtime } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { shellQuote } from "@/common/utils/shell";
 
 // Skip integration tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -32,6 +34,31 @@ beforeEach(async () => {
 afterEach(async () => {
   await historyCleanup();
 });
+
+function createExecStreamForTests(): ExecStream {
+  return {
+    stdout: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    }),
+    stderr: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    }),
+    stdin: new WritableStream<Uint8Array>({
+      write(_chunk) {
+        return Promise.resolve();
+      },
+      close() {
+        return Promise.resolve();
+      },
+    }),
+    exitCode: Promise.resolve(0),
+    duration: Promise.resolve(0),
+  };
+}
 
 describe("StreamManager - createTempDirForStream", () => {
   test("creates ~/.mux-tmp/<token> under the runtime's home", async () => {
@@ -70,6 +97,32 @@ describe("StreamManager - createTempDirForStream", () => {
         process.env.USERPROFILE = prevUserProfile;
       }
     }
+  });
+});
+
+describe("StreamManager - cleanupStreamTempDir", () => {
+  test("quotes temp-dir basename in rm -rf command", () => {
+    const streamManager = new StreamManager(historyService);
+    const execCalls: Array<{ command: string; options: ExecOptions }> = [];
+    const runtime = {
+      exec: (command: string, options: ExecOptions) => {
+        execCalls.push({ command, options });
+        return Promise.resolve(createExecStreamForTests());
+      },
+    } as unknown as Runtime;
+
+    const cleanup = Reflect.get(streamManager, "cleanupStreamTempDir") as
+      | ((runtime: Runtime, runtimeTempDir: string) => void)
+      | undefined;
+
+    expect(typeof cleanup).toBe("function");
+
+    const runtimeTempDir = "/tmp/stream-$(echo injected)";
+    cleanup?.(runtime, runtimeTempDir);
+
+    expect(execCalls).toHaveLength(1);
+    expect(execCalls[0]?.command).toBe(`rm -rf ${shellQuote("stream-$(echo injected)")}`);
+    expect(execCalls[0]?.options).toMatchObject({ cwd: "/tmp", timeout: 10 });
   });
 });
 
