@@ -442,11 +442,6 @@ export function collectAllTabs(node: RightSidebarLayoutNode): TabType[] {
   if (node.type === "tabset") return [...node.tabs];
   return [...collectAllTabs(node.children[0]), ...collectAllTabs(node.children[1])];
 }
-export function collectActiveTabs(node: RightSidebarLayoutNode): TabType[] {
-  if (node.type === "tabset") return [node.activeTab];
-  return [...collectActiveTabs(node.children[0]), ...collectActiveTabs(node.children[1])];
-}
-
 export function hasTab(state: RightSidebarLayoutState, tab: TabType): boolean {
   return collectAllTabs(state.root).includes(tab);
 }
