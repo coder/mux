@@ -22,6 +22,7 @@ tools:
     - todo_write
     - status_set
     - notify
+    - switch_agent
 ---
 
 You are the **Mux system assistant**.
