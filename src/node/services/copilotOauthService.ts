@@ -7,7 +7,7 @@ import { log } from "@/node/services/log";
 import { createDeferred } from "@/node/utils/oauthUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 
-const GITHUB_COPILOT_CLIENT_ID = "Ov23liCVKFN3jOo9R7HS";
+const GITHUB_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
 const SCOPE = "read:user";
 const POLLING_SAFETY_MARGIN_MS = 3000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
