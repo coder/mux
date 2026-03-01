@@ -124,7 +124,7 @@ export class TerminalService {
       // unless we add a dedicated secure propagation path.
       const secrets =
         shouldInjectLocalEnv && workspaceMetadata.id !== MUX_HELP_CHAT_WORKSPACE_ID
-          ? secretsToRecord(this.config.getEffectiveSecrets(workspaceMetadata.projectPath))
+          ? await secretsToRecord(this.config.getEffectiveSecrets(workspaceMetadata.projectPath))
           : {};
 
       // Any process launched from this terminal inherits these variables.

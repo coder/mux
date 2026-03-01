@@ -1693,7 +1693,7 @@ export const router = (authToken?: string) => {
             ? input.projectPath!
             : context.config.rootDir;
 
-          const secrets = secretsToRecord(
+          const secrets = await secretsToRecord(
             projectPathProvided
               ? context.config.getEffectiveSecrets(resolvedProjectPath)
               : context.config.getGlobalSecrets()
@@ -2171,7 +2171,9 @@ export const router = (authToken?: string) => {
           .output(schemas.projects.mcp.test.output)
           .handler(async ({ context, input }) => {
             const start = Date.now();
-            const secrets = secretsToRecord(context.config.getEffectiveSecrets(input.projectPath));
+            const secrets = await secretsToRecord(
+              context.config.getEffectiveSecrets(input.projectPath)
+            );
 
             const configuredTransport = input.name
               ? (await context.mcpConfigService.listServers(input.projectPath))[input.name]

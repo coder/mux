@@ -5,7 +5,7 @@ import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { secretsToRecord, type Secret, type SecretsConfig } from "@/common/types/secrets";
+import { type Secret, type SecretsConfig } from "@/common/types/secrets";
 import type {
   Workspace,
   ProjectConfig,
@@ -1192,12 +1192,21 @@ ${jsonString}`;
     );
   }
 
+  private static isOpSecretValue(value: unknown): value is { op: string } {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "op" in value &&
+      typeof (value as { op?: unknown }).op === "string"
+    );
+  }
+
   private static isSecretValue(value: unknown): value is Secret["value"] {
     if (typeof value === "string") {
       return true;
     }
 
-    return Config.isSecretReferenceValue(value);
+    return Config.isSecretReferenceValue(value) || Config.isOpSecretValue(value);
   }
 
   private static isSecret(value: unknown): value is Secret {
@@ -1326,7 +1335,65 @@ ${jsonString}`;
     const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
     const projectSecrets = config[normalizedProjectPath] ?? [];
-    const globalSecretsByKey = secretsToRecord(config[Config.GLOBAL_SECRETS_KEY] ?? []);
+
+    // Keep global reference resolution synchronous so getEffectiveSecrets remains fast and side-effect free.
+    const globalRawByKey = new Map<string, Secret["value"]>();
+    for (const globalSecret of config[Config.GLOBAL_SECRETS_KEY] ?? []) {
+      if (!globalSecret || typeof globalSecret.key !== "string") {
+        continue;
+      }
+
+      globalRawByKey.set(globalSecret.key, globalSecret.value);
+    }
+
+    const globalResolved = new Map<string, string | undefined>();
+    const globalResolving = new Set<string>();
+
+    const resolveGlobalKey = (key: string): string | undefined => {
+      if (globalResolved.has(key)) {
+        return globalResolved.get(key);
+      }
+
+      if (globalResolving.has(key)) {
+        globalResolved.set(key, undefined);
+        return undefined;
+      }
+
+      globalResolving.add(key);
+      try {
+        const raw = globalRawByKey.get(key);
+
+        if (typeof raw === "string") {
+          globalResolved.set(key, raw);
+          return raw;
+        }
+
+        if (Config.isSecretReferenceValue(raw)) {
+          const target = raw.secret.trim();
+          if (!target) {
+            globalResolved.set(key, undefined);
+            return undefined;
+          }
+
+          const value = resolveGlobalKey(target);
+          globalResolved.set(key, value);
+          return value;
+        }
+
+        globalResolved.set(key, undefined);
+        return undefined;
+      } finally {
+        globalResolving.delete(key);
+      }
+    };
+
+    const globalSecretsByKey: Record<string, string> = {};
+    for (const key of globalRawByKey.keys()) {
+      const value = resolveGlobalKey(key);
+      if (value !== undefined) {
+        globalSecretsByKey[key] = value;
+      }
+    }
 
     return projectSecrets.map((secret) => {
       if (!Config.isSecretReferenceValue(secret.value)) {

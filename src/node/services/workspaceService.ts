@@ -1803,7 +1803,7 @@ export class WorkspaceService extends EventEmitter {
       session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
 
       // Background init: run postCreateSetup (if present) then initWorkspace
-      const secrets = secretsToRecord(this.config.getEffectiveSecrets(projectPath));
+      const secrets = await secretsToRecord(this.config.getEffectiveSecrets(projectPath));
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
       //
       // If the user cancelled creation while create() was still in flight, avoid spawning
@@ -3113,7 +3113,7 @@ export class WorkspaceService extends EventEmitter {
       } = forkResult.data;
 
       // Run init for forked workspace (fire-and-forget like create())
-      const secrets = secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
+      const secrets = await secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
       runBackgroundInit(
         targetRuntime,
         {
@@ -4515,7 +4515,7 @@ export class WorkspaceService extends EventEmitter {
       const bashTool = createBashTool({
         cwd: workspacePath,
         runtime,
-        secrets: secretsToRecord(projectSecrets),
+        secrets: await secretsToRecord(projectSecrets),
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
         trusted: projectConfig?.trusted ?? false,

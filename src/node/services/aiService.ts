@@ -809,7 +809,7 @@ export class AIService extends EventEmitter {
             runtime,
             workspacePath,
             overrides: mcpOverrides,
-            projectSecrets: secretsToRecord(projectSecrets),
+            projectSecrets: await secretsToRecord(projectSecrets),
           });
 
           mcpTools = result.tools;
@@ -848,7 +848,7 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
-          secrets: secretsToRecord(projectSecrets),
+          secrets: await secretsToRecord(projectSecrets),
           muxEnv: getMuxEnv(
             metadata.projectPath,
             getRuntimeType(metadata.runtimeConfig),

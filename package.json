@@ -46,6 +46,7 @@
     "postinstall": "sh scripts/postinstall.sh"
   },
   "dependencies": {
+    "@1password/sdk": "^0.4.0",
     "@agentclientprotocol/sdk": "^0.14.1",
     "@ai-sdk/amazon-bedrock": "^4.0.49",
     "@ai-sdk/anthropic": "^3.0.37",

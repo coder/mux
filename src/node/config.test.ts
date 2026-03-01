@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
-import { secretsToRecord } from "@/common/types/secrets";
+import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
   let tempDir: string;
@@ -355,7 +355,7 @@ describe("Config", () => {
       ]);
 
       const effective = config.getEffectiveSecrets(projectPath);
-      const record = secretsToRecord(effective);
+      const record = await secretsToRecord(effective);
 
       expect(record).toEqual({
         TOKEN: "project",
@@ -371,7 +371,7 @@ describe("Config", () => {
         { key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } },
       ]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
         TOKEN: "abc",
       });
@@ -385,14 +385,14 @@ describe("Config", () => {
         { key: "OPENAI_API_KEY", value: { secret: "OPENAI_API_KEY" } },
       ]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
         OPENAI_API_KEY: "abc",
       });
     });
 
-    it("omits missing referenced secrets when resolving secretsToRecord", () => {
-      const record = secretsToRecord([
+    it("omits missing referenced secrets when resolving secretsToRecord", async () => {
+      const record = await secretsToRecord([
         { key: "GLOBAL", value: "1" },
         { key: "A", value: { secret: "MISSING" } },
       ]);
@@ -400,14 +400,74 @@ describe("Config", () => {
       expect(record).toEqual({ GLOBAL: "1" });
     });
 
-    it("omits cyclic secret references when resolving secretsToRecord", () => {
-      const record = secretsToRecord([
+    it("omits cyclic secret references when resolving secretsToRecord", async () => {
+      const record = await secretsToRecord([
         { key: "A", value: { secret: "B" } },
         { key: "B", value: { secret: "A" } },
         { key: "OK", value: "y" },
       ]);
 
       expect(record).toEqual({ OK: "y" });
+    });
+
+    it("resolves { op } values via external resolver", async () => {
+      const resolver: ExternalSecretResolver = async (ref: string) => {
+        if (ref === "op://Dev/Stripe/key") return "sk-resolved";
+        return undefined;
+      };
+
+      const record = await secretsToRecord(
+        [
+          { key: "STRIPE_KEY", value: { op: "op://Dev/Stripe/key" } },
+          { key: "LITERAL", value: "plain" },
+        ],
+        resolver
+      );
+
+      expect(record).toEqual({ STRIPE_KEY: "sk-resolved", LITERAL: "plain" });
+    });
+
+    it("omits { op } values when no resolver is provided", async () => {
+      const record = await secretsToRecord([
+        { key: "A", value: { op: "op://Dev/Stripe/key" } },
+        { key: "B", value: "literal" },
+      ]);
+
+      expect(record).toEqual({ B: "literal" });
+    });
+
+    it("omits { op } values when resolver returns undefined", async () => {
+      const resolver: ExternalSecretResolver = async () => undefined;
+      const record = await secretsToRecord(
+        [{ key: "A", value: { op: "op://Dev/Stripe/key" } }],
+        resolver
+      );
+
+      expect(record).toEqual({});
+    });
+
+    it("resolves mixed literal, { secret }, and { op } values", async () => {
+      const resolver: ExternalSecretResolver = async (ref: string) => {
+        if (ref === "op://Vault/Item/field") return "op-resolved";
+        return undefined;
+      };
+
+      const record = await secretsToRecord(
+        [
+          { key: "LITERAL", value: "raw" },
+          { key: "GLOBAL_TOKEN", value: "abc" },
+          { key: "ALIAS", value: { secret: "GLOBAL_TOKEN" } },
+          { key: "OP_REF", value: { op: "op://Vault/Item/field" } },
+        ],
+        resolver
+      );
+
+      expect(record).toEqual({
+        LITERAL: "raw",
+        GLOBAL_TOKEN: "abc",
+        ALIAS: "abc",
+        OP_REF: "op-resolved",
+      });
     });
     it("normalizes project paths so trailing slashes don't split secrets", async () => {
       const projectPath = "/repo";
