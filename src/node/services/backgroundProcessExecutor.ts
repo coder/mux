@@ -52,13 +52,13 @@ function errorMsg(error: unknown): string {
 }
 
 /** Subdirectory under temp for background process output */
-export const BG_OUTPUT_SUBDIR = "mux-bashes";
+const BG_OUTPUT_SUBDIR = "mux-bashes";
 
 /** Output filename for combined stdout/stderr */
-export const OUTPUT_FILENAME = "output.log";
+const OUTPUT_FILENAME = "output.log";
 
 /** Exit code filename */
-export const EXIT_CODE_FILENAME = "exit_code";
+const EXIT_CODE_FILENAME = "exit_code";
 
 /**
  * Compute paths for a background process output directory.
@@ -66,7 +66,7 @@ export const EXIT_CODE_FILENAME = "exit_code";
  * @param workspaceId Workspace identifier
  * @param processId Process identifier
  */
-export function computeOutputPaths(
+function computeOutputPaths(
   bgOutputDir: string,
   workspaceId: string,
   processId: string
