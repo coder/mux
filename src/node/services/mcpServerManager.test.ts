@@ -490,11 +490,12 @@ describe("MCPServerManager", () => {
     } as unknown as Tool;
 
     const startServersMock = mock(() => {
+      const tools: Record<string, Tool> = {};
       const instance = {
         name: "test-server",
         resolvedTransport: "stdio" as const,
         autoFallbackUsed: false,
-        tools: {} as Record<string, Tool>,
+        tools,
         isClosed: false,
         close: mock(() => Promise.resolve(undefined)),
       };
@@ -522,7 +523,13 @@ describe("MCPServerManager", () => {
       throw new Error("Expected wrapped MCP tool to include execute");
     }
 
-    await expect(firstTool.execute({}, {} as never)).rejects.toThrow(closedError);
+    let firstToolError: unknown;
+    try {
+      await firstTool.execute({}, {} as never);
+    } catch (error) {
+      firstToolError = error;
+    }
+    expect(firstToolError).toBe(closedError);
 
     const cached = access.workspaceServers.get(workspaceId) as
       | { instances: Map<string, { isClosed: boolean }> }
@@ -577,7 +584,7 @@ describe("isClosedClientError", () => {
 
 describe("wrapMCPTools", () => {
   test("calls onClosed when execute throws a closed-client error", async () => {
-    const onClosed = mock(() => {});
+    const onClosed = mock(() => undefined);
     const closedError = new Error("Attempted to send a request from a closed client");
     const tool = {
       execute: mock(() => Promise.reject(closedError)),
@@ -585,12 +592,20 @@ describe("wrapMCPTools", () => {
     } as unknown as Tool;
 
     const wrapped = wrapMCPTools({ myTool: tool }, undefined, onClosed);
-    await expect(wrapped.myTool.execute!({}, {} as never)).rejects.toThrow(closedError);
+
+    let executeError: unknown;
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+    } catch (error) {
+      executeError = error;
+    }
+
+    expect(executeError).toBe(closedError);
     expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
   test("does NOT call onClosed for non-closed-client errors", async () => {
-    const onClosed = mock(() => {});
+    const onClosed = mock(() => undefined);
     const otherError = new Error("some other failure");
     const tool = {
       execute: mock(() => Promise.reject(otherError)),
@@ -598,13 +613,21 @@ describe("wrapMCPTools", () => {
     } as unknown as Tool;
 
     const wrapped = wrapMCPTools({ myTool: tool }, undefined, onClosed);
-    await expect(wrapped.myTool.execute!({}, {} as never)).rejects.toThrow(otherError);
+
+    let executeError: unknown;
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+    } catch (error) {
+      executeError = error;
+    }
+
+    expect(executeError).toBe(otherError);
     expect(onClosed).toHaveBeenCalledTimes(0);
   });
 
   test("calls onActivity before execute and still calls it on failure", async () => {
-    const onActivity = mock(() => {});
-    const onClosed = mock(() => {});
+    const onActivity = mock(() => undefined);
+    const onClosed = mock(() => undefined);
     const tool = {
       execute: mock(() =>
         Promise.reject(new Error("Attempted to send a request from a closed client"))
@@ -613,7 +636,15 @@ describe("wrapMCPTools", () => {
     } as unknown as Tool;
 
     const wrapped = wrapMCPTools({ myTool: tool }, onActivity, onClosed);
-    await expect(wrapped.myTool.execute!({}, {} as never)).rejects.toThrow();
+
+    let didThrow = false;
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+    } catch {
+      didThrow = true;
+    }
+
+    expect(didThrow).toBe(true);
     expect(onActivity).toHaveBeenCalledTimes(1);
   });
 
@@ -624,7 +655,7 @@ describe("wrapMCPTools", () => {
     } as unknown as Tool;
 
     const wrapped = wrapMCPTools({ myTool: tool });
-    const result = await wrapped.myTool.execute!({}, {} as never);
+    const result: unknown = await wrapped.myTool.execute!({}, {} as never);
     expect(result).toBeTruthy();
   });
 
