@@ -109,6 +109,31 @@ describe("buildSwitchAgentDescription", () => {
     expect(description).toContain("- secret-router: Hidden but routable");
   });
 
+  test("does not duplicate agent that is both selectable and routable", () => {
+    const description = buildDescriptionWithAgents([
+      createAgentDescriptor("exec", {
+        description: "Implement changes",
+        uiSelectable: true,
+        uiRoutable: true,
+      }),
+    ]);
+
+    const matches = description.match(/exec/g);
+    expect(matches?.length).toBe(1);
+  });
+
+  test("handles agent with no description", () => {
+    const description = buildDescriptionWithAgents([
+      createAgentDescriptor("custom", {
+        uiSelectable: true,
+        uiRoutable: false,
+      }),
+    ]);
+
+    expect(description).toContain("- custom");
+    expect(description).not.toContain("- custom:");
+  });
+
   test("excludes hidden agents without uiRoutable", () => {
     const description = buildDescriptionWithAgents([
       createAgentDescriptor("visible", {

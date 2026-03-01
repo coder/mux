@@ -60,6 +60,10 @@ interface AgentDefinitionUiFlags {
   routable?: boolean;
 }
 
+// TODO: The visibility/routability resolution logic (hidden → selectable, routable)
+// is duplicated across agentDefinitionsService.ts, agentSession.ts,
+// streamContextBuilder.ts, and orpc/router.ts. Consider extracting a single
+// resolveAgentVisibility(ui) → { selectable, routable, disabled } helper.
 function resolveUiSelectable(ui: AgentDefinitionUiFlags | undefined): boolean {
   if (!ui) {
     return true;
@@ -76,12 +80,21 @@ function resolveUiSelectable(ui: AgentDefinitionUiFlags | undefined): boolean {
   return true;
 }
 
+/**
+ * Resolve whether an agent can be targeted by switch_agent.
+ *
+ * Defaults to the same value as uiSelectable: visible agents are routable by
+ * default (a human-pickable agent should also be agent-pickable). This differs
+ * from subagentRunnable which defaults to false, because routing via
+ * switch_agent has lower impact than spawning a task sub-agent.
+ *
+ * Hidden agents must explicitly set `ui.routable: true` to be switch targets.
+ */
 function resolveUiRoutable(ui: AgentDefinitionUiFlags | undefined): boolean {
   if (typeof ui?.routable === "boolean") {
     return ui.routable;
   }
 
-  // Mirror uiSelectable when no explicit routable override is provided.
   return resolveUiSelectable(ui);
 }
 

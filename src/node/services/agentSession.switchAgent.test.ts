@@ -334,6 +334,55 @@ describe("AgentSession switch_agent target validation", () => {
     }
   });
 
+  test("rejects switch to disabled agent even with ui.routable: true", async () => {
+    using projectDir = new DisposableTempDir("agent-session-switch-disabled-routable");
+    await writeAgentDefinition(
+      projectDir.path,
+      "disabled-routable-agent",
+      "ui:\n  disabled: true\n  routable: true\n"
+    );
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const session = createSession(historyService, projectDir.path, projectDir.path, {
+      aiSettingsByAgent: {
+        exec: {
+          model: "anthropic:claude-sonnet-4-5",
+          thinkingLevel: "high",
+        },
+      },
+    });
+
+    try {
+      const internals = session as unknown as SessionInternals;
+      const sendMessageMock = mock(() => Promise.resolve({ success: true as const }));
+      internals.sendMessage = sendMessageMock as unknown as SessionInternals["sendMessage"];
+
+      const result = await internals.dispatchAgentSwitch(
+        {
+          agentId: "disabled-routable-agent",
+          followUp: "Should not send",
+        },
+        { model: "openai:gpt-4o-mini", agentId: "exec", thinkingLevel: "low" },
+        "openai:gpt-4o"
+      );
+
+      expect(result).toBe(true);
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+      const firstCall = sendMessageMock.mock.calls[0];
+      expect(firstCall).toBeDefined();
+      const [messageArg, optionsArg] = firstCall as unknown as [string, SendMessageOptions];
+      expect(messageArg).toContain('target "disabled-routable-agent" is unavailable');
+      expect(optionsArg.agentId).toBe("exec");
+      expect(optionsArg.model).toBe("openai:gpt-4o-mini");
+      expect(optionsArg.thinkingLevel).toBe("low");
+    } finally {
+      session.dispose();
+    }
+  });
+
   test("falls back to safe agent when switch target is disabled", async () => {
     using projectDir = new DisposableTempDir("agent-session-switch-disabled");
     await writeAgentDefinition(projectDir.path, "disabled-agent", "disabled: true\n");
