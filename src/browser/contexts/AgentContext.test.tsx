@@ -156,4 +156,77 @@ describe("AgentContext", () => {
       expect(contextValue?.agentId).toBe("exec");
     });
   });
+
+  test("cycle shortcut exits auto even when only one manual agent is available", async () => {
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT];
+    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("auto"));
+
+    let contextValue: AgentContextValue | undefined;
+
+    render(
+      <AgentProvider projectPath={projectPath}>
+        <Harness onChange={(value) => (contextValue = value)} />
+      </AgentProvider>
+    );
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("auto");
+      expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["auto", "exec"]);
+    });
+
+    window.api = { platform: "darwin", versions: {} };
+
+    fireEvent.keyDown(window, {
+      key: ".",
+      ctrlKey: true,
+      metaKey: true,
+    });
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("exec");
+    });
+  });
+
+  test("toggle auto shortcut switches between manual and auto", async () => {
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("exec"));
+
+    let contextValue: AgentContextValue | undefined;
+
+    render(
+      <AgentProvider projectPath={projectPath}>
+        <Harness onChange={(value) => (contextValue = value)} />
+      </AgentProvider>
+    );
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("exec");
+    });
+
+    window.api = { platform: "darwin", versions: {} };
+
+    fireEvent.keyDown(window, {
+      key: ".",
+      ctrlKey: true,
+      metaKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("auto");
+    });
+
+    fireEvent.keyDown(window, {
+      key: ".",
+      ctrlKey: true,
+      metaKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("exec");
+    });
+  });
 });

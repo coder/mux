@@ -355,6 +355,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           <br />
           Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
           <br />
+          Toggle auto: {formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT)}
+          <br />
           Quick select: {formatNumberedKeybind(0).replace("1", "1-9")} (when open)
           <br />
           <br />

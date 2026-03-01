@@ -7,6 +7,7 @@ import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   TOGGLE_AGENT: "Open agent picker",
   CYCLE_AGENT: "Cycle agent",
+  TOGGLE_AUTO_AGENT: "Toggle auto agent",
   SEND_MESSAGE: "Send message",
   SEND_MESSAGE_AFTER_TURN: "Send after turn",
   NEW_LINE: "Insert newline",
@@ -87,6 +88,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     keys: [
       "TOGGLE_AGENT",
       "CYCLE_AGENT",
+      "TOGGLE_AUTO_AGENT",
       "OPEN_COMMAND_PALETTE",
       "OPEN_MUX_CHAT",
       "OPEN_SETTINGS",

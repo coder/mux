@@ -258,8 +258,11 @@ export const KEYBINDS = {
   /** Open agent picker (focuses search) */
   TOGGLE_AGENT: { key: "A", ctrl: true, shift: true },
 
-  /** Cycle to next agent without opening picker */
+  /** Cycle to next manual agent without opening picker */
   CYCLE_AGENT: { key: ".", ctrl: true },
+
+  /** Toggle auto agent mode on/off */
+  TOGGLE_AUTO_AGENT: { key: ".", ctrl: true, shift: true },
 
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },

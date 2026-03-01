@@ -827,6 +827,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         },
       },
       {
+        id: "toggle-auto-agent",
+        title: "Toggle Auto Agent",
+        section: section.mode,
+        shortcutHint: formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT),
+        run: () => {
+          const ev = new KeyboardEvent("keydown", { key: ".", ctrlKey: true, shiftKey: true });
+          window.dispatchEvent(ev);
+        },
+      },
+      {
         id: CommandIds.modelChange(),
         title: "Change Model…",
         section: section.mode,

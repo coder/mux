@@ -2591,10 +2591,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
                       <span> - change model</span>
                     </span>
-                    {!isAutoAgent && (
+                    <span>
+                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
                       <span>
-                        <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
-                        <span> - change agent</span>
+                        {isAutoAgent ? " - cycle agent (turn off auto)" : " - change agent"}
+                      </span>
+                    </span>
+                    {autoAvailable && !isAutoAgent && (
+                      <span>
+                        <span className="font-mono">
+                          {formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT)}
+                        </span>
+                        <span> - enable auto</span>
                       </span>
                     )}
                   </div>
