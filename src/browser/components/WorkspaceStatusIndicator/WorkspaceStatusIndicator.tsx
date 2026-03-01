@@ -4,7 +4,6 @@ import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
 import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
-import { Button } from "../Button/Button";
 
 export const WorkspaceStatusIndicator = memo<{
   workspaceId: string;
@@ -34,15 +33,22 @@ export const WorkspaceStatusIndicator = memo<{
         {agentStatus.url && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="flex h-4 w-4 shrink-0 items-center justify-center [&_svg]:size-3"
+              {/* Plain <a> instead of Button to keep the icon compact.
+                  !min-h-0 !min-w-0 override the global 44px mobile touch-target
+                  rule (globals.css) that forces all <a>/<button> to min 44×44px
+                  on pointer:coarse — this inline icon doesn't need a full tap target.
+                  stopPropagation prevents the parent workspace-select and DnD
+                  handlers from swallowing the tap. */}
+              <a
+                href={agentStatus.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-4 !min-h-0 w-4 !min-w-0 shrink-0 items-center justify-center [&_svg]:size-3"
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
               >
-                <a href={agentStatus.url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLinkIcon />
-                </a>
-              </Button>
+                <ExternalLinkIcon />
+              </a>
             </TooltipTrigger>
             <TooltipContent align="center">{agentStatus.url}</TooltipContent>
           </Tooltip>
