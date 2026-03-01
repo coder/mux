@@ -13,6 +13,10 @@ tools:
   remove:
     # Plan should not apply sub-agent patches.
     - task_apply_git_patch
+    # Global config tools are restricted to the mux agent
+    - mux_global_agents_.*
+    - agent_skill_write
+    - agent_skill_delete
   require:
     - propose_plan
   # Note: file_edit_* tools ARE available but restricted to plan file only at runtime
