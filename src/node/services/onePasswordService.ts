@@ -125,13 +125,7 @@ export class OnePasswordService {
     try {
       const client = await this.getClient();
       const overviews = await client.vaults.list();
-      const vaults: Array<{ id: string; title: string }> = [];
-
-      for await (const vault of overviews) {
-        vaults.push({ id: vault.id, title: vault.title });
-      }
-
-      return vaults;
+      return overviews.map((vault) => ({ id: vault.id, title: vault.title }));
     } catch (error) {
       log.warn("[OnePasswordService] Failed to list vaults", { error });
       return [];
@@ -144,17 +138,11 @@ export class OnePasswordService {
     try {
       const client = await this.getClient();
       const overviews = await client.items.list(vaultId);
-      const items: Array<{ id: string; title: string; category: string }> = [];
-
-      for await (const item of overviews) {
-        items.push({
-          id: item.id,
-          title: item.title,
-          category: String(item.category),
-        });
-      }
-
-      return items;
+      return overviews.map((item) => ({
+        id: item.id,
+        title: item.title,
+        category: String(item.category),
+      }));
     } catch (error) {
       log.warn("[OnePasswordService] Failed to list items", { error, vaultId });
       return [];

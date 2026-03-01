@@ -53,10 +53,10 @@ function createMockClient() {
       resolve: mock((ref: string) => Promise.resolve(`secret:${ref}`)),
     },
     vaults: {
-      list: mock(() => Promise.resolve(asyncIterable<MockVaultOverview>([]))),
+      list: mock(() => Promise.resolve([] as MockVaultOverview[])),
     },
     items: {
-      list: mock(() => Promise.resolve(asyncIterable<MockItemOverview>([]))),
+      list: mock(() => Promise.resolve([] as MockItemOverview[])),
       get: mock(() => Promise.resolve({ fields: [], sections: [] } as MockItem)),
     },
   };
@@ -70,12 +70,6 @@ function createDeferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
-}
-
-async function* asyncIterable<T>(items: T[]): AsyncGenerator<T> {
-  for (const item of items) {
-    yield item;
-  }
 }
 
 describe("OnePasswordService", () => {
@@ -98,13 +92,13 @@ describe("OnePasswordService", () => {
 
     const service = new OnePasswordService("account-a");
 
-    await expect(service.isAvailable()).resolves.toBe(false);
+    expect(await service.isAvailable()).toBe(false);
   });
 
   it("isAvailable() returns true when createClient resolves", async () => {
     const service = new OnePasswordService("account-a");
 
-    await expect(service.isAvailable()).resolves.toBe(true);
+    expect(await service.isAvailable()).toBe(true);
   });
 
   it("isAvailable() caches result", async () => {
@@ -122,7 +116,7 @@ describe("OnePasswordService", () => {
 
     mockClient.secrets.resolve.mockImplementationOnce(() => Promise.resolve("secret-value"));
 
-    await expect(service.resolve(ref)).resolves.toBe("secret-value");
+    expect(await service.resolve(ref)).toBe("secret-value");
   });
 
   it("resolve() returns undefined when client creation fails", async () => {
@@ -130,7 +124,7 @@ describe("OnePasswordService", () => {
 
     mockCreateClient.mockImplementationOnce(() => Promise.reject(new Error("create failed")));
 
-    await expect(service.resolve("op://vault/item/password")).resolves.toBeUndefined();
+    expect(await service.resolve("op://vault/item/password")).toBeUndefined();
   });
 
   it("resolve() returns undefined on SDK resolve error", async () => {
@@ -140,7 +134,7 @@ describe("OnePasswordService", () => {
       Promise.reject(new Error("resolve failed"))
     );
 
-    await expect(service.resolve("op://vault/item/password")).resolves.toBeUndefined();
+    expect(await service.resolve("op://vault/item/password")).toBeUndefined();
   });
 
   it("resolve() uses cache within TTL", async () => {
@@ -183,7 +177,18 @@ describe("OnePasswordService", () => {
   it("resolve() asserts on non-op:// input", async () => {
     const service = new OnePasswordService("account-a");
 
-    await expect(service.resolve("not-a-reference")).rejects.toThrow("op://");
+    let thrown: unknown;
+    try {
+      await service.resolve("not-a-reference");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    if (!(thrown instanceof Error)) {
+      throw new Error("Expected resolve() to reject with an Error");
+    }
+    expect(thrown.message).toContain("op://");
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
@@ -204,8 +209,8 @@ describe("OnePasswordService", () => {
 
     deferred.resolve(concurrentClient as unknown as Client);
 
-    await expect(firstPromise).resolves.toBe("value:op://vault/item/field-a");
-    await expect(secondPromise).resolves.toBe("value:op://vault/item/field-b");
+    expect(await firstPromise).toBe("value:op://vault/item/field-a");
+    expect(await secondPromise).toBe("value:op://vault/item/field-b");
     expect(mockCreateClient).toHaveBeenCalledTimes(1);
   });
 
@@ -217,13 +222,13 @@ describe("OnePasswordService", () => {
       .mockImplementationOnce(() => Promise.resolve("before-reset"))
       .mockImplementationOnce(() => Promise.resolve("after-reset"));
 
-    await expect(service.resolve(ref)).resolves.toBe("before-reset");
-    await expect(service.isAvailable()).resolves.toBe(true);
+    expect(await service.resolve(ref)).toBe("before-reset");
+    expect(await service.isAvailable()).toBe(true);
 
     service.reset();
 
-    await expect(service.isAvailable()).resolves.toBe(true);
-    await expect(service.resolve(ref)).resolves.toBe("after-reset");
+    expect(await service.isAvailable()).toBe(true);
+    expect(await service.resolve(ref)).toBe("after-reset");
     expect(mockCreateClient).toHaveBeenCalledTimes(2);
     expect(mockClient.secrets.resolve).toHaveBeenCalledTimes(2);
   });
@@ -242,7 +247,7 @@ describe("OnePasswordService", () => {
       .mockImplementationOnce(() => Promise.resolve(firstClient as unknown as Client))
       .mockImplementationOnce(() => Promise.resolve(secondClient as unknown as Client));
 
-    await expect(service.resolve("op://vault/item/password")).resolves.toBe("refreshed-secret");
+    expect(await service.resolve("op://vault/item/password")).toBe("refreshed-secret");
 
     expect(mockCreateClient).toHaveBeenCalledTimes(2);
     expect(firstClient.secrets.resolve).toHaveBeenCalledTimes(1);
@@ -253,15 +258,13 @@ describe("OnePasswordService", () => {
     const service = new OnePasswordService("account-a");
 
     mockClient.vaults.list.mockImplementationOnce(() =>
-      Promise.resolve(
-        asyncIterable([
-          { id: "v1", title: "Engineering" },
-          { id: "v2", title: "Personal" },
-        ])
-      )
+      Promise.resolve([
+        { id: "v1", title: "Engineering" },
+        { id: "v2", title: "Personal" },
+      ])
     );
 
-    await expect(service.listVaults()).resolves.toEqual([
+    expect(await service.listVaults()).toEqual([
       { id: "v1", title: "Engineering" },
       { id: "v2", title: "Personal" },
     ]);
@@ -271,15 +274,13 @@ describe("OnePasswordService", () => {
     const service = new OnePasswordService("account-a");
 
     mockClient.items.list.mockImplementationOnce(() =>
-      Promise.resolve(
-        asyncIterable([
-          { id: "i1", title: "Github", category: "LOGIN" },
-          { id: "i2", title: "AWS", category: "API_CREDENTIAL" },
-        ])
-      )
+      Promise.resolve([
+        { id: "i1", title: "Github", category: "LOGIN" },
+        { id: "i2", title: "AWS", category: "API_CREDENTIAL" },
+      ])
     );
 
-    await expect(service.listItems("vault-a")).resolves.toEqual([
+    expect(await service.listItems("vault-a")).toEqual([
       { id: "i1", title: "Github", category: "LOGIN" },
       { id: "i2", title: "AWS", category: "API_CREDENTIAL" },
     ]);
@@ -300,7 +301,7 @@ describe("OnePasswordService", () => {
       })
     );
 
-    await expect(service.getItemFields("vault-a", "item-a")).resolves.toEqual([
+    expect(await service.getItemFields("vault-a", "item-a")).toEqual([
       { id: "f1", title: "username", sectionTitle: "Login" },
       { id: "f2", title: "password", sectionTitle: "Login" },
       { id: "f3", title: "token", sectionTitle: undefined },

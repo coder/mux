@@ -411,9 +411,9 @@ describe("Config", () => {
     });
 
     it("resolves { op } values via external resolver", async () => {
-      const resolver: ExternalSecretResolver = async (ref: string) => {
-        if (ref === "op://Dev/Stripe/key") return "sk-resolved";
-        return undefined;
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === "op://Dev/Stripe/key") return Promise.resolve("sk-resolved");
+        return Promise.resolve(undefined);
       };
 
       const record = await secretsToRecord(
@@ -437,7 +437,7 @@ describe("Config", () => {
     });
 
     it("omits { op } values when resolver returns undefined", async () => {
-      const resolver: ExternalSecretResolver = async () => undefined;
+      const resolver: ExternalSecretResolver = () => Promise.resolve(undefined);
       const record = await secretsToRecord(
         [{ key: "A", value: { op: "op://Dev/Stripe/key" } }],
         resolver
@@ -447,9 +447,9 @@ describe("Config", () => {
     });
 
     it("resolves mixed literal, { secret }, and { op } values", async () => {
-      const resolver: ExternalSecretResolver = async (ref: string) => {
-        if (ref === "op://Vault/Item/field") return "op-resolved";
-        return undefined;
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === "op://Vault/Item/field") return Promise.resolve("op-resolved");
+        return Promise.resolve(undefined);
       };
 
       const record = await secretsToRecord(
