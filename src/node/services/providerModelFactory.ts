@@ -708,9 +708,6 @@ export class ProviderModelFactory {
         // fall back to an API key when OAuth is not connected.
         const creds = resolveProviderCredentials("openai", providerConfig);
         const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
-        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
-          return Err({ type: "api_key_not_found", provider: providerName });
-        }
 
         // When a model requires Codex OAuth but the user hasn't connected it,
         // fall back to their API key instead of blocking entirely.  If the model
@@ -744,6 +741,13 @@ export class ProviderModelFactory {
 
           return codexOauthDefaultAuth === "oauth";
         })();
+
+        // Defer op:// key failure until after OAuth routing is evaluated —
+        // OAuth-eligible models can proceed without an API key.
+        const opRefFailed = creds.apiKey != null && isOpReference(creds.apiKey) && !resolvedApiKey;
+        if (opRefFailed && !shouldRouteThroughCodexOauth) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
 
         if (!shouldRouteThroughCodexOauth && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
