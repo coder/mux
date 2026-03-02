@@ -7,6 +7,7 @@ import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderD
 import type { Config } from "@/node/config";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
+import { log } from "./log";
 
 const OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions";
 const MUX_GATEWAY_TRANSCRIPTION_PATH = "/api/v1/openai/v1/audio/transcriptions";
@@ -132,6 +133,16 @@ export class VoiceService {
     let resolvedApiKey = apiKey;
     if (isOpReference(apiKey) && this.opResolver) {
       resolvedApiKey = (await this.opResolver(apiKey)) ?? apiKey;
+    }
+
+    const opReferenceUnresolved = isOpReference(resolvedApiKey as unknown);
+    if (opReferenceUnresolved) {
+      log.warn("Voice transcription skipped: 1Password key could not be resolved");
+      return {
+        success: false,
+        error:
+          "OpenAI API key could not be resolved from 1Password. Update the key in Settings → Providers and try again.",
+      };
     }
 
     const response = await fetch(this.resolveOpenAITranscriptionUrl(openaiConfig, forcedBaseUrl), {

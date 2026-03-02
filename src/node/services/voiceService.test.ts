@@ -78,6 +78,32 @@ describe("VoiceService.transcribe", () => {
     });
   });
 
+  it("returns error without calling fetch when OpenAI key is unresolved op:// reference", async () => {
+    await withTempConfig(async (config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "op://Personal/OpenAI/password",
+        },
+      });
+
+      const fetchSpy = spyOn(globalThis, "fetch");
+      fetchSpy.mockResolvedValue(new Response("transcribed text"));
+
+      try {
+        const result = await service.transcribe("Zm9v");
+
+        expect(result).toEqual({
+          success: false,
+          error:
+            "OpenAI API key could not be resolved from 1Password. Update the key in Settings → Providers and try again.",
+        });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
+
   it("uses gateway when couponCode is set and OpenAI key is absent", async () => {
     await withTempConfig(async (config, service) => {
       config.saveProvidersConfig({
