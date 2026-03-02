@@ -54,6 +54,45 @@ export class OnePasswordService {
     this.available = false;
   }
 
+  private async withSessionRetry<T>(
+    operationName: string,
+    operation: (client: Client) => Promise<T>,
+    fallback: T,
+    context: Record<string, unknown> = {}
+  ): Promise<T> {
+    const attempt = async (): Promise<T> => {
+      const client = await this.getClient();
+      return operation(client);
+    };
+
+    try {
+      return await attempt();
+    } catch (error) {
+      if (error instanceof DesktopSessionExpiredError) {
+        this.client = null;
+        this.initPromise = null;
+
+        try {
+          return await attempt();
+        } catch (retryError) {
+          log.warn(`[OnePasswordService] Failed to ${operationName} after session refresh`, {
+            ...context,
+            error: retryError,
+          });
+          this.invalidateAvailabilityCache();
+          return fallback;
+        }
+      }
+
+      log.warn(`[OnePasswordService] Failed to ${operationName}`, {
+        ...context,
+        error,
+      });
+      this.invalidateAvailabilityCache();
+      return fallback;
+    }
+  }
+
   async isAvailable(): Promise<boolean> {
     if (this.available === true) {
       return true;
@@ -142,58 +181,59 @@ export class OnePasswordService {
   }
 
   async listVaults(): Promise<Array<{ id: string; title: string }>> {
-    try {
-      const client = await this.getClient();
-      const overviews = await client.vaults.list();
-      return overviews.map((vault) => ({ id: vault.id, title: vault.title }));
-    } catch (error) {
-      log.warn("[OnePasswordService] Failed to list vaults", { error });
-      this.invalidateAvailabilityCache();
-      return [];
-    }
+    return this.withSessionRetry<Array<{ id: string; title: string }>>(
+      "list vaults",
+      async (client) => {
+        const overviews = await client.vaults.list();
+        return overviews.map((vault) => ({ id: vault.id, title: vault.title }));
+      },
+      []
+    );
   }
 
   async listItems(
     vaultId: string
   ): Promise<Array<{ id: string; title: string; category: string }>> {
-    try {
-      const client = await this.getClient();
-      const overviews = await client.items.list(vaultId);
-      return overviews.map((item) => ({
-        id: item.id,
-        title: item.title,
-        category: String(item.category),
-      }));
-    } catch (error) {
-      log.warn("[OnePasswordService] Failed to list items", { error, vaultId });
-      this.invalidateAvailabilityCache();
-      return [];
-    }
+    return this.withSessionRetry<Array<{ id: string; title: string; category: string }>>(
+      "list items",
+      async (client) => {
+        const overviews = await client.items.list(vaultId);
+        return overviews.map((item) => ({
+          id: item.id,
+          title: item.title,
+          category: String(item.category),
+        }));
+      },
+      [],
+      { vaultId }
+    );
   }
 
   async getItemFields(
     vaultId: string,
     itemId: string
   ): Promise<Array<{ id: string; title: string; sectionTitle?: string; sectionId?: string }>> {
-    try {
-      const client = await this.getClient();
-      const item = await client.items.get(vaultId, itemId);
-      const sectionTitles = new Map<string, string>();
-      for (const section of item.sections) {
-        sectionTitles.set(section.id, section.title);
-      }
+    return this.withSessionRetry<
+      Array<{ id: string; title: string; sectionTitle?: string; sectionId?: string }>
+    >(
+      "list item fields",
+      async (client) => {
+        const item = await client.items.get(vaultId, itemId);
+        const sectionTitles = new Map<string, string>();
+        for (const section of item.sections) {
+          sectionTitles.set(section.id, section.title);
+        }
 
-      return item.fields.map((field) => ({
-        id: field.id,
-        title: field.title,
-        sectionTitle: field.sectionId ? sectionTitles.get(field.sectionId) : undefined,
-        sectionId: field.sectionId ?? undefined,
-      }));
-    } catch (error) {
-      log.warn("[OnePasswordService] Failed to list item fields", { error, vaultId, itemId });
-      this.invalidateAvailabilityCache();
-      return [];
-    }
+        return item.fields.map((field) => ({
+          id: field.id,
+          title: field.title,
+          sectionTitle: field.sectionId ? sectionTitles.get(field.sectionId) : undefined,
+          sectionId: field.sectionId ?? undefined,
+        }));
+      },
+      [],
+      { vaultId, itemId }
+    );
   }
 
   static buildReference(

@@ -279,6 +279,29 @@ describe("OnePasswordService", () => {
     ]);
   });
 
+  it("listVaults() retries once on DesktopSessionExpiredError", async () => {
+    const service = new OnePasswordService("account-a");
+    const firstClient = createMockClient();
+    const secondClient = createMockClient();
+
+    firstClient.vaults.list.mockImplementationOnce(() => {
+      return Promise.reject(new MockDesktopSessionExpiredError("expired"));
+    });
+    secondClient.vaults.list.mockImplementationOnce(() =>
+      Promise.resolve([{ id: "v1", title: "Engineering" }])
+    );
+
+    mockCreateClient
+      .mockImplementationOnce(() => Promise.resolve(firstClient as unknown as Client))
+      .mockImplementationOnce(() => Promise.resolve(secondClient as unknown as Client));
+
+    expect(await service.listVaults()).toEqual([{ id: "v1", title: "Engineering" }]);
+
+    expect(mockCreateClient).toHaveBeenCalledTimes(2);
+    expect(firstClient.vaults.list).toHaveBeenCalledTimes(1);
+    expect(secondClient.vaults.list).toHaveBeenCalledTimes(1);
+  });
+
   it("listItems() returns mapped item data", async () => {
     const service = new OnePasswordService("account-a");
 
