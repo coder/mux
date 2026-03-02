@@ -14,9 +14,16 @@ const TestSchema = z
   })
   .passthrough();
 
+const OBJECT_ROOT_POLICY = { rootContainer: "object" } as const;
+
 describe("applyMutations", () => {
   it("applies set operation", () => {
-    const result = applyMutations({}, [{ op: "set", path: ["name"], value: "test" }], TestSchema);
+    const result = applyMutations(
+      {},
+      [{ op: "set", path: ["name"], value: "test" }],
+      TestSchema,
+      OBJECT_ROOT_POLICY
+    );
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -25,7 +32,12 @@ describe("applyMutations", () => {
   });
 
   it("applies delete operation", () => {
-    const result = applyMutations({ name: "test" }, [{ op: "delete", path: ["name"] }], TestSchema);
+    const result = applyMutations(
+      { name: "test" },
+      [{ op: "delete", path: ["name"] }],
+      TestSchema,
+      OBJECT_ROOT_POLICY
+    );
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -37,7 +49,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       {},
       [{ op: "set", path: ["nested", "value"], value: 42 }],
-      TestSchema
+      TestSchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(true);
@@ -50,7 +63,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       {},
       [{ op: "set", path: ["__proto__", "polluted"], value: true }],
-      TestSchema
+      TestSchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(false);
@@ -60,7 +74,12 @@ describe("applyMutations", () => {
   });
 
   it("rejects prototype path segment", () => {
-    const result = applyMutations({}, [{ op: "set", path: ["prototype"], value: {} }], TestSchema);
+    const result = applyMutations(
+      {},
+      [{ op: "set", path: ["prototype"], value: {} }],
+      TestSchema,
+      OBJECT_ROOT_POLICY
+    );
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -72,7 +91,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       {},
       [{ op: "set", path: ["constructor"], value: {} }],
-      TestSchema
+      TestSchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(false);
@@ -83,12 +103,31 @@ describe("applyMutations", () => {
 
   it("returns validation issues on schema failure", () => {
     const strictSchema = z.object({ name: z.string() }).strict();
-    const result = applyMutations({}, [{ op: "set", path: ["invalid"], value: "x" }], strictSchema);
+    const result = applyMutations(
+      {},
+      [{ op: "set", path: ["invalid"], value: "x" }],
+      strictSchema,
+      OBJECT_ROOT_POLICY
+    );
 
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.validationIssues).toBeDefined();
       expect(result.validationIssues?.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("recovers from primitive root by normalizing to object", () => {
+    const result = applyMutations(
+      "oops",
+      [{ op: "set", path: ["name"], value: "fixed" }],
+      z.object({ name: z.string() }),
+      OBJECT_ROOT_POLICY
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.document).toEqual({ name: "fixed" });
     }
   });
 
@@ -99,7 +138,8 @@ describe("applyMutations", () => {
         { op: "set", path: ["name"], value: "test" },
         { op: "set", path: ["nested", "value"], value: 42 },
       ],
-      TestSchema
+      TestSchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(true);
@@ -117,7 +157,8 @@ describe("applyMutations", () => {
         topExtra: 99,
       },
       [{ op: "set", path: ["name"], value: "updated" }],
-      TestSchema
+      TestSchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(true);
@@ -135,7 +176,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       { items: ["a"] },
       [{ op: "set", path: ["items", "4000000000"], value: "boom" }],
-      ArraySchema
+      ArraySchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(false);
@@ -151,7 +193,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       { items: [{ v: 1 }] },
       [{ op: "set", path: ["items", "999999999", "v"], value: 2 }],
-      ArraySchema
+      ArraySchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(false);
@@ -170,7 +213,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       {},
       [{ op: "set", path: ["settings", "123", "value"], value: "hello" }],
-      RecordSchema
+      RecordSchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(true);
@@ -193,7 +237,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       {},
       [{ op: "set", path: ["toString", "value"], value: 1 }],
-      InheritedKeySchema
+      InheritedKeySchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(true);
@@ -206,7 +251,8 @@ describe("applyMutations", () => {
     const result = applyMutations(
       { name: "test" },
       [{ op: "delete", path: ["toString"] }],
-      TestSchema
+      TestSchema,
+      OBJECT_ROOT_POLICY
     );
 
     expect(result.success).toBe(true);

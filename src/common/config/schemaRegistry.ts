@@ -9,6 +9,7 @@ export interface ConfigFileEntry<TSchema extends z.ZodTypeAny> {
   fileKind: ConfigFileKind;
   schema: TSchema;
   fileName: string;
+  rootContainer: "object" | "array";
 }
 
 export const CONFIG_FILE_REGISTRY = {
@@ -16,11 +17,13 @@ export const CONFIG_FILE_REGISTRY = {
     fileKind: "jsonc",
     schema: ProvidersConfigSchema,
     fileName: "providers.jsonc",
+    rootContainer: "object",
   },
   config: {
     fileKind: "json",
     schema: AppConfigOnDiskSchema,
     fileName: "config.json",
+    rootContainer: "object",
   },
 } as const satisfies Record<string, ConfigFileEntry<z.ZodTypeAny>>;
 

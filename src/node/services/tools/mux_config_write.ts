@@ -61,7 +61,8 @@ export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration)
         const mutationResult = applyMutations(
           currentDocument,
           args.operations,
-          registryEntry.schema
+          registryEntry.schema,
+          { rootContainer: registryEntry.rootContainer }
         );
 
         if (!mutationResult.success) {

@@ -54,22 +54,33 @@ export type MutationResult<TDocument = unknown> = MutationSuccess<TDocument> | M
 
 type MutableContainer = Record<string, unknown> | unknown[];
 
+export interface MutationRootPolicy {
+  rootContainer: "object" | "array";
+}
+
+export function normalizeMutationRoot(
+  currentDocument: unknown,
+  policy: MutationRootPolicy
+): MutableContainer {
+  if (isMutableContainer(currentDocument)) {
+    return currentDocument;
+  }
+
+  // Recovery-first: parseable but invalid roots (string/number/boolean/null)
+  // must not block repair operations.
+  return policy.rootContainer === "array" ? [] : {};
+}
+
 // Apply path operations first, then validate the entire document against the canonical
 // schema so partial edits cannot persist an invalid config shape.
 export function applyMutations<TSchema extends z.ZodTypeAny>(
   currentDocument: unknown,
   operations: readonly ConfigOperation[],
-  schema: TSchema
+  schema: TSchema,
+  policy: MutationRootPolicy
 ): MutationResult<z.infer<TSchema>> {
-  const baseDocument = currentDocument ?? {};
+  const baseDocument = normalizeMutationRoot(currentDocument, policy);
   const clonedDocument = deepClone(baseDocument);
-
-  if (!isMutableContainer(clonedDocument)) {
-    return {
-      success: false,
-      error: "Config mutation requires an object or array document root",
-    };
-  }
 
   for (const [index, operation] of operations.entries()) {
     const deniedSegment = operation.path.find((segment) => DENIED_PATH_SEGMENTS.has(segment));

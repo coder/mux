@@ -408,4 +408,58 @@ describe("mux_config_write", () => {
     expect(configDocument.taskSettings?.maxParallelAgentTasks).toBe(4);
     expect(configDocument.defaultModel).toBe("anthropic:claude-sonnet-4-20250514");
   });
+
+  it("repairs primitive config.json root during write", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const configPath = path.join(muxHome.path, "config.json");
+    await fs.writeFile(configPath, JSON.stringify("oops"), "utf-8");
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "config",
+        operations: [{ op: "set", path: ["defaultModel"], value: "openai:gpt-4o" }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.appliedOps).toBe(1);
+    }
+
+    const configDocument = JSON.parse(await fs.readFile(configPath, "utf-8")) as {
+      defaultModel?: string;
+    };
+    expect(configDocument).toEqual({ defaultModel: "openai:gpt-4o" });
+  });
+
+  it("repairs primitive providers.jsonc root during write", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const providersPath = path.join(muxHome.path, "providers.jsonc");
+    await fs.writeFile(providersPath, "42", "utf-8");
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [{ op: "set", path: ["anthropic", "apiKey"], value: "sk-ant-fixed" }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.appliedOps).toBe(1);
+    }
+
+    const providersDocument = jsonc.parse(await fs.readFile(providersPath, "utf-8")) as {
+      anthropic?: { apiKey?: string };
+    };
+    expect(providersDocument).toEqual({ anthropic: { apiKey: "sk-ant-fixed" } });
+  });
 });
