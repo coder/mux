@@ -1352,10 +1352,10 @@ ${jsonString}`;
       globalRawByKey.set(globalSecret.key, globalSecret.value);
     }
 
-    const globalResolved = new Map<string, string | undefined>();
+    const globalResolved = new Map<string, Secret["value"] | undefined>();
     const globalResolving = new Set<string>();
 
-    const resolveGlobalKey = (key: string): string | undefined => {
+    const resolveGlobalKey = (key: string): Secret["value"] | undefined => {
       if (globalResolved.has(key)) {
         return globalResolved.get(key);
       }
@@ -1369,7 +1369,7 @@ ${jsonString}`;
       try {
         const raw = globalRawByKey.get(key);
 
-        if (typeof raw === "string") {
+        if (typeof raw === "string" || Config.isOpSecretValue(raw)) {
           globalResolved.set(key, raw);
           return raw;
         }
@@ -1393,11 +1393,11 @@ ${jsonString}`;
       }
     };
 
-    const globalSecretsByKey: Record<string, string> = {};
+    const globalSecretsByKey = new Map<string, Secret["value"]>();
     for (const key of globalRawByKey.keys()) {
       const value = resolveGlobalKey(key);
       if (value !== undefined) {
-        globalSecretsByKey[key] = value;
+        globalSecretsByKey.set(key, value);
       }
     }
 
@@ -1412,7 +1412,7 @@ ${jsonString}`;
       }
 
       // Allow empty-string global secrets by checking for undefined explicitly.
-      const resolvedGlobalValue = globalSecretsByKey[targetKey];
+      const resolvedGlobalValue = globalSecretsByKey.get(targetKey);
       if (resolvedGlobalValue !== undefined) {
         return {
           ...secret,

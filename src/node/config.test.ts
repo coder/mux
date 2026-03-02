@@ -391,6 +391,27 @@ describe("Config", () => {
       });
     });
 
+    it("resolves project secret aliases to global { op } values", async () => {
+      const opRef = "op://Vault/Item/field";
+      await config.updateGlobalSecrets([{ key: "GLOBAL_OP", value: { op: opRef } }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: { secret: "GLOBAL_OP" } },
+      ]);
+
+      const effective = config.getEffectiveSecrets(projectPath);
+      expect(effective).toEqual([{ key: "TOKEN", value: { op: opRef } }]);
+
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === opRef) return Promise.resolve("resolved-op");
+        return Promise.resolve(undefined);
+      };
+
+      const record = await secretsToRecord(effective, resolver);
+      expect(record).toEqual({ TOKEN: "resolved-op" });
+    });
+
     it("omits missing referenced secrets when resolving secretsToRecord", async () => {
       const record = await secretsToRecord([
         { key: "GLOBAL", value: "1" },
