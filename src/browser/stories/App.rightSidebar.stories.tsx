@@ -80,6 +80,7 @@ export const CostsTab: AppStory = {
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
+        localStorage.setItem("statsContainer:subTab", JSON.stringify("cost"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-costs"));
 
@@ -105,7 +106,7 @@ export const CostsTab: AppStory = {
 
     // Session usage is fetched async via WorkspaceStore; wait to avoid snapshot races.
     await waitFor(() => {
-      canvas.getByRole("tab", { name: /costs.*\$0\.56/i });
+      canvas.getByRole("tab", { name: /stats.*\$0\.56/i });
     });
   },
 };
@@ -121,6 +122,7 @@ export const CostsTabWithCacheCreate: AppStory = {
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
+        localStorage.setItem("statsContainer:subTab", JSON.stringify("cost"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
         const modelUsage = {
           // Realistic Anthropic usage: heavy caching, cache create is expensive
@@ -164,9 +166,9 @@ export const CostsTabWithCacheCreate: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Ensure we're on the Costs tab (layout state can persist across stories).
-    const costsTab = await canvas.findByRole("tab", { name: /^costs/i }, { timeout: 10_000 });
-    await userEvent.click(costsTab);
+    // Ensure we're on the Stats tab (layout state can persist across stories).
+    const statsTab = await canvas.findByRole("tab", { name: /^stats/i }, { timeout: 10_000 });
+    await userEvent.click(statsTab);
 
     // Wait for session usage to load + render.
     await waitFor(
@@ -211,7 +213,7 @@ export const ReviewTab: AppStory = {
 
     // Wait for session usage to land (avoid theme/mode snapshots diverging on timing).
     await waitFor(() => {
-      canvas.getByRole("tab", { name: /costs.*\$0\.42/i });
+      canvas.getByRole("tab", { name: /stats.*\$0\.42/i });
     });
 
     // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
@@ -1259,6 +1261,7 @@ export const CostsTabCompactionModelWarning: AppStory = {
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
+        localStorage.setItem("statsContainer:subTab", JSON.stringify("cost"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-compact-warning"));
 
