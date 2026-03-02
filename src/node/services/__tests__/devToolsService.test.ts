@@ -28,6 +28,7 @@ function makeStep(overrides: Partial<DevToolsStep> & { id: string; runId: string
     error: null,
     rawRequest: null,
     rawResponse: null,
+    rawChunks: null,
     ...rest,
   };
 }
@@ -246,6 +247,29 @@ describe("DevToolsService", () => {
         durationMs: 125,
         output: { finishReason: "stop" },
       });
+    });
+
+    it("defaults rawChunks to null when replaying legacy step entries", async () => {
+      const config = createTestConfig({ sessionsDir, enabled: true });
+      const run = makeRun("run-1");
+      const legacyStep = {
+        ...makeStep({ id: "step-1", runId: "run-1" }),
+      };
+      delete (legacyStep as Record<string, unknown>).rawChunks;
+      const logPath = getDevtoolsLogPath(sessionsDir, "ws-1");
+
+      await fs.mkdir(path.dirname(logPath), { recursive: true });
+      await fs.writeFile(
+        logPath,
+        `${JSON.stringify({ type: "run", run })}\n${JSON.stringify({ type: "step", step: legacyStep })}\n`,
+        "utf-8"
+      );
+
+      const service = new DevToolsService(config);
+      const runWithSteps = await service.getRunWithSteps("ws-1", "run-1");
+
+      expect(runWithSteps).not.toBeNull();
+      expect(runWithSteps?.steps[0]?.rawChunks).toBeNull();
     });
 
     it("skips corrupted lines while replaying persisted logs", async () => {

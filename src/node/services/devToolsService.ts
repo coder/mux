@@ -69,6 +69,15 @@ function getStepSortKey(step: DevToolsStep): string {
   return `${String(step.stepNumber).padStart(8, "0")}:${step.startedAt}:${step.id}`;
 }
 
+function applyStepBackwardCompatibilityDefaults(step: DevToolsStep): DevToolsStep {
+  return {
+    ...step,
+    rawRequest: step.rawRequest ?? null,
+    rawResponse: step.rawResponse ?? null,
+    rawChunks: step.rawChunks ?? null,
+  };
+}
+
 export class DevToolsService extends EventEmitter {
   private readonly workspaces = new Map<string, WorkspaceData>();
 
@@ -280,16 +289,19 @@ export class DevToolsService extends EventEmitter {
             break;
           }
           case "step": {
-            data.steps.set(entry.step.id, entry.step);
+            data.steps.set(entry.step.id, applyStepBackwardCompatibilityDefaults(entry.step));
             break;
           }
           case "step-update": {
             const existing = data.steps.get(entry.stepId);
             if (existing) {
-              data.steps.set(entry.stepId, {
-                ...existing,
-                ...entry.update,
-              });
+              data.steps.set(
+                entry.stepId,
+                applyStepBackwardCompatibilityDefaults({
+                  ...existing,
+                  ...entry.update,
+                })
+              );
             }
             break;
           }

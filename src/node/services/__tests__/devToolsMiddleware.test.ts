@@ -189,8 +189,9 @@ describe("createDevToolsMiddleware", () => {
         outputTokens: 5,
         totalTokens: 15,
       });
-      expect(step?.rawRequest).toEqual(expectedResult.request);
-      expect(step?.rawResponse).toEqual(expectedResult.response);
+      expect(step?.rawRequest).toEqual(expectedResult.request?.body);
+      expect(step?.rawResponse).toEqual(expectedResult.response?.body);
+      expect(step?.rawChunks).toBeNull();
       expect(step?.error).toBeNull();
     });
 
@@ -267,14 +268,19 @@ describe("createDevToolsMiddleware", () => {
   });
 
   describe("wrapStream", () => {
-    it("records a run + step and collects streamed text output on flush", async () => {
+    it("records streamed output plus raw provider chunks on flush", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const middleware = createDevToolsMiddleware("ws-1", service);
       const wrapStream = getWrapStream(middleware);
 
+      const rawChunkValue = {
+        event: "response.output_text.delta",
+        data: "world",
+      };
       const chunks: LanguageModelV3StreamPart[] = [
         { type: "text-start", id: "t1" },
         { type: "text-delta", id: "t1", delta: "Hello " },
+        { type: "raw", rawValue: rawChunkValue },
         { type: "text-delta", id: "t1", delta: "world" },
         { type: "text-end", id: "t1" },
         {
@@ -283,6 +289,7 @@ describe("createDevToolsMiddleware", () => {
           usage: createUsage(5, 2),
         },
       ];
+      const expectedForwardedChunks = chunks.filter((chunk) => chunk.type !== "raw");
 
       const stream = new ReadableStream<LanguageModelV3StreamPart>({
         start(controller) {
@@ -306,7 +313,7 @@ describe("createDevToolsMiddleware", () => {
       });
 
       const observedChunks = await collectStream(result.stream);
-      expect(observedChunks).toEqual(chunks);
+      expect(observedChunks).toEqual(expectedForwardedChunks);
 
       const runs = await service.getRuns("ws-1");
       expect(runs).toHaveLength(1);
@@ -328,9 +335,96 @@ describe("createDevToolsMiddleware", () => {
         outputTokens: 2,
         totalTokens: 7,
       });
-      expect(step?.rawRequest).toEqual({ body: "stream-req" });
-      expect(step?.rawResponse).toEqual({ headers: { "x-test": "1" } });
+      expect(step?.rawRequest).toEqual("stream-req");
+      expect(step?.rawResponse).toEqual(expectedForwardedChunks);
+      expect(step?.rawChunks).toEqual([rawChunkValue]);
       expect(step?.error).toBeNull();
+    });
+
+    it("does not forward raw chunks when includeRawChunks was not requested", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const middleware = createDevToolsMiddleware("ws-1", service);
+      const wrapStream = getWrapStream(middleware);
+
+      const rawValue = { event: "response.output_text.delta", data: "hidden" };
+      const chunks: LanguageModelV3StreamPart[] = [
+        { type: "raw", rawValue },
+        {
+          type: "finish",
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: createUsage(1, 1),
+        },
+      ];
+
+      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
+
+      const params = createMockParams();
+      const result = await wrapStream({
+        doGenerate: () => Promise.reject(new Error("doGenerate should not be called")),
+        doStream: () => Promise.resolve({ stream }),
+        params,
+        model: createMockModel(),
+      });
+
+      const observedChunks = await collectStream(result.stream);
+      expect(observedChunks).toEqual([chunks[1]]);
+
+      const runs = await service.getRuns("ws-1");
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
+      expect(runWithSteps).not.toBeNull();
+      expect(runWithSteps?.steps[0]?.rawChunks).toEqual([rawValue]);
+    });
+
+    it("forwards raw chunks when includeRawChunks was explicitly requested", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const middleware = createDevToolsMiddleware("ws-1", service);
+      const wrapStream = getWrapStream(middleware);
+
+      const rawValue = { event: "response.output_text.delta", data: "visible" };
+      const chunks: LanguageModelV3StreamPart[] = [
+        { type: "raw", rawValue },
+        {
+          type: "finish",
+          finishReason: { unified: "stop", raw: "stop" },
+          usage: createUsage(1, 1),
+        },
+      ];
+
+      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
+
+      const params = {
+        ...createMockParams(),
+        includeRawChunks: true,
+      };
+
+      const result = await wrapStream({
+        doGenerate: () => Promise.reject(new Error("doGenerate should not be called")),
+        doStream: () => Promise.resolve({ stream }),
+        params,
+        model: createMockModel(),
+      });
+
+      const observedChunks = await collectStream(result.stream);
+      expect(observedChunks).toEqual(chunks);
+
+      const runs = await service.getRuns("ws-1");
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
+      expect(runWithSteps).not.toBeNull();
+      expect(runWithSteps?.steps[0]?.rawChunks).toEqual([rawValue]);
     });
 
     it("records tool calls from stream chunks", async () => {

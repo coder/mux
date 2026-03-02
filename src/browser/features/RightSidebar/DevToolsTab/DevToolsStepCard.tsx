@@ -164,16 +164,33 @@ function StepOutputView(props: { step: DevToolsStep }) {
 
 function StepRawView(props: { step: DevToolsStep }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="space-y-3">
       <div>
-        <p className="text-foreground text-[10px] font-medium">Request</p>
-        <pre className={PRE_CLASS_NAME}>{stringifyForDisplay(props.step.rawRequest)}</pre>
+        <div className="text-muted mb-1 text-xs font-medium">Request</div>
+        <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">
+          {props.step.rawRequest != null
+            ? stringifyForDisplay(props.step.rawRequest)
+            : "No request body captured"}
+        </pre>
       </div>
 
       <div>
-        <p className="text-foreground text-[10px] font-medium">Response</p>
-        <pre className={PRE_CLASS_NAME}>{stringifyForDisplay(props.step.rawResponse)}</pre>
+        <div className="text-muted mb-1 text-xs font-medium">Response</div>
+        <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">
+          {props.step.rawResponse != null
+            ? stringifyForDisplay(props.step.rawResponse)
+            : "No response body captured"}
+        </pre>
       </div>
+
+      {props.step.rawChunks != null && (
+        <div>
+          <div className="text-muted mb-1 text-xs font-medium">Provider Chunks (SSE)</div>
+          <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">
+            {stringifyForDisplay(props.step.rawChunks)}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

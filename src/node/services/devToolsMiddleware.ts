@@ -96,6 +96,7 @@ function createEmptyStep(
     error: null,
     rawRequest: null,
     rawResponse: null,
+    rawChunks: null,
   };
 }
 
@@ -242,7 +243,10 @@ export function createDevToolsMiddleware(
   async function updateStepSuccess(
     stepId: string,
     startedAtMs: number,
-    update: Pick<DevToolsStep, "output" | "usage" | "rawRequest" | "rawResponse" | "error">
+    update: Pick<
+      DevToolsStep,
+      "output" | "usage" | "rawRequest" | "rawResponse" | "rawChunks" | "error"
+    >
   ): Promise<void> {
     await service.updateStep(workspaceId, stepId, {
       durationMs: Date.now() - startedAtMs,
@@ -256,7 +260,8 @@ export function createDevToolsMiddleware(
     error: unknown,
     output: DevToolsStepOutput | null = null,
     rawRequest: unknown = null,
-    rawResponse: unknown = null
+    rawResponse: unknown = null,
+    rawChunks: unknown = null
   ): Promise<void> {
     await service.updateStep(workspaceId, stepId, {
       durationMs: Date.now() - startedAtMs,
@@ -264,6 +269,7 @@ export function createDevToolsMiddleware(
       error: extractErrorMessage(error),
       rawRequest,
       rawResponse,
+      rawChunks,
     });
   }
 
@@ -283,8 +289,9 @@ export function createDevToolsMiddleware(
         await updateStepSuccess(stepId, startedAtMs, {
           output: extractGenerateOutput(result),
           usage: extractUsage(result.usage),
-          rawRequest: result.request ?? null,
-          rawResponse: result.response ?? null,
+          rawRequest: result.request?.body ?? null,
+          rawResponse: result.response?.body ?? null,
+          rawChunks: null,
           error: null,
         });
 
@@ -299,6 +306,9 @@ export function createDevToolsMiddleware(
       if (!service.enabled) {
         return doStream();
       }
+
+      const userRequestedRawChunks = params.includeRawChunks === true;
+      params.includeRawChunks = true;
 
       const { stepId, startedAtMs } = await createStep("stream", params, model);
 
@@ -318,13 +328,18 @@ export function createDevToolsMiddleware(
       const textParts: Array<{ id: string; text: string }> = [];
       const reasoningParts: Array<{ id: string; text: string }> = [];
       const toolCalls: unknown[] = [];
+      const rawChunks: unknown[] = [];
+      const fullStreamChunks: unknown[] = [];
 
       let finishReason: string | undefined;
       let usage: DevToolsUsage | null = null;
       let stepFinalized = false;
 
       const finalizeStep = async (
-        update: Pick<DevToolsStep, "output" | "usage" | "error" | "rawRequest" | "rawResponse">
+        update: Pick<
+          DevToolsStep,
+          "output" | "usage" | "error" | "rawRequest" | "rawResponse" | "rawChunks"
+        >
       ): Promise<void> => {
         if (stepFinalized) {
           return;
@@ -337,7 +352,14 @@ export function createDevToolsMiddleware(
         });
       };
 
-      const collectChunk = (chunk: LanguageModelV3StreamPart): void => {
+      const collectChunk = (chunk: LanguageModelV3StreamPart): boolean => {
+        if (chunk.type === "raw") {
+          rawChunks.push(chunk.rawValue);
+          return userRequestedRawChunks;
+        }
+
+        fullStreamChunks.push(chunk);
+
         switch (chunk.type) {
           case "text-start": {
             currentText.set(chunk.id, "");
@@ -391,6 +413,8 @@ export function createDevToolsMiddleware(
           default:
             break;
         }
+
+        return true;
       };
 
       const buildOutput = (): DevToolsStepOutput => ({
@@ -403,29 +427,38 @@ export function createDevToolsMiddleware(
       const trackedStream = new ReadableStream<LanguageModelV3StreamPart>({
         async pull(controller): Promise<void> {
           try {
-            const { done, value } = await reader.read();
-            if (done) {
-              await finalizeStep({
-                output: buildOutput(),
-                usage,
-                error: null,
-                rawRequest: rest.request ?? null,
-                rawResponse: rest.response ?? null,
-              });
-              controller.close();
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) {
+                await finalizeStep({
+                  output: buildOutput(),
+                  usage,
+                  error: null,
+                  rawRequest: rest.request?.body ?? null,
+                  rawResponse: fullStreamChunks,
+                  rawChunks,
+                });
+                controller.close();
+                return;
+              }
+
+              assert(value, "DevTools middleware expected stream value when done=false");
+
+              if (!collectChunk(value)) {
+                continue;
+              }
+
+              controller.enqueue(value);
               return;
             }
-
-            assert(value, "DevTools middleware expected stream value when done=false");
-            collectChunk(value);
-            controller.enqueue(value);
           } catch (error) {
             await finalizeStep({
               output: buildOutput(),
               usage,
               error: extractErrorMessage(error),
-              rawRequest: rest.request ?? null,
-              rawResponse: rest.response ?? null,
+              rawRequest: rest.request?.body ?? null,
+              rawResponse: fullStreamChunks,
+              rawChunks,
             });
             controller.error(error);
           }
@@ -439,8 +472,9 @@ export function createDevToolsMiddleware(
               output: buildOutput(),
               usage,
               error: "Request aborted",
-              rawRequest: rest.request ?? null,
-              rawResponse: rest.response ?? null,
+              rawRequest: rest.request?.body ?? null,
+              rawResponse: fullStreamChunks,
+              rawChunks,
             });
           }
         },

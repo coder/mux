@@ -21,6 +21,7 @@ export interface DevToolsStep {
   error: string | null;
   rawRequest: unknown;
   rawResponse: unknown;
+  rawChunks: unknown;
 }
 
 export interface DevToolsStepInput {

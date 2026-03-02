@@ -1722,6 +1722,7 @@ const DevToolsStepSchema = z.object({
   error: z.string().nullable(),
   rawRequest: z.unknown().nullable(),
   rawResponse: z.unknown().nullable(),
+  rawChunks: z.unknown().nullable(),
 });
 
 const DevToolsRunSummarySchema = z.object({
