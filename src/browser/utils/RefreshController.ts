@@ -105,6 +105,7 @@ export class RefreshController {
   private pendingBecausePaused = false;
   private lastFocusRefreshMs = 0;
   private disposed = false;
+  private lifecycleGeneration = 0;
 
   // Track last refresh for debugging
   private _lastRefreshInfo: LastRefreshInfo | null = null;
@@ -320,6 +321,10 @@ export class RefreshController {
     this.inFlight = true;
     this.pendingTrigger = null;
 
+    // Capture generation at start so dispose() can fence stale continuations.
+    const runGeneration = this.lifecycleGeneration;
+    const isRunStale = () => this.disposed || runGeneration !== this.lifecycleGeneration;
+
     // Shared cleanup: clear in-flight state and process any queued follow-up.
     const finalizeInFlight = () => {
       this.inFlight = false;
@@ -361,9 +366,29 @@ export class RefreshController {
 
     // Unified promise pipeline: normalizes sync throws and async rejections
     // into a single failure path so all errors are handled identically.
+    // Each stage checks isRunStale() so dispose() mid-flight stops the pipeline
+    // from invoking onRefresh or external callbacks for a dead owner.
     void Promise.resolve()
-      .then(() => this.onRefresh())
-      .then(handleSuccess, handleFailure);
+      .then(() => {
+        if (isRunStale()) return;
+        return this.onRefresh();
+      })
+      .then(
+        () => {
+          if (isRunStale()) {
+            finalizeInFlight();
+            return;
+          }
+          handleSuccess();
+        },
+        (error) => {
+          if (isRunStale()) {
+            finalizeInFlight();
+            return;
+          }
+          handleFailure(error);
+        }
+      );
   }
 
   /**
@@ -458,6 +483,16 @@ export class RefreshController {
    */
   dispose(): void {
     this.disposed = true;
+
+    // Bump generation to fence any in-flight async pipeline continuations.
+    this.lifecycleGeneration += 1;
+
+    // Collapse active refresh state so observability is coherent immediately.
+    this.inFlight = false;
+    this.pendingBecauseInFlight = false;
+    this.pendingBecauseHidden = false;
+    this.pendingBecausePaused = false;
+    this.pendingTrigger = null;
 
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);

@@ -291,4 +291,68 @@ describe("RefreshController", () => {
 
     controller.dispose();
   });
+
+  it("does not run deferred onRefresh after immediate dispose", async () => {
+    const onRefresh = vi.fn(() => undefined);
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
+
+    controller.requestImmediate();
+    controller.dispose();
+    await sleep(10);
+
+    // onRefresh should never have been called — dispose fenced the deferred pipeline.
+    expect(onRefresh).toHaveBeenCalledTimes(0);
+    expect(controller.isRefreshing).toBe(false);
+  });
+
+  it("does not fire onRefreshComplete when disposed during in-flight async refresh", async () => {
+    const d = deferred<void>();
+    const onRefresh = vi.fn(() => d.promise);
+    const onRefreshComplete = vi.fn(() => undefined);
+
+    const controller = new RefreshController({
+      onRefresh,
+      onRefreshComplete,
+      debounceMs: 20,
+    });
+
+    controller.requestImmediate();
+    await sleep(10);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(controller.isRefreshing).toBe(true);
+
+    // Dispose while the async onRefresh is still in-flight.
+    controller.dispose();
+    expect(controller.isRefreshing).toBe(false);
+
+    // Let the deferred promise resolve — callbacks should be suppressed.
+    d.resolve();
+    await sleep(10);
+
+    expect(onRefreshComplete).toHaveBeenCalledTimes(0);
+  });
+
+  it("does not fire onRefreshError when disposed during in-flight async refresh failure", async () => {
+    const d = deferred<void>();
+    const onRefresh = vi.fn(() => d.promise);
+    const onRefreshError = vi.fn(() => undefined);
+
+    const controller = new RefreshController({
+      onRefresh,
+      onRefreshError,
+      debounceMs: 20,
+    });
+
+    controller.requestImmediate();
+    await sleep(10);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+
+    d.reject(new Error("too late"));
+    await sleep(10);
+
+    expect(onRefreshError).toHaveBeenCalledTimes(0);
+    expect(controller.isRefreshing).toBe(false);
+  });
 });
