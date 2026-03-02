@@ -50,6 +50,10 @@ export class OnePasswordService {
     return initPromise;
   }
 
+  private invalidateAvailabilityCache(): void {
+    this.available = false;
+  }
+
   async isAvailable(): Promise<boolean> {
     if (this.available === true) {
       return true;
@@ -60,6 +64,7 @@ export class OnePasswordService {
       this.available = true;
       return true;
     } catch {
+      this.invalidateAvailabilityCache();
       return false;
     }
   }
@@ -121,11 +126,13 @@ export class OnePasswordService {
             ref,
             error: retryError,
           });
+          this.invalidateAvailabilityCache();
           return undefined;
         }
       }
 
       log.warn("[OnePasswordService] Failed to resolve secret", { ref, error });
+      this.invalidateAvailabilityCache();
       return undefined;
     }
   }
@@ -137,6 +144,7 @@ export class OnePasswordService {
       return overviews.map((vault) => ({ id: vault.id, title: vault.title }));
     } catch (error) {
       log.warn("[OnePasswordService] Failed to list vaults", { error });
+      this.invalidateAvailabilityCache();
       return [];
     }
   }
@@ -154,6 +162,7 @@ export class OnePasswordService {
       }));
     } catch (error) {
       log.warn("[OnePasswordService] Failed to list items", { error, vaultId });
+      this.invalidateAvailabilityCache();
       return [];
     }
   }
@@ -178,6 +187,7 @@ export class OnePasswordService {
       }));
     } catch (error) {
       log.warn("[OnePasswordService] Failed to list item fields", { error, vaultId, itemId });
+      this.invalidateAvailabilityCache();
       return [];
     }
   }

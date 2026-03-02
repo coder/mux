@@ -734,10 +734,9 @@ export class ProviderModelFactory {
           (providerConfig as { codexOauth?: unknown }).codexOauth
         );
 
-        // Resolve credentials from config + env BEFORE OAuth checks so we can
-        // fall back to an API key when OAuth is not connected.
+        // Resolve credentials from config + env so we can decide whether to
+        // route through Codex OAuth or fall back to API key auth.
         const creds = resolveProviderCredentials("openai", providerConfig);
-        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
 
         // When a model requires Codex OAuth but the user hasn't connected it,
         // fall back to their API key instead of blocking entirely.  If the model
@@ -772,10 +771,20 @@ export class ProviderModelFactory {
           return codexOauthDefaultAuth === "oauth";
         })();
 
+        // Only resolve op:// references when this request will use API-key auth.
+        // OAuth requests use a placeholder key and override auth headers in fetch().
+        const resolvedApiKey = shouldRouteThroughCodexOauth
+          ? undefined
+          : await this.resolveApiKey(creds.apiKey);
+
         // Defer op:// key failure until after OAuth routing is evaluated —
         // OAuth-eligible models can proceed without an API key.
-        const opRefFailed = creds.apiKey != null && isOpReference(creds.apiKey) && !resolvedApiKey;
-        if (opRefFailed && !shouldRouteThroughCodexOauth) {
+        const opRefFailed =
+          !shouldRouteThroughCodexOauth &&
+          creds.apiKey != null &&
+          isOpReference(creds.apiKey) &&
+          !resolvedApiKey;
+        if (opRefFailed) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
@@ -802,7 +811,7 @@ export class ProviderModelFactory {
           ...providerConfig,
           // When using Codex OAuth, we overwrite auth headers in fetch(), so the OpenAI API key
           // isn't required. Still pass a placeholder to ensure the SDK never reads env vars.
-          apiKey: shouldRouteThroughCodexOauth ? (resolvedApiKey ?? "codex-oauth") : resolvedApiKey,
+          apiKey: shouldRouteThroughCodexOauth ? "codex-oauth" : resolvedApiKey,
           ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
           ...(creds.organization && { organization: creds.organization }),
         };
