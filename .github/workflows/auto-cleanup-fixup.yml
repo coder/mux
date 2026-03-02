@@ -51,9 +51,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         if: ${{ steps.precheck.outputs.enabled == 'true' }}
         with:
-          ref: auto-cleanup
+          # Diagnose/fix the exact failed run revision, not a moving branch tip.
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
+
+      - name: Attach auto-cleanup branch to failed revision
+        if: ${{ steps.precheck.outputs.enabled == 'true' }}
+        run: |
+          git checkout -B auto-cleanup "${{ github.event.workflow_run.head_sha }}"
+          actual_sha=$(git rev-parse HEAD)
+          if [ "$actual_sha" != "${{ github.event.workflow_run.head_sha }}" ]; then
+            echo "❌ Expected HEAD to match failed run SHA"
+            echo "expected=${{ github.event.workflow_run.head_sha }} actual=$actual_sha"
+            exit 1
+          fi
 
       - uses: oven-sh/setup-bun@b7a1c7ccf290d58743029c4f6903da283811b979 # v2.1.0
         if: ${{ steps.precheck.outputs.enabled == 'true' }}
