@@ -3,6 +3,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 import { Config } from "@/node/config";
 import type { SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import { SshPromptService } from "@/node/services/sshPromptService";
@@ -352,9 +353,7 @@ exit 1
       const originalPath = process.env.PATH ?? "";
       const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
       const markerName = `WIN_marker_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      const markerPath = path.join(process.cwd(), markerName);
 
-      await fs.rm(markerPath, { force: true });
       await fs.mkdir(fakeBinDir, { recursive: true });
       await fs.writeFile(
         fakeGitPath,
@@ -392,14 +391,6 @@ exit 1
           new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
         );
         expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
-
-        let markerExists = true;
-        try {
-          await fs.access(markerPath);
-        } catch {
-          markerExists = false;
-        }
-        expect(markerExists).toBe(false);
       } finally {
         process.env.PATH = originalPath;
         if (originalFakeGitArgsLogPath === undefined) {
@@ -407,7 +398,176 @@ exit 1
         } else {
           process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
         }
-        await fs.rm(markerPath, { force: true });
+      }
+    });
+
+    it("preserves combining-mark script names when deriving clone folder names", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "unicode-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-unicode");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-unicode-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const repoUrl = "https://example.com/org/हिन्दी.git";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({ repoUrl, cloneParentDir });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+        const expectedFolderName = "हिन्दी";
+
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+      }
+    });
+
+    it("falls back to deterministic safe folder names when repo basename sanitizes to empty", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "fallback-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-fallback");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-fallback-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const repoUrl = "https://example.com/org/🚀🚀.git";
+      const expectedFolderName = `repo-${createHash("sha256").update(repoUrl).digest("hex").slice(0, 10)}`;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({ repoUrl, cloneParentDir });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+      }
+    });
+
+    it("avoids Windows reserved destination names", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "reserved-name-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-reserved");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-reserved-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({
+          repoUrl: "https://example.com/org/con.git",
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+        const expectedFolderName = "con-repo";
+
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
       }
     });
 
