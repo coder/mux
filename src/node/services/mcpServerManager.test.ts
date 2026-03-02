@@ -4,6 +4,7 @@ import { createServer } from "http";
 import {
   MCPServerManager,
   isClosedClientError,
+  raceWithAbort,
   raceWithTimeout,
   wrapMCPTools,
 } from "./mcpServerManager";
@@ -757,8 +758,9 @@ describe("wrapMCPTools", () => {
     const controller = new AbortController();
     controller.abort();
 
+    const executeMock = mock(() => Promise.resolve({ content: [{ type: "text", text: "ok" }] }));
     const tool = {
-      execute: mock(() => Promise.resolve({ content: [{ type: "text", text: "ok" }] })),
+      execute: executeMock,
       parameters: {},
     } as unknown as Tool;
 
@@ -775,6 +777,7 @@ describe("wrapMCPTools", () => {
 
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toBe("Interrupted");
+    expect(executeMock).not.toHaveBeenCalled();
   });
 
   test("calls onClosed when execute throws a timeout error", async () => {
@@ -812,6 +815,26 @@ describe("wrapMCPTools", () => {
 
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toBe("MCP tool 'testTool' timed out after 50ms");
+  });
+
+  test("raceWithAbort drains pre-started promise on pre-aborted signal", async () => {
+    const { promise, reject } = Promise.withResolvers<never>();
+    const controller = new AbortController();
+    controller.abort();
+
+    let caught: unknown;
+    try {
+      await raceWithAbort(promise, controller.signal);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("Interrupted");
+
+    // Late-reject the orphaned promise — should NOT produce unhandled rejection
+    // because raceWithAbort attached a drain handler.
+    reject(new Error("late failure"));
   });
 
   test("passes through successful execution results", async () => {

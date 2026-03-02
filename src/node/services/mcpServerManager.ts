@@ -43,6 +43,8 @@ export async function raceWithAbort<T>(op: Promise<T>, signal?: AbortSignal): Pr
     return op;
   }
   if (signal.aborted) {
+    // Drain any pre-started promise so it doesn't become an unhandled rejection.
+    void op.catch(() => undefined);
     throw new Error("Interrupted");
   }
 
@@ -126,6 +128,12 @@ export function wrapMCPTools(
             context && typeof context === "object" && "abortSignal" in context
               ? (context as { abortSignal?: AbortSignal }).abortSignal
               : undefined;
+
+          // Cancellation ordering invariant: if already aborted, skip all async work.
+          if (abortSignal?.aborted) {
+            throw new Error("Interrupted");
+          }
+
           const callPromise: Promise<unknown> = Promise.resolve(originalExecute(args, context));
           // The MCP client only checks abort at request boundaries; race the in-flight
           // call against both timeout and abort so hung servers cannot stall streams.
