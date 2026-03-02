@@ -727,18 +727,29 @@ describe("wrapMCPTools", () => {
 
   test("rejects with Interrupted when aborted during execution", async () => {
     const controller = new AbortController();
+    const pending = Promise.withResolvers<unknown>();
     const tool = {
-      execute: mock(() => new Promise(() => {})),
+      execute: mock(() => pending.promise),
       parameters: {},
     } as unknown as Tool;
 
     const onClosed = mock(() => undefined);
     const wrapped = wrapMCPTools({ hangTool: tool }, { onClosed });
 
-    const promise = wrapped.hangTool.execute!({}, { abortSignal: controller.signal } as never);
+    const promise = wrapped.hangTool.execute!({}, {
+      abortSignal: controller.signal,
+    } as never) as Promise<unknown>;
     controller.abort();
 
-    await expect(promise).rejects.toThrow("Interrupted");
+    let caught: unknown;
+    try {
+      await promise;
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("Interrupted");
     expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
@@ -752,9 +763,18 @@ describe("wrapMCPTools", () => {
     } as unknown as Tool;
 
     const wrapped = wrapMCPTools({ myTool: tool });
-    await expect(
-      wrapped.myTool.execute!({}, { abortSignal: controller.signal } as never)
-    ).rejects.toThrow("Interrupted");
+    const promise = wrapped.myTool.execute!({}, {
+      abortSignal: controller.signal,
+    } as never) as Promise<unknown>;
+    let caught: unknown;
+    try {
+      await promise;
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("Interrupted");
   });
 
   test("calls onClosed when execute throws a timeout error", async () => {
@@ -767,18 +787,31 @@ describe("wrapMCPTools", () => {
 
     const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
 
-    await expect(wrapped.myTool.execute!({}, {} as never)).rejects.toThrow(
-      "MCP tool 'myTool' timed out after 50ms"
-    );
+    const promise = wrapped.myTool.execute!({}, {} as never) as Promise<unknown>;
+    let caught: unknown;
+    try {
+      await promise;
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("MCP tool 'myTool' timed out after 50ms");
     expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
   test("raceWithTimeout rejects after timeout", async () => {
-    const never = new Promise<never>(() => {});
+    const pending = Promise.withResolvers<never>();
 
-    await expect(raceWithTimeout(never, 50, "testTool")).rejects.toThrow(
-      "MCP tool 'testTool' timed out after 50ms"
-    );
+    let caught: unknown;
+    try {
+      await raceWithTimeout(pending.promise, 50, "testTool");
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("MCP tool 'testTool' timed out after 50ms");
   });
 
   test("passes through successful execution results", async () => {

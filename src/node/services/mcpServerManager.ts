@@ -126,7 +126,7 @@ export function wrapMCPTools(
             context && typeof context === "object" && "abortSignal" in context
               ? (context as { abortSignal?: AbortSignal }).abortSignal
               : undefined;
-          const callPromise = originalExecute(args, context);
+          const callPromise: Promise<unknown> = Promise.resolve(originalExecute(args, context));
           // The MCP client only checks abort at request boundaries; race the in-flight
           // call against both timeout and abort so hung servers cannot stall streams.
           const timedPromise = raceWithTimeout(callPromise, MCP_TOOL_CALL_TIMEOUT_MS, toolName);
