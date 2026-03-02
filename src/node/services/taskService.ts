@@ -1696,6 +1696,27 @@ export class TaskService {
     return status ?? null;
   }
 
+  getAgentTaskStatuses(taskIds: string[]): Map<string, AgentTaskStatus | null> {
+    for (const taskId of taskIds) {
+      assert(taskId.length > 0, "getAgentTaskStatuses: taskId must be non-empty");
+    }
+
+    if (taskIds.length === 0) {
+      return new Map<string, AgentTaskStatus | null>();
+    }
+
+    const cfg = this.config.loadConfigOrDefault();
+    const statuses = new Map<string, AgentTaskStatus | null>();
+
+    for (const taskId of taskIds) {
+      const entry = findWorkspaceEntry(cfg, taskId);
+      const status = entry?.workspace.taskStatus;
+      statuses.set(taskId, status ?? null);
+    }
+
+    return statuses;
+  }
+
   hasActiveDescendantAgentTasksForWorkspace(workspaceId: string): boolean {
     assert(
       workspaceId.length > 0,

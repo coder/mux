@@ -89,6 +89,13 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             ).filter((taskId): taskId is string => typeof taskId === "string");
 
       const descendantAgentTaskIdSet = new Set(descendantAgentTaskIds);
+      const rejectedAgentTaskIds = agentTaskIds.filter(
+        (taskId) => !descendantAgentTaskIdSet.has(taskId)
+      );
+      const rejectedAgentTaskStatuses =
+        rejectedAgentTaskIds.length > 0
+          ? taskService.getAgentTaskStatuses(rejectedAgentTaskIds)
+          : new Map<string, ReturnType<typeof taskService.getAgentTaskStatus>>();
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
@@ -159,7 +166,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           }
 
           if (!descendantAgentTaskIdSet.has(taskId)) {
-            const globalStatus = taskService.getAgentTaskStatus(taskId);
+            const globalStatus = rejectedAgentTaskStatuses.get(taskId) ?? null;
             const activeTaskIds =
               activeDescendantAgentTaskIds.length > 0 ? activeDescendantAgentTaskIds : undefined;
             if (!globalStatus) {

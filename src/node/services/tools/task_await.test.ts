@@ -151,10 +151,14 @@ describe("task_await tool", () => {
     });
     const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ok" }));
 
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["other"]);
+      return new Map([["other", "running" as const]]);
+    });
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["child"]),
       isDescendantAgentTask,
-      getAgentTaskStatus: mock(() => "running" as const),
+      getAgentTaskStatuses,
       waitForAgentReport,
     } as unknown as TaskService;
 
@@ -172,6 +176,7 @@ describe("task_await tool", () => {
     });
     expect(waitForAgentReport).toHaveBeenCalledTimes(1);
     expect(waitForAgentReport).toHaveBeenCalledWith("child", expect.any(Object));
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
   });
 
   it("returns not_found with activeTaskIds when a requested taskId is hallucinated", async () => {
@@ -181,12 +186,15 @@ describe("task_await tool", () => {
     const waitForAgentReport = mock(() => {
       throw new Error("waitForAgentReport should not be called for hallucinated task IDs");
     });
-    const getAgentTaskStatus = mock(() => null);
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["hallucinated"]);
+      return new Map([["hallucinated", null]]);
+    });
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["real-child"]),
       isDescendantAgentTask: mock(() => Promise.resolve(false)),
-      getAgentTaskStatus,
+      getAgentTaskStatuses,
       waitForAgentReport,
     } as unknown as TaskService;
 
@@ -205,7 +213,7 @@ describe("task_await tool", () => {
         },
       ],
     });
-    expect(getAgentTaskStatus).toHaveBeenCalledWith("hallucinated");
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
     expect(waitForAgentReport).toHaveBeenCalledTimes(0);
   });
 
@@ -216,12 +224,15 @@ describe("task_await tool", () => {
     const waitForAgentReport = mock(() => {
       throw new Error("waitForAgentReport should not be called for out-of-scope task IDs");
     });
-    const getAgentTaskStatus = mock(() => "running" as const);
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["other-workspace"]);
+      return new Map([["other-workspace", "running" as const]]);
+    });
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["real-child"]),
       isDescendantAgentTask: mock(() => Promise.resolve(false)),
-      getAgentTaskStatus,
+      getAgentTaskStatuses,
       waitForAgentReport,
     } as unknown as TaskService;
 
@@ -240,7 +251,45 @@ describe("task_await tool", () => {
         },
       ],
     });
-    expect(getAgentTaskStatus).toHaveBeenCalledWith("other-workspace");
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
+    expect(waitForAgentReport).toHaveBeenCalledTimes(0);
+  });
+
+  it("batches status lookups for multiple out-of-scope task IDs", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-batched-status-lookups");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => {
+      throw new Error("waitForAgentReport should not be called for out-of-scope task IDs");
+    });
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["external-1", "external-2"]);
+      return new Map([
+        ["external-1", "running" as const],
+        ["external-2", null],
+      ]);
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["real-child"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["external-1", "external-2"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "invalid_scope", taskId: "external-1", activeTaskIds: ["real-child"] },
+        { status: "not_found", taskId: "external-2", activeTaskIds: ["real-child"] },
+      ],
+    });
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
     expect(waitForAgentReport).toHaveBeenCalledTimes(0);
   });
 
