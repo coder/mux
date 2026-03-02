@@ -4,6 +4,7 @@ import { EventEmitter } from "events";
 import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -885,6 +886,11 @@ export class AIService extends EventEmitter {
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,
+          // Trust gating: only run hooks/scripts for explicitly trusted projects
+          trusted:
+            this.config
+              .loadConfigOrDefault()
+              .projects.get(stripTrailingSlashes(metadata.projectPath))?.trusted ?? false,
         },
         workspaceId,
         this.initStateManager,
@@ -997,10 +1003,15 @@ export class AIService extends EventEmitter {
         truncationMode
       );
 
-      // Build per-request HTTP headers (e.g., anthropic-beta for 1M context).
-      // This is the single injection site for provider-specific headers, handling
-      // both direct and gateway-routed models identically.
-      const requestHeaders = buildRequestHeaders(modelString, effectiveMuxProviderOptions);
+      // Build per-request HTTP headers (e.g., workspace correlation and
+      // anthropic-beta for 1M context). This is the single injection site for
+      // provider-specific headers, handling both direct and gateway-routed models
+      // identically.
+      const requestHeaders = buildRequestHeaders(
+        modelString,
+        effectiveMuxProviderOptions,
+        workspaceId
+      );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {

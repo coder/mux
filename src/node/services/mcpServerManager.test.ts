@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createServer } from "http";
 
-import { MCPServerManager } from "./mcpServerManager";
+import { MCPServerManager, isClosedClientError, wrapMCPTools } from "./mcpServerManager";
 import type { MCPConfigService } from "./mcpConfigService";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { Tool } from "ai";
@@ -470,5 +470,273 @@ describe("MCPServerManager", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  test("tool execution failure with closed-client error marks instance isClosed for restart", async () => {
+    const workspaceId = "ws-tool-closed";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        "test-server": { transport: "stdio", command: "cmd", disabled: false },
+      })
+    );
+
+    const closedError = new Error("Attempted to send a request from a closed client");
+    const dummyTool = {
+      execute: mock(() => Promise.reject(closedError)),
+      parameters: {},
+    } as unknown as Tool;
+
+    const startServersMock = mock(() => {
+      const tools: Record<string, Tool> = {};
+      const instance = {
+        name: "test-server",
+        resolvedTransport: "stdio" as const,
+        autoFallbackUsed: false,
+        tools,
+        isClosed: false,
+        close: mock(() => Promise.resolve(undefined)),
+      };
+
+      instance.tools = wrapMCPTools(
+        { failTool: dummyTool },
+        {
+          onClosed: () => {
+            instance.isClosed = true;
+          },
+        }
+      );
+
+      return Promise.resolve(new Map([["test-server", instance]]));
+    });
+
+    access.startServers = startServersMock;
+
+    const result1 = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+    expect(startServersMock).toHaveBeenCalledTimes(1);
+
+    const firstTool = Object.values(result1.tools)[0];
+    expect(firstTool).toBeDefined();
+    if (!firstTool?.execute) {
+      throw new Error("Expected wrapped MCP tool to include execute");
+    }
+
+    let firstToolError: unknown;
+    try {
+      await firstTool.execute({}, {} as never);
+    } catch (error) {
+      firstToolError = error;
+    }
+    expect(firstToolError).toBe(closedError);
+
+    const cached = access.workspaceServers.get(workspaceId) as
+      | { instances: Map<string, { isClosed: boolean }> }
+      | undefined;
+
+    expect(cached).toBeDefined();
+
+    const instances = cached?.instances;
+    expect(instances).toBeDefined();
+    for (const [, inst] of instances ?? []) {
+      expect(inst.isClosed).toBe(true);
+    }
+
+    await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+    expect(startServersMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("isClosedClientError", () => {
+  test("returns true for 'Attempted to send a request from a closed client'", () => {
+    expect(isClosedClientError(new Error("Attempted to send a request from a closed client"))).toBe(
+      true
+    );
+  });
+
+  test("returns true for 'Connection closed'", () => {
+    expect(isClosedClientError(new Error("Connection closed"))).toBe(true);
+  });
+
+  test("returns true for 'MCP SSE Transport Error: Connection closed unexpectedly'", () => {
+    expect(
+      isClosedClientError(new Error("MCP SSE Transport Error: Connection closed unexpectedly"))
+    ).toBe(true);
+  });
+
+  test("returns true for 'Not connected'", () => {
+    expect(isClosedClientError(new Error("MCP SSE Transport Error: Not connected"))).toBe(true);
+  });
+
+  test("returns true for chained error with closed-client cause", () => {
+    const cause = new Error("Connection closed");
+    const wrapper = new Error("Tool execution failed", { cause });
+    expect(isClosedClientError(wrapper)).toBe(true);
+  });
+
+  test("returns false for chained error without closed-client cause", () => {
+    const cause = new Error("ECONNREFUSED");
+    const wrapper = new Error("Tool execution failed", { cause });
+    expect(isClosedClientError(wrapper)).toBe(false);
+  });
+
+  test("returns false for unrelated errors", () => {
+    expect(isClosedClientError(new Error("timeout"))).toBe(false);
+    expect(isClosedClientError(new Error("ECONNREFUSED"))).toBe(false);
+  });
+
+  test("returns false for non-Error values", () => {
+    expect(isClosedClientError(null)).toBe(false);
+    expect(isClosedClientError(undefined)).toBe(false);
+    expect(isClosedClientError("string error")).toBe(false);
+  });
+});
+
+describe("wrapMCPTools", () => {
+  test("calls onClosed when execute throws a closed-client error", async () => {
+    const onClosed = mock(() => undefined);
+    const closedError = new Error("Attempted to send a request from a closed client");
+    const tool = {
+      execute: mock(() => Promise.reject(closedError)),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
+
+    let executeError: unknown;
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+    } catch (error) {
+      executeError = error;
+    }
+
+    expect(executeError).toBe(closedError);
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  test("does NOT call onClosed for non-closed-client errors", async () => {
+    const onClosed = mock(() => undefined);
+    const otherError = new Error("some other failure");
+    const tool = {
+      execute: mock(() => Promise.reject(otherError)),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
+
+    let executeError: unknown;
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+    } catch (error) {
+      executeError = error;
+    }
+
+    expect(executeError).toBe(otherError);
+    expect(onClosed).toHaveBeenCalledTimes(0);
+  });
+
+  test("wraps multiple tools and failure in one does not affect others", async () => {
+    const onClosed = mock(() => undefined);
+    const failTool = {
+      execute: mock(() =>
+        Promise.reject(new Error("Attempted to send a request from a closed client"))
+      ),
+      parameters: {},
+    } as unknown as Tool;
+    const okTool = {
+      execute: mock(() => Promise.resolve({ content: [{ type: "text", text: "ok" }] })),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ failTool, okTool }, { onClosed });
+
+    // failTool should throw and trigger onClosed
+    try {
+      await wrapped.failTool.execute!({}, {} as never);
+      throw new Error("Expected failTool to throw");
+    } catch (e) {
+      expect((e as Error).message).toBe("Attempted to send a request from a closed client");
+    }
+    expect(onClosed).toHaveBeenCalledTimes(1);
+
+    // okTool should still work fine
+    const result: unknown = await wrapped.okTool.execute!({}, {} as never);
+    expect(result).toBeTruthy();
+  });
+
+  test("onClosed throwing does not mask original error", async () => {
+    const onClosed = mock(() => {
+      throw new Error("onClosed exploded");
+    });
+    const closedError = new Error("Attempted to send a request from a closed client");
+    const tool = {
+      execute: mock(() => Promise.reject(closedError)),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+      throw new Error("Expected to throw");
+    } catch (e) {
+      // Original error should be preserved, NOT the onClosed error
+      expect(e).toBe(closedError);
+    }
+    // onClosed was still called (even though it threw)
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  test("calls onActivity before execute and still calls it on failure", async () => {
+    const onActivity = mock(() => undefined);
+    const onClosed = mock(() => undefined);
+    const tool = {
+      execute: mock(() =>
+        Promise.reject(new Error("Attempted to send a request from a closed client"))
+      ),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, { onActivity, onClosed });
+
+    let didThrow = false;
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+    } catch {
+      didThrow = true;
+    }
+
+    expect(didThrow).toBe(true);
+    expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  test("passes through successful execution results", async () => {
+    const tool = {
+      execute: mock(() => Promise.resolve({ content: [{ type: "text", text: "ok" }] })),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool });
+    const result: unknown = await wrapped.myTool.execute!({}, {} as never);
+    expect(result).toBeTruthy();
+  });
+
+  test("skips wrapping tools without execute", () => {
+    const tool = {
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ noExec: tool });
+    expect(wrapped.noExec).toBe(tool);
   });
 });

@@ -6,11 +6,11 @@ import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useProjectContext } from "./contexts/ProjectContext";
-import type { WorkspaceSelection } from "./components/ProjectSidebar";
-import { LeftSidebar } from "./components/LeftSidebar";
-import { ProjectCreateModal } from "./components/ProjectCreateModal";
-import { AIView } from "./components/AIView";
-import { ErrorBoundary } from "./components/ErrorBoundary";
+import type { WorkspaceSelection } from "./components/ProjectSidebar/ProjectSidebar";
+import { LeftSidebar } from "./components/LeftSidebar/LeftSidebar";
+import { ProjectCreateModal } from "./components/ProjectCreateModal/ProjectCreateModal";
+import { AIView } from "./components/AIView/AIView";
+import { ErrorBoundary } from "./components/ErrorBoundary/ErrorBoundary";
 import {
   usePersistedState,
   updatePersistedState,
@@ -29,7 +29,7 @@ import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandR
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
-import { CommandPalette } from "./components/CommandPalette";
+import { CommandPalette } from "./components/CommandPalette/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
@@ -59,30 +59,30 @@ import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
 } from "@/browser/utils/workspaceAiSettingsSync";
-import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
-import { Button } from "./components/ui/button";
-import { ProjectPage } from "@/browser/components/ProjectPage";
+import { AuthTokenModal } from "@/browser/components/AuthTokenModal/AuthTokenModal";
+import { Button } from "./components/Button/Button";
+import { ProjectPage } from "@/browser/components/ProjectPage/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { AboutDialogProvider } from "./contexts/AboutDialogContext";
 import { ConfirmDialogProvider, useConfirmDialog } from "./contexts/ConfirmDialogContext";
-import { AboutDialog } from "./components/About/AboutDialog";
-import { SettingsPage } from "@/browser/components/Settings/SettingsPage";
-import { AnalyticsDashboard } from "@/browser/components/analytics/AnalyticsDashboard";
-import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
-import { SshPromptDialog } from "./components/SshPromptDialog";
-import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
+import { AboutDialog } from "./features/About/AboutDialog";
+import { SettingsPage } from "@/browser/features/Settings/SettingsPage";
+import { AnalyticsDashboard } from "@/browser/features/Analytics/AnalyticsDashboard";
+import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog/MuxGatewaySessionExpiredDialog";
+import { SshPromptDialog } from "./components/SshPromptDialog/SshPromptDialog";
+import { SplashScreenProvider } from "./features/SplashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
-import { TooltipProvider } from "./components/ui/tooltip";
+import { TooltipProvider } from "./components/Tooltip/Tooltip";
 import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
-import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
-import { RosettaBanner } from "./components/RosettaBanner";
+import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner/WindowsToolchainBanner";
+import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";

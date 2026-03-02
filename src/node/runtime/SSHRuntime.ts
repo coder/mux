@@ -32,7 +32,12 @@ import type {
 import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
+import {
+  checkInitHookExists,
+  getMuxEnv,
+  runInitHookOnRuntime,
+  shouldSkipInitHook,
+} from "./initHook";
 import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
 
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
@@ -40,6 +45,7 @@ import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getOriginUrlForBundle } from "./gitBundleSync";
+import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
 
@@ -798,16 +804,11 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const {
-      projectPath,
-      branchName,
-      trunkBranch,
-      workspacePath,
-      initLogger,
-      abortSignal,
-      env,
-      skipInitHook,
-    } = params;
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
+      params;
+
+    // Disable git hooks for untrusted projects (prevents post-checkout execution)
+    const nhp = gitNoHooksPrefix(params.trusted);
 
     try {
       // If the workspace directory already exists and contains a git repo (e.g. forked from
@@ -887,7 +888,8 @@ export class SSHRuntime extends RemoteRuntime {
           baseRepoPath,
           trunkBranch,
           initLogger,
-          abortSignal
+          abortSignal,
+          nhp
         );
 
         // Resolve the bundle's staging ref to use as the local fallback start
@@ -923,7 +925,7 @@ export class SSHRuntime extends RemoteRuntime {
         // (e.g. orphaned from a previously deleted workspace). Git still prevents
         // checking out a branch that's active in another worktree.
         initLogger.logStep(`Creating worktree for branch: ${branchName}`);
-        const worktreeCmd = `git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
+        const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
 
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",
@@ -946,7 +948,8 @@ export class SSHRuntime extends RemoteRuntime {
           workspacePath,
           trunkBranch,
           initLogger,
-          abortSignal
+          abortSignal,
+          nhp
         );
         const shouldUseOrigin =
           fetchedOrigin &&
@@ -959,14 +962,13 @@ export class SSHRuntime extends RemoteRuntime {
           ));
 
         if (shouldUseOrigin) {
-          await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal);
+          await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal, nhp);
         }
       }
 
       // 3. Run .mux/init hook if it exists
       // Note: runInitHookOnRuntime calls logComplete() internally
-      if (skipInitHook) {
-        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+      if (shouldSkipInitHook(params, initLogger)) {
         initLogger.logComplete(0);
       } else {
         const hookExists = await checkInitHookExists(projectPath);
@@ -1009,12 +1011,13 @@ export class SSHRuntime extends RemoteRuntime {
     workspacePath: string,
     trunkBranch: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    nhp = ""
   ): Promise<boolean> {
     try {
       initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
 
-      const fetchCmd = `git fetch origin ${shescape.quote(trunkBranch)}`;
+      const fetchCmd = `${nhp}git fetch origin ${shescape.quote(trunkBranch)}`;
       const fetchStream = await this.exec(fetchCmd, {
         cwd: workspacePath,
         timeout: 120, // 2 minutes for network operation
@@ -1095,12 +1098,13 @@ export class SSHRuntime extends RemoteRuntime {
     workspacePath: string,
     trunkBranch: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    nhp = ""
   ): Promise<void> {
     try {
       initLogger.logStep("Fast-forward merging...");
 
-      const mergeCmd = `git merge --ff-only origin/${shescape.quote(trunkBranch)}`;
+      const mergeCmd = `${nhp}git merge --ff-only origin/${shescape.quote(trunkBranch)}`;
       const mergeStream = await this.exec(mergeCmd, {
         cwd: workspacePath,
         timeout: 60, // 1 minute for fast-forward merge
@@ -1202,12 +1206,16 @@ export class SSHRuntime extends RemoteRuntime {
     projectPath: string,
     workspaceName: string,
     force: boolean,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
     // Check if already aborted
     if (abortSignal?.aborted) {
       return { success: false, error: "Delete operation aborted" };
     }
+
+    // Disable git hooks for untrusted projects
+    const nhp = gitNoHooksPrefix(trusted);
 
     // Compute workspace path using canonical method
     const deletedPath = this.getWorkspacePath(projectPath, workspaceName);
@@ -1244,7 +1252,8 @@ export class SSHRuntime extends RemoteRuntime {
                 # Check for squash-merge: if all changed files match origin/$DEFAULT, content is merged
                 if [ -n "$DEFAULT" ]; then
                   # Fetch latest to ensure we have current remote state
-                  git fetch origin "$DEFAULT" --quiet 2>/dev/null || true
+                  # nhp disables git hooks for untrusted projects (reference-transaction, etc.)
+                  ${nhp}git fetch origin "$DEFAULT" --quiet 2>/dev/null || true
 
                   # Get merge-base between current branch and default
                   MERGE_BASE=$(git merge-base "origin/$DEFAULT" HEAD 2>/dev/null)
@@ -1349,8 +1358,8 @@ export class SSHRuntime extends RemoteRuntime {
         // Worktree: use `git worktree remove` to clean up the base repo's worktree metadata.
         const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
         const removeCmd = force
-          ? `git -C ${baseRepoPathArg} worktree remove --force ${this.quoteForRemote(deletedPath)}`
-          : `git -C ${baseRepoPathArg} worktree remove ${this.quoteForRemote(deletedPath)}`;
+          ? `${nhp}git -C ${baseRepoPathArg} worktree remove --force ${this.quoteForRemote(deletedPath)}`
+          : `${nhp}git -C ${baseRepoPathArg} worktree remove ${this.quoteForRemote(deletedPath)}`;
         const stream = await this.exec(removeCmd, {
           cwd: this.config.srcBaseDir,
           timeout: 30,
@@ -1368,7 +1377,7 @@ export class SSHRuntime extends RemoteRuntime {
             // `worktree prune` is best-effort: if the base repo was externally
             // deleted/corrupted the prune fails, but the workspace IS gone after
             // rm -rf — don't report failure for a cosmetic prune error.
-            `rm -rf ${this.quoteForRemote(deletedPath)} && (git -C ${baseRepoPathArg} worktree prune 2>/dev/null || true)`,
+            `rm -rf ${this.quoteForRemote(deletedPath)} && (${nhp}git -C ${baseRepoPathArg} worktree prune 2>/dev/null || true)`,
             { cwd: this.config.srcBaseDir, timeout: 30, abortSignal }
           );
           await fallbackStream.stdin.abort();
@@ -1389,7 +1398,7 @@ export class SSHRuntime extends RemoteRuntime {
         if (!PROTECTED_BRANCHES.includes(workspaceName)) {
           await execBuffered(
             this,
-            `git -C ${baseRepoPathArg} branch -D ${shescape.quote(workspaceName)} 2>/dev/null || true`,
+            `${nhp}git -C ${baseRepoPathArg} branch -D ${shescape.quote(workspaceName)} 2>/dev/null || true`,
             { cwd: "/tmp", timeout: 10 }
           ).catch(() => undefined);
         }
@@ -1487,7 +1496,9 @@ export class SSHRuntime extends RemoteRuntime {
         // Use -b (not -B) so we fail instead of silently resetting an existing
         // branch that another worktree might reference. initWorkspace uses -B
         // because it owns the branch lifecycle; fork is creating a new name.
-        const worktreeCmd = `git -C ${baseRepoPathArg} worktree add ${newWorkspacePathArg} -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+        // Disable git hooks for untrusted projects (prevents post-checkout execution)
+        const nhp = gitNoHooksPrefix(params.trusted);
+        const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${newWorkspacePathArg} -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",
           timeout: 60,
@@ -1592,10 +1603,12 @@ export class SSHRuntime extends RemoteRuntime {
         }
 
         // Checkout the destination branch, creating it from sourceBranch if needed.
+        // Disable git hooks for untrusted projects (prevents post-checkout execution)
+        const forkNhp = gitNoHooksPrefix(params.trusted);
         initLogger.logStep(`Checking out branch: ${newWorkspaceName}`);
         const checkoutCmd =
-          `git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
-          `git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+          `${forkNhp}git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
+          `${forkNhp}git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
         const checkoutResult = await execBuffered(this, checkoutCmd, {
           cwd: newWorkspacePath,
           timeout: 120,

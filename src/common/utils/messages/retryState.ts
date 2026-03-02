@@ -7,8 +7,8 @@ export interface RetryState<TError = SendMessageError> {
   lastError?: TError;
 }
 
-export const INITIAL_DELAY = 1000; // 1 second
-export const MAX_DELAY = 60000; // 60 seconds
+const INITIAL_DELAY = 1000; // 1 second
+const MAX_DELAY = 60000; // 60 seconds
 
 /**
  * Utility functions for managing retry state.

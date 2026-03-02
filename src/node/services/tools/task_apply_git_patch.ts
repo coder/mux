@@ -11,6 +11,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { shellQuote } from "@/common/utils/shell";
 import { execBuffered } from "@/node/utils/runtime/helpers";
+import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import {
   getSubagentGitPatchMboxPath,
   markSubagentGitPatchArtifactApplied,
@@ -583,6 +584,9 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
       const flags: string[] = [];
       if (threeWay) flags.push("--3way");
 
+      // Disable git hooks for untrusted projects (prevents applypatch-msg, pre-applypatch, post-applypatch)
+      const nhp = gitNoHooksPrefix(config.trusted);
+
       if (dryRun) {
         // `git am` doesn't support a native --dry-run. Instead, apply inside a temporary worktree
         // and discard it. This avoids mutating the current worktree while still exercising `git am`.
@@ -594,7 +598,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
 
         const addResult = await execBuffered(
           config.runtime,
-          `git worktree add --detach ${shellQuote(dryRunWorktreePath)} HEAD`,
+          `${nhp}git worktree add --detach ${shellQuote(dryRunWorktreePath)} HEAD`,
           { cwd: config.cwd, timeout: 60 }
         );
         if (addResult.exitCode !== 0) {
@@ -613,7 +617,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         try {
           const beforeHeadSha = await tryRevParseHead({ cwd: dryRunWorktreePath });
 
-          const amCmd = `git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
+          const amCmd = `${nhp}git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
           const amResult = await execBuffered(config.runtime, amCmd, {
             cwd: dryRunWorktreePath,
             timeout: 300,
@@ -672,7 +676,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         } finally {
           // Best-effort: clean up the temp worktree. This should never fail the tool call.
           try {
-            const abortResult = await execBuffered(config.runtime, "git am --abort", {
+            const abortResult = await execBuffered(config.runtime, `${nhp}git am --abort`, {
               cwd: dryRunWorktreePath,
               timeout: 30,
             });
@@ -700,7 +704,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           try {
             const removeResult = await execBuffered(
               config.runtime,
-              `git worktree remove --force ${shellQuote(dryRunWorktreePath)}`,
+              `${nhp}git worktree remove --force ${shellQuote(dryRunWorktreePath)}`,
               { cwd: config.cwd, timeout: 60 }
             );
             if (removeResult.exitCode !== 0) {
@@ -752,7 +756,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
 
       const beforeHeadSha = await tryRevParseHead({ cwd: config.cwd });
 
-      const amCmd = `git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
+      const amCmd = `${nhp}git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
       const amResult = await execBuffered(config.runtime, amCmd, { cwd: config.cwd, timeout: 300 });
 
       if (amResult.exitCode !== 0) {

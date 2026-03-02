@@ -604,6 +604,26 @@ export const System1KeepRangeSchema = z.object({
   reason: z.string().nullish().describe("Optional short reason for keeping this range"),
 });
 
+// -----------------------------------------------------------------------------
+// propose_name (workspace name generation)
+// -----------------------------------------------------------------------------
+
+export const ProposeNameToolArgsSchema = z.object({
+  name: z
+    .string()
+    .regex(/^[a-z0-9-]+$/)
+    .min(2)
+    .max(20)
+    .describe(
+      "Codebase area (1-2 words, max 15 chars): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config'"
+    ),
+  title: z
+    .string()
+    .min(5)
+    .max(60)
+    .describe("Human-readable title (2-5 words): verb-noun format like 'Fix plan mode'"),
+});
+
 /**
  * Tool definitions: single source of truth
  * Key = tool name, Value = { description, schema }
@@ -901,6 +921,12 @@ export const TOOL_DEFINITIONS = {
       "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
     schema: AskUserQuestionToolArgsSchema,
   },
+  propose_name: {
+    description:
+      "Propose a workspace name and title. You MUST call this tool exactly once with your chosen name and title. " +
+      "Do not emit a text response; call this tool immediately.",
+    schema: ProposeNameToolArgsSchema,
+  },
   propose_plan: {
     description:
       "Signal that your plan is complete and ready for user approval. " +
@@ -998,8 +1024,8 @@ export const TOOL_DEFINITIONS = {
       "The TODO list is displayed to the user at all times. " +
       "Replace the entire list on each call - the AI tracks which tasks are completed.\n" +
       "\n" +
-      "Mark ONE task as in_progress at a time. " +
-      "Order tasks as: completed first, then in_progress (max 1), then pending last. " +
+      "Mark tasks as in_progress when actively being worked on (multiple allowed for parallel work). " +
+      "Order tasks as: completed first, then in_progress, then pending last. " +
       "Use appropriate tense in content: past tense for completed (e.g., 'Added tests'), " +
       "present progressive for in_progress (e.g., 'Adding tests'), " +
       "and imperative/infinitive for pending (e.g., 'Add tests').\n" +

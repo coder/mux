@@ -100,12 +100,6 @@ export interface ProjectsConfig {
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).
    */
   hiddenModels?: string[];
-  /**
-   * Preferred model for compaction requests (shared via ~/.mux/config.json).
-   * Mirrors the browser localStorage cache (PREFERRED_COMPACTION_MODEL_KEY).
-   */
-  preferredCompactionModel?: string;
-
   /** Default model + thinking overrides per agentId (applies to UI agents and subagents). */
   agentAiDefaults?: AgentAiDefaults;
   /** @deprecated Legacy per-subagent default model + thinking overrides. */

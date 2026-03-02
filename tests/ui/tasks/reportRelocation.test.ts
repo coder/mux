@@ -10,7 +10,12 @@ import "../dom";
 import { waitFor } from "@testing-library/react";
 
 import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } from "../../ipc/setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { HistoryService } from "@/node/services/historyService";
 import { createMuxMessage } from "@/common/types/message";
@@ -99,6 +104,7 @@ describe("Task report relocation UI", () => {
   test("renders completed task report under original task tool call", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
     const cleanupDom = installDom();
     let view: ReturnType<typeof renderApp> | undefined;
     let workspaceId: string | undefined;

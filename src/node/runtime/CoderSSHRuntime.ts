@@ -533,21 +533,22 @@ export class CoderSSHRuntime extends SSHRuntime {
     projectPath: string,
     workspaceName: string,
     force: boolean,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
     // Deleting a Coder workspace is dangerous; CoderService refuses to delete workspaces
     // without the mux- prefix to avoid accidentally deleting user-owned Coder workspaces.
 
     // If this workspace is an existing Coder workspace that mux didn't create, just do SSH cleanup.
     if (this.coderConfig.existingWorkspace) {
-      return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
+      return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal, trusted);
     }
 
     const coderWorkspaceName = this.coderConfig.workspaceName;
 
     if (!coderWorkspaceName) {
       log.warn("Coder workspace name not set, falling back to SSH-only deletion");
-      return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
+      return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal, trusted);
     }
 
     // For force deletes ("cancel creation"), skip SSH cleanup and focus on deleting the
@@ -639,7 +640,13 @@ export class CoderSSHRuntime extends SSHRuntime {
       }
     }
 
-    const sshResult = await super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
+    const sshResult = await super.deleteWorkspace(
+      projectPath,
+      workspaceName,
+      force,
+      abortSignal,
+      trusted
+    );
 
     // In the normal (force=false) delete path, only delete the Coder workspace if the SSH delete
     // succeeded. If SSH delete failed (e.g., dirty workspace), WorkspaceService.remove() keeps the

@@ -103,7 +103,8 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    const cacheTtl = muxProviderOptions?.anthropic?.cacheTtl;
+    const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
+    const cacheTtl = disableBeta ? undefined : muxProviderOptions?.anthropic?.cacheTtl;
     const cacheControl = cacheTtl ? { type: "ephemeral" as const, ttl: cacheTtl } : undefined;
 
     // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
@@ -234,6 +235,7 @@ export function buildProviderOptions(
 
     const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
     const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
+    const store = muxProviderOptions?.openai?.store;
     const isResponses = wireFormat === "responses";
     const truncationMode = openaiTruncationMode ?? "disabled";
     const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(modelName);
@@ -252,6 +254,7 @@ export function buildProviderOptions(
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
         serviceTier,
+        ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
         ...(isResponses && {
           // Default to disabled; allow auto truncation for compaction to avoid context errors
           truncation: truncationMode,
@@ -379,28 +382,62 @@ export function buildProviderOptions(
 /** Header value for Anthropic 1M context beta */
 export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
 
+/** HTTP header sent on AI requests for workspace-level observability. */
+export const MUX_WORKSPACE_ID_HEADER = "X-Mux-Workspace-Id";
+
+const HTTP_HEADER_VALUE_SAFE_PATTERN = /^[\t\x20-\x7E\x80-\xFF]+$/;
+
+/**
+ * Encode workspace IDs that contain non-header-safe bytes.
+ *
+ * Legacy workspace IDs may include non-Latin-1 characters (e.g., emoji from
+ * project/workspace names). Fetch rejects such header values, which would abort
+ * the request before it reaches the provider. We keep safe IDs unchanged for
+ * readability and encode unsafe ones into a stable URL-safe base64 form.
+ */
+function toWorkspaceHeaderValue(workspaceId: string): string {
+  if (HTTP_HEADER_VALUE_SAFE_PATTERN.test(workspaceId)) {
+    return workspaceId;
+  }
+
+  return `b64:${Buffer.from(workspaceId, "utf8").toString("base64url")}`;
+}
+
 /**
  * Build per-request HTTP headers for provider-specific features.
  *
  * These flow through streamText({ headers }) to the provider SDK, which merges
  * them with provider-creation-time headers via combineHeaders(). This is the
- * single injection site for features like the Anthropic 1M context beta header,
- * regardless of whether the model is direct or gateway-routed.
+ * single injection site for headers like the workspace correlation header and
+ * Anthropic's 1M context beta header, regardless of direct vs gateway routing.
  */
 export function buildRequestHeaders(
   modelString: string,
-  muxProviderOptions?: MuxProviderOptions
+  muxProviderOptions?: MuxProviderOptions,
+  workspaceId?: string
 ): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+
+  if (workspaceId != null) {
+    headers[MUX_WORKSPACE_ID_HEADER] = toWorkspaceHeaderValue(workspaceId);
+  }
+
   const normalized = normalizeGatewayModel(modelString);
   const [provider] = normalized.split(":", 2);
 
-  if (provider !== "anthropic") return undefined;
+  if (provider === "anthropic") {
+    // ZDR: skip all Anthropic beta headers when beta features are disabled.
+    if (!muxProviderOptions?.anthropic?.disableBetaFeatures) {
+      const is1MEnabled =
+        ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
+          muxProviderOptions?.anthropic?.use1MContext === true) &&
+        supports1MContext(normalized);
 
-  const is1MEnabled =
-    ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
-      muxProviderOptions?.anthropic?.use1MContext === true) &&
-    supports1MContext(normalized);
+      if (is1MEnabled) {
+        headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
+      }
+    }
+  }
 
-  if (!is1MEnabled) return undefined;
-  return { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }

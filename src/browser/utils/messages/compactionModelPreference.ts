@@ -3,12 +3,13 @@
  *
  * resolveCompactionModel priority:
  *   1) /compact -m flag (requestedModel)
- *   2) Settings preference (preferredCompactionModel)
+ *   2) Settings preference (agentAiDefaults.compact.modelString)
  *   3) undefined → caller falls back to workspace model
  */
 
-import { readPersistedString } from "@/browser/hooks/usePersistedState";
-import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
 function trimmedOrUndefined(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -17,7 +18,8 @@ function trimmedOrUndefined(value: unknown): string | undefined {
 }
 
 export function getPreferredCompactionModel(): string | undefined {
-  return trimmedOrUndefined(readPersistedString(PREFERRED_COMPACTION_MODEL_KEY));
+  const defaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
+  return trimmedOrUndefined(defaults.compact?.modelString);
 }
 
 export function resolveCompactionModel(requestedModel: string | undefined): string | undefined {

@@ -359,18 +359,34 @@ async function queryTimingDistribution(
   // Histogram emits real metric values (e.g. ms, tok/s) as bucket labels,
   // not abstract 1..20 indices. This way the chart x-axis maps directly to
   // meaningful units and percentile reference lines land correctly.
+  //
+  // Cap the histogram range at p99 so a single extreme outlier does not flatten
+  // the distribution for the other 99% of responses. If p99 collapses to min
+  // (for near-constant datasets), fall back to raw max to preserve bucket spread.
   const histogram = await typedQuery(
     conn,
     `
-    WITH stats AS (
+    WITH raw_stats AS (
       SELECT
         MIN(${column}) AS min_value,
-        MAX(${column}) AS max_value
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY ${column}) AS p99_value,
+        MAX(${column}) AS raw_max_value
       FROM events
       WHERE ${column} IS NOT NULL
         AND (? IS NULL OR project_path = ?)
         AND (? IS NULL OR date >= CAST(? AS DATE))
         AND (? IS NULL OR date <= CAST(? AS DATE))
+    ),
+    stats AS (
+      SELECT
+        min_value,
+        CASE
+          -- If p99 collapses to the minimum (e.g. >99% identical values),
+          -- fall back to the raw max so outliers do not get forced into bucket 1.
+          WHEN p99_value = min_value AND raw_max_value > p99_value THEN raw_max_value
+          ELSE p99_value
+        END AS max_value
+      FROM raw_stats
     ),
     bucketed AS (
       SELECT

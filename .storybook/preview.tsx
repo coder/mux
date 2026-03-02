@@ -8,7 +8,7 @@ import {
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
   type TutorialState,
 } from "../src/common/constants/storage";
-import { NOW } from "../src/browser/stories/mockFactory";
+import { NOW } from "../src/browser/stories/storyTime";
 import { updatePersistedState } from "../src/browser/hooks/usePersistedState";
 import { configure } from "@storybook/test";
 

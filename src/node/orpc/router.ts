@@ -7,6 +7,7 @@ import {
 } from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
@@ -568,7 +569,6 @@ export const router = (authToken?: string) => {
             muxGatewayModels: config.muxGatewayModels,
             defaultModel: config.defaultModel,
             hiddenModels: config.hiddenModels,
-            preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
             runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
             defaultRuntime: config.defaultRuntime ?? null,
@@ -669,10 +669,6 @@ export const router = (authToken?: string) => {
               }
 
               next.hiddenModels = normalizedHidden;
-            }
-
-            if (input.preferredCompactionModel !== undefined) {
-              next.preferredCompactionModel = normalizeModelString(input.preferredCompactionModel);
             }
 
             return next;
@@ -2012,6 +2008,23 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.gitInit(input.projectPath);
         }),
+      setTrust: t
+        .input(schemas.projects.setTrust.input)
+        .output(schemas.projects.setTrust.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedPath = stripTrailingSlashes(input.projectPath);
+            let project = config.projects.get(normalizedPath);
+            if (!project) {
+              // Create a minimal project entry so trust can be set before
+              // the first workspace.create (which normally adds the project)
+              project = { workspaces: [] };
+              config.projects.set(normalizedPath, project);
+            }
+            project.trusted = input.trusted;
+            return config;
+          });
+        }),
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)
@@ -2534,7 +2547,7 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.create.output)
         .handler(async ({ context, input }) => {
           const result = await context.workspaceService.create(
-            input.projectPath,
+            stripTrailingSlashes(input.projectPath),
             input.branchName,
             input.trunkBranch,
             input.title,

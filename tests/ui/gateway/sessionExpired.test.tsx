@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { installDom } from "../dom";
 
-import { MuxGatewaySessionExpiredDialog } from "@/browser/components/MuxGatewaySessionExpiredDialog";
+import { MuxGatewaySessionExpiredDialog } from "@/browser/components/MuxGatewaySessionExpiredDialog/MuxGatewaySessionExpiredDialog";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 

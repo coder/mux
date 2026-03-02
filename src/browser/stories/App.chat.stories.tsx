@@ -2,7 +2,7 @@
  * Chat messages & interactions stories
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { appMeta, AppWithMocks, StoryUiShell, type AppStory } from "./meta.js";
 import {
   STABLE_TIMESTAMP,
   createUserMessage,
@@ -24,7 +24,7 @@ import {
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
-import { getModelKey } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY, getModelKey } from "@/common/constants/storage";
 import { waitForChatMessagesLoaded } from "./storyPlayHelpers.js";
 import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
@@ -36,9 +36,8 @@ import {
   HelpIndicator,
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
-} from "@/browser/components/ui/tooltip";
+} from "@/browser/components/Tooltip/Tooltip";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   PLAN_AUTO_ROUTING_STATUS_EMOJI,
@@ -839,7 +838,7 @@ export const StreamingCompactionWithConfigureHint: AppStory = {
     <AppWithMocks
       setup={() => {
         // Ensure no compaction model is set so the "configure" hint appears
-        localStorage.removeItem("preferredCompactionModel");
+        updatePersistedState(AGENT_AI_DEFAULTS_KEY, undefined);
 
         return setupStreamingChatStory({
           workspaceId: "ws-compaction-hint",
@@ -957,7 +956,7 @@ export const BackgroundProcesses: AppStory = {
  */
 export const ModeHelpTooltip: AppStory = {
   render: () => (
-    <TooltipProvider>
+    <StoryUiShell>
       <div className="bg-background flex min-h-[180px] items-start p-6">
         <Tooltip>
           <TooltipTrigger asChild>
@@ -985,7 +984,7 @@ export const ModeHelpTooltip: AppStory = {
           </TooltipContent>
         </Tooltip>
       </div>
-    </TooltipProvider>
+    </StoryUiShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

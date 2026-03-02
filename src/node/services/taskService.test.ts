@@ -293,6 +293,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: parentPath,
@@ -377,6 +378,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: runtime.getWorkspacePath(projectPath, parent1Name),
@@ -480,6 +482,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: runtime.getWorkspacePath(projectPath, rootName),
@@ -578,6 +581,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: runtime.getWorkspacePath(projectPath, parentName),
@@ -692,6 +696,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: runtime.getWorkspacePath(projectPath, parentName),
@@ -807,6 +812,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -878,6 +884,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: parentPath,
@@ -940,6 +947,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: projectPath,
@@ -993,6 +1001,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: projectPath,
@@ -1056,6 +1065,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: projectPath,
@@ -1117,6 +1127,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: projectPath,
@@ -1197,6 +1208,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: projectPath,
@@ -1272,6 +1284,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: projectPath,
@@ -1325,6 +1338,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "root"),
@@ -1883,6 +1897,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "root"),
@@ -1946,6 +1961,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "root"),
@@ -2023,6 +2039,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "root"),
@@ -2086,6 +2103,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "parent"),
@@ -2253,6 +2271,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "parent"),
@@ -2322,6 +2341,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -2378,6 +2398,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -2432,6 +2453,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -2513,6 +2535,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
             ],
@@ -2544,6 +2567,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -2591,6 +2615,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -2633,6 +2658,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -2671,6 +2697,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -2710,6 +2737,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -2774,6 +2802,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "parent"),
@@ -2966,6 +2995,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -3015,6 +3045,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -3059,6 +3090,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -3111,6 +3143,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -3159,6 +3192,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -3207,6 +3241,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -3265,6 +3300,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -3326,6 +3362,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -3402,6 +3439,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: parentPath,
@@ -3460,6 +3498,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -3635,6 +3674,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: parentPath,
@@ -3805,6 +3845,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: parentPath,
@@ -3950,6 +3991,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -4082,6 +4124,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -4206,6 +4249,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
               {
@@ -4393,6 +4437,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: path.join(projectPath, "parent"),
@@ -4834,6 +4879,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               {
                 path: parentPath,
@@ -4885,6 +4931,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -4961,6 +5008,7 @@ describe("TaskService", () => {
         [
           projectPath,
           {
+            trusted: true,
             workspaces: [
               { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
               {
@@ -5043,6 +5091,7 @@ describe("TaskService", () => {
           [
             projectPath,
             {
+              trusted: true,
               workspaces: [
                 {
                   path: path.join(projectPath, "root"),
@@ -5164,6 +5213,7 @@ describe("TaskService", () => {
           [
             projectPath,
             {
+              trusted: true,
               workspaces: [
                 {
                   path: path.join(projectPath, "root-a"),

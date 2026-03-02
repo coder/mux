@@ -237,9 +237,15 @@ describe("buildAIProviderRequestHeaders", () => {
     expect(result.get("user-agent")).toBe(MUX_AI_PROVIDER_USER_AGENT);
   });
 
-  it("does not overwrite an existing User-Agent", () => {
+  it("prepends Mux attribution to an existing User-Agent", () => {
     const result = buildAIProviderRequestHeaders({ "User-Agent": "custom-agent/1.0" });
-    expect(result.get("user-agent")).toBe("custom-agent/1.0");
+    expect(result.get("user-agent")).toBe(`${MUX_AI_PROVIDER_USER_AGENT} custom-agent/1.0`);
+  });
+
+  it("does not duplicate Mux attribution when already present", () => {
+    const existing = `${MUX_AI_PROVIDER_USER_AGENT} ai-sdk/anthropic/3.0.37`;
+    const result = buildAIProviderRequestHeaders({ "User-Agent": existing });
+    expect(result.get("user-agent")).toBe(existing);
   });
 
   it("preserves existing headers while injecting User-Agent", () => {

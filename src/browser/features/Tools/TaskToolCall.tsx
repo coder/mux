@@ -1,0 +1,855 @@
+import React, { useState } from "react";
+import { Info } from "lucide-react";
+import {
+  ToolContainer,
+  ToolHeader,
+  ExpandIcon,
+  ToolName,
+  StatusIndicator,
+  ToolDetails,
+  LoadingDots,
+  ErrorBox,
+} from "./Shared/ToolPrimitives";
+import {
+  useToolExpansion,
+  getStatusDisplay,
+  isToolErrorResult,
+  type ToolStatus,
+} from "./Shared/toolUtils";
+import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
+import { useOptionalMessageListContext } from "../Messages/MessageListContext";
+import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
+import { cn } from "@/common/lib/utils";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+import {
+  useOptionalWorkspaceContext,
+  toWorkspaceSelection,
+} from "@/browser/contexts/WorkspaceContext";
+import { useTaskToolLiveTaskId } from "@/browser/stores/WorkspaceStore";
+import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type {
+  TaskToolArgs,
+  TaskToolResult,
+  TaskAwaitToolArgs,
+  TaskAwaitToolSuccessResult,
+  TaskListToolArgs,
+  TaskListToolSuccessResult,
+  TaskTerminateToolArgs,
+  TaskTerminateToolSuccessResult,
+} from "@/common/types/tools";
+import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
+
+/**
+ * Clean SVG icon for task tools - represents spawning/branching work
+ */
+const TaskIcon: React.FC<{ className?: string; toolName: string }> = ({ className, toolName }) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={cn("h-3.5 w-3.5 text-task-mode", className)}
+      >
+        {/* Main vertical line */}
+        <path d="M4 2v5" />
+        {/* Branch to right */}
+        <path d="M4 7c0 2 2 3 4 3h4" />
+        {/* Arrow head */}
+        <path d="M10 8l2 2-2 2" />
+        {/* Dot at origin */}
+        <circle cx="4" cy="2" r="1.5" fill="currentColor" stroke="none" />
+      </svg>
+    </TooltipTrigger>
+    <TooltipContent>{toolName}</TooltipContent>
+  </Tooltip>
+);
+
+// Status badge component for task statuses
+const TaskStatusBadge: React.FC<{
+  status: string;
+  className?: string;
+}> = ({ status, className }) => {
+  const getStatusStyle = () => {
+    switch (status) {
+      case "completed":
+      case "reported":
+        return "bg-success/20 text-success";
+      case "running":
+      case "awaiting_report":
+        return "bg-pending/20 text-pending";
+      case "queued":
+        return "bg-muted/20 text-muted";
+      case "terminated":
+        return "bg-interrupted/20 text-interrupted";
+      case "not_found":
+      case "invalid_scope":
+      case "error":
+        return "bg-danger/20 text-danger";
+      default:
+        return "bg-muted/20 text-muted";
+    }
+  };
+
+  return (
+    <span
+      className={cn(
+        "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+        getStatusStyle(),
+        className
+      )}
+    >
+      {status}
+    </span>
+  );
+};
+
+// Agent type badge
+const AgentTypeBadge: React.FC<{
+  type: string;
+  className?: string;
+}> = ({ type, className }) => {
+  const getTypeStyle = () => {
+    switch (type) {
+      case "explore":
+        return "border-plan-mode/50 text-plan-mode";
+      case "exec":
+        return "border-exec-mode/50 text-exec-mode";
+      default:
+        return "border-muted/50 text-muted";
+    }
+  };
+
+  return (
+    <span
+      className={cn(
+        "inline-block shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+        getTypeStyle(),
+        className
+      )}
+    >
+      {type}
+    </span>
+  );
+};
+
+// Task ID display with open/copy affordance.
+// - If the task workspace exists locally, clicking opens it.
+// - Otherwise, clicking copies the ID (so the user can search / share it).
+const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className }) => {
+  const workspaceContext = useOptionalWorkspaceContext();
+  const { copied, copyToClipboard } = useCopyToClipboard();
+
+  const workspace = workspaceContext?.workspaceMetadata.get(id);
+
+  const canOpenWorkspace = Boolean(workspace && workspaceContext);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "font-mono text-[10px] text-muted opacity-70 hover:opacity-100 hover:underline underline-offset-2",
+            className
+          )}
+          onClick={() => {
+            if (workspace && workspaceContext) {
+              workspaceContext.setSelectedWorkspace(toWorkspaceSelection(workspace));
+              return;
+            }
+
+            void copyToClipboard(id);
+          }}
+        >
+          {id}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {canOpenWorkspace ? "Open workspace" : copied ? "Copied" : "Copy task ID"}
+      </TooltipContent>
+    </Tooltip>
+  );
+};
+
+interface TaskRowProps {
+  taskId: string;
+  status: string;
+  agentType?: string;
+  title?: string;
+  depth?: number;
+  className?: string;
+}
+
+const TaskRow: React.FC<TaskRowProps> = (props) => (
+  <div
+    className={cn("bg-code-bg flex flex-wrap items-center gap-2 rounded-sm p-2", props.className)}
+  >
+    <TaskId id={props.taskId} />
+    <TaskStatusBadge status={props.status} />
+    {props.agentType && <AgentTypeBadge type={props.agentType} />}
+    {props.title && (
+      <span className="text-foreground max-w-[200px] truncate text-[11px]">{props.title}</span>
+    )}
+    {typeof props.depth === "number" && props.depth > 0 && (
+      <span className="text-muted text-[10px]">depth: {props.depth}</span>
+    )}
+  </div>
+);
+
+const MAX_TASK_DEPTH_TRAVERSAL = 50;
+
+function computeWorkspaceDepthFromRoot(
+  rootWorkspaceId: string,
+  leafWorkspaceId: string,
+  workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata>
+): number | undefined {
+  // Not a descendant task (or no nesting to measure).
+  if (rootWorkspaceId === leafWorkspaceId) {
+    return 0;
+  }
+
+  const visited = new Set<string>();
+  let depth = 0;
+  let currentId: string | undefined = leafWorkspaceId;
+
+  // DEFENSIVE: Guard against cycles or corrupted metadata.
+  while (depth < MAX_TASK_DEPTH_TRAVERSAL) {
+    if (!currentId) {
+      return undefined;
+    }
+
+    if (visited.has(currentId)) {
+      return undefined;
+    }
+
+    visited.add(currentId);
+
+    const metadata = workspaceMetadata.get(currentId);
+    const parentId = metadata?.parentWorkspaceId;
+
+    if (typeof parentId !== "string" || parentId.trim().length === 0) {
+      return undefined;
+    }
+
+    depth += 1;
+
+    if (parentId === rootWorkspaceId) {
+      return depth;
+    }
+
+    currentId = parentId;
+  }
+
+  return undefined;
+}
+
+function toTaskStatusFromBackgroundProcessStatus(
+  status: "running" | "exited" | "killed" | "failed"
+): string {
+  switch (status) {
+    case "running":
+      return "running";
+    case "exited":
+      return "completed";
+    case "killed":
+      return "terminated";
+    case "failed":
+      return "error";
+    default:
+      return String(status);
+  }
+}
+
+function fromBashTaskId(taskId: string): string | null {
+  const prefix = "bash:";
+  if (!taskId.startsWith(prefix)) {
+    return null;
+  }
+
+  const processId = taskId.slice(prefix.length).trim();
+  return processId.length > 0 ? processId : null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK TOOL CALL (spawn sub-agent)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface TaskToolCallProps {
+  args: TaskToolArgs;
+  result?: TaskToolResult;
+  status?: ToolStatus;
+  taskReportLinking?: TaskReportLinking;
+  workspaceId?: string;
+  toolCallId?: string;
+}
+
+export const TaskToolCall: React.FC<TaskToolCallProps> = ({
+  workspaceId,
+  args,
+  result,
+  status = "pending",
+  taskReportLinking,
+  toolCallId,
+}) => {
+  // Narrow result to error or success shape
+  const errorResult = isToolErrorResult(result) ? result : null;
+  const successResult = result && typeof result === "object" && "status" in result ? result : null;
+
+  const liveTaskId = useTaskToolLiveTaskId(workspaceId, toolCallId);
+
+  // Derive task state from the spawn response (or UI-only task-created event while executing)
+  const taskId = successResult?.taskId ?? liveTaskId ?? undefined;
+  const taskStatus = successResult?.status;
+
+  // Render-time linking: if a later task_await produced the final report, display it here.
+  // This keeps the report under the original spawn card without mutating history.
+  const linkedReport =
+    typeof taskId === "string" ? taskReportLinking?.reportByTaskId.get(taskId) : undefined;
+  const hasLinkedCompletion = Boolean(linkedReport);
+
+  const ownReportMarkdown =
+    successResult?.status === "completed" ? successResult.reportMarkdown : undefined;
+  const ownReportTitle = successResult?.status === "completed" ? successResult.title : undefined;
+
+  const reportMarkdown =
+    typeof ownReportMarkdown === "string" && ownReportMarkdown.trim().length > 0
+      ? ownReportMarkdown
+      : linkedReport?.reportMarkdown;
+  const reportTitle = ownReportTitle ?? linkedReport?.title;
+
+  const displayTaskStatus = hasLinkedCompletion ? "completed" : taskStatus;
+
+  // Override status for background tasks: the aggregator sees success=true and marks "completed",
+  // but if the task is still queued/running, we should show "backgrounded" instead.
+  // If we have a linked completion report, show the task as completed.
+  const effectiveStatus: ToolStatus = hasLinkedCompletion
+    ? "completed"
+    : status === "completed" &&
+        successResult &&
+        (successResult.status === "queued" || successResult.status === "running")
+      ? "backgrounded"
+      : status;
+
+  // Derive expansion: keep task cards collapsed by default (reports can be long),
+  // but auto-expand on error. Always respect the user's explicit toggle.
+  const hasReport = typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0;
+  const shouldAutoExpand = !!errorResult;
+  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
+  const expanded = userExpandedChoice ?? shouldAutoExpand;
+  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+
+  const isBackground = args.run_in_background;
+
+  const title = args.title ?? "Task";
+  const prompt = args.prompt ?? "";
+  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
+  const kindBadge = <AgentTypeBadge type={agentType} />;
+
+  const canViewTranscript = displayTaskStatus === "completed" && typeof taskId === "string";
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  // Show preview (first line or truncated)
+  const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
+
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task" />
+        <ToolName>task</ToolName>
+        {kindBadge}
+        {isBackground && (
+          <span className="text-backgrounded text-[10px] font-medium">background</span>
+        )}
+        <StatusIndicator status={effectiveStatus}>
+          {getStatusDisplay(effectiveStatus)}
+        </StatusIndicator>
+      </ToolHeader>
+
+      {canViewTranscript && taskId && (
+        <SubagentTranscriptDialog
+          open={transcriptOpen}
+          onOpenChange={setTranscriptOpen}
+          workspaceId={workspaceId}
+          taskId={taskId}
+        />
+      )}
+
+      {expanded && (
+        <ToolDetails>
+          {/* Task info surface */}
+          <div className="task-surface mt-1 rounded-md p-3">
+            <div className="task-divider mb-2 flex flex-wrap items-center gap-2 border-b pb-2">
+              <span className="text-task-mode text-[12px] font-semibold">
+                {reportTitle ?? title}
+              </span>
+              {taskId && <TaskId id={taskId} />}
+              {displayTaskStatus && <TaskStatusBadge status={displayTaskStatus} />}
+              {canViewTranscript && (
+                <button
+                  type="button"
+                  className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setTranscriptOpen(true);
+                  }}
+                >
+                  View transcript
+                </button>
+              )}
+            </div>
+
+            {/* Prompt / script */}
+            <div className="mb-2">
+              <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Prompt</div>
+              <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
+                {prompt}
+              </div>
+            </div>
+
+            {/* Report section */}
+            {hasReport && reportMarkdown && (
+              <div className="task-divider border-t pt-2">
+                <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
+                <div
+                  className={cn("text-[11px]", hasLinkedCompletion && "bg-code-bg rounded-sm p-2")}
+                >
+                  <MarkdownRenderer content={reportMarkdown} />
+                </div>
+              </div>
+            )}
+
+            {/* Pending state */}
+            {effectiveStatus === "executing" && !hasReport && (
+              <div className="text-muted text-[11px] italic">
+                Task {isBackground ? "running in background" : "executing"}
+                <LoadingDots />
+              </div>
+            )}
+
+            {/* Error state */}
+            {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
+          </div>
+        </ToolDetails>
+      )}
+
+      {/* Collapsed preview */}
+      {!expanded && <div className="text-muted mt-1 truncate text-[10px]">{preview}</div>}
+    </ToolContainer>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK AWAIT TOOL CALL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface TaskAwaitToolCallProps {
+  args: TaskAwaitToolArgs;
+  result?: TaskAwaitToolSuccessResult;
+  status?: ToolStatus;
+  taskReportLinking?: TaskReportLinking;
+}
+
+export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
+  args,
+  result,
+  status = "pending",
+  taskReportLinking,
+}) => {
+  const taskIds = args.task_ids;
+  const timeoutSecs = args.timeout_secs;
+  const results = result?.results ?? [];
+
+  const suppressReportInAwaitTaskIds = taskReportLinking?.suppressReportInAwaitTaskIds;
+
+  const showConfigInfo =
+    taskIds != null || timeoutSecs != null || args.filter != null || args.filter_exclude === true;
+
+  // Summary for header
+  const completedCount = results.filter((r) => r.status === "completed").length;
+  const totalCount = results.length;
+  const failedCount = results.filter(
+    (r) => r.status === "error" || r.status === "invalid_scope" || r.status === "not_found"
+  ).length;
+
+  const workspaceContext = useOptionalWorkspaceContext();
+  const workspaceMetadata = workspaceContext?.workspaceMetadata;
+  const messageListContext = useOptionalMessageListContext();
+  const workspaceId = messageListContext?.workspaceId;
+  const backgroundProcesses = useBackgroundProcesses(workspaceId);
+
+  const awaitedRows: TaskRowProps[] = [];
+  if (status === "executing" && results.length === 0 && Array.isArray(taskIds)) {
+    for (const taskId of taskIds) {
+      const processId = fromBashTaskId(taskId);
+      if (processId) {
+        const proc = backgroundProcesses.find((entry) => entry.id === processId);
+        awaitedRows.push({
+          taskId,
+          status: proc ? toTaskStatusFromBackgroundProcessStatus(proc.status) : "waiting",
+          title: proc?.displayName ?? proc?.id,
+          depth: 1,
+        });
+        continue;
+      }
+
+      const metadata = workspaceMetadata?.get(taskId);
+      if (!metadata) {
+        awaitedRows.push({ taskId, status: "waiting" });
+        continue;
+      }
+
+      const agentType = (metadata.agentId ?? metadata.agentType)?.trim();
+      const title = metadata.title?.trim().length ? metadata.title : metadata.name;
+
+      awaitedRows.push({
+        taskId,
+        status: metadata.taskStatus ?? "waiting",
+        agentType: agentType && agentType.length > 0 ? agentType : undefined,
+        title,
+        depth:
+          workspaceId && workspaceMetadata
+            ? computeWorkspaceDepthFromRoot(workspaceId, taskId, workspaceMetadata)
+            : undefined,
+      });
+    }
+  }
+
+  function getWorkspaceTitle(taskId: string): string | undefined {
+    const metadata = workspaceMetadata?.get(taskId);
+    const title = metadata?.title?.trim();
+    if (title && title.length > 0) return title;
+
+    const name = metadata?.name?.trim();
+    return name && name.length > 0 ? name : undefined;
+  }
+  // Keep task_await collapsed by default, but auto-expand when failures are present.
+  // This avoids hiding failures behind a "completed" badge in the header.
+  const shouldAutoExpand = failedCount > 0;
+  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
+  const expanded = userExpandedChoice ?? shouldAutoExpand;
+  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+
+  const effectiveStatus: ToolStatus = status === "completed" && failedCount > 0 ? "failed" : status;
+
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task_await" />
+        <ToolName>task_await</ToolName>
+        {totalCount > 0 && (
+          <span className="text-muted text-[10px]">
+            {completedCount}/{totalCount} completed
+          </span>
+        )}
+        {failedCount > 0 && <span className="text-danger text-[10px]">{failedCount} failed</span>}
+        <StatusIndicator status={effectiveStatus}>
+          {getStatusDisplay(effectiveStatus)}
+        </StatusIndicator>
+      </ToolHeader>
+
+      {expanded && (
+        <ToolDetails>
+          <div className="task-surface mt-1 rounded-md p-3">
+            {/* Config info */}
+            {showConfigInfo && (
+              <div className="task-divider text-muted mb-2 flex flex-wrap gap-2 border-b pb-2 text-[10px]">
+                {taskIds != null && <span>Waiting for: {taskIds.length} task(s)</span>}
+                {timeoutSecs != null && <span>Timeout: {timeoutSecs}s</span>}
+                {args.filter != null && <span>Filter: {args.filter}</span>}
+                {args.filter_exclude === true && <span>Exclude: true</span>}
+              </div>
+            )}
+
+            {/* Results */}
+            {results.length > 0 ? (
+              <div className="space-y-3">
+                {results.map((r, idx) => {
+                  const taskId = typeof r.taskId === "string" ? r.taskId : null;
+
+                  const spawnTitle = taskId
+                    ? taskReportLinking?.spawnTitleByTaskId.get(taskId)
+                    : undefined;
+                  const fallbackTitle =
+                    (spawnTitle && spawnTitle.trim().length > 0 ? spawnTitle.trim() : undefined) ??
+                    (taskId ? getWorkspaceTitle(taskId) : undefined);
+
+                  return (
+                    <TaskAwaitResult
+                      key={taskId ?? idx}
+                      result={r}
+                      fallbackTitle={fallbackTitle}
+                      suppressReport={taskId ? suppressReportInAwaitTaskIds?.has(taskId) : false}
+                    />
+                  );
+                })}
+              </div>
+            ) : status === "executing" ? (
+              <div className="space-y-2">
+                {awaitedRows.map((row) => (
+                  <TaskRow key={row.taskId} {...row} />
+                ))}
+                <div className="text-muted text-[11px] italic">
+                  Waiting for tasks to complete
+                  <LoadingDots />
+                </div>
+              </div>
+            ) : (
+              <div className="text-muted text-[11px] italic">No tasks specified</div>
+            )}
+          </div>
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};
+
+// Individual task_await result display
+const TaskAwaitResult: React.FC<{
+  result: TaskAwaitToolSuccessResult["results"][number];
+  fallbackTitle?: string;
+  suppressReport?: boolean;
+}> = ({ result, fallbackTitle, suppressReport }) => {
+  const isCompleted = result.status === "completed";
+  const reportMarkdown = isCompleted ? result.reportMarkdown : undefined;
+
+  const rawReportTitle = isCompleted ? result.title : undefined;
+  const reportTitle =
+    typeof rawReportTitle === "string" && rawReportTitle.trim().length > 0
+      ? rawReportTitle.trim()
+      : undefined;
+
+  const title =
+    reportTitle ??
+    (fallbackTitle && fallbackTitle.trim().length > 0 ? fallbackTitle.trim() : undefined);
+
+  const output = "output" in result ? result.output : undefined;
+  const note = "note" in result ? result.note : undefined;
+  const exitCode = "exitCode" in result ? result.exitCode : undefined;
+
+  const gitPatchArtifact =
+    result.status === "completed" ? result.artifacts?.gitFormatPatch : undefined;
+
+  const patchSummary = (() => {
+    if (!gitPatchArtifact) return null;
+
+    switch (gitPatchArtifact.status) {
+      case "pending":
+        return "Patch: pending";
+      case "skipped":
+        return "Patch: skipped (no commits)";
+      case "ready": {
+        const count = gitPatchArtifact.commitCount ?? 0;
+        const label = count === 1 ? "commit" : "commits";
+        return `Patch: ready (${count} ${label})`;
+      }
+      case "failed": {
+        const error = gitPatchArtifact.error?.trim();
+        const shortError =
+          error && error.length > 80 ? `${error.slice(0, 77)}…` : (error ?? undefined);
+        return shortError ? `Patch: failed (${shortError})` : "Patch: failed";
+      }
+      default:
+        return `Patch: ${String(gitPatchArtifact.status)}`;
+    }
+  })();
+  const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
+
+  const showDetails = suppressReport !== true;
+
+  return (
+    <div className="bg-code-bg rounded-sm p-2">
+      <div className={cn("flex flex-wrap items-center gap-2", showDetails && "mb-1")}>
+        <TaskId id={result.taskId} />
+        <TaskStatusBadge status={result.status} />
+        {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
+        {exitCode !== undefined && <span className="text-muted text-[10px]">exit {exitCode}</span>}
+        {elapsedMs !== undefined && <span className="text-muted text-[10px]">{elapsedMs}ms</span>}
+        {note && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="View notice"
+                className="text-muted hover:text-secondary translate-y-[-1px] rounded p-0.5 transition-colors"
+              >
+                <Info size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+
+      {showDetails && patchSummary && <div className="text-muted text-[10px]">{patchSummary}</div>}
+
+      {showDetails && !isCompleted && output && output.length > 0 && (
+        <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
+          {output}
+        </div>
+      )}
+
+      {showDetails && reportMarkdown && (
+        <div className="mt-2 text-[11px]">
+          <MarkdownRenderer content={reportMarkdown} />
+        </div>
+      )}
+
+      {"error" in result && result.error && (
+        <div className="text-danger mt-1 text-[11px]">{result.error}</div>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK LIST TOOL CALL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface TaskListToolCallProps {
+  args: TaskListToolArgs;
+  result?: TaskListToolSuccessResult;
+  status?: ToolStatus;
+}
+
+export const TaskListToolCall: React.FC<TaskListToolCallProps> = ({
+  args,
+  result,
+  status = "pending",
+}) => {
+  const tasks = result?.tasks ?? [];
+  const { expanded, toggleExpanded } = useToolExpansion(false);
+
+  const statusFilter = args.statuses;
+
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task_list" />
+        <ToolName>task_list</ToolName>
+        <span className="text-muted text-[10px]">{tasks.length} task(s)</span>
+        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+      </ToolHeader>
+
+      {expanded && (
+        <ToolDetails>
+          <div className="task-surface mt-1 rounded-md p-3">
+            {statusFilter && statusFilter.length > 0 && (
+              <div className="task-divider text-muted mb-2 border-b pb-2 text-[10px]">
+                Filter: {statusFilter.join(", ")}
+              </div>
+            )}
+
+            {tasks.length > 0 ? (
+              <div className="space-y-2">
+                {tasks.map((task) => (
+                  <TaskListItem key={task.taskId} task={task} />
+                ))}
+              </div>
+            ) : status === "executing" ? (
+              <div className="text-muted text-[11px] italic">
+                Fetching tasks
+                <LoadingDots />
+              </div>
+            ) : (
+              <div className="text-muted text-[11px] italic">No tasks found</div>
+            )}
+          </div>
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};
+
+// Individual task in list display
+const TaskListItem: React.FC<{
+  task: TaskListToolSuccessResult["tasks"][number];
+}> = ({ task }) => (
+  <TaskRow
+    taskId={task.taskId}
+    status={task.status}
+    agentType={task.agentType}
+    title={task.title}
+    depth={task.depth}
+  />
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK TERMINATE TOOL CALL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface TaskTerminateToolCallProps {
+  args: TaskTerminateToolArgs;
+  result?: TaskTerminateToolSuccessResult;
+  status?: ToolStatus;
+}
+
+export const TaskTerminateToolCall: React.FC<TaskTerminateToolCallProps> = ({
+  args,
+  result,
+  status = "pending",
+}) => {
+  const { expanded, toggleExpanded } = useToolExpansion(false);
+
+  const taskIds = args.task_ids;
+  const results = result?.results ?? [];
+
+  const terminatedCount = results.filter((r) => r.status === "terminated").length;
+
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task_terminate" />
+        <ToolName>task_terminate</ToolName>
+        <span className="text-interrupted text-[10px]">
+          {terminatedCount > 0 ? `${terminatedCount} terminated` : `${taskIds.length} to terminate`}
+        </span>
+        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+      </ToolHeader>
+
+      {expanded && (
+        <ToolDetails>
+          <div className="task-surface mt-1 rounded-md p-3">
+            {results.length > 0 ? (
+              <div className="space-y-2">
+                {results.map((r, idx) => (
+                  <div key={r.taskId ?? idx} className="bg-code-bg rounded-sm p-2">
+                    <div className="flex items-center gap-2">
+                      <TaskId id={r.taskId} />
+                      <TaskStatusBadge status={r.status} />
+                    </div>
+                    {"terminatedTaskIds" in r && r.terminatedTaskIds.length > 1 && (
+                      <div className="text-muted mt-1 text-[10px]">
+                        Also terminated:{" "}
+                        {r.terminatedTaskIds.filter((id) => id !== r.taskId).join(", ")}
+                      </div>
+                    )}
+                    {"error" in r && r.error && (
+                      <div className="text-danger mt-1 text-[11px]">{r.error}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : status === "executing" ? (
+              <div className="text-muted text-[11px] italic">
+                Terminating tasks
+                <LoadingDots />
+              </div>
+            ) : (
+              <div className="text-muted text-[10px]">Tasks to terminate: {taskIds.join(", ")}</div>
+            )}
+          </div>
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};

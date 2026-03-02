@@ -131,6 +131,9 @@ async function createWorkspaceWithCleanup(
     | { success: false; error: string };
   cleanup: () => Promise<void>;
 }> {
+  // Trust the project so hooks and scripts can run during workspace creation
+  await env.orpc.projects.setTrust({ projectPath, trusted: true });
+
   const result = await env.orpc.workspace.create({
     projectPath,
     branchName,

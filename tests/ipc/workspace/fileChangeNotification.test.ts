@@ -25,6 +25,7 @@ import {
   createStreamCollector,
   HAIKU_MODEL,
   STREAM_TIMEOUT_LOCAL_MS,
+  trustProject,
 } from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import { getApiKey, validateApiKeys } from "../../testUtils";
@@ -51,6 +52,7 @@ describeIntegration("File Change Notification Integration", () => {
     await preloadTestModules();
     env = await createTestEnvironment();
     repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
 
     // Setup Anthropic provider
     const apiKey = getApiKey("ANTHROPIC_API_KEY");

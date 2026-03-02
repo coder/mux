@@ -12,7 +12,7 @@ import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { useAIViewKeybinds } from "./useAIViewKeybinds";
-import type { ChatInputAPI } from "@/browser/components/ChatInput";
+import type { ChatInputAPI } from "@/browser/features/ChatInput";
 import type { APIClient } from "@/browser/contexts/API";
 import type { RecursivePartial } from "@/browser/testUtils";
 

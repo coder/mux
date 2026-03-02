@@ -50,6 +50,15 @@ export const TEST_TIMEOUT_SSH_MS = 120000; // Recommended timeout for SSH runtim
 export const STREAM_TIMEOUT_LOCAL_MS = 15000; // Stream timeout for local runtime
 
 /**
+ * Mark a project as trusted so hooks and scripts are allowed to run.
+ * This must be called before creating workspaces that rely on .mux/init or tool_env.
+ */
+export async function trustProject(source: OrpcSource, projectPath: string): Promise<void> {
+  const client = resolveOrpcClient(source);
+  await client.projects.setTrust({ projectPath, trusted: true });
+}
+
+/**
  * Get the appropriate test runner for a runtime type.
  *
  * SSH tests run serially because they share a single Docker container.
@@ -208,6 +217,9 @@ export async function createWorkspace(
       ? trunkBranch.trim()
       : await detectDefaultTrunkBranch(projectPath);
 
+  // Trust the project so hooks and scripts can run during workspace creation
+  await trustProject(source, projectPath);
+
   const client = resolveOrpcClient(source);
   return client.workspace.create({
     projectPath,
@@ -245,6 +257,9 @@ export async function createWorkspaceWithInit(
   isSSH: boolean = false
 ): Promise<{ workspaceId: string; workspacePath: string; cleanup: () => Promise<void> }> {
   const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+  // Trust the project so hooks and scripts can run during workspace creation
+  await trustProject(env, projectPath);
 
   const result = await env.orpc.workspace.create({
     projectPath,

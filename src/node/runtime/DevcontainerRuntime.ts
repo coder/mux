@@ -26,8 +26,12 @@ import {
   resolveSshAgentForwarding,
 } from "./credentialForwarding";
 import { devcontainerUp, devcontainerDown } from "./devcontainerCli";
-import { checkInitHookExists, getMuxEnv } from "./initHook";
-import { runInitHookOnRuntime } from "./initHook";
+import {
+  checkInitHookExists,
+  getMuxEnv,
+  runInitHookOnRuntime,
+  shouldSkipInitHook,
+} from "./initHook";
 import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
@@ -424,6 +428,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       branchName: params.branchName,
       trunkBranch: params.trunkBranch,
       initLogger: params.initLogger,
+      trusted: params.trusted,
     });
   }
 
@@ -470,6 +475,11 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     const { projectPath, branchName, workspacePath, initLogger, env } = params;
 
     try {
+      if (shouldSkipInitHook(params, initLogger)) {
+        initLogger.logComplete(0);
+        return { success: true };
+      }
+
       // Check if init hook exists (on host - worktree is bind-mounted)
       const hookExists = await checkInitHookExists(workspacePath);
       if (hookExists) {
@@ -772,7 +782,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     projectPath: string,
     oldName: string,
     newName: string,
-    _abortSignal?: AbortSignal
+    _abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<
     { success: true; oldPath: string; newPath: string } | { success: false; error: string }
   > {
@@ -781,7 +792,12 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     await devcontainerDown(oldPath, this.configPath);
 
     // Rename worktree on host
-    const result = await this.worktreeManager.renameWorkspace(projectPath, oldName, newName);
+    const result = await this.worktreeManager.renameWorkspace(
+      projectPath,
+      oldName,
+      newName,
+      trusted
+    );
 
     if (result.success) {
       // Update current workspace path if this was the active workspace
@@ -797,7 +813,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     projectPath: string,
     workspaceName: string,
     force: boolean,
-    _abortSignal?: AbortSignal
+    _abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
     const workspacePath = this.getWorkspacePath(projectPath, workspaceName);
 
@@ -809,7 +826,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     }
 
     // Delete worktree on host
-    return this.worktreeManager.deleteWorkspace(projectPath, workspaceName, force);
+    return this.worktreeManager.deleteWorkspace(projectPath, workspaceName, force, trusted);
   }
 
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {

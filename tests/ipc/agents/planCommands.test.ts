@@ -11,7 +11,12 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
 import type { TestEnvironment } from "../setup";
-import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "../helpers";
+import {
+  createTempGitRepo,
+  cleanupTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import { getPlanFilePath } from "../../../src/common/utils/planStorage";
 import { createMuxMessage } from "../../../src/common/types/message";
@@ -27,6 +32,7 @@ describeIntegration("Plan Commands Integration", () => {
   beforeAll(async () => {
     env = await createTestEnvironment();
     repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
   }, 30000);
 
   afterAll(async () => {

@@ -1,4 +1,4 @@
-import type { DiffLineType } from "@/browser/components/shared/DiffRenderer";
+import type { DiffLineType } from "@/browser/features/Shared/DiffRenderer";
 
 export interface DiffChunk {
   type: Exclude<DiffLineType, "header">; // 'add' | 'remove' | 'context'

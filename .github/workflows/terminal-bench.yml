@@ -136,10 +136,15 @@ jobs:
       - uses: ./.github/actions/setup-mux
 
       - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Add uv to PATH
-        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install Python 3.12 (Harbor requires >=3.12)
+        run: |
+          uv python install 3.12
+          uv --version
+          uvx --version
 
       - name: Generate version file
         run: ./scripts/generate-version.sh
@@ -147,9 +152,31 @@ jobs:
       - name: Build dist/ (skip icons - not needed for benchmark)
         run: make build-main build-preload
 
+      # Best-effort snapshot of existing Daytona sandboxes so post-run cleanup
+      # only deletes sandboxes created by *this* job, not ones from parallel jobs.
+      # continue-on-error: transient API/pip failures must not block the benchmark.
+      - name: Snapshot Daytona sandboxes
+        if: inputs.env == 'daytona'
+        continue-on-error: true
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            exit 0
+          fi
+          pip install --quiet daytona
+          python3 -c "
+          from daytona import Daytona
+          d = Daytona()
+          ids = [sb.id for sb in d.list()]
+          print('\n'.join(ids))
+          " > /tmp/daytona-pre-existing.txt
+          echo "Snapshot $(wc -l < /tmp/daytona-pre-existing.txt) pre-existing sandbox(es)"
+
       - name: Run Terminal-Bench
         run: make benchmark-terminal 2>&1 | tee benchmark.log
         env:
+          UV_PYTHON: "3.12"
           TB_DATASET: ${{ inputs.dataset }}
           TB_CONCURRENCY: ${{ inputs.concurrency }}
           TB_ENV: ${{ inputs.env }}
@@ -168,6 +195,51 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+
+      # Best-effort cleanup of sandboxes created during this run. Compares
+      # against the pre-run snapshot and only deletes stopped/errored sandboxes,
+      # so active sandboxes from parallel jobs are never touched.
+      # Failures here must never mark the job as failed (benchmark results matter).
+      - name: Cleanup Daytona sandboxes
+        if: always() && inputs.env == 'daytona'
+        continue-on-error: true
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            echo "No DAYTONA_API_KEY, skipping cleanup"
+            exit 0
+          fi
+          if [ ! -f /tmp/daytona-pre-existing.txt ]; then
+            echo "No pre-run snapshot found, skipping cleanup to avoid deleting unrelated sandboxes"
+            exit 0
+          fi
+          pip install --quiet daytona
+          python3 -c "
+          from daytona import Daytona
+          with open('/tmp/daytona-pre-existing.txt') as f:
+              pre_existing = {line.strip() for line in f if line.strip()}
+          d = Daytona()
+          # Only consider sandboxes created after our snapshot (not pre-existing)
+          # and only delete ones that are no longer running (safe for parallel jobs).
+          ACTIVE_STATES = {'started', 'creating', 'starting'}
+          candidates = [sb for sb in d.list() if sb.id not in pre_existing]
+          to_delete = [sb for sb in candidates if str(sb.state).lower() not in ACTIVE_STATES]
+          skipped = len(candidates) - len(to_delete)
+          if skipped:
+              print(f'Skipping {skipped} still-active sandbox(es)')
+          if not to_delete:
+              print('No stopped sandboxes to clean up')
+          else:
+              print(f'Cleaning up {len(to_delete)} stopped sandbox(es) from this run...')
+              for sb in to_delete:
+                  try:
+                      print(f'  Deleting {sb.id} (state={sb.state})...')
+                      d.delete(sb)
+                      print(f'  Deleted {sb.id}')
+                  except Exception as e:
+                      print(f'  Failed to delete {sb.id}: {e}')
+          "
 
       - name: Print results summary
         if: always()

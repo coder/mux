@@ -1,6 +1,6 @@
 import { render, type RenderResult, waitFor } from "@testing-library/react";
 
-import { AppLoader } from "@/browser/components/AppLoader";
+import { AppLoader } from "@/browser/components/AppLoader/AppLoader";
 import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 

@@ -58,6 +58,7 @@ import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatew
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
 
@@ -569,7 +570,7 @@ export class StreamManager extends EventEmitter {
     // Fire-and-forget: don't block stream completion waiting for directory deletion.
     // This is especially important for SSH where rm -rf can take 500ms-2s.
     void runtime
-      .exec(`rm -rf "${tempDirBasename}"`, {
+      .exec(`rm -rf ${shellQuote(tempDirBasename)}`, {
         cwd: tempDirParent,
         timeout: 10,
       })

@@ -45,6 +45,8 @@ interface AcpTestClient {
 
 interface CreateAcpClientOptions {
   logFilePath?: string;
+  /** Project path to pre-trust in the ephemeral config. */
+  projectPath?: string;
 }
 
 let buildMainPromise: Promise<void> | null = null;
@@ -178,6 +180,17 @@ async function createAcpClient(options: CreateAcpClientOptions = {}): Promise<Ac
   );
 
   const muxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mux-acp-test-root-"));
+
+  // Pre-trust the repo in this test's ephemeral MUX_ROOT so workspace creation
+  // succeeds when newSession runs against a fresh config directory.
+  if (options.projectPath != null) {
+    const configPath = path.join(muxRoot, "config.json");
+    const trustedProjectConfig = {
+      projects: [[options.projectPath, { workspaces: [], trusted: true }]],
+    };
+    await fs.writeFile(configPath, JSON.stringify(trustedProjectConfig, null, 2));
+  }
+
   const acpArgs = ["dist/cli/index.js", "acp"];
   if (options.logFilePath != null) {
     acpArgs.push("--log-file", options.logFilePath);
@@ -360,7 +373,7 @@ describeIntegration("ACP built CLI integration", () => {
     async () => {
       assert(repoPath.length > 0, "Temporary git repo path must be set");
 
-      const acpClient = await createAcpClient();
+      const acpClient = await createAcpClient({ projectPath: repoPath });
       try {
         await acpClient.runRpc(
           "initialize",
@@ -399,7 +412,7 @@ describeIntegration("ACP built CLI integration", () => {
       try {
         let acpClient: AcpTestClient | undefined;
         try {
-          acpClient = await createAcpClient({ logFilePath });
+          acpClient = await createAcpClient({ logFilePath, projectPath: repoPath });
 
           await acpClient.runRpc(
             "initialize",
@@ -445,7 +458,7 @@ describeIntegration("ACP built CLI integration", () => {
     async () => {
       assert(repoPath.length > 0, "Temporary git repo path must be set");
 
-      const acpClient = await createAcpClient();
+      const acpClient = await createAcpClient({ projectPath: repoPath });
       try {
         await acpClient.runRpc(
           "initialize",

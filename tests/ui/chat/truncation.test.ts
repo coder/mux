@@ -7,7 +7,12 @@ import "../dom";
 import { waitFor } from "@testing-library/react";
 
 import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } from "../../ipc/setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { HistoryService } from "@/node/services/historyService";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "@/browser/utils/messages/transcriptTruncationPlan";
@@ -78,6 +83,7 @@ describe("Chat truncation UI", () => {
   test("shows a generic hidden indicator and preserves assistant meta rows", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
     const cleanupDom = installDom();
     let view: ReturnType<typeof renderApp> | undefined;
     let workspaceId: string | undefined;

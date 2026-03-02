@@ -1608,4 +1608,116 @@ exit 1
       expect(result.error).toContain("does not exist");
     });
   });
+
+  describe("remove", () => {
+    it("removes project with no workspaces", async () => {
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [] });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("returns project_not_found for unknown project", async () => {
+      const result = await service.remove("/no/such/project");
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("project_not_found");
+    });
+
+    it("blocks removal when workspaces still exist on disk", async () => {
+      const wsDir = path.join(tempDir, "real-workspace");
+      await fs.mkdir(wsDir, { recursive: true });
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ path: wsDir }],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+    });
+
+    it("auto-prunes stale workspace entries and removes project", async () => {
+      const stalePath = path.join(tempDir, "deleted-workspace-dir");
+      // Do NOT create the directory — simulating manual deletion
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ path: stalePath }],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("preserves remote runtime workspace entries even if path is not local", async () => {
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          {
+            path: "/remote/host/workspace",
+            runtimeConfig: { type: "ssh", host: "remote", srcBaseDir: "/remote" },
+          },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      // Should block on the SSH workspace, not prune it
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+
+      // Workspace entry should still be in config
+      const after = config.loadConfigOrDefault();
+      const project = after.projects.get(projectPath);
+      expect(project).toBeDefined();
+      expect(project!.workspaces).toHaveLength(1);
+    });
+
+    it("prunes stale entries but blocks on remaining real workspaces", async () => {
+      const stalePath = path.join(tempDir, "gone-workspace");
+      const realDir = path.join(tempDir, "still-here");
+      await fs.mkdir(realDir, { recursive: true });
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ path: stalePath }, { path: realDir }],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+
+      // Stale entry should have been pruned from config even though removal was blocked
+      const after = config.loadConfigOrDefault();
+      const project = after.projects.get(projectPath);
+      expect(project).toBeDefined();
+      expect(project!.workspaces).toHaveLength(1);
+      expect(project!.workspaces[0]?.path).toBe(realDir);
+    });
+  });
 });

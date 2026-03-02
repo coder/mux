@@ -6,11 +6,13 @@
  */
 
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { FC } from "react";
+import type { FC, ReactNode } from "react";
 import { useRef } from "react";
-import { AppLoader } from "../components/AppLoader";
-import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
+import { AppLoader } from "../components/AppLoader/AppLoader";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { APIClient } from "@/browser/contexts/API";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // META CONFIG
@@ -33,6 +35,28 @@ export const appMeta: Meta<typeof AppLoader> = {
 };
 
 export type AppStory = StoryObj<typeof appMeta>;
+
+export const StoryUiShell: FC<{ children: ReactNode }> = (props) => {
+  return (
+    <ThemeProvider>
+      <TooltipProvider>{props.children}</TooltipProvider>
+    </ThemeProvider>
+  );
+};
+
+export const lightweightMeta: Meta = {
+  parameters: {
+    layout: "fullscreen",
+    chromatic: { delay: 200 },
+  },
+  decorators: [
+    (Story) => (
+      <StoryUiShell>
+        <Story />
+      </StoryUiShell>
+    ),
+  ],
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STORY WRAPPER

@@ -1,130 +1,219 @@
 import { describe, expect, test } from "bun:test";
-import { shouldRunInitialBackfill } from "./backfillDecision";
+import { decideSyncPlan, type SyncPlanInput } from "./backfillDecision";
 
-describe("shouldRunInitialBackfill", () => {
-  test("returns true when session workspaces exist but watermark coverage is missing", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 1,
-        watermarkCount: 0,
-        sessionWorkspaceCount: 2,
-        hasSessionWorkspaceMissingWatermark: true,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: false,
-      })
-    ).toBe(true);
+function makeInput(overrides: Partial<SyncPlanInput> = {}): SyncPlanInput {
+  return {
+    eventCount: 0,
+    watermarkCount: 0,
+    knownWorkspaceIds: new Set(),
+    watermarkWorkspaceIds: new Set(),
+    hasAnyWatermarkAtOrAboveZero: false,
+    ...overrides,
+  };
+}
 
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 0,
-        watermarkCount: 0,
-        sessionWorkspaceCount: 1,
-        hasSessionWorkspaceMissingWatermark: true,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: false,
-      })
-    ).toBe(true);
+describe("decideSyncPlan", () => {
+  describe("noop", () => {
+    test("returns noop when DB and disk are both empty", () => {
+      expect(decideSyncPlan(makeInput())).toEqual({
+        action: "noop",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns noop when workspace coverage is complete and unchanged", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 4,
+            watermarkCount: 2,
+            knownWorkspaceIds: new Set(["w1", "w2"]),
+            watermarkWorkspaceIds: new Set(["w1", "w2"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+          })
+        )
+      ).toEqual({
+        action: "noop",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns noop for zero-event workspaces with full watermark coverage", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 0,
+            watermarkCount: 2,
+            knownWorkspaceIds: new Set(["w1", "w2"]),
+            watermarkWorkspaceIds: new Set(["w1", "w2"]),
+            hasAnyWatermarkAtOrAboveZero: false,
+          })
+        )
+      ).toEqual({
+        action: "noop",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
   });
 
-  test("returns true when any session workspace is missing a watermark row", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 10,
-        watermarkCount: 1,
-        sessionWorkspaceCount: 2,
-        hasSessionWorkspaceMissingWatermark: true,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: false,
-      })
-    ).toBe(true);
+  describe("incremental", () => {
+    test("returns incremental for fresh install with workspaces and empty DB", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            knownWorkspaceIds: new Set(["w1", "w2"]),
+          })
+        )
+      ).toEqual({
+        action: "incremental",
+        workspaceIdsToIngest: ["w1", "w2"],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns incremental when one new workspace is added", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 5,
+            watermarkCount: 1,
+            knownWorkspaceIds: new Set(["w1", "w2"]),
+            watermarkWorkspaceIds: new Set(["w1"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+          })
+        )
+      ).toEqual({
+        action: "incremental",
+        workspaceIdsToIngest: ["w2"],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns incremental when one workspace is deleted from disk", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 5,
+            watermarkCount: 2,
+            knownWorkspaceIds: new Set(["w1"]),
+            watermarkWorkspaceIds: new Set(["w1", "w2"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+          })
+        )
+      ).toEqual({
+        action: "incremental",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: ["w2"],
+      });
+    });
+
+    test("returns incremental for mixed new and deleted workspaces", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 10,
+            watermarkCount: 2,
+            knownWorkspaceIds: new Set(["w1", "w3"]),
+            watermarkWorkspaceIds: new Set(["w1", "w2"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+          })
+        )
+      ).toEqual({
+        action: "incremental",
+        workspaceIdsToIngest: ["w3"],
+        workspaceIdsToPurge: ["w2"],
+      });
+    });
   });
 
-  test("returns true when a watermark references a workspace missing on disk", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 3,
-        watermarkCount: 2,
-        sessionWorkspaceCount: 2,
-        hasSessionWorkspaceMissingWatermark: false,
-        hasWatermarkMissingSessionWorkspace: true,
-        hasAnyWatermarkAtOrAboveZero: false,
-      })
-    ).toBe(true);
+  describe("full_rebuild", () => {
+    test("returns full_rebuild when events exist but watermarks are zero", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 1,
+            watermarkCount: 0,
+            knownWorkspaceIds: new Set(["w1"]),
+          })
+        )
+      ).toEqual({
+        action: "full_rebuild",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns full_rebuild when watermarks imply data but events table is empty", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 0,
+            watermarkCount: 1,
+            knownWorkspaceIds: new Set(["w1"]),
+            watermarkWorkspaceIds: new Set(["w1"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+          })
+        )
+      ).toEqual({
+        action: "full_rebuild",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns full_rebuild when no workspaces remain on disk and DB has stale rows", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 3,
+            watermarkCount: 1,
+          })
+        )
+      ).toEqual({
+        action: "full_rebuild",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns full_rebuild when no workspaces remain and only stale watermarks exist", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 0,
+            watermarkCount: 2,
+          })
+        )
+      ).toEqual({
+        action: "full_rebuild",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
   });
 
-  test("returns true when events are missing but watermarks show prior assistant history", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 0,
-        watermarkCount: 2,
-        sessionWorkspaceCount: 2,
-        hasSessionWorkspaceMissingWatermark: false,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: true,
-      })
-    ).toBe(true);
-  });
+  describe("input validation", () => {
+    test("throws when eventCount is negative", () => {
+      expect(() =>
+        decideSyncPlan(
+          makeInput({
+            eventCount: -1,
+          })
+        )
+      ).toThrow("decideSyncPlan requires a non-negative integer eventCount");
+    });
 
-  test("returns false for fully initialized zero-event histories", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 0,
-        watermarkCount: 2,
-        sessionWorkspaceCount: 2,
-        hasSessionWorkspaceMissingWatermark: false,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: false,
-      })
-    ).toBe(false);
-  });
-
-  test("returns false when events already exist and watermark coverage is complete", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 3,
-        watermarkCount: 2,
-        sessionWorkspaceCount: 2,
-        hasSessionWorkspaceMissingWatermark: false,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: true,
-      })
-    ).toBe(false);
-  });
-
-  test("returns false when there are no session workspaces and the DB is empty", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 0,
-        watermarkCount: 0,
-        sessionWorkspaceCount: 0,
-        hasSessionWorkspaceMissingWatermark: false,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: false,
-      })
-    ).toBe(false);
-  });
-
-  test("returns true when there are no session workspaces but stale DB rows remain", () => {
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 5,
-        watermarkCount: 0,
-        sessionWorkspaceCount: 0,
-        hasSessionWorkspaceMissingWatermark: false,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: true,
-      })
-    ).toBe(true);
-
-    expect(
-      shouldRunInitialBackfill({
-        eventCount: 0,
-        watermarkCount: 2,
-        sessionWorkspaceCount: 0,
-        hasSessionWorkspaceMissingWatermark: false,
-        hasWatermarkMissingSessionWorkspace: false,
-        hasAnyWatermarkAtOrAboveZero: false,
-      })
-    ).toBe(true);
+    test("throws when watermarkCount is negative", () => {
+      expect(() =>
+        decideSyncPlan(
+          makeInput({
+            watermarkCount: -1,
+          })
+        )
+      ).toThrow("decideSyncPlan requires a non-negative integer watermarkCount");
+    });
   });
 });

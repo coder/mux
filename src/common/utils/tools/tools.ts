@@ -96,6 +96,8 @@ export interface ToolConfiguration {
   availableSubagents?: AgentDefinitionDescriptor[];
   /** Available skills for the agent_skill_read tool description (dynamic context) */
   availableSkills?: AgentSkillDescriptor[];
+  /** Whether the project is trusted for hook/script execution */
+  trusted?: boolean;
 }
 
 /**
@@ -213,6 +215,11 @@ function wrapToolsWithHooks(
   tools: Record<string, Tool>,
   config: ToolConfiguration
 ): Record<string, Tool> {
+  // Skip hooks for untrusted projects — repo-controlled scripts must not run
+  if (config.trusted !== true) {
+    return tools;
+  }
+
   // Hooks require workspaceId, cwd, and runtime
   if (!config.workspaceId || !config.cwd || !config.runtime) {
     return tools;
@@ -328,6 +335,10 @@ export async function getToolsForModel(
     agent_skill_delete: createAgentSkillDeleteTool(config),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
+    // propose_name is intentionally NOT registered here — it's only used by
+    // the internal workspace-naming path (workspaceTitleGenerator.ts) which
+    // creates the tool inline. Exposing it in the default toolset would let
+    // exec-derived agents see its "call me immediately" description.
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     switch_agent: createSwitchAgentTool(config),
     system1_keep_ranges: createSystem1KeepRangesTool(config),

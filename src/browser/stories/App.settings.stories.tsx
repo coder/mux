@@ -25,10 +25,12 @@ import {
   EXPERIMENT_IDS,
   type ExperimentId,
 } from "@/common/constants/experiments";
-import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import type { TaskSettings } from "@/common/types/tasks";
 import type { ServerAuthSession } from "@/common/orpc/types";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import type { ProjectConfig } from "@/common/types/project";
+import type { TaskSettings } from "@/common/types/tasks";
 import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 export default {
   ...appMeta,
@@ -81,6 +83,50 @@ function setupSettingsStory(options: {
     taskSettings: options.taskSettings,
     serverAuthSessions: options.serverAuthSessions,
     layoutPresets: options.layoutPresets,
+  });
+}
+
+/** Setup projects with explicit trust states for Security section stories */
+function setupSecurityStory(
+  projectEntries: Array<{
+    name: string;
+    path: string;
+    trusted: boolean;
+    workspaces?: string[];
+  }>
+): APIClient {
+  const allWorkspaces: FrontendWorkspaceMetadata[] = [];
+  const projects = new Map<string, ProjectConfig>();
+
+  for (const entry of projectEntries) {
+    const workspaceNames = entry.workspaces ?? ["main"];
+    const entryWorkspaces = workspaceNames.map((workspaceName) =>
+      createWorkspace({
+        id: `ws-${entry.name}-${workspaceName}`,
+        name: workspaceName,
+        projectName: entry.name,
+        projectPath: entry.path,
+      })
+    );
+
+    allWorkspaces.push(...entryWorkspaces);
+    projects.set(entry.path, {
+      workspaces: entryWorkspaces.map((workspace) => ({
+        path: workspace.namedWorkspacePath,
+        id: workspace.id,
+        name: workspace.name,
+      })),
+      trusted: entry.trusted,
+    });
+  }
+
+  if (allWorkspaces.length > 0) {
+    selectWorkspace(allWorkspaces[0]);
+  }
+
+  return createMockORPCClient({
+    projects,
+    workspaces: allWorkspaces,
   });
 }
 
@@ -586,6 +632,110 @@ export const Keybinds: AppStory = {
   render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettingsToSection(canvasElement, "keybinds");
+  },
+};
+
+/** Security section - empty state when no user projects exist */
+export const SecurityEmpty: AppStory = {
+  render: () => <AppWithMocks setup={() => setupSecurityStory([])} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "security");
+
+    const settingsCanvas = within(canvasElement);
+
+    await settingsCanvas.findByText(/Project Trust/i);
+    await settingsCanvas.findByText(/No projects added yet\./i);
+  },
+};
+
+/** Security section - mixed trusted and untrusted projects */
+export const SecurityMixedTrust: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSecurityStory([
+          { name: "my-app", path: "/Users/dev/my-app", trusted: true },
+          { name: "untrusted-repo", path: "/Users/dev/untrusted-repo", trusted: false },
+          { name: "another-project", path: "/Users/dev/another-project", trusted: true },
+        ])
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "security");
+
+    const settingsCanvas = within(canvasElement);
+
+    await settingsCanvas.findByText(/Project Trust/i);
+    // One untrusted project → exactly one "Trust" button
+    await settingsCanvas.findByRole("button", { name: /^Trust untrusted-repo$/i });
+    // Two trusted projects → use findAllByRole (findByRole errors on multiple matches)
+    const revokeButtons = await settingsCanvas.findAllByRole("button", {
+      name: /^Revoke trust for /i,
+    });
+    if (revokeButtons.length !== 2) {
+      throw new Error(`Expected 2 Revoke trust buttons, got ${revokeButtons.length}`);
+    }
+  },
+};
+
+/** Security section - all projects trusted */
+export const SecurityAllTrusted: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSecurityStory([
+          { name: "my-app", path: "/Users/dev/my-app", trusted: true },
+          { name: "payments-service", path: "/Users/dev/payments-service", trusted: true },
+        ])
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "security");
+
+    const settingsCanvas = within(canvasElement);
+
+    await settingsCanvas.findByText(/Project Trust/i);
+    const revokeButtons = await settingsCanvas.findAllByRole("button", {
+      name: /^Revoke trust for /i,
+    });
+    if (revokeButtons.length === 0) {
+      throw new Error("Expected at least one Revoke trust button");
+    }
+
+    if (settingsCanvas.queryByRole("button", { name: /^Trust /i })) {
+      throw new Error("Expected no Trust buttons when all projects are trusted");
+    }
+  },
+};
+
+/** Security section - all projects untrusted */
+export const SecurityAllUntrusted: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSecurityStory([
+          { name: "my-app", path: "/Users/dev/my-app", trusted: false },
+          { name: "legacy-repo", path: "/Users/dev/legacy-repo", trusted: false },
+        ])
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "security");
+
+    const settingsCanvas = within(canvasElement);
+
+    await settingsCanvas.findByText(/Project Trust/i);
+    const trustButtons = await settingsCanvas.findAllByRole("button", { name: /^Trust /i });
+    if (trustButtons.length === 0) {
+      throw new Error("Expected at least one Trust button");
+    }
+
+    if (settingsCanvas.queryByRole("button", { name: /^Revoke trust for /i })) {
+      throw new Error("Expected no Revoke trust buttons when all projects are untrusted");
+    }
   },
 };
 

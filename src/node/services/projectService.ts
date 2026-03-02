@@ -795,6 +795,41 @@ export class ProjectService {
         return Err({ type: "project_not_found" as const });
       }
 
+      // Self-healing: purge workspace entries whose backing directories no longer exist.
+      // This handles the case where a user manually deleted workspace dirs from ~/.mux/src/.
+      // Only check local/worktree runtimes — remote runtimes (SSH, Docker, devcontainer)
+      // have paths on the remote host that won't exist locally.
+      const localRuntimeTypes = new Set(["local", "worktree"]);
+      const survivingWorkspaces = [];
+      for (const ws of projectConfig.workspaces) {
+        const runtimeType = ws.runtimeConfig?.type;
+        const isLocal = runtimeType == null || localRuntimeTypes.has(runtimeType);
+        if (!isLocal) {
+          survivingWorkspaces.push(ws);
+          continue;
+        }
+        try {
+          await fsPromises.access(ws.path);
+          survivingWorkspaces.push(ws);
+        } catch (err: unknown) {
+          // Only prune when the directory is truly gone (ENOENT/ENOTDIR).
+          // Other errors (EACCES, transient I/O) mean the path may still exist.
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "ENOTDIR") {
+            log.info(`Pruning stale workspace entry (directory missing): ${ws.path}`);
+          } else {
+            log.warn(
+              `Keeping workspace entry despite access error (${code ?? "unknown"}): ${ws.path}`
+            );
+            survivingWorkspaces.push(ws);
+          }
+        }
+      }
+      if (survivingWorkspaces.length !== projectConfig.workspaces.length) {
+        projectConfig.workspaces = survivingWorkspaces;
+        await this.config.saveConfig(config);
+      }
+
       const counts = getProjectWorkspaceCounts(projectConfig.workspaces);
       if (counts.activeCount + counts.archivedCount > 0) {
         return Err({ type: "workspace_blockers" as const, ...counts });

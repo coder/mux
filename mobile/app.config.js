@@ -45,6 +45,56 @@ function withDevAtsException(expoConfig) {
   };
 }
 
+function readOptionalEnv(name) {
+  const rawValue = process.env[name];
+  if (rawValue === undefined) {
+    return undefined;
+  }
+
+  if (typeof rawValue !== "string") {
+    throw new Error(`Expected ${name} to be a string`);
+  }
+
+  const trimmed = rawValue.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * User rationale: `EXPO_PUBLIC_BACKEND_URL` / `EXPO_PUBLIC_AUTH_TOKEN` should
+ * define mobile defaults in one command so agents do not have to open Settings
+ * manually before the first successful connection.
+ */
+function withMuxEnvDefaults(expoConfig) {
+  const envBaseUrl = readOptionalEnv("EXPO_PUBLIC_BACKEND_URL");
+  const envAuthToken = readOptionalEnv("EXPO_PUBLIC_AUTH_TOKEN");
+
+  if (!envBaseUrl && !envAuthToken) {
+    return expoConfig;
+  }
+
+  const existingExtra = expoConfig.extra ?? {};
+  if (!existingExtra || typeof existingExtra !== "object" || Array.isArray(existingExtra)) {
+    throw new Error("Expected expo.extra to be an object");
+  }
+
+  const existingMux = existingExtra.mux;
+  if (existingMux != null && (typeof existingMux !== "object" || Array.isArray(existingMux))) {
+    throw new Error("Expected expo.extra.mux to be an object when provided");
+  }
+
+  return {
+    ...expoConfig,
+    extra: {
+      ...existingExtra,
+      mux: {
+        ...(existingMux ?? {}),
+        ...(envBaseUrl ? { baseUrl: envBaseUrl } : {}),
+        ...(envAuthToken ? { authToken: envAuthToken } : {}),
+      },
+    },
+  };
+}
+
 module.exports = () => {
   assertAppJson(appJson);
 
@@ -53,6 +103,7 @@ module.exports = () => {
 
   const buildProfile = process.env.EAS_BUILD_PROFILE;
   const allowInsecureHttp = !buildProfile || buildProfile === "development";
+  const configWithNetworkingPolicy = allowInsecureHttp ? withDevAtsException(expoConfig) : expoConfig;
 
-  return allowInsecureHttp ? withDevAtsException(expoConfig) : expoConfig;
+  return withMuxEnvDefaults(configWithNetworkingPolicy);
 };

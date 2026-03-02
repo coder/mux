@@ -365,7 +365,7 @@ const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentTh
 ## Long List Items
 
 - This is a very long list item that contains a lot of text and should wrap properly within the message container without causing horizontal scrollbar on the entire chat window
-- Another item with a long URL: https://github.com/coder/mux/blob/main/src/browser/components/Messages/MessageWindow.tsx#L72-L76
+- Another item with a long URL: https://github.com/coder/mux/blob/main/src/browser/features/Messages/MessageWindow.tsx#L72-L76
 - \`inline code with a really long function name like thisIsAReallyLongFunctionNameThatShouldWrapOrScrollProperly()\`
 
 ## Long Paragraph

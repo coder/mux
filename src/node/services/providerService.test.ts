@@ -87,6 +87,35 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
+  it("surfaces store: false for OpenAI", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          store: false,
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.store).toBe(false);
+    });
+  });
+
+  it("omits store when not set for OpenAI", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "store")).toBe(false);
+    });
+  });
+
   it("marks providers disabled when enabled is false", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
@@ -273,5 +302,31 @@ describe("ProviderService.setConfig", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("surfaces disableBetaFeatures: true for Anthropic", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        anthropic: { apiKey: "sk-ant-test", disableBetaFeatures: true },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.anthropic.disableBetaFeatures).toBe(true);
+    });
+  });
+
+  it("omits disableBetaFeatures when not set for Anthropic", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        anthropic: { apiKey: "sk-ant-test" },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(Object.prototype.hasOwnProperty.call(cfg.anthropic, "disableBetaFeatures")).toBe(
+        false
+      );
+    });
   });
 });

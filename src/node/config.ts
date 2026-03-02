@@ -276,7 +276,6 @@ export class Config {
           muxGatewayModels?: unknown;
           defaultModel?: unknown;
           hiddenModels?: unknown;
-          preferredCompactionModel?: unknown;
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           useSSH2Transport?: unknown;
@@ -319,9 +318,6 @@ export class Config {
 
           const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
           const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
-          const preferredCompactionModel = normalizeOptionalModelString(
-            parsed.preferredCompactionModel
-          );
           const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
 
           // Default ON: store `false` only so config.json stays minimal.
@@ -361,7 +357,6 @@ export class Config {
             muxGatewayModels,
             defaultModel,
             hiddenModels,
-            preferredCompactionModel,
             agentAiDefaults,
             // Legacy fields are still parsed and returned for downgrade compatibility.
             subagentAiDefaults: legacySubagentAiDefaults,
@@ -414,7 +409,6 @@ export class Config {
         muxGatewayModels?: ProjectsConfig["muxGatewayModels"];
         defaultModel?: ProjectsConfig["defaultModel"];
         hiddenModels?: ProjectsConfig["hiddenModels"];
-        preferredCompactionModel?: ProjectsConfig["preferredCompactionModel"];
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         useSSH2Transport?: boolean;
@@ -453,12 +447,6 @@ export class Config {
         data.hiddenModels = hiddenModels;
       }
 
-      const preferredCompactionModel = normalizeOptionalModelString(
-        config.preferredCompactionModel
-      );
-      if (preferredCompactionModel !== undefined) {
-        data.preferredCompactionModel = preferredCompactionModel;
-      }
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
       if (apiServerBindHost) {
         data.apiServerBindHost = apiServerBindHost;

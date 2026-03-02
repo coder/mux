@@ -25,6 +25,7 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -891,6 +892,70 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }
     expect(executionError.message).toContain("idle-only send was skipped");
   });
+  test("prefers global compact thinking default over exec and activity fallbacks", async () => {
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/project/ws";
+
+    type ThinkingLevel = Parameters<typeof enforceThinkingPolicy>[1];
+
+    interface WorkspaceServiceIdleCompactionAccess {
+      buildIdleCompactionSendOptions: (workspaceId: string) => Promise<{
+        model: string;
+        thinkingLevel: ThinkingLevel;
+      }>;
+      config: {
+        findWorkspace: (
+          workspaceId: string
+        ) => { projectPath: string; workspacePath: string } | null;
+        loadConfigOrDefault: () => {
+          projects: Map<string, { workspaces: Array<Record<string, unknown>> }>;
+          agentAiDefaults?: {
+            compact?: {
+              thinkingLevel?: ThinkingLevel;
+            };
+          };
+        };
+      };
+      extensionMetadata: ExtensionMetadataService;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceIdleCompactionAccess;
+
+    svc.config.findWorkspace = mock((workspaceId: string) =>
+      workspaceId === "ws" ? { projectPath, workspacePath } : null
+    );
+    svc.config.loadConfigOrDefault = mock(() => ({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: "ws",
+                path: workspacePath,
+                name: "ws",
+                aiSettingsByAgent: {
+                  exec: { model: "openai:gpt-4o-mini", thinkingLevel: "low" },
+                },
+              },
+            ],
+          },
+        ],
+      ]),
+      agentAiDefaults: {
+        compact: { thinkingLevel: "high" as ThinkingLevel },
+      },
+    }));
+
+    svc.extensionMetadata = {
+      getMetadata: mock(() => Promise.resolve({ lastThinkingLevel: "off" })),
+    } as unknown as ExtensionMetadataService;
+
+    const options = await svc.buildIdleCompactionSendOptions("ws");
+
+    expect(options.thinkingLevel).toBe(enforceThinkingPolicy(options.model, "high"));
+  });
+
   test("does not tag streaming=true snapshots as idle compaction", async () => {
     const workspaceId = "idle-streaming-true-no-tag";
     const snapshot = {
@@ -1467,6 +1532,7 @@ describe("WorkspaceService remove timing rollup", () => {
         getSessionDir: mock((id: string) => path.join(sessionRoot, id)),
         removeWorkspace: mock(() => Promise.resolve()),
         findWorkspace: mock(() => null),
+        loadConfigOrDefault: mock(() => ({ projects: new Map() })),
       };
 
       const timingService: Partial<SessionTimingService> = {
@@ -2357,6 +2423,63 @@ describe("WorkspaceService init cancellation", () => {
     await cleanupHistory();
   });
 
+  test("create() rejects untrusted projects", async () => {
+    const projectPath = "/tmp/proj";
+    const generateStableIdMock = mock(() => "ws-untrusted");
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      rootDir: "/tmp/mux-root",
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: generateStableIdMock,
+      findWorkspace: mock(() => null),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [],
+              trusted: false,
+            },
+          ],
+        ]),
+      })),
+    };
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const result = await workspaceService.create(projectPath, "ws-branch", undefined, "title", {
+      type: "local",
+    });
+
+    expect(result).toEqual(
+      Err(
+        "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+      )
+    );
+    expect(generateStableIdMock).not.toHaveBeenCalled();
+  });
+
   test("archive() aborts init and still archives when init is running", async () => {
     const workspaceId = "ws-init-running";
 
@@ -2582,6 +2705,17 @@ describe("WorkspaceService init cancellation", () => {
       getEffectiveSecrets: mock(() => []),
       getSessionDir: mock(() => "/tmp/test/sessions"),
       findWorkspace: mock(() => null),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [],
+              trusted: true,
+            },
+          ],
+        ]),
+      })),
     };
 
     const mockAIService = {
@@ -2834,6 +2968,7 @@ describe("WorkspaceService init cancellation", () => {
         getSessionDir: mock((id: string) => path.join(tempRoot, id)),
         removeWorkspace: mock(() => Promise.resolve()),
         findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({ projects: new Map() })),
       };
       const workspaceService = new WorkspaceService(
         mockConfig as Config,
@@ -2846,7 +2981,8 @@ describe("WorkspaceService init cancellation", () => {
 
       const result = await workspaceService.remove(workspaceId, true);
       expect(result.success).toBe(true);
-      expect(deleteWorkspaceMock).toHaveBeenCalledWith(projectPath, "ws", true);
+      // trusted defaults to false (no project config), so deleteWorkspace gets (path, name, force, undefined, false)
+      expect(deleteWorkspaceMock).toHaveBeenCalledWith(projectPath, "ws", true, undefined, false);
     } finally {
       createRuntimeSpy.mockRestore();
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
@@ -3092,6 +3228,9 @@ describe("WorkspaceService fork", () => {
       generateStableId: mock(() => newWorkspaceId),
       findWorkspace: mock(() => null),
       getSessionDir: mock(() => "/tmp/test/sessions"),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([[sourceProjectPath, { workspaces: [], trusted: true }]]),
+      })),
     };
 
     const workspaceService = new WorkspaceService(

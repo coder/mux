@@ -279,7 +279,7 @@ index aaa1111..bbb2222 100644
 +++ b/src/browser/components/WorkspaceShell.tsx
 @@ -1,8 +1,18 @@
  import React from 'react';
-+import { useRightSidebarLayout } from '../hooks/useRightSidebarLayout';
++import { useRightSidebarLayout } from '../Hooks/useRightSidebarLayout';
 +import { clamp } from '../utils/layout';
  
 -export function WorkspaceShell() {

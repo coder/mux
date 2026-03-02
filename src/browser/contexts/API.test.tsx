@@ -81,7 +81,7 @@ void mock.module("@orpc/client/message-port", () => ({
   RPCLink: class {},
 }));
 
-void mock.module("@/browser/components/AuthTokenModal", () => ({
+void mock.module("@/browser/components/AuthTokenModal/AuthTokenModal", () => ({
   // Note: Module mocks leak between bun test files.
   // Export all commonly-used symbols to avoid cross-test import errors.
   AuthTokenModal: () => null,

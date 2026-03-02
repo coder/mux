@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { ChatInputAPI } from "@/browser/components/ChatInput";
+import type { ChatInputAPI } from "@/browser/features/ChatInput";
 import {
   allowsEscapeToInterruptStream,
   matchesKeybind,

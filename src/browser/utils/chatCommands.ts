@@ -26,7 +26,7 @@ import {
   WORKSPACE_ONLY_COMMAND_KEYS,
   WORKSPACE_ONLY_COMMAND_TYPES,
 } from "@/constants/slashCommands";
-import type { Toast } from "@/browser/components/ChatInputToast";
+import type { Toast } from "@/browser/features/ChatInput/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import {
   formatCompactionCommandLine,
@@ -35,8 +35,8 @@ import {
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
-import type { QueueDispatchMode } from "@/browser/components/ChatInput/types";
-import type { ChatAttachment } from "../components/ChatAttachments";
+import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
+import type { ChatAttachment } from "../features/ChatInput/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
@@ -51,7 +51,7 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   createCommandToast,
   createInvalidCompactModelToast,
-} from "@/browser/components/ChatInputToasts";
+} from "@/browser/features/ChatInput/ChatInputToasts";
 import { trackCommandUsed } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 

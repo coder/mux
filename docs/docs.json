@@ -47,6 +47,7 @@
               "workspaces",
               "workspaces/fork",
               "workspaces/sharing",
+              "workspaces/muxignore",
               {
                 "group": "Compaction",
                 "pages": [

@@ -28,6 +28,7 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -1619,6 +1620,18 @@ export class WorkspaceService extends EventEmitter {
       return Err(validation.error ?? "Invalid workspace name");
     }
 
+    // Trust gate: block workspace creation for untrusted projects.
+    // The frontend shows a confirmation dialog before reaching here,
+    // but this guards secondary paths (slash commands, forking).
+    const projectConfig = this.config
+      .loadConfigOrDefault()
+      .projects.get(stripTrailingSlashes(projectPath));
+    if (!projectConfig?.trusted) {
+      return Err(
+        "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+      );
+    }
+
     // Generate stable workspace ID
     const workspaceId = this.config.generateStableId();
 
@@ -1705,6 +1718,7 @@ export class WorkspaceService extends EventEmitter {
           directoryName: finalBranchName,
           initLogger,
           abortSignal: initAbortController.signal,
+          trusted: projectConfig.trusted ?? false,
         });
 
         if (createResult.success) break;
@@ -1805,6 +1819,7 @@ export class WorkspaceService extends EventEmitter {
             initLogger,
             env: secrets,
             abortSignal: initAbortController.signal,
+            trusted: projectConfig.trusted ?? false,
           },
           workspaceId,
           log
@@ -1935,10 +1950,15 @@ export class WorkspaceService extends EventEmitter {
 
         // Delete workspace from runtime first - if this fails with force=false, we abort
         // and keep workspace in config so user can retry. This prevents orphaned directories.
+        const trusted =
+          this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath))
+            ?.trusted ?? false;
         const deleteResult = await runtime.deleteWorkspace(
           projectPath,
           metadata.name, // use branch name
-          force
+          force,
+          undefined, // abortSignal
+          trusted
         );
 
         if (!deleteResult.success) {
@@ -2217,7 +2237,16 @@ export class WorkspaceService extends EventEmitter {
         workspaceName: oldName,
       });
 
-      const renameResult = await runtime.renameWorkspace(projectPath, oldName, newName);
+      const trusted =
+        this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath))
+          ?.trusted ?? false;
+      const renameResult = await runtime.renameWorkspace(
+        projectPath,
+        oldName,
+        newName,
+        undefined, // abortSignal
+        trusted
+      );
 
       if (!renameResult.success) {
         return Err(renameResult.error);
@@ -2959,6 +2988,18 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      // Trust gate: block fork for untrusted projects.
+      // Same defense-in-depth as create() — the frontend shows a dialog,
+      // but forking is a secondary creation path that needs backend gating.
+      const projectConfig = this.config
+        .loadConfigOrDefault()
+        .projects.get(stripTrailingSlashes(foundProjectPath));
+      if (!projectConfig?.trusted) {
+        return Err(
+          "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+        );
+      }
+
       // Auto-generate branch name (and title) when user omits one (seamless fork).
       // Uses pattern: {parentName}-fork-{N} for branch, "{parentTitle} (N)" for title.
       const isAutoName = newName == null;
@@ -3048,6 +3089,7 @@ export class WorkspaceService extends EventEmitter {
           sourceRuntimeConfig,
           allowCreateFallback: false,
           abortSignal: initAbortController.signal,
+          trusted: projectConfig.trusted ?? false,
         });
       } catch (error) {
         // Guarantee init lifecycle cleanup when orchestrateFork rejects.
@@ -3082,6 +3124,7 @@ export class WorkspaceService extends EventEmitter {
           initLogger,
           env: secrets,
           abortSignal: initAbortController.signal,
+          trusted: projectConfig.trusted ?? false,
         },
         newWorkspaceId,
         log
@@ -3106,7 +3149,14 @@ export class WorkspaceService extends EventEmitter {
           );
         }
       } catch (copyError) {
-        await targetRuntime.deleteWorkspace(foundProjectPath, resolvedName, true);
+        const forkTrusted = projectConfig.trusted ?? false;
+        await targetRuntime.deleteWorkspace(
+          foundProjectPath,
+          resolvedName,
+          true,
+          undefined,
+          forkTrusted
+        );
         try {
           await fsPromises.rm(newSessionDir, { recursive: true, force: true });
         } catch (cleanupError) {
@@ -4456,6 +4506,11 @@ export class WorkspaceService extends EventEmitter {
 
       const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Read trust state so tool_env is sourced for trusted projects
+      const projectConfig = this.config
+        .loadConfigOrDefault()
+        .projects.get(stripTrailingSlashes(metadata.projectPath));
+
       // Create bash tool
       const bashTool = createBashTool({
         cwd: workspacePath,
@@ -4463,6 +4518,7 @@ export class WorkspaceService extends EventEmitter {
         secrets: secretsToRecord(projectSecrets),
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
+        trusted: projectConfig?.trusted ?? false,
       });
 
       // Execute the script
@@ -4705,20 +4761,34 @@ export class WorkspaceService extends EventEmitter {
     const execAgentSettings =
       workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ?? workspaceEntry?.aiSettings;
 
-    const preferredCompactionModel =
-      typeof config.preferredCompactionModel === "string"
-        ? normalizeGatewayModel(config.preferredCompactionModel.trim())
+    // Compaction defaults now flow through per-agent defaults.
+    const globalCompactDefaults = config.agentAiDefaults?.compact;
+    const globalCompactDefaultModel = globalCompactDefaults?.modelString;
+    const normalizedGlobalCompactDefaultModel =
+      typeof globalCompactDefaultModel === "string"
+        ? normalizeGatewayModel(globalCompactDefaultModel.trim())
+        : undefined;
+    const validGlobalCompactDefaultModel =
+      normalizedGlobalCompactDefaultModel && isValidModelFormat(normalizedGlobalCompactDefaultModel)
+        ? normalizedGlobalCompactDefaultModel
         : undefined;
 
-    const normalizedPreferredCompactionModel =
-      preferredCompactionModel && isValidModelFormat(preferredCompactionModel)
-        ? preferredCompactionModel
+    const globalExecDefaultModel =
+      config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString;
+    const normalizedGlobalExecDefaultModel =
+      typeof globalExecDefaultModel === "string"
+        ? normalizeGatewayModel(globalExecDefaultModel.trim())
+        : undefined;
+    const validGlobalExecDefaultModel =
+      normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
+        ? normalizedGlobalExecDefaultModel
         : undefined;
 
     const fallbackModel =
-      normalizedPreferredCompactionModel ??
       compactAgentSettings?.model ??
+      validGlobalCompactDefaultModel ??
       execAgentSettings?.model ??
+      validGlobalExecDefaultModel ??
       activity?.lastModel ??
       WORKSPACE_DEFAULTS.model;
 
@@ -4731,8 +4801,11 @@ export class WorkspaceService extends EventEmitter {
       model = WORKSPACE_DEFAULTS.model;
     }
 
+    const globalCompactDefaultThinking = globalCompactDefaults?.thinkingLevel;
+
     const requestedThinking =
       compactAgentSettings?.thinkingLevel ??
+      globalCompactDefaultThinking ??
       execAgentSettings?.thinkingLevel ??
       activity?.lastThinkingLevel ??
       WORKSPACE_DEFAULTS.thinkingLevel;

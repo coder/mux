@@ -20,6 +20,10 @@ export const MuxProviderOptionsSchema = z.object({
         description:
           'Anthropic prompt cache TTL: "5m" (default, free refresh) or "1h" (2× write cost, longer cache)',
       }),
+      disableBetaFeatures: z.boolean().optional().meta({
+        description:
+          "Disable Anthropic beta features (1M context, prompt caching). Required for ZDR.",
+      }),
     })
     .optional(),
   openai: z
@@ -31,6 +35,9 @@ export const MuxProviderOptionsSchema = z.object({
       wireFormat: z.enum(["responses", "chatCompletions"]).optional().meta({
         description:
           "OpenAI wire format: responses (default, persistence + built-in tools) or chatCompletions (legacy /chat/completions)",
+      }),
+      store: z.boolean().optional().meta({
+        description: "Whether OpenAI stores responses. Set false for zero data retention (ZDR).",
       }),
       forceContextLimitError: z.boolean().optional().meta({
         description: "Force context limit error (used in integration tests to simulate overflow)",

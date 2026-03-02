@@ -9,7 +9,7 @@
 
 import type { ParsedRuntime, DevcontainerConfigInfo } from "@/common/types/runtime";
 import { RUNTIME_MODE, getDevcontainerConfigs } from "@/common/types/runtime";
-import type { RuntimeAvailabilityState } from "@/browser/components/ChatInput/useCreationWorkspace";
+import type { RuntimeAvailabilityState } from "@/browser/features/ChatInput/useCreationWorkspace";
 
 export const DEFAULT_DEVCONTAINER_CONFIG_PATH = ".devcontainer/devcontainer.json";
 

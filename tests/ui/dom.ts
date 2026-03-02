@@ -74,6 +74,54 @@ export function installDom(): () => void {
       domWindow.DataTransfer ?? class MockDataTransfer {};
   }
 
+  // happy-dom returns null from canvas.getContext("2d") by default. Libraries like
+  // lottie-web expect a writable 2D context during module initialization.
+  const canvasPrototype = domWindow.HTMLCanvasElement?.prototype as
+    | {
+        getContext?: (contextId: string, options?: unknown) => unknown;
+      }
+    | undefined;
+
+  if (canvasPrototype?.getContext) {
+    const originalGetContext = canvasPrototype.getContext;
+    canvasPrototype.getContext = function (
+      this: HTMLCanvasElement,
+      contextId: string,
+      options?: unknown
+    ): unknown {
+      const context = originalGetContext.call(this, contextId, options);
+      if (context || contextId !== "2d") {
+        return context;
+      }
+
+      return {
+        fillStyle: "rgba(0,0,0,0)",
+        fillRect: () => undefined,
+        clearRect: () => undefined,
+        drawImage: () => undefined,
+        save: () => undefined,
+        restore: () => undefined,
+        beginPath: () => undefined,
+        moveTo: () => undefined,
+        lineTo: () => undefined,
+        closePath: () => undefined,
+        stroke: () => undefined,
+        translate: () => undefined,
+        scale: () => undefined,
+        rotate: () => undefined,
+        arc: () => undefined,
+        fill: () => undefined,
+        transform: () => undefined,
+        rect: () => undefined,
+        clip: () => undefined,
+        getImageData: () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 }),
+        createImageData: () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 }),
+        putImageData: () => undefined,
+        measureText: () => ({ width: 0 }),
+      };
+    };
+  }
+
   // happy-dom doesn't always define these on globalThis in node env.
   if (!globalThis.requestAnimationFrame) {
     globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {

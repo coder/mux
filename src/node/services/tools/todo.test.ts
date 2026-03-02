@@ -130,33 +130,27 @@ describe("Todo Storage", () => {
       expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(maxTodos);
     });
 
-    it("should reject multiple in_progress tasks", async () => {
-      const validTodos: TodoItem[] = [
-        {
-          content: "Step 1",
-          status: "pending",
-        },
+    it("should accept multiple in_progress tasks", async () => {
+      const todos: TodoItem[] = [
+        { content: "Step 1", status: "in_progress" },
+        { content: "Step 2", status: "in_progress" },
       ];
 
-      await setTodosForSessionDir(workspaceId, workspaceSessionDir, validTodos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, todos);
+      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(todos);
+    });
 
-      const invalidTodos: TodoItem[] = [
-        {
-          content: "Step 1",
-          status: "in_progress",
-        },
-        {
-          content: "Step 2",
-          status: "in_progress",
-        },
+    it("should accept mixed completed + multiple in_progress + pending", async () => {
+      const todos: TodoItem[] = [
+        { content: "Done task", status: "completed" },
+        { content: "Parallel task A", status: "in_progress" },
+        { content: "Parallel task B", status: "in_progress" },
+        { content: "Parallel task C", status: "in_progress" },
+        { content: "Next up", status: "pending" },
       ];
 
-      await expect(
-        setTodosForSessionDir(workspaceId, workspaceSessionDir, invalidTodos)
-      ).rejects.toThrow(/only one task can be marked as in_progress/i);
-
-      // Original todos should remain unchanged on failure
-      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(validTodos);
+      await setTodosForSessionDir(workspaceId, workspaceSessionDir, todos);
+      expect(await getTodosForSessionDir(workspaceSessionDir)).toEqual(todos);
     });
 
     it("should reject when in_progress tasks appear after pending", async () => {

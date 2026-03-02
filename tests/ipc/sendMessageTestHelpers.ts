@@ -18,6 +18,7 @@ import {
   generateBranchName,
   createStreamCollector,
   INIT_HOOK_WAIT_MS,
+  trustProject,
 } from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace";
@@ -35,6 +36,7 @@ export async function createSharedRepo(): Promise<void> {
   await preloadTestModules();
   sharedEnv = await createTestEnvironment();
   sharedRepoPath = await createTempGitRepo();
+  await trustProject(sharedEnv, sharedRepoPath);
 }
 
 /**
@@ -98,6 +100,9 @@ export async function withSharedWorkspace(
   // Generate unique branch name for this test
   const branchName = generateBranchName(`test-${provider}`);
   const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+  // Trust the project so workspace creation can run under the test trust gate.
+  await trustProject(env, projectPath);
 
   // Create workspace
   const result = await env.orpc.workspace.create({
@@ -179,6 +184,9 @@ export async function withSharedWorkspaceNoProvider(
   // Generate unique branch name
   const branchName = generateBranchName("test-no-provider");
   const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+  // Trust the project so workspace creation can run under the test trust gate.
+  await trustProject(env, projectPath);
 
   // Create workspace WITHOUT setting up any providers
   const result = await env.orpc.workspace.create({

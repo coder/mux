@@ -2,11 +2,11 @@ name: Nightly Terminal-Bench
 
 on:
   schedule:
-    # Run twice daily, 12 h apart, at times representing peak and trough model load.
-    # 10:00 UTC (2 AM PT) – lowest US model usage (overnight)
-    # 22:00 UTC (2 PM PT) – highest US model usage (mid-afternoon business hours)
-    - cron: "0 10 * * *"
-    - cron: "0 22 * * *"
+    # Run twice weekly (Mon + Thu), at peak and trough model load times.
+    # Monday 10:00 UTC (2 AM PT) – lowest US model usage
+    # Thursday 22:00 UTC (2 PM PT) – highest US model usage
+    - cron: "0 10 * * 1"
+    - cron: "0 22 * * 4"
   workflow_dispatch:
     inputs:
       models:

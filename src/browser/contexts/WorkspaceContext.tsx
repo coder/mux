@@ -12,7 +12,7 @@ import {
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -33,8 +33,9 @@ import {
   AGENT_AI_DEFAULTS_KEY,
   DEFAULT_MODEL_KEY,
   DEFAULT_RUNTIME_KEY,
+  GATEWAY_ENABLED_KEY,
+  GATEWAY_MODELS_KEY,
   HIDDEN_MODELS_KEY,
-  PREFERRED_COMPACTION_MODEL_KEY,
   RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
@@ -73,7 +74,7 @@ import { getErrorMessage } from "@/common/utils/errors";
  */
 function migrateLocalModelPrefsToBackend(
   api: APIClient,
-  cfg: { defaultModel?: string; hiddenModels?: string[]; preferredCompactionModel?: string }
+  cfg: { defaultModel?: string; hiddenModels?: string[] }
 ): void {
   if (!api.config.updateModelPreferences) return;
 
@@ -83,12 +84,10 @@ function migrateLocalModelPrefsToBackend(
       ? migrateGatewayModel(localDefaultModelRaw).trim()
       : undefined;
   const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
-  const localPreferredCompactionModel = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
 
   const patch: {
     defaultModel?: string;
     hiddenModels?: string[];
-    preferredCompactionModel?: string;
   } = {};
 
   if (
@@ -105,14 +104,6 @@ function migrateLocalModelPrefsToBackend(
     localHiddenModels.length > 0
   ) {
     patch.hiddenModels = localHiddenModels;
-  }
-
-  if (
-    cfg.preferredCompactionModel === undefined &&
-    typeof localPreferredCompactionModel === "string" &&
-    localPreferredCompactionModel.trim()
-  ) {
-    patch.preferredCompactionModel = localPreferredCompactionModel;
   }
 
   if (Object.keys(patch).length > 0) {
@@ -135,16 +126,16 @@ function migrateLocalGatewayPrefsToBackend(
   // Only migrate if the backend doesn't have these values yet
   if (cfg.muxGatewayEnabled !== undefined && cfg.muxGatewayModels !== undefined) return;
 
-  // Read legacy localStorage keys (inline strings — these constants were removed from storage.ts)
-  const localEnabled = readPersistedState<boolean>("gateway-enabled", true);
-  const localModels = readPersistedState<string[]>("gateway-models", []);
+  // Read legacy localStorage keys
+  const localEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
+  const localModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
 
   const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
   const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
 
   const clearLegacyGatewayPrefs = () => {
-    updatePersistedState<boolean | undefined>("gateway-enabled", undefined);
-    updatePersistedState<string[] | undefined>("gateway-models", undefined);
+    updatePersistedState<boolean | undefined>(GATEWAY_ENABLED_KEY, undefined);
+    updatePersistedState<string[] | undefined>(GATEWAY_MODELS_KEY, undefined);
   };
 
   if (shouldMigrateEnabled || shouldMigrateModels) {
@@ -507,9 +498,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         }
         if (cfg.hiddenModels !== undefined) {
           updatePersistedState(HIDDEN_MODELS_KEY, cfg.hiddenModels);
-        }
-        if (cfg.preferredCompactionModel !== undefined) {
-          updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, cfg.preferredCompactionModel);
         }
 
         // Seed runtime enablement from backend so switching ports doesn't reset the UI.

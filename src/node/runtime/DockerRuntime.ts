@@ -29,10 +29,16 @@ import type {
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
-import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
+import {
+  checkInitHookExists,
+  getMuxEnv,
+  runInitHookOnRuntime,
+  shouldSkipInitHook,
+} from "./initHook";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
+import { GIT_NO_HOOKS_ENV, gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import {
   getHostGitconfigPath,
   hasHostGitconfig,
@@ -500,6 +506,7 @@ export class DockerRuntime extends RemoteRuntime {
       initLogger,
       abortSignal,
       env,
+      trusted: params.trusted,
     });
   }
 
@@ -511,8 +518,7 @@ export class DockerRuntime extends RemoteRuntime {
    * is handled by postCreateSetup().
    */
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env, skipInitHook } =
-      params;
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
 
     try {
       if (!this.containerName) {
@@ -522,8 +528,7 @@ export class DockerRuntime extends RemoteRuntime {
         };
       }
 
-      if (skipInitHook) {
-        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+      if (shouldSkipInitHook(params, initLogger)) {
         initLogger.logComplete(0);
         return { success: true };
       }
@@ -640,6 +645,7 @@ export class DockerRuntime extends RemoteRuntime {
     initLogger: InitLogger;
     abortSignal?: AbortSignal;
     env?: Record<string, string>;
+    trusted?: boolean;
   }): Promise<void> {
     const {
       containerName,
@@ -706,7 +712,8 @@ export class DockerRuntime extends RemoteRuntime {
         containerName,
         workspacePath,
         initLogger,
-        abortSignal
+        abortSignal,
+        params.trusted
       );
     } catch (error) {
       await runDockerCommand(`docker rm -f ${containerName}`, 10000);
@@ -715,8 +722,10 @@ export class DockerRuntime extends RemoteRuntime {
     initLogger.logStep("Files synced successfully");
 
     // 3. Checkout branch
+    // Disable git hooks for untrusted projects (prevents post-checkout execution)
+    const nhp = gitNoHooksPrefix(params.trusted);
     initLogger.logStep(`Checking out branch: ${branchName}`);
-    const checkoutCmd = `git checkout ${shescape.quote(branchName)} 2>/dev/null || git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
+    const checkoutCmd = `${nhp}git checkout ${shescape.quote(branchName)} 2>/dev/null || ${nhp}git checkout -b ${shescape.quote(branchName)} ${shescape.quote(trunkBranch)}`;
 
     const checkoutStream = await this.exec(checkoutCmd, {
       cwd: workspacePath,
@@ -742,7 +751,8 @@ export class DockerRuntime extends RemoteRuntime {
     containerName: string,
     workspacePath: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<void> {
     const timestamp = Date.now();
     const bundleFilename = `mux-bundle-${timestamp}.bundle`;
@@ -760,6 +770,7 @@ export class DockerRuntime extends RemoteRuntime {
       initLogger,
       abortSignal,
       cloneStep: "Cloning repository in container...",
+      trusted,
       createRemoteBundle: async ({ remoteBundlePath, initLogger, abortSignal }) => {
         try {
           if (abortSignal?.aborted) {
@@ -1034,8 +1045,16 @@ export class DockerRuntime extends RemoteRuntime {
       }
 
       initLogger.logStep("Cloning repository in destination...");
+      // Disable git hooks inside the container for untrusted projects
+      const noHooksEnvCmd = params.trusted
+        ? ""
+        : "env " +
+          Object.entries(GIT_NO_HOOKS_ENV)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(" ") +
+          " ";
       const cloneResult = await runDockerCommand(
-        `docker exec ${destContainerName} git clone ${containerBundlePath} ${CONTAINER_SRC_DIR}`,
+        `docker exec ${destContainerName} ${noHooksEnvCmd}git clone ${containerBundlePath} ${CONTAINER_SRC_DIR}`,
         300000
       );
       if (cloneResult.exitCode !== 0) {
@@ -1101,10 +1120,12 @@ export class DockerRuntime extends RemoteRuntime {
       }
 
       // 9. Checkout destination branch
+      // Disable git hooks for untrusted projects (prevents post-checkout execution)
+      const forkNhp = gitNoHooksPrefix(params.trusted);
       initLogger.logStep(`Checking out branch: ${newWorkspaceName}`);
       const checkoutCmd =
-        `git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
-        `git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+        `${forkNhp}git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
+        `${forkNhp}git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
       const checkoutResult = await runDockerCommand(
         `docker exec ${destContainerName} bash -c ${shescape.quote(`cd ${CONTAINER_SRC_DIR} && ${checkoutCmd}`)}`,
         120000

@@ -317,6 +317,7 @@ function createHarness(options?: HarnessOptions): Harness {
         currentBranch: "main",
         recommendedTrunk: "main",
       }),
+      setTrust: async () => {},
     },
     agents: {
       list: async () => [],
