@@ -437,12 +437,12 @@ export function buildRequestHeaders(
   }
 
   const normalized = normalizeGatewayModel(modelString);
+  // Route provider-specific headers by the runtime provider from the original model
+  // string. Capability resolution is only for model-level feature checks below.
   const [provider] = normalized.split(":", 2);
   const capabilityModel = resolveModelForMetadata(normalized, providersConfig ?? null);
-  const [resolvedCapabilityProvider] = capabilityModel.split(":", 2);
-  const capProvider = resolvedCapabilityProvider || provider;
 
-  if (capProvider === "anthropic") {
+  if (provider === "anthropic") {
     // ZDR: skip all Anthropic beta headers when beta features are disabled.
     if (!muxProviderOptions?.anthropic?.disableBetaFeatures) {
       const explicitlyEnabled1MModel =
