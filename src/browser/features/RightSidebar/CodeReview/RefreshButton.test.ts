@@ -8,7 +8,11 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import type { RefreshTrigger, LastRefreshInfo } from "@/browser/utils/RefreshController";
+import type {
+  RefreshTrigger,
+  LastRefreshInfo,
+  RefreshFailureInfo,
+} from "@/browser/utils/RefreshController";
 
 // Extract tooltip content logic for testing
 type AnimationState = "idle" | "spinning" | "stopping";
@@ -25,12 +29,26 @@ const TRIGGER_LABELS: Record<RefreshTrigger, string> = {
 
 function getTooltipContent(
   animationState: AnimationState,
-  lastRefreshInfo: LastRefreshInfo | null
-): { type: "refreshing" } | { type: "idle"; showLastRefreshInfo: boolean } {
+  lastRefreshInfo: LastRefreshInfo | null,
+  lastRefreshFailure: RefreshFailureInfo | null = null
+):
+  | { type: "refreshing" }
+  | {
+      type: "idle";
+      showLastRefreshInfo: boolean;
+      refreshStatus: "success" | "error" | "none";
+    } {
   if (animationState !== "idle") {
     return { type: "refreshing" };
   }
-  return { type: "idle", showLastRefreshInfo: lastRefreshInfo !== null };
+  const refreshStatus: "success" | "error" | "none" =
+    lastRefreshFailure &&
+    (!lastRefreshInfo || lastRefreshFailure.timestamp > lastRefreshInfo.timestamp)
+      ? "error"
+      : lastRefreshInfo
+        ? "success"
+        : "none";
+  return { type: "idle", showLastRefreshInfo: lastRefreshInfo !== null, refreshStatus };
 }
 
 describe("RefreshButton tooltip content", () => {
@@ -47,18 +65,20 @@ describe("RefreshButton tooltip content", () => {
   test("shows idle content without lastRefreshInfo when null", () => {
     const result = getTooltipContent("idle", null);
     expect(result.type).toBe("idle");
-    expect((result as { type: "idle"; showLastRefreshInfo: boolean }).showLastRefreshInfo).toBe(
-      false
-    );
+    if (result.type === "idle") {
+      expect(result.showLastRefreshInfo).toBe(false);
+      expect(result.refreshStatus).toBe("none");
+    }
   });
 
   test("shows idle content WITH lastRefreshInfo when set", () => {
     const info: LastRefreshInfo = { timestamp: Date.now(), trigger: "manual" };
     const result = getTooltipContent("idle", info);
     expect(result.type).toBe("idle");
-    expect((result as { type: "idle"; showLastRefreshInfo: boolean }).showLastRefreshInfo).toBe(
-      true
-    );
+    if (result.type === "idle") {
+      expect(result.showLastRefreshInfo).toBe(true);
+      expect(result.refreshStatus).toBe("success");
+    }
   });
 
   test("TRIGGER_LABELS covers all trigger types", () => {
@@ -83,6 +103,61 @@ describe("RefreshButton tooltip content", () => {
   });
 });
 
+describe("RefreshButton failure state", () => {
+  test("shows error status when failure is more recent than success", () => {
+    const lastRefreshInfo: LastRefreshInfo = { timestamp: 1000, trigger: "manual" };
+    const lastRefreshFailure: RefreshFailureInfo = {
+      timestamp: 2000,
+      trigger: "manual",
+      errorMessage: "git failed",
+    };
+    const result = getTooltipContent("idle", lastRefreshInfo, lastRefreshFailure);
+
+    expect(result.type).toBe("idle");
+    if (result.type === "idle") {
+      expect(result.refreshStatus).toBe("error");
+    }
+  });
+
+  test("shows success status when success is more recent than failure", () => {
+    const lastRefreshInfo: LastRefreshInfo = { timestamp: 3000, trigger: "manual" };
+    const lastRefreshFailure: RefreshFailureInfo = {
+      timestamp: 2000,
+      trigger: "manual",
+      errorMessage: "git failed",
+    };
+    const result = getTooltipContent("idle", lastRefreshInfo, lastRefreshFailure);
+
+    expect(result.type).toBe("idle");
+    if (result.type === "idle") {
+      expect(result.refreshStatus).toBe("success");
+    }
+  });
+
+  test("shows error status when no success exists", () => {
+    const lastRefreshFailure: RefreshFailureInfo = {
+      timestamp: 2000,
+      trigger: "manual",
+      errorMessage: "boom",
+    };
+    const result = getTooltipContent("idle", null, lastRefreshFailure);
+
+    expect(result.type).toBe("idle");
+    if (result.type === "idle") {
+      expect(result.refreshStatus).toBe("error");
+    }
+  });
+
+  test("shows none status when neither success nor failure exists", () => {
+    const result = getTooltipContent("idle", null, null);
+
+    expect(result.type).toBe("idle");
+    if (result.type === "idle") {
+      expect(result.refreshStatus).toBe("none");
+    }
+  });
+});
+
 describe("RefreshButton behavior invariants", () => {
   test("after manual refresh completes, tooltip must show lastRefreshInfo", () => {
     // This test documents the expected UX flow:
@@ -104,8 +179,9 @@ describe("RefreshButton behavior invariants", () => {
 
     // CRITICAL: When idle with lastRefreshInfo, must show the info
     expect(result.type).toBe("idle");
-    expect((result as { type: "idle"; showLastRefreshInfo: boolean }).showLastRefreshInfo).toBe(
-      true
-    );
+    if (result.type === "idle") {
+      expect(result.showLastRefreshInfo).toBe(true);
+      expect(result.refreshStatus).toBe("success");
+    }
   });
 });

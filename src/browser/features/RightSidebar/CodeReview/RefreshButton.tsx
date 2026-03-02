@@ -7,13 +7,19 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/To
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { formatRelativeTimeCompact } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";
-import type { LastRefreshInfo, RefreshTrigger } from "@/browser/utils/RefreshController";
+import type {
+  LastRefreshInfo,
+  RefreshTrigger,
+  RefreshFailureInfo,
+} from "@/browser/utils/RefreshController";
 
 interface RefreshButtonProps {
   onClick: () => void;
   isLoading?: boolean;
   /** Debug info about last refresh (timestamp and trigger) */
   lastRefreshInfo?: LastRefreshInfo | null;
+  /** Info about last refresh failure (shows failure indicator when set) */
+  lastRefreshFailure?: RefreshFailureInfo | null;
   /** Whether the button should be disabled (e.g., user composing review note) */
   disabled?: boolean;
 }
@@ -30,7 +36,13 @@ const TRIGGER_LABELS: Record<RefreshTrigger, string> = {
 };
 
 export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
-  const { onClick, isLoading = false, lastRefreshInfo, disabled = false } = props;
+  const {
+    onClick,
+    isLoading = false,
+    lastRefreshInfo,
+    lastRefreshFailure,
+    disabled = false,
+  } = props;
   // Track animation state for graceful stopping
   const [animationState, setAnimationState] = useState<"idle" | "spinning" | "stopping">("idle");
   const spinOnceTimeoutRef = useRef<number | null>(null);
@@ -81,6 +93,15 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
     onClick();
   };
 
+  // Determine the most recent outcome for data attributes and UI.
+  const refreshStatus: "success" | "error" | "none" =
+    lastRefreshFailure &&
+    (!lastRefreshInfo || lastRefreshFailure.timestamp > lastRefreshInfo.timestamp)
+      ? "error"
+      : lastRefreshInfo
+        ? "success"
+        : "none";
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -89,6 +110,8 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
           data-testid="review-refresh"
           data-last-refresh-trigger={lastRefreshInfo?.trigger ?? ""}
           data-last-refresh-timestamp={lastRefreshInfo?.timestamp ?? ""}
+          data-last-refresh-status={refreshStatus}
+          data-last-refresh-error-message={lastRefreshFailure?.errorMessage ?? ""}
           data-disabled={disabled || undefined}
           disabled={disabled}
           onClick={handleClick}
@@ -98,7 +121,9 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
               ? "text-muted/40 cursor-not-allowed"
               : animationState === "spinning"
                 ? "text-accent cursor-default hover:text-accent"
-                : "text-muted cursor-pointer hover:text-foreground",
+                : refreshStatus === "error"
+                  ? "text-danger-soft cursor-pointer hover:text-foreground"
+                  : "text-muted cursor-pointer hover:text-foreground",
             animationState === "stopping" && "cursor-default"
           )}
         >
@@ -125,6 +150,11 @@ export const RefreshButton: React.FC<RefreshButtonProps> = (props) => {
         ) : (
           <span>
             Refresh diff ({formatKeybind(KEYBINDS.REFRESH_REVIEW)})
+            {refreshStatus === "error" && lastRefreshFailure && (
+              <span className="text-danger-soft block text-[10px]">
+                Last refresh failed: {lastRefreshFailure.errorMessage}
+              </span>
+            )}
             {lastRefreshInfo && (
               <span className="text-muted block text-[10px]">
                 Last: {formatRelativeTimeCompact(lastRefreshInfo.timestamp)} via{" "}

@@ -38,7 +38,11 @@ import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults"
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { useHunkFirstSeen } from "@/browser/hooks/useHunkFirstSeen";
-import { RefreshController, type LastRefreshInfo } from "@/browser/utils/RefreshController";
+import {
+  RefreshController,
+  type LastRefreshInfo,
+  type RefreshFailureInfo,
+} from "@/browser/utils/RefreshController";
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import {
   getReviewImmersiveKey,
@@ -651,6 +655,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Last refresh info for UI display (tooltip showing trigger reason + time)
   const [lastRefreshInfo, setLastRefreshInfo] = useState<LastRefreshInfo | null>(null);
+  // Last refresh failure for UI display (tooltip showing latest refresh error)
+  const [lastRefreshFailure, setLastRefreshFailure] = useState<RefreshFailureInfo | null>(null);
   // Track if refresh button should be disabled (drafting or editing a review note)
   const [isRefreshBlocked, setIsRefreshBlocked] = useState(false);
 
@@ -671,7 +677,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         setRefreshTrigger((prev) => prev + 1);
         invalidateGitStatus(workspaceId);
       },
-      onRefreshComplete: setLastRefreshInfo,
+      onRefreshComplete: (info) => {
+        setLastRefreshInfo(info);
+        setLastRefreshFailure(null);
+      },
+      onRefreshError: setLastRefreshFailure,
     });
     controllerRef.current = controller;
 
@@ -1345,6 +1355,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         onToggleImmersive={toggleImmersive}
         projectPath={projectPath}
         lastRefreshInfo={lastRefreshInfo}
+        lastRefreshFailure={lastRefreshFailure}
       />
 
       {diffState.status === "error" ? (

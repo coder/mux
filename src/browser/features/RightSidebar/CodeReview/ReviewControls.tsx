@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/To
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
-import type { LastRefreshInfo } from "@/browser/utils/RefreshController";
+import type { LastRefreshInfo, RefreshFailureInfo } from "@/browser/utils/RefreshController";
 import { RefreshButton } from "./RefreshButton";
 import { BaseSelectorPopover } from "./BaseSelectorPopover";
 
@@ -31,6 +31,8 @@ interface ReviewControlsProps {
   projectPath: string;
   /** Debug info about last refresh */
   lastRefreshInfo?: LastRefreshInfo | null;
+  /** Info about last refresh failure (null = no recent failure) */
+  lastRefreshFailure?: RefreshFailureInfo | null;
   /** Whether immersive review mode is active */
   isImmersive?: boolean;
   /** Toggle immersive review mode */
@@ -47,6 +49,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   isRefreshBlocked = false,
   projectPath,
   lastRefreshInfo,
+  lastRefreshFailure,
   isImmersive = false,
   onToggleImmersive,
 }) => {
@@ -101,6 +104,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
           isLoading={isLoading}
           disabled={isRefreshBlocked}
           lastRefreshInfo={lastRefreshInfo}
+          lastRefreshFailure={lastRefreshFailure}
         />
       )}
 
