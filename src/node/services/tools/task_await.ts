@@ -38,8 +38,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const requestedIds: string[] | null =
         args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;
 
-      let candidateTaskIds: string[] =
-        requestedIds ?? taskService.listActiveDescendantAgentTaskIds(workspaceId);
+      const activeDescendantAgentTaskIds =
+        taskService.listActiveDescendantAgentTaskIds(workspaceId);
+      let candidateTaskIds: string[] = requestedIds ?? activeDescendantAgentTaskIds;
 
       if (!requestedIds && config.backgroundProcessManager) {
         const processes = await config.backgroundProcessManager.list();
@@ -158,7 +159,13 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           }
 
           if (!descendantAgentTaskIdSet.has(taskId)) {
-            return { status: "invalid_scope" as const, taskId };
+            const globalStatus = taskService.getAgentTaskStatus(taskId);
+            const activeTaskIds =
+              activeDescendantAgentTaskIds.length > 0 ? activeDescendantAgentTaskIds : undefined;
+            if (!globalStatus) {
+              return { status: "not_found" as const, taskId, activeTaskIds };
+            }
+            return { status: "invalid_scope" as const, taskId, activeTaskIds };
           }
 
           // When timeout_secs=0 (or rounds down to 0ms), task_await should be non-blocking.

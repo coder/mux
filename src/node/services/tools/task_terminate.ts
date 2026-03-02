@@ -70,11 +70,13 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
           );
           if (!terminateResult.success) {
             const msg = terminateResult.error;
+            const activeDescendantIds = taskService.listActiveDescendantAgentTaskIds(workspaceId);
+            const activeTaskIds = activeDescendantIds.length > 0 ? activeDescendantIds : undefined;
             if (/not found/i.test(msg)) {
-              return { status: "not_found" as const, taskId };
+              return { status: "not_found" as const, taskId, activeTaskIds };
             }
             if (/descendant/i.test(msg) || /scope/i.test(msg)) {
-              return { status: "invalid_scope" as const, taskId };
+              return { status: "invalid_scope" as const, taskId, activeTaskIds };
             }
             return { status: "error" as const, taskId, error: msg };
           }

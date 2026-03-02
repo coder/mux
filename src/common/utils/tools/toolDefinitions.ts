@@ -335,6 +335,7 @@ export const TaskAwaitToolNotFoundResultSchema = z
   .object({
     status: z.literal("not_found"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -342,6 +343,7 @@ export const TaskAwaitToolInvalidScopeResultSchema = z
   .object({
     status: z.literal("invalid_scope"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -451,6 +453,7 @@ export const TaskTerminateToolNotFoundResultSchema = z
   .object({
     status: z.literal("not_found"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -458,6 +461,7 @@ export const TaskTerminateToolInvalidScopeResultSchema = z
   .object({
     status: z.literal("invalid_scope"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
