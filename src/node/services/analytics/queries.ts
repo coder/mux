@@ -694,8 +694,8 @@ const RAW_QUERY_DISALLOWED_PATTERNS: RegExp[] = [
   /\bduckdb_schemas\s*\(/i,
   /\bduckdb_sequences\s*\(/i,
   /\bduckdb_extensions\s*\(/i,
-  /\binformation_schema\s*\./i,
-  /\bpg_catalog\s*\./i,
+  /(?:"?\binformation_schema\b"?)\s*\./i,
+  /(?:"?\bpg_catalog\b"?)\s*\./i,
   /\bgenerate_series\s*\(/i,
   /\b[a-zA-Z_][a-zA-Z0-9_]*_scan\s*\(/i,
   /(^|[;(])\s*copy\b/i,
@@ -856,14 +856,15 @@ export async function executeRawQuery(
     });
   }
 
-  const truncated = rawRows.length > RAW_QUERY_ROW_LIMIT;
+  const rowCount = rawRows.length;
+  const truncated = rowCount > RAW_QUERY_ROW_LIMIT;
   const rows = truncated ? rawRows.slice(0, RAW_QUERY_ROW_LIMIT) : rawRows;
 
   return {
     columns,
     rows: rows.map(normalizeDuckDbRow),
     truncated,
-    rowCount: rows.length,
+    rowCount,
     durationMs,
   };
 }

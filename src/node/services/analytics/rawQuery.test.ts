@@ -139,6 +139,13 @@ describe("executeRawQuery", () => {
     );
   });
 
+  test("rejects quoted information_schema references", async () => {
+    await expectValidationFailure(
+      'SELECT * FROM "information_schema".tables',
+      /disallowed SQL: .*information_schema/i
+    );
+  });
+
   test("rejects parenthesized table function in FROM", async () => {
     await expectValidationFailure(
       "SELECT * FROM (duckdb_tables()) AS t",
@@ -344,7 +351,7 @@ describe("executeRawQuery", () => {
   });
 
   test("enforces RAW_QUERY_ROW_LIMIT and marks response truncated", async () => {
-    const oversizedRows = Array.from({ length: RAW_QUERY_ROW_LIMIT + 10 }, (_, index) => ({
+    const oversizedRows = Array.from({ length: RAW_QUERY_ROW_LIMIT + 1 }, (_, index) => ({
       rank: index,
     }));
 
@@ -358,7 +365,7 @@ describe("executeRawQuery", () => {
     const result = await executeRawQuery(conn, "SELECT rank FROM events");
 
     expect(result.truncated).toBe(true);
-    expect(result.rowCount).toBe(RAW_QUERY_ROW_LIMIT);
+    expect(result.rowCount).toBe(RAW_QUERY_ROW_LIMIT + 1);
     expect(result.rows).toHaveLength(RAW_QUERY_ROW_LIMIT);
     expect(result.rows[0]).toEqual({ rank: 0 });
     expect(result.rows.at(-1)).toEqual({ rank: RAW_QUERY_ROW_LIMIT - 1 });
