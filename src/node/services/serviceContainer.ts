@@ -102,7 +102,8 @@ export class ServiceContainer {
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
   public readonly copilotOauthService: CopilotOauthService;
-  public readonly onePasswordService: OnePasswordService | null;
+  private _onePasswordService: OnePasswordService | null | undefined = undefined;
+  private _onePasswordServiceAccountName: string | undefined;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -144,12 +145,16 @@ export class ServiceContainer {
     // the persistent config rather than creating a default with an ephemeral one.
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
 
-    // 1Password integration — create service if account name is configured
-    const opAccountName = config.loadConfigOrDefault().onePasswordAccountName;
-    this.onePasswordService = opAccountName ? new OnePasswordService(opAccountName) : null;
-    const opResolver: ExternalSecretResolver | undefined = this.onePasswordService
-      ? this.onePasswordService.resolve.bind(this.onePasswordService)
-      : undefined;
+    // 1Password integration — resolve references lazily so config updates are picked
+    // up without requiring an app restart.
+    const opResolver: ExternalSecretResolver = async (ref: string) => {
+      const service = this.onePasswordService;
+      if (!service) {
+        return undefined;
+      }
+
+      return service.resolve(ref);
+    };
 
     const core = createCoreServices({
       config,
@@ -297,6 +302,27 @@ export class ServiceContainer {
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );
+  }
+
+  get onePasswordService(): OnePasswordService | null {
+    const opAccountName = this.config.loadConfigOrDefault().onePasswordAccountName;
+
+    if (!opAccountName) {
+      this._onePasswordService = null;
+      this._onePasswordServiceAccountName = undefined;
+      return null;
+    }
+
+    if (
+      this._onePasswordService === undefined ||
+      this._onePasswordService === null ||
+      this._onePasswordServiceAccountName !== opAccountName
+    ) {
+      this._onePasswordService = new OnePasswordService(opAccountName);
+      this._onePasswordServiceAccountName = opAccountName;
+    }
+
+    return this._onePasswordService;
   }
 
   async initialize(): Promise<void> {
@@ -455,6 +481,8 @@ export class ServiceContainer {
    * (desktop/main.ts, cli/server.ts) don't duplicate a 30-field spread.
    */
   toORPCContext(): Omit<ORPCContext, "headers"> {
+    const resolveOnePasswordService = () => this.onePasswordService;
+
     return {
       config: this.config,
       aiService: this.aiService,
@@ -466,7 +494,9 @@ export class ServiceContainer {
       muxGovernorOauthService: this.muxGovernorOauthService,
       codexOauthService: this.codexOauthService,
       copilotOauthService: this.copilotOauthService,
-      onePasswordService: this.onePasswordService,
+      get onePasswordService() {
+        return resolveOnePasswordService();
+      },
       terminalService: this.terminalService,
       editorService: this.editorService,
       windowService: this.windowService,

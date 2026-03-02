@@ -161,6 +161,26 @@ describe("Config", () => {
     });
   });
 
+  describe("onePasswordAccountName loading", () => {
+    it("loads top-level settings even when projects is missing", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          onePasswordAccountName: "personal-account",
+          muxGovernorUrl: "https://governor.example.com",
+          terminalDefaultShell: "zsh",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.size).toBe(0);
+      expect(loaded.onePasswordAccountName).toBe("personal-account");
+      expect(loaded.muxGovernorUrl).toBe("https://governor.example.com");
+      expect(loaded.terminalDefaultShell).toBe("zsh");
+    });
+  });
+
   describe("model preferences", () => {
     it("should normalize and persist defaultModel and hiddenModels", async () => {
       await config.editConfig((cfg) => {

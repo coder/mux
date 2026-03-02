@@ -99,6 +99,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
     // This is the most comprehensive test - includes ALL possible fields
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      apiKeyIsOpRef: true,
+      apiKeyOpRef: "op://Personal/OpenAI/credential",
       isEnabled: true,
       isConfigured: true,
       baseUrl: "https://custom.endpoint.com",
@@ -126,6 +128,8 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
     // Explicit field-by-field verification for clarity
     expect(parsed.apiKeySet).toBe(full.apiKeySet);
+    expect(parsed.apiKeyIsOpRef).toBe(full.apiKeyIsOpRef);
+    expect(parsed.apiKeyOpRef).toBe(full.apiKeyOpRef);
     expect(parsed.isEnabled).toBe(full.isEnabled);
     expect(parsed.baseUrl).toBe(full.baseUrl);
     expect(parsed.models).toEqual(full.models);

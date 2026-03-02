@@ -256,90 +256,88 @@ export class Config {
         const data = fs.readFileSync(this.configFile, "utf-8");
         const parsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
 
-        // Config is stored as array of [path, config] pairs
-        if (parsed.projects && Array.isArray(parsed.projects)) {
-          const rawPairs = parsed.projects;
-          // Migrate: normalize project paths by stripping trailing slashes
-          // This fixes configs created with paths like "/home/user/project/"
-          // Also filter out any malformed entries (null/undefined paths)
-          const normalizedPairs = rawPairs
-            .filter(([projectPath]) => {
-              if (!projectPath || typeof projectPath !== "string") {
-                log.warn("Filtering out project with invalid path", { projectPath });
-                return false;
-              }
-              return true;
-            })
-            .map(([projectPath, projectConfig]) => {
-              const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
-              return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
-                string,
-                ProjectConfig,
-              ];
-            });
-          const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
+        // Config is stored as array of [path, config] pairs.
+        // Older/newer files may omit `projects`; treat missing/invalid values as an empty map
+        // so top-level settings (provider/runtime/server preferences) still load.
+        const rawPairs = Array.isArray(parsed.projects) ? parsed.projects : [];
+        // Migrate: normalize project paths by stripping trailing slashes
+        // This fixes configs created with paths like "/home/user/project/"
+        // Also filter out any malformed entries (null/undefined paths)
+        const normalizedPairs = rawPairs
+          .filter(([projectPath]) => {
+            if (!projectPath || typeof projectPath !== "string") {
+              log.warn("Filtering out project with invalid path", { projectPath });
+              return false;
+            }
+            return true;
+          })
+          .map(([projectPath, projectConfig]) => {
+            const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
+            return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
+              string,
+              ProjectConfig,
+            ];
+          });
+        const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
 
-          const taskSettings = normalizeTaskSettings(parsed.taskSettings);
+        const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
-          const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
-          const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
+        const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
+        const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
 
-          const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
-          const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
-          const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
+        const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
+        const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
+        const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
 
-          // Default ON: store `false` only so config.json stays minimal.
-          const stopCoderWorkspaceOnArchive =
-            parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
-          const updateChannel = parseUpdateChannel(parsed.updateChannel);
+        // Default ON: store `false` only so config.json stays minimal.
+        const stopCoderWorkspaceOnArchive =
+          parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
+        const updateChannel = parseUpdateChannel(parsed.updateChannel);
 
-          const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
-          const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
+        const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
+        const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
 
-          const agentAiDefaults =
-            parsed.agentAiDefaults !== undefined
-              ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
-              : normalizeAgentAiDefaults(legacySubagentAiDefaults);
+        const agentAiDefaults =
+          parsed.agentAiDefaults !== undefined
+            ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
+            : normalizeAgentAiDefaults(legacySubagentAiDefaults);
 
-          const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
-          const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
-            ? undefined
-            : layoutPresetsRaw;
+        const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
+        const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
+          ? undefined
+          : layoutPresetsRaw;
 
-          return {
-            projects: projectsMap,
-            apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
-            apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi)
-              ? true
-              : undefined,
-            apiServerPort: parseOptionalPort(parsed.apiServerPort),
-            mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
-            mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
-            serverSshHost: parsed.serverSshHost,
-            serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
-            defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
-            viewedSplashScreens: parsed.viewedSplashScreens,
-            layoutPresets,
-            taskSettings,
-            muxGatewayEnabled,
-            muxGatewayModels,
-            defaultModel,
-            hiddenModels,
-            agentAiDefaults,
-            // Legacy fields are still parsed and returned for downgrade compatibility.
-            subagentAiDefaults: legacySubagentAiDefaults,
-            featureFlagOverrides: parsed.featureFlagOverrides,
-            useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
-            muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
-            muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
-            stopCoderWorkspaceOnArchive,
-            terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
-            updateChannel,
-            defaultRuntime,
-            runtimeEnablement,
-            onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
-          };
-        }
+        return {
+          projects: projectsMap,
+          apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
+          apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi) ? true : undefined,
+          apiServerPort: parseOptionalPort(parsed.apiServerPort),
+          mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
+          mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
+          serverSshHost: parsed.serverSshHost,
+          serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
+          defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
+          viewedSplashScreens: parsed.viewedSplashScreens,
+          layoutPresets,
+          taskSettings,
+          muxGatewayEnabled,
+          muxGatewayModels,
+          defaultModel,
+          hiddenModels,
+          agentAiDefaults,
+          // Legacy fields are still parsed and returned for downgrade compatibility.
+          subagentAiDefaults: legacySubagentAiDefaults,
+          featureFlagOverrides: parsed.featureFlagOverrides,
+          useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
+          muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
+          muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
+          stopCoderWorkspaceOnArchive,
+          terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
+          updateChannel,
+          defaultRuntime,
+          runtimeEnablement,
+          onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
+        };
       }
     } catch (error) {
       log.error("Error loading config:", error);

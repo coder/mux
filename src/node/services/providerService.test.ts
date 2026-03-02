@@ -116,6 +116,23 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
+  it("surfaces non-secret op:// API key references", () => {
+    withTempConfig((config, service) => {
+      const opRef = "op://Personal/Anthropic/credential";
+      config.saveProvidersConfig({
+        anthropic: {
+          apiKey: opRef,
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.anthropic.apiKeySet).toBe(true);
+      expect(cfg.anthropic.apiKeyIsOpRef).toBe(true);
+      expect(cfg.anthropic.apiKeyOpRef).toBe(opRef);
+    });
+  });
+
   it("marks providers disabled when enabled is false", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({

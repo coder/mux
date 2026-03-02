@@ -132,6 +132,7 @@ export class ProviderService {
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
+      const apiKeyIsOpRef = isOpReference(config.apiKey);
       let isEnabled = !isProviderDisabledInConfig(config);
       if (provider === "mux-gateway" && mainConfig.muxGatewayEnabled === false) {
         isEnabled = false;
@@ -139,7 +140,8 @@ export class ProviderService {
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
-        apiKeyIsOpRef: isOpReference(config.apiKey) || undefined,
+        apiKeyIsOpRef: apiKeyIsOpRef || undefined,
+        apiKeyOpRef: apiKeyIsOpRef ? config.apiKey : undefined,
         // Users can disable providers without removing credentials from providers.jsonc.
         isEnabled,
         isConfigured: false, // computed below

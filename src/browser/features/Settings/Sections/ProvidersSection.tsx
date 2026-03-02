@@ -996,7 +996,11 @@ export function ProvidersSection() {
 
     // Optimistic update for instant feedback
     if (field === "apiKey") {
-      updateOptimistically(provider, { apiKeySet: editValue !== "", apiKeyIsOpRef: false });
+      updateOptimistically(provider, {
+        apiKeySet: editValue !== "",
+        apiKeyIsOpRef: false,
+        apiKeyOpRef: undefined,
+      });
     } else if (field === "baseUrl") {
       updateOptimistically(provider, { baseUrl: editValue || undefined });
     }
@@ -1015,7 +1019,11 @@ export function ProvidersSection() {
 
       // Optimistic update for instant feedback
       if (field === "apiKey") {
-        updateOptimistically(provider, { apiKeySet: false, apiKeyIsOpRef: false });
+        updateOptimistically(provider, {
+          apiKeySet: false,
+          apiKeyIsOpRef: false,
+          apiKeyOpRef: undefined,
+        });
       } else if (field === "baseUrl") {
         updateOptimistically(provider, { baseUrl: undefined });
       }
@@ -1452,10 +1460,22 @@ export function ProvidersSection() {
                                 fieldIsSet ? (
                                   fieldConfig.key === "apiKey" &&
                                   config?.[provider]?.apiKeyIsOpRef ? (
-                                    <>
-                                      <KeyRound className="h-3 w-3" />
-                                      Linked to 1Password
-                                    </>
+                                    config?.[provider]?.apiKeyOpRef ? (
+                                      <span className="text-muted inline-flex max-w-[260px] min-w-0 items-center gap-1">
+                                        <KeyRound className="h-3 w-3 shrink-0" />
+                                        <span
+                                          className="truncate"
+                                          title={config?.[provider]?.apiKeyOpRef}
+                                        >
+                                          {config?.[provider]?.apiKeyOpRef}
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <>
+                                        <KeyRound className="h-3 w-3" />
+                                        Linked to 1Password
+                                      </>
+                                    )
                                   ) : (
                                     "••••••••"
                                   )
@@ -1509,6 +1529,7 @@ export function ProvidersSection() {
                                 updateOptimistically(provider, {
                                   apiKeySet: true,
                                   apiKeyIsOpRef: true,
+                                  apiKeyOpRef: opRef,
                                 });
 
                                 if (!api) {
