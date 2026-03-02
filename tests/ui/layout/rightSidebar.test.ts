@@ -219,8 +219,9 @@ describeIntegration("RightSidebar (UI)", () => {
     }
   }, 60_000);
 
-  // Regression: the Stats tab must not steal default focus.
-  test("stats tab appears by default and does not steal focus", async () => {
+  // The standalone "stats" tab was absorbed into the "costs" tab as sub-tabs.
+  // Verify the unified "Stats" tab (internal key "costs") is selected by default.
+  test("stats tab is selected by default", async () => {
     const cleanupDom = installDom();
 
     // Clear any persisted state
@@ -247,20 +248,20 @@ describeIntegration("RightSidebar (UI)", () => {
         { timeout: 10_000 }
       );
 
-      // Wait for Stats tab injection and confirm it doesn't steal focus.
+      // Verify the costs/stats tab is selected by default (no standalone "stats" tab exists).
       await waitFor(() => {
         const costsTab = sidebar.querySelector(
           '[role="tab"][aria-controls*="costs"]'
         ) as HTMLElement | null;
-        if (!costsTab) throw new Error("Costs tab not found");
-
-        const statsTab = sidebar.querySelector(
-          '[role="tab"][aria-controls*="stats"]'
-        ) as HTMLElement | null;
-        if (!statsTab) throw new Error("Stats tab not found");
+        if (!costsTab) throw new Error("Stats tab (costs) not found");
 
         expect(costsTab.getAttribute("aria-selected")).toBe("true");
-        expect(statsTab.getAttribute("aria-selected")).toBe("false");
+
+        // Standalone "stats" tab should not exist
+        const statsTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="-stats"]'
+        ) as HTMLElement | null;
+        expect(statsTab).toBeNull();
       });
     } finally {
       await cleanupView(view, cleanupDom);
