@@ -7,6 +7,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { invalidateGitStatus, useGitStatus } from "@/browser/stores/GitStatusStore";
 import { createLRUCache } from "@/browser/utils/lruCache";
+import { buildCheckoutScript, buildRemoteBranchListScript } from "./branchScripts";
 
 // LRU cache for persisting branch names across app restarts
 const branchCache = createLRUCache<string>({
@@ -171,7 +172,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         // Fetch one extra to detect truncation
         const result = await api.workspace.executeBash({
           workspaceId,
-          script: `git branch -r --list '${remote}/*' --sort=-committerdate --format='%(refname:short)' 2>/dev/null | head -${MAX_REMOTE_BRANCHES + 1}`,
+          script: buildRemoteBranchListScript(remote, MAX_REMOTE_BRANCHES),
           options: { timeout_secs: 5 },
         });
 
@@ -226,7 +227,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
       try {
         const result = await api.workspace.executeBash({
           workspaceId,
-          script: `git checkout ${checkoutTarget} 2>&1`,
+          script: buildCheckoutScript(checkoutTarget),
           options: { timeout_secs: 30 },
         });
 
