@@ -55,7 +55,7 @@ import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
-import { getModelStats } from "@/common/utils/tokens/modelStats";
+import { getModelStats, getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shellQuote } from "@/common/utils/shell";
@@ -1093,7 +1093,10 @@ export class StreamManager extends EventEmitter {
     // If no metadata exists, omit the parameter to let the provider use its
     // default (Anthropic requires this but has low defaults).
     const runtimeModelStats = getModelStats(modelString);
-    const effectiveMaxOutputTokens = maxOutputTokens ?? runtimeModelStats?.max_output_tokens;
+    // Fall back to resolved stats for custom aliases (e.g., provider alias mappedToModel).
+    const resolvedModelStats =
+      runtimeModelStats ?? getModelStatsResolved(modelString, this.getProvidersConfig());
+    const effectiveMaxOutputTokens = maxOutputTokens ?? resolvedModelStats?.max_output_tokens;
 
     let toolChoice: StreamRequestConfig["toolChoice"] | undefined;
     if (forceToolChoice && toolPolicy && finalTools) {
