@@ -2,59 +2,69 @@
  * Storybook stories for agent_skill_read + agent_skill_read_file tool UIs.
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
-import { setupSimpleChatStory } from "./storyHelpers";
-import {
-  STABLE_TIMESTAMP,
-  createAssistantMessage,
-  createGenericTool,
-  createUserMessage,
-} from "./mockFactory";
-import {
-  blurActiveElement,
-  waitForChatInputAutofocusDone,
-  waitForChatMessagesLoaded,
-  waitForScrollStabilization,
-} from "./storyPlayHelpers";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { userEvent, waitFor } from "@storybook/test";
+import { SkillIndicator } from "@/browser/components/SkillIndicator/SkillIndicator";
+import { AgentSkillReadToolCall as AgentSkillReadToolCallCard } from "@/browser/features/Tools/AgentSkillReadToolCall";
+import { AgentSkillReadFileToolCall as AgentSkillReadFileToolCallCard } from "@/browser/features/Tools/AgentSkillReadFileToolCall";
+import type { SkillLoadError } from "@/browser/utils/messages/StreamingMessageAggregator";
+import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
+import { lightweightMeta } from "./meta.js";
 
-export default {
-  ...appMeta,
+const meta = {
+  ...lightweightMeta,
   title: "App/Agent Skill Tools",
-};
+} satisfies Meta;
 
-async function expandFirstToolCall(canvasElement: HTMLElement) {
-  await waitForChatMessagesLoaded(canvasElement);
+export default meta;
 
-  const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
-  if (!(messageWindow instanceof HTMLElement)) {
-    throw new Error("Message window not found");
-  }
+type Story = StoryObj<typeof meta>;
 
+async function openSkillIndicatorPopover(canvasElement: HTMLElement): Promise<HTMLElement> {
   await waitFor(() => {
-    const allSpans = messageWindow.querySelectorAll("span");
-    const expandIcon = Array.from(allSpans).find((span) => span.textContent?.trim() === "▶");
-    if (!expandIcon) {
-      throw new Error("No expand icon found");
+    const skillButton = canvasElement.querySelector('button[aria-label*="skill"]');
+    if (!(skillButton instanceof HTMLElement)) {
+      throw new Error("Skill indicator not found");
     }
   });
 
-  const allSpans = messageWindow.querySelectorAll("span");
-  const expandIcon = Array.from(allSpans).find((span) => span.textContent?.trim() === "▶");
-  if (!expandIcon) {
-    throw new Error("No expand icon found");
+  const skillButton = canvasElement.querySelector('button[aria-label*="skill"]');
+  if (!(skillButton instanceof HTMLElement)) {
+    throw new Error("Skill indicator not found");
   }
 
-  const header = expandIcon.closest("div.cursor-pointer");
+  await userEvent.hover(skillButton);
+
+  const doc = canvasElement.ownerDocument;
+  await waitFor(() => {
+    const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
+    if (!(popover instanceof HTMLElement)) {
+      throw new Error("Popover not visible");
+    }
+  });
+
+  const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
+  if (!(popover instanceof HTMLElement)) {
+    throw new Error("Popover not visible");
+  }
+
+  return popover;
+}
+
+async function expandFirstToolCall(canvasElement: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    const header = canvasElement.querySelector("div.cursor-pointer");
+    if (!(header instanceof HTMLElement)) {
+      throw new Error("Tool header not found");
+    }
+  });
+
+  const header = canvasElement.querySelector("div.cursor-pointer");
   if (!(header instanceof HTMLElement)) {
     throw new Error("Tool header not found");
   }
 
   await userEvent.click(header);
-
-  // Give ResizeObserver-based scroll a chance to settle after expansion.
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 }
 
 const SKILL_PACKAGE = {
@@ -132,6 +142,10 @@ const ALL_SKILLS: AgentSkillDescriptor[] = [
   },
 ];
 
+const LOADED_ALL_SCOPES = ALL_SKILLS.filter((skill) => {
+  return skill.name === "pull-requests" || skill.name === "api-client" || skill.name === "init";
+});
+
 const SKILLS_WITH_UNADVERTISED: AgentSkillDescriptor[] = [
   {
     name: "pull-requests",
@@ -157,6 +171,10 @@ const SKILLS_WITH_UNADVERTISED: AgentSkillDescriptor[] = [
   },
 ];
 
+const LOADED_UNADVERTISED = SKILLS_WITH_UNADVERTISED.filter((skill) => {
+  return skill.name === "pull-requests" || skill.name === "deep-review";
+});
+
 const INVALID_SKILLS: AgentSkillIssue[] = [
   {
     directoryName: "Bad_Skill",
@@ -174,261 +192,135 @@ const INVALID_SKILLS: AgentSkillIssue[] = [
   },
 ];
 
+const SKILL_LOAD_ERRORS: SkillLoadError[] = [
+  { name: "deployment", error: "Agent skill not found: deployment" },
+  {
+    name: "staging-env",
+    error: "Failed to read SKILL.md: Permission denied (os error 13)",
+  },
+];
+
+function renderSkillIndicatorStory(props: {
+  loadedSkills: AgentSkillDescriptor[];
+  availableSkills: AgentSkillDescriptor[];
+  invalidSkills?: AgentSkillIssue[];
+  skillLoadErrors?: SkillLoadError[];
+}) {
+  return (
+    <div className="bg-background flex min-h-[220px] items-start justify-end p-6">
+      <SkillIndicator
+        loadedSkills={props.loadedSkills}
+        availableSkills={props.availableSkills}
+        invalidSkills={props.invalidSkills}
+        skillLoadErrors={props.skillLoadErrors}
+      />
+    </div>
+  );
+}
+
 /** Shows the SkillIndicator popover with all skill scopes (project, global, built-in) */
-export const SkillIndicator_AllScopes: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-skill-indicator",
-          messages: [],
-          agentSkills: ALL_SKILLS,
-        })
-      }
-    />
-  ),
+export const SkillIndicator_AllScopes: Story = {
+  render: () =>
+    renderSkillIndicatorStory({
+      loadedSkills: LOADED_ALL_SCOPES,
+      availableSkills: ALL_SKILLS,
+    }),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
+    const popover = await openSkillIndicatorPopover(canvasElement);
 
-    // Find the skill indicator button by its aria-label
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
     await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
+      const text = popover.textContent ?? "";
+      if (!text.includes("Project skills")) throw new Error("Project scope section not visible");
+      if (!text.includes("Global skills")) throw new Error("Global scope section not visible");
+      if (!text.includes("Built-in skills")) throw new Error("Built-in scope section not visible");
     });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
-
-    // Wait for popover to appear (hover triggers open)
-    await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-    });
-
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
   },
 };
 
 /** Shows unadvertised skills (advertise: false) with EyeOff icon in the popover */
-export const SkillIndicator_UnadvertisedSkills: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-skill-indicator-unadvertised",
-          messages: [],
-          agentSkills: SKILLS_WITH_UNADVERTISED,
-        })
-      }
-    />
-  ),
+export const SkillIndicator_UnadvertisedSkills: Story = {
+  render: () =>
+    renderSkillIndicatorStory({
+      loadedSkills: LOADED_UNADVERTISED,
+      availableSkills: SKILLS_WITH_UNADVERTISED,
+    }),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
+    const popover = await openSkillIndicatorPopover(canvasElement);
 
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
     await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
-
-    // Wait for popover to appear with EyeOff icons for unadvertised skills
-    await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-      // Verify EyeOff icon is present (aria-label for unadvertised skills)
       const eyeOffIcon = popover.querySelector('[aria-label="Not advertised in system prompt"]');
       if (!eyeOffIcon) throw new Error("EyeOff icon not found for unadvertised skill");
     });
-
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
   },
 };
 
 /** Shows invalid skills in the SkillIndicator popover ("Invalid skills" section) */
-export const SkillIndicator_InvalidSkills: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-skill-indicator-invalid-skills",
-          messages: [],
-          agentSkills: ALL_SKILLS,
-          invalidAgentSkills: INVALID_SKILLS,
-        })
-      }
-    />
-  ),
+export const SkillIndicator_InvalidSkills: Story = {
+  render: () =>
+    renderSkillIndicatorStory({
+      loadedSkills: LOADED_ALL_SCOPES,
+      availableSkills: ALL_SKILLS,
+      invalidSkills: INVALID_SKILLS,
+    }),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
-    await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
+    const popover = await openSkillIndicatorPopover(canvasElement);
 
     await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-      if (!popover.textContent?.includes("Invalid skills")) {
+      const text = popover.textContent ?? "";
+      if (!text.includes("Invalid skills")) {
         throw new Error("Invalid skills section not visible");
       }
-      if (!popover.textContent?.includes("Bad_Skill")) {
+      if (!text.includes("Bad_Skill")) {
         throw new Error("Invalid skill name not visible");
       }
     });
-
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
   },
 };
 
 /** Shows runtime skill load errors in the SkillIndicator popover ("Load errors" section) */
-export const SkillIndicator_LoadErrors: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-skill-indicator-load-errors",
-          // Messages include failed agent_skill_read tool calls,
-          // which the StreamingMessageAggregator tracks as load errors
-          messages: [
-            createUserMessage("u1", "Load the deployment skill", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 60000,
-            }),
-            createAssistantMessage("a1", "Trying to load skills:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 59000,
-              toolCalls: [
-                createGenericTool(
-                  "tc1",
-                  "agent_skill_read",
-                  { name: "deployment" },
-                  {
-                    success: false,
-                    error: "Agent skill not found: deployment",
-                  }
-                ),
-                createGenericTool(
-                  "tc2",
-                  "agent_skill_read",
-                  { name: "staging-env" },
-                  {
-                    success: false,
-                    error: "Failed to read SKILL.md: Permission denied (os error 13)",
-                  }
-                ),
-              ],
-            }),
-          ],
-          agentSkills: ALL_SKILLS,
-        })
-      }
-    />
-  ),
+export const SkillIndicator_LoadErrors: Story = {
+  render: () =>
+    renderSkillIndicatorStory({
+      loadedSkills: LOADED_ALL_SCOPES,
+      availableSkills: ALL_SKILLS,
+      skillLoadErrors: SKILL_LOAD_ERRORS,
+    }),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
-    await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
+    const popover = await openSkillIndicatorPopover(canvasElement);
 
     await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-      if (!popover.textContent?.includes("Load errors")) {
+      const text = popover.textContent ?? "";
+      if (!text.includes("Load errors")) {
         throw new Error("Load errors section not visible");
       }
-      if (!popover.textContent?.includes("deployment")) {
+      if (!text.includes("deployment")) {
         throw new Error("Failed skill name not visible");
       }
     });
-
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
   },
 };
 
 /** Shows both invalid skills and runtime load errors together in the popover */
-export const SkillIndicator_AllErrors: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-skill-indicator-all-errors",
-          messages: [
-            createUserMessage("u1", "Load the deployment skill", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 60000,
-            }),
-            createAssistantMessage("a1", "Trying to load skills:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 59000,
-              toolCalls: [
-                createGenericTool(
-                  "tc1",
-                  "agent_skill_read",
-                  { name: "deployment" },
-                  {
-                    success: false,
-                    error: "Agent skill not found: deployment",
-                  }
-                ),
-              ],
-            }),
-          ],
-          agentSkills: ALL_SKILLS,
-          invalidAgentSkills: INVALID_SKILLS,
-        })
-      }
-    />
-  ),
+export const SkillIndicator_AllErrors: Story = {
+  render: () =>
+    renderSkillIndicatorStory({
+      loadedSkills: LOADED_ALL_SCOPES,
+      availableSkills: ALL_SKILLS,
+      invalidSkills: INVALID_SKILLS,
+      skillLoadErrors: SKILL_LOAD_ERRORS,
+    }),
   play: async ({ canvasElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
-    const doc = canvasElement.ownerDocument;
-    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
-    await waitFor(() => {
-      const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
-      if (!skillButton) throw new Error("Skill indicator not found");
-    });
-
-    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
-    await userEvent.hover(skillButton);
+    const popover = await openSkillIndicatorPopover(canvasElement);
 
     await waitFor(() => {
-      const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
-      if (!popover) throw new Error("Popover not visible");
-      // Both sections should be visible
-      if (!popover.textContent?.includes("Invalid skills")) {
+      const text = popover.textContent ?? "";
+      if (!text.includes("Invalid skills")) {
         throw new Error("Invalid skills section not visible");
       }
-      if (!popover.textContent?.includes("Load errors")) {
+      if (!text.includes("Load errors")) {
         throw new Error("Load errors section not visible");
       }
     });
-
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
   },
 };
 
@@ -436,98 +328,70 @@ export const SkillIndicator_AllErrors: AppStory = {
 // SKILL TOOL CALLS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const AgentSkillRead_Collapsed: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-agent-skill-read-collapsed",
-          messages: [
-            createUserMessage("u1", "Load the react-effects skill", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 60000,
-            }),
-            createAssistantMessage("a1", "Reading skill:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 59000,
-              toolCalls: [
-                createGenericTool(
-                  "tc1",
-                  "agent_skill_read",
-                  { name: "react-effects" },
-                  { success: true, skill: SKILL_PACKAGE }
-                ),
-              ],
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
-  },
+function renderAgentSkillReadToolCall() {
+  return (
+    <div className="bg-background flex min-h-screen items-start p-6">
+      <div className="w-full max-w-2xl">
+        <AgentSkillReadToolCallCard
+          args={{ name: "react-effects" }}
+          result={{ success: true, skill: SKILL_PACKAGE }}
+          status="completed"
+        />
+      </div>
+    </div>
+  );
+}
+
+function renderAgentSkillReadFileToolCall() {
+  return (
+    <div className="bg-background flex min-h-screen items-start p-6">
+      <div className="w-full max-w-2xl">
+        <AgentSkillReadFileToolCallCard
+          args={{ name: "react-effects", filePath: "references/README.md", offset: 1, limit: 5 }}
+          result={{
+            success: true,
+            file_size: 250,
+            modifiedTime: "2023-11-14T00:00:00.000Z",
+            lines_read: 5,
+            content: SKILL_FILE_CONTENT,
+          }}
+          status="completed"
+        />
+      </div>
+    </div>
+  );
+}
+
+export const AgentSkillRead_Collapsed: Story = {
+  render: renderAgentSkillReadToolCall,
 };
 
-export const AgentSkillRead_Expanded: AppStory = {
-  render: AgentSkillRead_Collapsed.render,
+export const AgentSkillRead_Expanded: Story = {
+  render: renderAgentSkillReadToolCall,
   play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
     await expandFirstToolCall(canvasElement);
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
-  },
-};
 
-export const AgentSkillReadFile_Collapsed: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-agent-skill-file-collapsed",
-          messages: [
-            createUserMessage("u1", "Read a file from the skill", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 60000,
-            }),
-            createAssistantMessage("a1", "Reading file:", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 59000,
-              toolCalls: [
-                createGenericTool(
-                  "tc1",
-                  "agent_skill_read_file",
-                  { name: "react-effects", filePath: "references/README.md", offset: 1, limit: 5 },
-                  {
-                    success: true,
-                    file_size: 250,
-                    modifiedTime: "2023-11-14T00:00:00.000Z",
-                    lines_read: 5,
-                    content: SKILL_FILE_CONTENT,
-                  }
-                ),
-              ],
-            }),
-          ],
-        })
+    await waitFor(() => {
+      if (!canvasElement.textContent?.includes("Contents")) {
+        throw new Error("Expanded skill contents are not visible");
       }
-    />
-  ),
-  play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
+    });
   },
 };
 
-export const AgentSkillReadFile_Expanded: AppStory = {
-  render: AgentSkillReadFile_Collapsed.render,
+export const AgentSkillReadFile_Collapsed: Story = {
+  render: renderAgentSkillReadFileToolCall,
+};
+
+export const AgentSkillReadFile_Expanded: Story = {
+  render: renderAgentSkillReadFileToolCall,
   play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
     await expandFirstToolCall(canvasElement);
-    await waitForChatInputAutofocusDone(canvasElement);
-    blurActiveElement();
+
+    await waitFor(() => {
+      if (!canvasElement.textContent?.includes("Content")) {
+        throw new Error("Expanded file contents are not visible");
+      }
+    });
   },
 };
