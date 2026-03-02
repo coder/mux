@@ -662,7 +662,9 @@ export interface RawQueryResult {
   columns: RawQueryColumn[];
   rows: Array<Record<string, unknown>>;
   truncated: boolean;
+  // When rowCountExact is false, this is a lower bound ("at least this many rows").
   rowCount: number;
+  rowCountExact: boolean;
   durationMs: number;
 }
 
@@ -859,12 +861,19 @@ export async function executeRawQuery(
   const rowCount = rawRows.length;
   const truncated = rowCount > RAW_QUERY_ROW_LIMIT;
   const rows = truncated ? rawRows.slice(0, RAW_QUERY_ROW_LIMIT) : rawRows;
+  const rowCountExact = !truncated;
+
+  assert(
+    rowCount <= fetchLimit,
+    `Raw query row count (${rowCount}) exceeded fetch limit (${fetchLimit})`
+  );
 
   return {
     columns,
     rows: rows.map(normalizeDuckDbRow),
     truncated,
     rowCount,
+    rowCountExact,
     durationMs,
   };
 }

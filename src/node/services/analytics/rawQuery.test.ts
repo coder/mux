@@ -113,6 +113,7 @@ describe("executeRawQuery", () => {
     ]);
     expect(result.truncated).toBe(false);
     expect(result.rowCount).toBe(1);
+    expect(result.rowCountExact).toBe(true);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
@@ -366,6 +367,7 @@ describe("executeRawQuery", () => {
 
     expect(result.truncated).toBe(true);
     expect(result.rowCount).toBe(RAW_QUERY_ROW_LIMIT + 1);
+    expect(result.rowCountExact).toBe(false);
     expect(result.rows).toHaveLength(RAW_QUERY_ROW_LIMIT);
     expect(result.rows[0]).toEqual({ rank: 0 });
     expect(result.rows.at(-1)).toEqual({ rank: RAW_QUERY_ROW_LIMIT - 1 });
@@ -393,6 +395,7 @@ describe("executeRawQuery", () => {
     ]);
     expect(result.rows).toEqual([]);
     expect(result.rowCount).toBe(0);
+    expect(result.rowCountExact).toBe(true);
     expect(result.truncated).toBe(false);
   });
 
