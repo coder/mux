@@ -648,7 +648,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
                     : `git am failed (exitCode=${amResult.exitCode})`,
                 note: mergeNotes(
                   patchPathNote,
-                  "Dry run failed; the patch does not apply cleanly. Applying for real will likely require conflict resolution."
+                  "Dry run failed; the patch does not apply cleanly against the current HEAD. Do not attempt a real apply in this workspace; delegate conflict resolution to a sub-agent that can replay and resolve the patch."
                 ),
               },
               "task_apply_git_patch"
@@ -784,7 +784,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
                 : `git am failed (exitCode=${amResult.exitCode})`,
             note: mergeNotes(
               patchPathNote,
-              "If git am stopped due to conflicts, resolve them then run `git am --continue` or `git am --abort`."
+              "git am stopped mid-rebase due to conflicts. Either resolve conflicts and run `git am --continue`, or run `git am --abort` to restore a clean working tree and delegate resolution to a sub-agent."
             ),
           },
           "task_apply_git_patch"

@@ -524,11 +524,16 @@ Patch integration loop (default):
 1. Identify a batch of independent subtasks.
 2. Spawn one implementation sub-agent task per subtask with `run_in_background: true` (`exec` for low complexity, `plan` for higher complexity).
 3. Await the batch via `task_await`.
-4. For each successful implementation task (`exec` directly, or `plan` after auto-handoff to implementation):
+4. For each successful implementation task (`exec` directly, or `plan` after auto-handoff to implementation), integrate patches one at a time:
+   - Complete each dry-run + real-apply pair before starting the next patch. Applying one patch changes `HEAD`, which can invalidate later dry-run results.
    - Dry-run apply: `task_apply_git_patch` with `dry_run: true`.
-   - If dry-run succeeds, apply for real: `task_apply_git_patch` with `dry_run: false`.
+   - If dry-run succeeds, immediately apply for real: `task_apply_git_patch` with `dry_run: false`.
    - If dry-run fails, treat it as a patch conflict and delegate reconciliation:
-     - Spawn a dedicated `exec` task that replays the patch via `task_apply_git_patch`, resolves conflicts in its own workspace, commits the resolved result, and reports back with a new patch to apply cleanly.
+     1. Do not attempt a real apply for that patch in this workspace.
+     2. Spawn a dedicated `exec` task. In the brief, include the original failing `task_id` and instruct the sub-agent to replay that patch via `task_apply_git_patch`, resolve conflicts in its own workspace, run `git am --continue`, commit the resolved result, and report back with a new patch to apply cleanly.
+   - If real apply fails unexpectedly:
+     1. Run `git am --abort` via `bash` first to restore a clean working tree.
+     2. Then follow the same delegated reconciliation flow above.
 5. Verify + review:
    - Run focused verification directly with `bash` when practical (for example: targeted tests or the repo's standard full-validation command), or delegate verification to `explore`/`exec` when investigation/fixes are likely.
    - Use `git`/`gh` directly for PR orchestration when a PR already exists (pushes, review-request comments, replies to review remarks, and CI/check-status waiting loops). Create a new PR only when the user explicitly asks.
@@ -538,7 +543,7 @@ Patch integration loop (default):
 Sequential protocol (only for dependency chains):
 
 1. Spawn the prerequisite implementation task (`exec` or `plan`, based on complexity) with `run_in_background: false` (or spawn, then immediately `task_await`).
-2. Dry-run apply its patch (`dry_run: true`); then apply for real (`dry_run: false`). If dry-run fails, follow the conflict playbook above.
+2. Dry-run apply its patch (`dry_run: true`); then apply for real (`dry_run: false`). If either step fails, follow the conflict playbook above (including `git am --abort` first when a real apply leaves the workspace mid-rebase).
 3. Only after the patch is applied, spawn the dependent implementation task.
 4. Repeat until the dependency chain is complete.
 
