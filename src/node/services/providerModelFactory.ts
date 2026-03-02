@@ -28,6 +28,7 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { DevToolsService } from "@/node/services/devToolsService";
+import { wrapFetchWithHeaderCapture } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
@@ -530,6 +531,16 @@ export class ProviderModelFactory {
     this.devToolsService = devToolsService;
   }
 
+  private wrapProviderFetchForDevTools(baseFetch: typeof fetch): typeof fetch {
+    assert(typeof baseFetch === "function", "ProviderModelFactory expected fetch function");
+
+    if (!this.devToolsService?.enabled) {
+      return baseFetch;
+    }
+
+    return wrapFetchWithHeaderCapture(baseFetch);
+  }
+
   /**
    * Resolve an API key that may be a 1Password op:// reference.
    * Returns the original key for non-op:// values, or the resolved secret for op:// refs.
@@ -756,9 +767,10 @@ export class ProviderModelFactory {
         const fetchWithCacheControl = disableBeta
           ? baseFetch
           : wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl);
+        const providerFetch = this.wrapProviderFetchForDevTools(fetchWithCacheControl);
         const provider = createAnthropic({
           ...normalizedConfig,
-          fetch: fetchWithCacheControl,
+          fetch: providerFetch,
         });
         return Ok(provider(modelId));
       }
@@ -1075,11 +1087,14 @@ export class ProviderModelFactory {
 
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
+        const providerFetch = this.wrapProviderFetchForDevTools(
+          fetchWithOpenAITruncation as typeof fetch
+        );
         const provider = createOpenAI({
           ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
           // The preconnect method is optional in our implementation but required by the SDK type.
-          fetch: fetchWithOpenAITruncation as typeof fetch,
+          fetch: providerFetch,
         });
         // OpenAI manages reasoning state via previousResponseId - no middleware needed
         const model =
@@ -1159,12 +1174,13 @@ export class ProviderModelFactory {
         }
 
         const { createXai } = await PROVIDER_REGISTRY.xai();
+        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
         const provider = createXai({
           apiKey: resolvedApiKey,
           baseURL: creds.baseUrl ?? baseURL,
           headers,
           ...restOptions,
-          fetch: baseFetch,
+          fetch: providerFetch,
         });
         return Ok(provider(modelId));
       }
@@ -1176,9 +1192,10 @@ export class ProviderModelFactory {
 
         // Lazy-load Ollama provider to reduce startup time
         const { createOllama } = await PROVIDER_REGISTRY.ollama();
+        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
         const provider = createOllama({
           ...providerConfig,
-          fetch: baseFetch,
+          fetch: providerFetch,
           // Use strict mode for better compatibility with Ollama API
           compatibility: "strict",
         });
@@ -1242,11 +1259,12 @@ export class ProviderModelFactory {
 
         // Lazy-load OpenRouter provider to reduce startup time
         const { createOpenRouter } = await PROVIDER_REGISTRY.openrouter();
+        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
         const provider = createOpenRouter({
           apiKey: resolvedApiKey,
           baseURL: creds.baseUrl ?? baseUrl,
           headers,
-          fetch: baseFetch,
+          fetch: providerFetch,
           extraBody,
         });
         return Ok(provider(modelId));
@@ -1269,6 +1287,7 @@ export class ProviderModelFactory {
             : undefined;
 
         const baseFetch = getProviderFetch(providerConfig);
+        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
         const { createAmazonBedrock } = await PROVIDER_REGISTRY.bedrock();
 
         // Check if explicit credentials are provided in config
@@ -1279,7 +1298,7 @@ export class ProviderModelFactory {
           const provider = createAmazonBedrock({
             ...providerConfig,
             region,
-            fetch: baseFetch,
+            fetch: providerFetch,
           });
           return Ok(provider(modelId));
         }
@@ -1293,7 +1312,7 @@ export class ProviderModelFactory {
           const provider = createAmazonBedrock({
             region,
             apiKey: bearerToken,
-            fetch: baseFetch,
+            fetch: providerFetch,
           });
           return Ok(provider(modelId));
         }
@@ -1303,7 +1322,7 @@ export class ProviderModelFactory {
           // SDK automatically picks this up via apiKey option
           const provider = createAmazonBedrock({
             region,
-            fetch: baseFetch,
+            fetch: providerFetch,
           });
           return Ok(provider(modelId));
         }
@@ -1319,7 +1338,7 @@ export class ProviderModelFactory {
         const provider = createAmazonBedrock({
           region,
           credentialProvider: fromNodeProviderChain(profile ? { profile } : {}),
-          fetch: baseFetch,
+          fetch: providerFetch,
         });
         return Ok(provider(modelId));
       }
@@ -1348,6 +1367,7 @@ export class ProviderModelFactory {
           fetchWithCacheControl,
           this.providerService
         );
+        const providerFetch = this.wrapProviderFetchForDevTools(fetchWithAutoLogout);
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
@@ -1357,7 +1377,7 @@ export class ProviderModelFactory {
         const gateway = createGateway({
           apiKey: couponCode,
           baseURL: gatewayBaseURL,
-          fetch: fetchWithAutoLogout,
+          fetch: providerFetch,
         });
         const model = gateway(modelId);
 
@@ -1465,13 +1485,14 @@ export class ProviderModelFactory {
           return baseFetch(input, { ...init, headers });
         };
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
+        const providerFetch = this.wrapProviderFetchForDevTools(copilotFetch);
 
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
         const provider = createOpenAICompatible({
           name: "github-copilot",
           baseURL,
           apiKey: "copilot", // placeholder — actual auth via custom fetch
-          fetch: copilotFetch,
+          fetch: providerFetch,
         });
         return Ok(provider.chatModel(modelId));
       }
@@ -1512,9 +1533,10 @@ export class ProviderModelFactory {
           ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
         };
 
+        const providerFetch = this.wrapProviderFetchForDevTools(getProviderFetch(providerConfig));
         const provider = factory({
           ...configWithCreds,
-          fetch: getProviderFetch(providerConfig),
+          fetch: providerFetch,
         });
         return Ok(provider(modelId));
       }

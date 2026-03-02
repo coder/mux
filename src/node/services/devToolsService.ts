@@ -73,6 +73,7 @@ function applyStepBackwardCompatibilityDefaults(step: DevToolsStep): DevToolsSte
   return {
     ...step,
     rawRequest: step.rawRequest ?? null,
+    requestHeaders: step.requestHeaders ?? null,
     responseHeaders: step.responseHeaders ?? null,
     rawResponse: step.rawResponse ?? null,
     rawChunks: step.rawChunks ?? null,

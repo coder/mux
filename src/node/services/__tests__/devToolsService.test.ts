@@ -27,6 +27,7 @@ function makeStep(overrides: Partial<DevToolsStep> & { id: string; runId: string
     usage: null,
     error: null,
     rawRequest: null,
+    requestHeaders: null,
     responseHeaders: null,
     rawResponse: null,
     rawChunks: null,
@@ -257,6 +258,7 @@ describe("DevToolsService", () => {
         ...makeStep({ id: "step-1", runId: "run-1" }),
       };
       delete (legacyStep as Record<string, unknown>).rawChunks;
+      delete (legacyStep as Record<string, unknown>).requestHeaders;
       delete (legacyStep as Record<string, unknown>).responseHeaders;
       const logPath = getDevtoolsLogPath(sessionsDir, "ws-1");
 
@@ -271,6 +273,7 @@ describe("DevToolsService", () => {
       const runWithSteps = await service.getRunWithSteps("ws-1", "run-1");
 
       expect(runWithSteps).not.toBeNull();
+      expect(runWithSteps?.steps[0]?.requestHeaders).toBeNull();
       expect(runWithSteps?.steps[0]?.responseHeaders).toBeNull();
       expect(runWithSteps?.steps[0]?.rawChunks).toBeNull();
     });

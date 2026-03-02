@@ -198,6 +198,7 @@ describe("createDevToolsMiddleware", () => {
         totalTokens: 15,
       });
       expect(step?.rawRequest).toEqual(expectedResult.request?.body);
+      expect(step?.requestHeaders).toBeNull();
       expect(step?.responseHeaders).toEqual(expectedResult.response?.headers);
       expect(step?.rawResponse).toEqual(expectedResult.response?.body);
       expect(step?.rawChunks).toBeNull();
@@ -345,6 +346,7 @@ describe("createDevToolsMiddleware", () => {
         totalTokens: 7,
       });
       expect(step?.rawRequest).toEqual("stream-req");
+      expect(step?.requestHeaders).toBeNull();
       expect(step?.responseHeaders).toEqual({ "content-type": "text/event-stream" });
       expect(step?.rawResponse).toEqual(expectedForwardedChunks);
       expect(step?.rawChunks).toEqual([rawChunkValue]);

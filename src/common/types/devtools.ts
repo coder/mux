@@ -20,6 +20,7 @@ export interface DevToolsStep {
   usage: DevToolsUsage | null;
   error: string | null;
   rawRequest: unknown;
+  requestHeaders: Record<string, string> | null;
   responseHeaders: Record<string, string> | null;
   rawResponse: unknown;
   rawChunks: unknown;

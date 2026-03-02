@@ -15,6 +15,7 @@ import type {
   DevToolsUsage,
 } from "@/common/types/devtools";
 import assert from "@/common/utils/assert";
+import { DEVTOOLS_STEP_ID_HEADER, consumeCapturedRequestHeaders } from "./devToolsHeaderCapture";
 import type { DevToolsService } from "./devToolsService";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,6 +96,7 @@ function createEmptyStep(
     usage: null,
     error: null,
     rawRequest: null,
+    requestHeaders: null,
     responseHeaders: null,
     rawResponse: null,
     rawChunks: null,
@@ -241,12 +243,35 @@ export function createDevToolsMiddleware(
     };
   }
 
+  function injectStepIdHeader(params: LanguageModelV3CallOptions, stepId: string): void {
+    assert(stepId.trim().length > 0, "injectStepIdHeader requires a non-empty stepId");
+
+    const headers = new Headers();
+    if (params.headers != null) {
+      for (const [key, value] of Object.entries(params.headers)) {
+        if (typeof value === "string") {
+          headers.set(key, value);
+        }
+      }
+    }
+
+    headers.set(DEVTOOLS_STEP_ID_HEADER, stepId);
+    params.headers = Object.fromEntries(headers.entries());
+  }
+
   async function updateStepSuccess(
     stepId: string,
     startedAtMs: number,
     update: Pick<
       DevToolsStep,
-      "output" | "usage" | "rawRequest" | "responseHeaders" | "rawResponse" | "rawChunks" | "error"
+      | "output"
+      | "usage"
+      | "rawRequest"
+      | "requestHeaders"
+      | "responseHeaders"
+      | "rawResponse"
+      | "rawChunks"
+      | "error"
     >
   ): Promise<void> {
     await service.updateStep(workspaceId, stepId, {
@@ -261,6 +286,7 @@ export function createDevToolsMiddleware(
     error: unknown,
     output: DevToolsStepOutput | null = null,
     rawRequest: unknown = null,
+    requestHeaders: Record<string, string> | null = null,
     responseHeaders: Record<string, string> | null = null,
     rawResponse: unknown = null,
     rawChunks: unknown = null
@@ -270,6 +296,7 @@ export function createDevToolsMiddleware(
       output,
       error: extractErrorMessage(error),
       rawRequest,
+      requestHeaders,
       responseHeaders,
       rawResponse,
       rawChunks,
@@ -285,14 +312,17 @@ export function createDevToolsMiddleware(
       }
 
       const { stepId, startedAtMs } = await createStep("generate", params, model);
+      injectStepIdHeader(params, stepId);
 
       try {
         const result = await doGenerate();
+        const capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
 
         await updateStepSuccess(stepId, startedAtMs, {
           output: extractGenerateOutput(result),
           usage: extractUsage(result.usage),
           rawRequest: result.request?.body ?? null,
+          requestHeaders: capturedRequestHeaders,
           responseHeaders:
             result.response?.headers != null
               ? Object.fromEntries(Object.entries(result.response.headers))
@@ -304,7 +334,8 @@ export function createDevToolsMiddleware(
 
         return result;
       } catch (error) {
-        await updateStepWithError(stepId, startedAtMs, error);
+        const capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
+        await updateStepWithError(stepId, startedAtMs, error, null, null, capturedRequestHeaders);
         throw error;
       }
     },
@@ -318,12 +349,16 @@ export function createDevToolsMiddleware(
       params.includeRawChunks = true;
 
       const { stepId, startedAtMs } = await createStep("stream", params, model);
+      injectStepIdHeader(params, stepId);
 
       let streamResult: LanguageModelV3StreamResult;
+      let capturedRequestHeaders: Record<string, string> | null = null;
       try {
         streamResult = await doStream();
+        capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
       } catch (error) {
-        await updateStepWithError(stepId, startedAtMs, error);
+        capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
+        await updateStepWithError(stepId, startedAtMs, error, null, null, capturedRequestHeaders);
         throw error;
       }
 
@@ -353,6 +388,7 @@ export function createDevToolsMiddleware(
           | "usage"
           | "error"
           | "rawRequest"
+          | "requestHeaders"
           | "responseHeaders"
           | "rawResponse"
           | "rawChunks"
@@ -452,6 +488,7 @@ export function createDevToolsMiddleware(
                   usage,
                   error: null,
                   rawRequest: rest.request?.body ?? null,
+                  requestHeaders: capturedRequestHeaders,
                   responseHeaders,
                   rawResponse: fullStreamChunks,
                   rawChunks,
@@ -475,6 +512,7 @@ export function createDevToolsMiddleware(
               usage,
               error: extractErrorMessage(error),
               rawRequest: rest.request?.body ?? null,
+              requestHeaders: capturedRequestHeaders,
               responseHeaders,
               rawResponse: fullStreamChunks,
               rawChunks,
@@ -492,6 +530,7 @@ export function createDevToolsMiddleware(
               usage,
               error: "Request aborted",
               rawRequest: rest.request?.body ?? null,
+              requestHeaders: capturedRequestHeaders,
               responseHeaders,
               rawResponse: fullStreamChunks,
               rawChunks,
