@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { createClient, DesktopAuth, DesktopSessionExpiredError, type Client } from "@1password/sdk";
-import { OP_REF_PREFIX, isOpReference } from "@/common/utils/opRef";
+import { OP_REF_PREFIX } from "@/common/utils/opRef";
 import { log } from "@/node/services/log";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -65,10 +65,10 @@ export class OnePasswordService {
   }
 
   async resolve(ref: string): Promise<string | undefined> {
-    assert(
-      isOpReference(ref),
-      `OnePasswordService.resolve expects a valid ${OP_REF_PREFIX} reference`
-    );
+    if (!ref.startsWith(OP_REF_PREFIX)) {
+      log.warn("Invalid 1Password reference (not an op:// URI)", { ref });
+      return undefined;
+    }
 
     const cached = this.cache.get(ref);
     const now = Date.now();

@@ -186,21 +186,10 @@ describe("OnePasswordService", () => {
     }
   });
 
-  it("resolve() asserts on non-op:// input", async () => {
+  it("resolve() returns undefined on non-op:// input", async () => {
     const service = new OnePasswordService("account-a");
 
-    let thrown: unknown;
-    try {
-      await service.resolve("not-a-reference");
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeInstanceOf(Error);
-    if (!(thrown instanceof Error)) {
-      throw new Error("Expected resolve() to reject with an Error");
-    }
-    expect(thrown.message).toContain("op://");
+    expect(await service.resolve("not-a-reference")).toBeUndefined();
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
