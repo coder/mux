@@ -17,6 +17,8 @@ tools:
     - mux_global_agents_.*
     - agent_skill_write
     - agent_skill_delete
+    - mux_config_read
+    - mux_config_write
   require:
     - propose_plan
   # Note: file_edit_* tools ARE available but restricted to plan file only at runtime

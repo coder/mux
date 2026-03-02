@@ -38,6 +38,8 @@ tools:
     - mux_global_agents_.*
     - agent_skill_write
     - agent_skill_delete
+    - mux_config_read
+    - mux_config_write
 ---
 
 You are in Exec mode.
