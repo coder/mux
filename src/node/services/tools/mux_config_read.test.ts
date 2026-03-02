@@ -80,6 +80,13 @@ describe("mux_config_read", () => {
             nested: { authToken: "nested-secret" },
             tokenizer: "cl100k_base",
             baseUrl: "https://custom.example.com",
+            privateKey: "pk-super-secret",
+            clientKey: "ck-hidden-value",
+          },
+          "custom-auth": {
+            serviceKey: "svc-key-secret",
+            nested: { signingKey: "sign-key-value" },
+            displayName: "Custom Auth Provider",
           },
         },
         null,
@@ -119,9 +126,22 @@ describe("mux_config_read", () => {
       expect(customData.token).toBe(REDACTED_SECRET_VALUE);
       expect(customData.clientSecret).toBe(REDACTED_SECRET_VALUE);
       expect((customData.nested as Record<string, unknown>).authToken).toBe(REDACTED_SECRET_VALUE);
+      expect(customData.privateKey).toBe(REDACTED_SECRET_VALUE);
+      expect(customData.clientKey).toBe(REDACTED_SECRET_VALUE);
       // Non-secret keys are preserved.
       expect(customData.tokenizer).toBe("cl100k_base");
       expect(customData.baseUrl).toBe("https://custom.example.com");
+
+      const customAuthData = (fullResult.data as Record<string, unknown>)["custom-auth"] as Record<
+        string,
+        unknown
+      >;
+      expect(customAuthData.serviceKey).toBe(REDACTED_SECRET_VALUE);
+      expect((customAuthData.nested as Record<string, unknown>).signingKey).toBe(
+        REDACTED_SECRET_VALUE
+      );
+      // Non-secret keys are preserved.
+      expect(customAuthData.displayName).toBe("Custom Auth Provider");
 
       const serialized = JSON.stringify(fullResult.data);
       expect(serialized).not.toContain("sk-ant-secret");
@@ -130,6 +150,10 @@ describe("mux_config_read", () => {
       expect(serialized).not.toContain("top-secret-token");
       expect(serialized).not.toContain("client-secret-value");
       expect(serialized).not.toContain("nested-secret");
+      expect(serialized).not.toContain("pk-super-secret");
+      expect(serialized).not.toContain("ck-hidden-value");
+      expect(serialized).not.toContain("svc-key-secret");
+      expect(serialized).not.toContain("sign-key-value");
     }
 
     const pathResult = (await tool.execute!(
@@ -150,6 +174,16 @@ describe("mux_config_read", () => {
     expect(tokenPathResult.success).toBe(true);
     if (tokenPathResult.success) {
       expect(tokenPathResult.data).toBe(REDACTED_SECRET_VALUE);
+    }
+
+    const privateKeyPathResult = (await tool.execute!(
+      { file: "providers", path: ["custom-llm", "privateKey"] },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+
+    expect(privateKeyPathResult.success).toBe(true);
+    if (privateKeyPathResult.success) {
+      expect(privateKeyPathResult.data).toBe(REDACTED_SECRET_VALUE);
     }
   });
 

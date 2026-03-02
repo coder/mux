@@ -44,6 +44,7 @@ const SECRET_TAIL_WORDS = new Set([
   "passphrase",
   "credential",
   "credentials",
+  "key",
 ]);
 const SECRET_TAIL_PAIRS = new Set([
   "api_key",
