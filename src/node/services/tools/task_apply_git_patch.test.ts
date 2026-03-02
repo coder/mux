@@ -418,6 +418,75 @@ describe("task_apply_git_patch tool", () => {
     expect(result.note).not.toContain("git am --continue");
   }, 20_000);
 
+  it("returns recovery guidance when git am is in progress without unmerged files", async () => {
+    initGitRepo(childRepo);
+    initGitRepo(targetRepo);
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    await commitFile(childRepo, "README.md", "hello world", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    await commitFile(targetRepo, "README.md", "hello there", "target change");
+
+    const childTaskId = "child-task-no-unmerged";
+    const workspaceId = getTestDeps().workspaceId;
+
+    const patchPath = getSubagentGitPatchMboxPath(sessionDir, childTaskId);
+    const patch = execSync(`git format-patch --stdout --binary ${baseSha}..${headSha}`, {
+      cwd: childRepo,
+      encoding: "buffer",
+    });
+
+    await fsPromises.mkdir(path.dirname(patchPath), { recursive: true });
+    await fsPromises.writeFile(patchPath, patch);
+
+    await upsertSubagentGitPatchArtifact({
+      workspaceId,
+      workspaceSessionDir: sessionDir,
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId: workspaceId,
+        createdAtMs: Date.now(),
+        status: "ready",
+        baseCommitSha: baseSha,
+        headCommitSha: headSha,
+        commitCount: 1,
+        mboxPath: patchPath,
+      }),
+    });
+
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: sessionDir,
+    });
+
+    const result = (await tool.execute!(
+      { task_id: childTaskId, three_way: false },
+      mockToolCallOptions
+    )) as {
+      success: boolean;
+      dryRun?: boolean;
+      conflictPaths?: string[];
+      error?: string;
+      note?: string;
+    };
+
+    expect(result.success).toBe(false);
+    expect(result.dryRun).toBe(false);
+    expect(result.conflictPaths).toEqual([]);
+    expect(result.error).toBeTruthy();
+    expect(result.note).toContain("conflict-recovery state");
+    expect(result.note).toContain("git am --continue");
+  }, 20_000);
+
   it("returns structured conflict diagnostics on dry_run failure", async () => {
     initGitRepo(childRepo);
     initGitRepo(targetRepo);
