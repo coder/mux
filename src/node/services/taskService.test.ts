@@ -105,6 +105,7 @@ function createAIServiceMocks(
     getWorkspaceMetadata: ReturnType<typeof mock>;
     stopStream: ReturnType<typeof mock>;
     createModel: ReturnType<typeof mock>;
+    getStreamInfo: ReturnType<typeof mock>;
     on: ReturnType<typeof mock>;
     off: ReturnType<typeof mock>;
   }>
@@ -114,6 +115,7 @@ function createAIServiceMocks(
   getWorkspaceMetadata: ReturnType<typeof mock>;
   stopStream: ReturnType<typeof mock>;
   createModel: ReturnType<typeof mock>;
+  getStreamInfo: ReturnType<typeof mock>;
   on: ReturnType<typeof mock>;
   off: ReturnType<typeof mock>;
 } {
@@ -131,6 +133,7 @@ function createAIServiceMocks(
   const createModel =
     overrides?.createModel ??
     mock((): Promise<Result<never>> => Promise.resolve(Err("createModel not mocked")));
+  const getStreamInfo = overrides?.getStreamInfo ?? mock(() => undefined);
 
   const on = overrides?.on ?? mock(() => undefined);
   const off = overrides?.off ?? mock(() => undefined);
@@ -141,6 +144,7 @@ function createAIServiceMocks(
       getWorkspaceMetadata,
       stopStream,
       createModel,
+      getStreamInfo,
       on,
       off,
     } as unknown as AIService,
@@ -148,6 +152,7 @@ function createAIServiceMocks(
     getWorkspaceMetadata,
     stopStream,
     createModel,
+    getStreamInfo,
     on,
     off,
   };
@@ -240,7 +245,8 @@ function createTaskServiceHarness(
     historyService,
     aiService,
     workspaceService,
-    initStateManager
+    initStateManager,
+    undefined
   );
 
   return {

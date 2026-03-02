@@ -95,7 +95,7 @@ describe("TerminalService", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockPTYService.createSession as any) = createSessionMock;
 
-    service = new TerminalService(mockConfig, mockPTYService);
+    service = new TerminalService(mockConfig, mockPTYService, undefined);
     service.setTerminalWindowManager(mockWindowManager);
     createSessionMock.mockClear();
     closeSessionMock.mockClear();
@@ -798,7 +798,7 @@ describe("TerminalService.openNative", () => {
         return { status: 0 }; // other commands available
       });
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService);
+      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
 
       await service.openNative("ws-local");
 
@@ -820,7 +820,7 @@ describe("TerminalService.openNative", () => {
         return Promise.reject(new Error("ENOENT"));
       });
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService);
+      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
 
       await service.openNative("ws-local");
 
@@ -841,7 +841,7 @@ describe("TerminalService.openNative", () => {
         return { status: 0 };
       });
 
-      service = new TerminalService(configWithSSHWorkspace, mockPTYService);
+      service = new TerminalService(configWithSSHWorkspace, mockPTYService, undefined);
 
       await service.openNative("ws-ssh");
 
@@ -865,7 +865,7 @@ describe("TerminalService.openNative", () => {
     });
 
     it("should open cmd for local workspace", async () => {
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService);
+      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
 
       await service.openNative("ws-local");
 
@@ -877,7 +877,7 @@ describe("TerminalService.openNative", () => {
     });
 
     it("should open cmd with SSH for SSH workspace", async () => {
-      service = new TerminalService(configWithSSHWorkspace, mockPTYService);
+      service = new TerminalService(configWithSSHWorkspace, mockPTYService, undefined);
 
       await service.openNative("ws-ssh");
 
@@ -913,7 +913,7 @@ describe("TerminalService.openNative", () => {
         return { status: 0 };
       });
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService);
+      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
 
       await service.openNative("ws-local");
 
@@ -928,7 +928,7 @@ describe("TerminalService.openNative", () => {
       // All terminals not found
       spawnSyncSpy.mockImplementation(() => ({ status: 1 }));
 
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService);
+      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
 
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(service.openNative("ws-local")).rejects.toThrow("No terminal emulator found");
@@ -943,7 +943,7 @@ describe("TerminalService.openNative", () => {
         return { status: 1 };
       });
 
-      service = new TerminalService(configWithSSHWorkspace, mockPTYService);
+      service = new TerminalService(configWithSSHWorkspace, mockPTYService, undefined);
 
       await service.openNative("ws-ssh");
 
@@ -964,7 +964,7 @@ describe("TerminalService.openNative", () => {
     });
 
     it("should throw error for non-existent workspace", async () => {
-      service = new TerminalService(configWithLocalWorkspace, mockPTYService);
+      service = new TerminalService(configWithLocalWorkspace, mockPTYService, undefined);
 
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(service.openNative("non-existent")).rejects.toThrow(
