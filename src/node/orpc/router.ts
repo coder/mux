@@ -1693,11 +1693,13 @@ export const router = (authToken?: string) => {
           const resolvedProjectPath = projectPathProvided
             ? input.projectPath!
             : context.config.rootDir;
+          const opResolver = context.onePasswordService?.resolve.bind(context.onePasswordService);
 
           const secrets = await secretsToRecord(
             projectPathProvided
               ? context.config.getEffectiveSecrets(resolvedProjectPath)
-              : context.config.getGlobalSecrets()
+              : context.config.getGlobalSecrets(),
+            opResolver
           );
 
           const configuredTransport = input.name
@@ -2172,8 +2174,10 @@ export const router = (authToken?: string) => {
           .output(schemas.projects.mcp.test.output)
           .handler(async ({ context, input }) => {
             const start = Date.now();
+            const opResolver = context.onePasswordService?.resolve.bind(context.onePasswordService);
             const secrets = await secretsToRecord(
-              context.config.getEffectiveSecrets(input.projectPath)
+              context.config.getEffectiveSecrets(input.projectPath),
+              opResolver
             );
 
             const configuredTransport = input.name

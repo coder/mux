@@ -51,18 +51,17 @@ export class OnePasswordService {
   }
 
   async isAvailable(): Promise<boolean> {
-    if (this.available !== null) {
-      return this.available;
+    if (this.available === true) {
+      return true;
     }
 
     try {
       await this.getClient();
       this.available = true;
+      return true;
     } catch {
-      this.available = false;
+      return false;
     }
-
-    return this.available;
   }
 
   async resolve(ref: string): Promise<string | undefined> {
@@ -178,9 +177,15 @@ export class OnePasswordService {
     fieldTitle: string,
     sectionTitle?: string
   ): string {
-    return `${OP_REF_PREFIX}${vaultTitle}/${itemTitle}/${
-      sectionTitle ? `${sectionTitle}/` : ""
-    }${fieldTitle}`;
+    const encode = (segment: string): string => encodeURIComponent(segment);
+    const segments = [
+      `${OP_REF_PREFIX}${encode(vaultTitle)}`,
+      encode(itemTitle),
+      ...(sectionTitle ? [encode(sectionTitle)] : []),
+      encode(fieldTitle),
+    ];
+
+    return segments.join("/");
   }
 
   reset(): void {

@@ -95,6 +95,18 @@ describe("OnePasswordService", () => {
     expect(await service.isAvailable()).toBe(false);
   });
 
+  it("isAvailable() retries after initial createClient failure", async () => {
+    mockCreateClient
+      .mockImplementationOnce(() => Promise.reject(new Error("create failed")))
+      .mockImplementationOnce(() => Promise.resolve(mockClient as unknown as Client));
+
+    const service = new OnePasswordService("account-a");
+
+    expect(await service.isAvailable()).toBe(false);
+    expect(await service.isAvailable()).toBe(true);
+    expect(mockCreateClient).toHaveBeenCalledTimes(2);
+  });
+
   it("isAvailable() returns true when createClient resolves", async () => {
     const service = new OnePasswordService("account-a");
 
@@ -319,5 +331,11 @@ describe("OnePasswordService", () => {
     expect(OnePasswordService.buildReference("Vault", "Item", "password", "Login")).toBe(
       "op://Vault/Item/Login/password"
     );
+  });
+
+  it("buildReference() encodes path delimiters in each segment", () => {
+    expect(
+      OnePasswordService.buildReference("Vault/Prod", "Item/Main", "pass/word", "Login/Primary")
+    ).toBe("op://Vault%2FProd/Item%2FMain/Login%2FPrimary/pass%2Fword");
   });
 });
