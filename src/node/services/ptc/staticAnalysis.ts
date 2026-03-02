@@ -307,16 +307,19 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
 
     // Skip variable declarations (e.g., const process = ...)
     if (parent && ts.isVariableDeclaration(parent) && parent.name === node) {
+      seen.add(name);
       return;
     }
 
     // Skip function declarations (e.g., function process() {})
     if (parent && ts.isFunctionDeclaration(parent) && parent.name === node) {
+      seen.add(name);
       return;
     }
 
     // Skip parameter declarations
     if (parent && ts.isParameter(parent) && parent.name === node) {
+      seen.add(name);
       return;
     }
 

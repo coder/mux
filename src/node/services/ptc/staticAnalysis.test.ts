@@ -200,6 +200,51 @@ const env = process.env;`);
     });
   });
 
+  describe("local variable shadowing", () => {
+    test("local variable shadowing fetch does not error", async () => {
+      const result = await analyzeCode(`
+        const fetch = mux.file_read({ path: "a.txt" });
+        return fetch.content;
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("function declaration shadowing fetch does not error", async () => {
+      const result = await analyzeCode(`
+        function fetch() { return 1; }
+        return fetch();
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("parameter shadowing process does not error", async () => {
+      const result = await analyzeCode(`
+        function run(process) { return process.id; }
+        return run({ id: 1 });
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    test("unshadowed fetch still errors", async () => {
+      const result = await analyzeCode(`fetch("https://example.com")`);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.message.includes("fetch"))).toBe(true);
+    });
+
+    test("multiple variables shadowing different globals", async () => {
+      const result = await analyzeCode(`
+        const fetch = mux.file_read({ path: "a.txt" });
+        const process = { id: 1 };
+        return { content: fetch.content, id: process.id };
+      `);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+  });
+
   describe("allowed constructs (work in QuickJS)", () => {
     test("eval() is allowed", async () => {
       const result = await analyzeCode(`
