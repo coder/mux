@@ -426,15 +426,15 @@ export function GeneralSection() {
 
           <div className="flex items-center justify-between py-3">
             <div className="flex-1 pr-4">
-              <div className="text-foreground text-sm">LLM Debug Logs</div>
+              <div className="text-foreground text-sm">API Debug Logs</div>
               <div className="text-muted mt-0.5 text-xs">
-                Record inputs and outputs for every LLM call
+                Record the full input and output of every AI API call
               </div>
             </div>
             <Switch
               checked={llmDebugLogs}
               onCheckedChange={handleLlmDebugLogsChange}
-              aria-label="Toggle LLM Debug Logs"
+              aria-label="Toggle API Debug Logs"
             />
           </div>
         </div>
