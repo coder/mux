@@ -64,7 +64,7 @@ export function DevToolsTab(props: DevToolsTabProps) {
             <p className="text-muted text-center text-xs">
               No debug logs yet.
               <br />
-              Enable LLM Debug Logs in Settings to start recording.
+              Enable API Debug Logs in Settings to start recording.
             </p>
           </div>
         ) : (

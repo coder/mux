@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { AlertCircle, ChevronRight } from "lucide-react";
+import { AlertCircle, Brain, ChevronRight, Wrench } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { DevToolsStep } from "@/common/types/devtools";
+import { formatDuration } from "@/common/utils/formatDuration";
 import { assertNever } from "@/common/utils/assertNever";
 
 type StepSubTab = "input" | "output" | "raw";
@@ -9,6 +10,13 @@ type StepSubTab = "input" | "output" | "raw";
 const STEP_SUB_TABS: readonly StepSubTab[] = ["input", "output", "raw"];
 const PRE_CLASS_NAME =
   "whitespace-pre-wrap break-all text-[10px] text-muted bg-background-primary rounded p-2 mt-1 max-h-[200px] overflow-auto";
+const ROLE_COLORS: Record<string, string> = {
+  system: "bg-neutral-500/20 text-neutral-400",
+  user: "bg-blue-500/20 text-blue-400",
+  assistant: "bg-green-500/20 text-green-400",
+  tool: "bg-violet-500/20 text-violet-400",
+};
+const DEFAULT_ROLE_COLOR = "bg-neutral-500/20 text-neutral-400";
 
 interface DevToolsStepCardProps {
   step: DevToolsStep;
@@ -31,11 +39,16 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
         <span className="text-foreground text-xs font-medium">Step {props.step.stepNumber}</span>
         <span className="text-muted text-[10px]">{props.step.modelId}</span>
         {props.step.durationMs != null && (
-          <span className="text-muted text-[10px]">{props.step.durationMs}ms</span>
+          <span className="text-muted text-[10px]">
+            {formatDuration(props.step.durationMs, "precise")}
+          </span>
         )}
-        {props.step.usage?.totalTokens != null && (
-          <span className="text-muted text-[10px]">{props.step.usage.totalTokens}tok</span>
-        )}
+        {props.step.usage != null &&
+          (props.step.usage.inputTokens != null || props.step.usage.outputTokens != null) && (
+            <span className="text-muted text-[10px]">
+              {props.step.usage.inputTokens ?? "?"}→{props.step.usage.outputTokens ?? "?"} tok
+            </span>
+          )}
         {props.step.error && <AlertCircle className="text-destructive ml-auto h-3 w-3 shrink-0" />}
       </button>
 
@@ -84,7 +97,7 @@ function StepSubTabContent(props: { activeSubTab: StepSubTab; step: DevToolsStep
 function StepInputView(props: { step: DevToolsStep }) {
   const prompt = props.step.input?.prompt;
 
-  if (Array.isArray(prompt)) {
+  if (isUnknownArray(prompt)) {
     if (prompt.length === 0) {
       return <p className="text-muted text-[10px]">No prompt messages</p>;
     }
@@ -92,15 +105,7 @@ function StepInputView(props: { step: DevToolsStep }) {
     return (
       <div className="flex flex-col gap-1">
         {prompt.map((promptPart, index) => (
-          <div
-            key={`${props.step.id}-prompt-${index}`}
-            className="border-border-light rounded border p-1.5"
-          >
-            <p className="text-foreground text-[10px] font-semibold">{getPromptRole(promptPart)}</p>
-            <pre className={PRE_CLASS_NAME}>
-              {stringifyForDisplay(getPromptContent(promptPart))}
-            </pre>
-          </div>
+          <MessageBubble key={`${props.step.id}-prompt-${index}`} message={promptPart} />
         ))}
       </div>
     );
@@ -135,21 +140,25 @@ function StepOutputView(props: { step: DevToolsStep }) {
         </div>
       ))}
 
-      {reasoningParts.length > 0 && (
-        <div>
-          <p className="text-foreground text-[10px] font-medium">Reasoning:</p>
-          {reasoningParts.map((reasoningPart) => (
-            <pre key={reasoningPart.id} className={PRE_CLASS_NAME}>
-              {reasoningPart.text}
-            </pre>
-          ))}
-        </div>
-      )}
+      {reasoningParts.map((reasoningPart) => (
+        <ReasoningBlock key={reasoningPart.id} text={reasoningPart.text} />
+      ))}
 
       {toolCalls.length > 0 && (
-        <div>
-          <p className="text-foreground text-[10px] font-medium">Tool calls</p>
-          <pre className={PRE_CLASS_NAME}>{stringifyForDisplay(toolCalls)}</pre>
+        <div className="flex flex-col gap-1">
+          <p className="text-foreground text-[10px] font-medium">Tool calls ({toolCalls.length})</p>
+          {toolCalls.map((toolCall, index) => {
+            const toolCallId =
+              isRecord(toolCall) && typeof toolCall.toolCallId === "string"
+                ? toolCall.toolCallId
+                : null;
+            return (
+              <ToolCallCard
+                key={toolCallId ?? `${props.step.id}-tool-${index}`}
+                toolCall={toolCall}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -213,11 +222,153 @@ function StepRawView(props: { step: DevToolsStep }) {
   );
 }
 
+function ToolCallCard(props: { toolCall: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const toolCallRecord = isRecord(props.toolCall) ? props.toolCall : null;
+  const toolName =
+    typeof toolCallRecord?.toolName === "string" && toolCallRecord.toolName.length > 0
+      ? toolCallRecord.toolName
+      : "unknown";
+  const args = toolCallRecord?.args;
+  const argsPreview = formatArgsPreview(args);
+
+  return (
+    <div className="bg-background-primary rounded border-l-2 border-violet-500/40 px-2 py-1">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="hover:bg-hover/50 flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left"
+      >
+        <Wrench className="h-3 w-3 shrink-0 text-violet-500" />
+        <span className="text-foreground text-[10px] font-semibold">{toolName}</span>
+        {!expanded && argsPreview && (
+          <span className="text-muted truncate text-[10px]">{argsPreview}</span>
+        )}
+        <ChevronRight
+          className={cn(
+            "text-muted ml-auto h-2.5 w-2.5 shrink-0 transition-transform",
+            expanded && "rotate-90"
+          )}
+        />
+      </button>
+      {expanded && args != null && (
+        <pre className="text-muted mt-1 max-h-[150px] overflow-auto text-[10px] break-all whitespace-pre-wrap">
+          {stringifyForDisplay(args)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function MessageBubble(props: { message: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const role = getPromptRole(props.message);
+  const content = stringifyForDisplay(getPromptContent(props.message));
+  const isTruncated = content.length > 500;
+  const displayContent = !expanded && isTruncated ? `${content.slice(0, 500)}…` : content;
+
+  return (
+    <div className="border-border-light overflow-hidden rounded border">
+      <div className="bg-hover/50 px-2 py-1">
+        <RoleBadge role={role} />
+      </div>
+      <pre className="text-muted max-h-[200px] overflow-auto p-2 text-[10px] break-words whitespace-pre-wrap">
+        {displayContent}
+      </pre>
+      {isTruncated && (
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="px-2 pb-1 text-[10px] text-blue-400 hover:underline"
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function RoleBadge(props: { role: string }) {
+  const normalizedRole = props.role.toLowerCase();
+  const colorClass = ROLE_COLORS[normalizedRole] ?? DEFAULT_ROLE_COLOR;
+
+  return (
+    <span className={cn("rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase", colorClass)}>
+      {normalizedRole}
+    </span>
+  );
+}
+
+function ReasoningBlock(props: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLongText = props.text.length > 150;
+  const preview = isLongText ? `${props.text.slice(0, 150)}…` : props.text;
+
+  return (
+    <div className="bg-background-primary rounded border-l-2 border-amber-500/40 px-2 py-1">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="hover:bg-hover/50 flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left"
+      >
+        <Brain className="h-3 w-3 shrink-0 text-amber-500" />
+        <span className="text-foreground text-[10px] font-medium">Thinking</span>
+        <ChevronRight
+          className={cn(
+            "text-muted ml-auto h-2.5 w-2.5 shrink-0 transition-transform",
+            expanded && "rotate-90"
+          )}
+        />
+      </button>
+      <pre className="text-muted mt-1 max-h-[200px] overflow-auto text-[10px] break-words whitespace-pre-wrap">
+        {expanded ? props.text : preview}
+      </pre>
+    </div>
+  );
+}
+
 function formatSubTabLabel(subTab: StepSubTab): string {
   if (subTab === "input") return "Input";
   if (subTab === "output") return "Output";
   if (subTab === "raw") return "Raw";
   return assertNever(subTab);
+}
+
+function formatArgsPreview(args: unknown): string {
+  if (!isRecord(args)) {
+    const value = formatPreviewValue(args);
+    return value.length > 80 ? `${value.slice(0, 80)}…` : value;
+  }
+
+  const entries = Object.entries(args);
+  if (entries.length === 0) {
+    return "{}";
+  }
+
+  const previewParts = entries.slice(0, 3).map(([key, value]) => {
+    const previewValue = formatPreviewValue(value);
+    const truncatedValue =
+      previewValue.length > 30 ? `${previewValue.slice(0, 30)}…` : previewValue;
+    return `${key}: ${truncatedValue}`;
+  });
+
+  if (entries.length > 3) {
+    previewParts.push("…");
+  }
+
+  return previewParts.join(", ");
+}
+
+function formatPreviewValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || value == null) {
+    return String(value);
+  }
+
+  return stringifyForDisplay(value).replace(/\s+/g, " ").trim();
 }
 
 function stringifyForDisplay(value: unknown): string {
@@ -237,6 +388,10 @@ function stringifyForDisplay(value: unknown): string {
       ? `Unable to format value: ${error.message}`
       : "Unable to format value";
   }
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
