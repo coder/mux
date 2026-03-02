@@ -53,7 +53,7 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { isTerminalTab } from "@/browser/types/rightSidebar";
 import {
   collectAllTabs,
-  isRightSidebarLayoutState,
+  parseRightSidebarLayoutState,
   removeTabEverywhere,
 } from "@/browser/utils/rightSidebarLayout";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -1261,9 +1261,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           const layoutKey = getRightSidebarLayoutKey(workspaceId);
           const rawLayout = readPersistedState<unknown>(layoutKey, null);
 
-          if (isRightSidebarLayoutState(rawLayout)) {
-            const terminalTabs = collectAllTabs(rawLayout.root).filter(isTerminalTab);
-            let cleanedLayout = rawLayout;
+          if (rawLayout != null) {
+            // Use parseRightSidebarLayoutState to handle legacy migrations
+            // (e.g. "stats" tab stripped) before cleaning terminal tabs.
+            const layout = parseRightSidebarLayoutState(rawLayout, "costs");
+            const terminalTabs = collectAllTabs(layout.root).filter(isTerminalTab);
+            let cleanedLayout = layout;
             for (const tab of terminalTabs) {
               cleanedLayout = removeTabEverywhere(cleanedLayout, tab);
             }
