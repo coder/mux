@@ -7,6 +7,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import {
   ProviderModelFactory,
   buildAIProviderRequestHeaders,
+  classifyCopilotInitiator,
   modelCostsIncluded,
   MUX_AI_PROVIDER_USER_AGENT,
   resolveAIProviderHeaderSource,
@@ -190,6 +191,55 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
         });
       }
     });
+  });
+});
+
+describe("classifyCopilotInitiator", () => {
+  it("returns 'user' when last message role is user", () => {
+    const body = JSON.stringify({ messages: [{ role: "user", content: "hello" }] });
+    expect(classifyCopilotInitiator(body)).toBe("user");
+  });
+
+  it("returns 'agent' when last message role is tool", () => {
+    const body = JSON.stringify({
+      messages: [
+        { role: "user", content: "hello" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{ id: "1", type: "function", function: { name: "test", arguments: "{}" } }],
+        },
+        { role: "tool", tool_call_id: "1", content: "result" },
+      ],
+    });
+    expect(classifyCopilotInitiator(body)).toBe("agent");
+  });
+
+  it("returns 'agent' when last message role is assistant", () => {
+    const body = JSON.stringify({
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "..." },
+      ],
+    });
+    expect(classifyCopilotInitiator(body)).toBe("agent");
+  });
+
+  it("returns 'user' for empty messages array", () => {
+    expect(classifyCopilotInitiator(JSON.stringify({ messages: [] }))).toBe("user");
+  });
+
+  it("returns 'user' for non-string body", () => {
+    expect(classifyCopilotInitiator(undefined)).toBe("user");
+    expect(classifyCopilotInitiator(null)).toBe("user");
+  });
+
+  it("returns 'user' for malformed JSON", () => {
+    expect(classifyCopilotInitiator("not json")).toBe("user");
+  });
+
+  it("returns 'user' when body has no messages field", () => {
+    expect(classifyCopilotInitiator(JSON.stringify({ model: "gpt-4o" }))).toBe("user");
   });
 });
 
