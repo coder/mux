@@ -97,8 +97,7 @@ export function buildProviderOptions(
   // Resolve aliases to their base model for capability detection while keeping
   // the original modelString for provider routing and previousResponseId lookups.
   const capabilityModel = resolveModelForMetadata(normalizedModel, providersConfig ?? null);
-  const [resolvedCapabilityProvider, resolvedCapabilityModelName] = capabilityModel.split(":", 2);
-  const capProvider = resolvedCapabilityProvider || provider;
+  const [, resolvedCapabilityModelName] = capabilityModel.split(":", 2);
   const capModelName = resolvedCapabilityModelName || modelName;
 
   log.debug("buildProviderOptions", {
@@ -106,7 +105,6 @@ export function buildProviderOptions(
     provider,
     modelName,
     capabilityModel,
-    capProvider,
     capModelName,
     thinkingLevel,
   });
@@ -117,7 +115,7 @@ export function buildProviderOptions(
   }
 
   // Build Anthropic-specific options
-  if (capProvider === "anthropic") {
+  if (provider === "anthropic") {
     const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
     const cacheTtl = disableBeta ? undefined : muxProviderOptions?.anthropic?.cacheTtl;
     const cacheControl = cacheTtl ? { type: "ephemeral" as const, ttl: cacheTtl } : undefined;
@@ -187,7 +185,7 @@ export function buildProviderOptions(
   }
 
   // Build OpenAI-specific options
-  if (capProvider === "openai") {
+  if (provider === "openai") {
     const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
 
     // Extract previousResponseId from last assistant message for persistence
@@ -301,7 +299,7 @@ export function buildProviderOptions(
   }
 
   // Build Google-specific options
-  if (capProvider === "google") {
+  if (provider === "google") {
     const isGemini3 = capModelName.includes("gemini-3");
     let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
 
@@ -337,7 +335,7 @@ export function buildProviderOptions(
   }
 
   // Build OpenRouter-specific options
-  if (capProvider === "openrouter") {
+  if (provider === "openrouter") {
     const reasoningEffort = OPENROUTER_REASONING_EFFORT[effectiveThinking];
 
     log.debug("buildProviderOptions: OpenRouter config", {
@@ -367,7 +365,7 @@ export function buildProviderOptions(
   }
 
   // Build xAI-specific options
-  if (capProvider === "xai") {
+  if (provider === "xai") {
     const overrides = muxProviderOptions?.xai ?? {};
 
     const defaultSearchParameters: XaiProviderOptions["searchParameters"] = {
