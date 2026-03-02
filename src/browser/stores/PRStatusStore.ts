@@ -134,6 +134,9 @@ export class PRStatusStore {
   constructor() {
     this.refreshController = new RefreshController({
       onRefresh: () => this.refreshAll(),
+      onRefreshError: (failure) => {
+        console.error("[PRStatusStore] refresh failed:", failure.errorMessage);
+      },
       debounceMs: 5000,
       refreshOnFocus: true,
       focusDebounceMs: 1000,
