@@ -194,20 +194,16 @@ describe("TOOL_DEFINITIONS", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("excludes global skill management tools unless explicitly enabled", () => {
+  it("always includes global skill management tools", () => {
     const tools = getAvailableTools("openai:gpt-4o");
 
-    expect(tools).not.toContain("agent_skill_list");
-    expect(tools).not.toContain("agent_skill_write");
-    expect(tools).not.toContain("agent_skill_delete");
-  });
-
-  it("includes global skill management tools when explicitly enabled", () => {
-    const tools = getAvailableTools("openai:gpt-4o", { enableMuxGlobalAgentsTools: true });
-
-    expect(tools).toEqual(
-      expect.arrayContaining(["agent_skill_list", "agent_skill_write", "agent_skill_delete"])
-    );
+    expect(tools).toContain("agent_skill_list");
+    expect(tools).toContain("agent_skill_write");
+    expect(tools).toContain("agent_skill_delete");
+    expect(tools).toContain("mux_global_agents_read");
+    expect(tools).toContain("mux_global_agents_write");
+    expect(tools).toContain("mux_config_read");
+    expect(tools).toContain("mux_config_write");
   });
 
   it("discourages repeating plan contents or plan file location after propose_plan", () => {
