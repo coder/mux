@@ -551,6 +551,7 @@ export class TaskService {
 
     const modelResult = await this.aiService.createModel(modelString, undefined, {
       agentInitiated: true,
+      workspaceId: args.workspaceId,
     });
     if (!modelResult.success) {
       log.warn("Plan-task auto-handoff auto-routing failed to create model; defaulting to exec", {

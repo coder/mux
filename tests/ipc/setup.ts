@@ -113,6 +113,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     voiceService: services.voiceService,
     experimentsService: services.experimentsService,
     telemetryService: services.telemetryService,
+    devToolsService: services.devToolsService,
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
     coderService: services.coderService,

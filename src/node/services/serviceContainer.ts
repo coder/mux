@@ -38,6 +38,7 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
 } from "@/common/types/stream";
+import { DevToolsService } from "@/node/services/devToolsService";
 import { FeatureFlagService } from "@/node/services/featureFlagService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
@@ -117,6 +118,7 @@ export class ServiceContainer {
   public readonly telemetryService: TelemetryService;
   public readonly featureFlagService: FeatureFlagService;
   public readonly sessionTimingService: SessionTimingService;
+  public readonly devToolsService: DevToolsService;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
@@ -140,6 +142,7 @@ export class ServiceContainer {
     });
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);
+    this.devToolsService = new DevToolsService(config);
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -164,6 +167,7 @@ export class ServiceContainer {
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
+      devToolsService: this.devToolsService,
       opResolver,
     });
 
@@ -520,6 +524,7 @@ export class ServiceContainer {
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
+      devToolsService: this.devToolsService,
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,

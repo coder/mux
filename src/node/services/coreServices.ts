@@ -22,6 +22,7 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
+import type { DevToolsService } from "@/node/services/devToolsService";
 
 export interface CoreServicesOptions {
   config: Config;
@@ -36,6 +37,7 @@ export interface CoreServicesOptions {
   experimentsService?: ExperimentsService;
   sessionTimingService?: SessionTimingService;
   opResolver?: ExternalSecretResolver;
+  devToolsService?: DevToolsService;
 }
 
 export interface CoreServices {
@@ -73,6 +75,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.workspaceMcpOverridesService,
     opts.policyService,
     opts.telemetryService,
+    opts.devToolsService,
     opts.opResolver
   );
 

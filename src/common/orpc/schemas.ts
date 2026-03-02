@@ -208,6 +208,7 @@ export {
   CoderWorkspaceSchema,
   CoderWorkspaceStatusSchema,
   config,
+  devtools,
   uiLayouts,
   debug,
   features,

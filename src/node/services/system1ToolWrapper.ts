@@ -65,7 +65,7 @@ export interface System1WrapOptions {
   createModel: (
     modelString: string,
     opts?: MuxProviderOptions,
-    createOptions?: { agentInitiated?: boolean }
+    createOptions?: { agentInitiated?: boolean; workspaceId?: string }
   ) => Promise<Result<LanguageModel, SendMessageError>>;
   emitBashOutput: (event: BashOutputEvent) => void;
   sessionUsageService?: SessionUsageService;
@@ -105,6 +105,7 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
     // createModel handles gateway routing automatically — pass the raw string.
     const created = await opts.createModel(system1Ctx.modelString, opts.muxProviderOptions, {
       agentInitiated: true,
+      workspaceId: opts.workspaceId,
     });
     if (!created.success) {
       cachedSystem1ModelFailed = true;

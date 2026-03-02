@@ -45,6 +45,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { DevToolsService } from "@/node/services/devToolsService";
 
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
@@ -181,6 +182,7 @@ export class AIService extends EventEmitter {
     workspaceMcpOverridesService?: WorkspaceMcpOverridesService,
     policyService?: PolicyService,
     telemetryService?: TelemetryService,
+    devToolsService?: DevToolsService,
     opResolver?: ExternalSecretResolver
   ) {
     super();
@@ -206,6 +208,7 @@ export class AIService extends EventEmitter {
       providerService,
       policyService,
       undefined,
+      devToolsService,
       opResolver
     );
     void this.ensureSessionsDir();
@@ -377,7 +380,7 @@ export class AIService extends EventEmitter {
   async createModel(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions,
-    opts?: { agentInitiated?: boolean }
+    opts?: { agentInitiated?: boolean; workspaceId?: string }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     return this.providerModelFactory.createModel(modelString, muxProviderOptions, opts);
   }
@@ -558,7 +561,7 @@ export class AIService extends EventEmitter {
         modelString,
         effectiveThinkingLevel,
         effectiveMuxProviderOptions,
-        { agentInitiated }
+        { agentInitiated, workspaceId }
       );
       if (!modelResult.success) {
         return Err(modelResult.error);
@@ -1107,7 +1110,8 @@ export class AIService extends EventEmitter {
               runtimeTempDir,
               runtime,
               agentDiscoveryPath,
-              createModel: (ms, o, createOptions) => this.createModel(ms, o, createOptions),
+              createModel: (ms, o, createOptions) =>
+                this.createModel(ms, o, { ...(createOptions ?? {}), workspaceId }),
               emitBashOutput: (ev) => this.emit("bash-output", ev),
               sessionUsageService: this.sessionUsageService,
             })

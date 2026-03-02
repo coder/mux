@@ -78,7 +78,9 @@ function createUsage(inputTokens: number, outputTokens: number): LanguageModelV3
   };
 }
 
-function createGenerateResult(overrides: Partial<LanguageModelV3GenerateResult> = {}): LanguageModelV3GenerateResult {
+function createGenerateResult(
+  overrides: Partial<LanguageModelV3GenerateResult> = {}
+): LanguageModelV3GenerateResult {
   return {
     content: [{ type: "text", text: "Hello" }],
     finishReason: { unified: "stop", raw: "stop" },
@@ -106,7 +108,9 @@ function getWrapStream(middleware: LanguageModelV3Middleware) {
   return middleware.wrapStream;
 }
 
-async function collectStream(stream: ReadableStream<LanguageModelV3StreamPart>): Promise<LanguageModelV3StreamPart[]> {
+async function collectStream(
+  stream: ReadableStream<LanguageModelV3StreamPart>
+): Promise<LanguageModelV3StreamPart[]> {
   const reader = stream.getReader();
   const chunks: LanguageModelV3StreamPart[] = [];
 

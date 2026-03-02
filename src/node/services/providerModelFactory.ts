@@ -27,6 +27,8 @@ import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderD
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
+import type { DevToolsService } from "@/node/services/devToolsService";
+import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
@@ -510,6 +512,7 @@ export class ProviderModelFactory {
   private readonly config: Config;
   private readonly providerService: ProviderService;
   private readonly policyService?: PolicyService;
+  private readonly devToolsService?: DevToolsService;
   codexOauthService?: CodexOauthService;
 
   constructor(
@@ -517,12 +520,14 @@ export class ProviderModelFactory {
     providerService: ProviderService,
     policyService?: PolicyService,
     codexOauthService?: CodexOauthService,
+    devToolsService?: DevToolsService,
     private readonly opResolver?: ExternalSecretResolver
   ) {
     this.config = config;
     this.providerService = providerService;
     this.policyService = policyService;
     this.codexOauthService = codexOauthService;
+    this.devToolsService = devToolsService;
   }
 
   /**
@@ -550,31 +555,42 @@ export class ProviderModelFactory {
   async createModel(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions,
-    opts?: { agentInitiated?: boolean }
+    opts?: { agentInitiated?: boolean; workspaceId?: string }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     const result = await this._createModelCore(modelString, muxProviderOptions, opts);
-    if (!result.success || process.env.MUX_DEVTOOLS !== "1") {
+    if (!result.success) {
       return result;
     }
+
+    // DevTools middleware wrappers currently support LanguageModelV3 instances only.
+    if (typeof result.data === "string" || result.data.specificationVersion !== "v3") {
+      return result;
+    }
+
+    let model: LanguageModel = result.data;
 
     // AI SDK DevTools is an opt-in developer workflow for richer debugging.
     // Enable with:
     //   1. MUX_DEVTOOLS=1 make dev
     //   2. make devtools
     //   3. Open http://localhost:4983
-    // DevTools middleware currently supports LanguageModelV3 instances only.
-    // This debugging path should never break successful model creation for non-v3 providers,
-    // so we fall back to the original model when wrapping is unsupported.
-    if (typeof result.data === "string" || result.data.specificationVersion !== "v3") {
-      return result;
+    if (process.env.MUX_DEVTOOLS === "1") {
+      model = wrapLanguageModel({
+        model,
+        middleware: devToolsMiddleware(),
+      });
     }
 
-    return Ok(
-      wrapLanguageModel({
-        model: result.data,
-        middleware: devToolsMiddleware(),
-      })
-    );
+    const workspaceId = opts?.workspaceId;
+    const devToolsService = this.devToolsService;
+    if (workspaceId != null && devToolsService?.enabled) {
+      model = wrapLanguageModel({
+        model,
+        middleware: createDevToolsMiddleware(workspaceId, devToolsService),
+      });
+    }
+
+    return Ok(model);
   }
 
   private async _createModelCore(
@@ -1526,7 +1542,7 @@ export class ProviderModelFactory {
     modelString: string,
     thinkingLevel: ThinkingLevel,
     muxProviderOptions?: MuxProviderOptions,
-    opts?: { agentInitiated?: boolean }
+    opts?: { agentInitiated?: boolean; workspaceId?: string }
   ): Promise<
     Result<
       {

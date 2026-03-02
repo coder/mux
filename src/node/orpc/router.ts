@@ -70,6 +70,7 @@ import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
+import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
@@ -862,6 +863,15 @@ export const router = (authToken?: string) => {
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
         }),
+      updateLlmDebugLogs: t
+        .input(schemas.config.updateLlmDebugLogs.input)
+        .output(schemas.config.updateLlmDebugLogs.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            config.llmDebugLogs = input.enabled;
+            return config;
+          });
+        }),
       unenrollMuxGovernor: t
         .input(schemas.config.unenrollMuxGovernor.input)
         .output(schemas.config.unenrollMuxGovernor.output)
@@ -872,6 +882,106 @@ export const router = (authToken?: string) => {
           });
 
           await context.policyService.refreshNow();
+        }),
+    },
+    devtools: {
+      getRuns: t
+        .input(schemas.devtools.getRuns.input)
+        .output(schemas.devtools.getRuns.output)
+        .handler(async ({ context, input }) => {
+          return context.devToolsService.getRuns(input.workspaceId);
+        }),
+      getRunDetail: t
+        .input(schemas.devtools.getRunDetail.input)
+        .output(schemas.devtools.getRunDetail.output)
+        .handler(async ({ context, input }) => {
+          return context.devToolsService.getRunWithSteps(input.workspaceId, input.runId);
+        }),
+      clear: t
+        .input(schemas.devtools.clear.input)
+        .output(schemas.devtools.clear.output)
+        .handler(async ({ context, input }) => {
+          await context.devToolsService.clear(input.workspaceId);
+          return { success: true };
+        }),
+      subscribe: t
+        .input(schemas.devtools.subscribe.input)
+        .output(schemas.devtools.subscribe.output)
+        .handler(async function* ({ context, input, signal }) {
+          const service = context.devToolsService;
+          let resolveNext: ((value: DevToolsEvent | null) => void) | null = null;
+          const queue: DevToolsEvent[] = [];
+          let ended = false;
+
+          const push = (event: DevToolsEvent) => {
+            if (ended) {
+              return;
+            }
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(event);
+              return;
+            }
+
+            queue.push(event);
+          };
+
+          const eventName = `update:${input.workspaceId}`;
+          const onEvent = (event: DevToolsEvent) => {
+            push(event);
+          };
+
+          service.on(eventName, onEvent);
+
+          const onAbort = () => {
+            if (ended) {
+              return;
+            }
+
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            const runs = await service.getRuns(input.workspaceId);
+            yield { type: "snapshot", runs };
+
+            while (!ended) {
+              const queuedEvent = queue.shift();
+              if (queuedEvent) {
+                yield queuedEvent;
+                continue;
+              }
+
+              const event = await new Promise<DevToolsEvent | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (event == null || ended) {
+                break;
+              }
+
+              yield event;
+            }
+          } finally {
+            ended = true;
+            signal?.removeEventListener("abort", onAbort);
+            service.off(eventName, onEvent);
+          }
         }),
     },
     uiLayouts: {
