@@ -316,14 +316,14 @@ export const TaskTranscriptViewer: Story = {
 
     await waitFor(() => {
       const dialog = canvasElement.ownerDocument.querySelector('[role="dialog"]');
-      if (!dialog || !dialog.textContent?.includes("task-transcript-001")) {
+      if (!dialog?.textContent?.includes("task-transcript-001")) {
         throw new Error("Transcript dialog not found");
       }
     });
 
     await waitFor(() => {
       const dialog = canvasElement.ownerDocument.querySelector('[role="dialog"]');
-      if (!dialog || !dialog.textContent?.includes("Transcript is empty")) {
+      if (!dialog?.textContent?.includes("Transcript is empty")) {
         throw new Error("Transcript content not rendered");
       }
     });
