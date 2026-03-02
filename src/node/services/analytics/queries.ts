@@ -798,7 +798,14 @@ function validateRawQuerySql(cleanSql: string): void {
     maskStrings: false,
   });
 
-  if (RAW_QUERY_REPLACEMENT_SCAN_PATTERN.test(commentMaskedSql)) {
+  // Keep quote delimiters while masking literal contents so replacement-scan detection
+  // still catches FROM/JOIN '<path>' but ignores FROM/JOIN text inside quoted values.
+  const replacementScanMaskedSql = commentMaskedSql.replace(/'(?:[^']|'')*'/g, (literal) => {
+    assert(literal.length >= 2, "Single-quoted SQL literal must include delimiters");
+    return `'${" ".repeat(literal.length - 2)}'`;
+  });
+
+  if (RAW_QUERY_REPLACEMENT_SCAN_PATTERN.test(replacementScanMaskedSql)) {
     throw new Error(
       "String literals cannot be used as table sources (DuckDB replacement scans are not allowed)"
     );
