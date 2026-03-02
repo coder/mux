@@ -60,6 +60,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Upload macOS assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # electron-builder's --publish always silently skips uploads when the
+          # release was created >2 hours ago (its internal staleness check),
+          # which breaks reruns. Force-upload all macOS assets with --clobber
+          # so reruns reliably attach artifacts to the release.
+          gh release upload "$RELEASE_TAG" \
+            release/mux-*.dmg \
+            release/mux-*.dmg.blockmap \
+            release/mux-*.zip \
+            release/mux-*.zip.blockmap \
+            release/*-mac.yml \
+            --clobber
+
   build-linux:
     name: Build and Release Linux
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
@@ -92,6 +108,16 @@ jobs:
         run: bun x electron-builder --linux --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Same electron-builder 2-hour staleness workaround as macOS.
+          gh release upload "$RELEASE_TAG" \
+            release/mux-*.AppImage \
+            release/*-linux.yml \
+            --clobber
 
   build-linux-arm64:
     name: Build and Release Linux arm64
@@ -199,6 +225,18 @@ jobs:
           EV_KEY: ${{ vars.EV_KEY }}
           EV_TSA_URL: ${{ vars.EV_TSA_URL }}
           GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
+
+      - name: Upload Windows assets to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Same electron-builder 2-hour staleness workaround as macOS.
+          gh release upload "$RELEASE_TAG" \
+            release/mux-*.exe \
+            release/mux-*.exe.blockmap \
+            release/*.yml \
+            --clobber
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
