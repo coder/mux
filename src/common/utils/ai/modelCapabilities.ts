@@ -26,6 +26,8 @@ export type SupportedInputMediaType = "image" | "pdf" | "audio" | "video";
 const PROVIDER_KEY_ALIASES: Record<string, string> = {
   // GitHub Copilot keys in models.json use underscores for LiteLLM provider names.
   "github-copilot": "github_copilot",
+  // Enterprise uses the same underlying models as public Copilot
+  "github-copilot-enterprise": "github_copilot",
 };
 
 /**

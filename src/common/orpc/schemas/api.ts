@@ -257,7 +257,11 @@ export const muxGatewayOauth = {
 // GitHub Copilot OAuth (Device Code Flow)
 export const copilotOauth = {
   startDeviceFlow: {
-    input: z.void(),
+    input: z
+      .object({
+        enterpriseDomain: z.string().nullish(),
+      })
+      .strict(),
     output: ResultSchema(
       z.object({
         flowId: z.string(),

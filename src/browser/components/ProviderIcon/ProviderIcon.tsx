@@ -31,6 +31,7 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   ollama: OllamaIcon,
   "mux-gateway": GatewayIcon,
   "github-copilot": GitHubIcon,
+  "github-copilot-enterprise": GitHubIcon,
 };
 
 /**

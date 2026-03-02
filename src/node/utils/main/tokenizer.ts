@@ -85,7 +85,7 @@ function resolveModelName(modelString: string): ModelName {
     // GitHub Copilot hosts models from multiple providers.
     // Infer the tokenizer family from the model name prefix.
     let effectiveProvider = provider;
-    if (provider === "github-copilot") {
+    if (provider === "github-copilot" || provider === "github-copilot-enterprise") {
       const modelId = normalized.split(":")[1] || "";
       if (modelId.startsWith("claude-")) {
         effectiveProvider = "anthropic";

@@ -74,6 +74,12 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createOpenAICompatible",
     requiresApiKey: true,
   },
+  "github-copilot-enterprise": {
+    displayName: "GitHub Copilot Enterprise",
+    import: () => import("@ai-sdk/openai-compatible"),
+    factoryName: "createOpenAICompatible",
+    requiresApiKey: true,
+  },
   bedrock: {
     displayName: "Bedrock",
     import: () => import("@ai-sdk/amazon-bedrock"),

@@ -1,11 +1,13 @@
 import * as crypto from "crypto";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
+import type { ProviderName } from "@/common/constants/providers";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
 import { createDeferred } from "@/node/utils/oauthUtils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { normalizeDomain, getOauthUrls, getCopilotApiBaseUrl } from "./copilotHelpers";
 
 const GITHUB_COPILOT_CLIENT_ID = "Ov23liCVKFN3jOo9R7HS";
 const SCOPE = "read:user";
@@ -14,10 +16,6 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const COMPLETED_FLOW_TTL_MS = 60 * 1000;
 // Only surface top-tier model families from the Copilot API
 export const COPILOT_MODEL_PREFIXES = ["gpt-5", "claude-", "gemini-3", "grok-code"];
-
-const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
-const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
-const COPILOT_API_BASE_URL = "https://api.githubcopilot.com";
 
 interface DeviceFlow {
   flowId: string;
@@ -29,6 +27,12 @@ interface DeviceFlow {
   pollingStarted: boolean;
   resultPromise: Promise<Result<void, string>>;
   resolveResult: (result: Result<void, string>) => void;
+  /** Normalized domain (e.g. "github.com" or "github.mycompany.com") */
+  domain: string;
+  /** Which provider key to store credentials under */
+  providerKey: ProviderName;
+  /** OAuth access token URL for polling */
+  accessTokenUrl: string;
 }
 
 export class CopilotOauthService {
@@ -39,13 +43,18 @@ export class CopilotOauthService {
     private readonly windowService?: WindowService
   ) {}
 
-  async startDeviceFlow(): Promise<
-    Result<{ flowId: string; verificationUri: string; userCode: string }, string>
-  > {
+  async startDeviceFlow(opts?: {
+    enterpriseDomain?: string;
+  }): Promise<Result<{ flowId: string; verificationUri: string; userCode: string }, string>> {
     const flowId = crypto.randomUUID();
+    const domain = opts?.enterpriseDomain ? normalizeDomain(opts.enterpriseDomain) : "github.com";
+    const providerKey: ProviderName = opts?.enterpriseDomain
+      ? "github-copilot-enterprise"
+      : "github-copilot";
+    const { deviceCodeUrl, accessTokenUrl } = getOauthUrls(domain);
 
     try {
-      const res = await fetch(GITHUB_DEVICE_CODE_URL, {
+      const res = await fetch(deviceCodeUrl, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -90,6 +99,9 @@ export class CopilotOauthService {
         cleanupTimeout: null,
         resultPromise,
         resolveResult,
+        domain,
+        providerKey,
+        accessTokenUrl,
       });
 
       log.debug(`Copilot OAuth device flow started (flowId=${flowId})`);
@@ -169,7 +181,7 @@ export class CopilotOauthService {
   private async pollForToken(flow: DeviceFlow): Promise<void> {
     while (!flow.cancelled) {
       try {
-        const res = await fetch(GITHUB_ACCESS_TOKEN_URL, {
+        const res = await fetch(flow.accessTokenUrl, {
           method: "POST",
           headers: {
             Accept: "application/json",
@@ -193,9 +205,9 @@ export class CopilotOauthService {
         if (flow.cancelled) return;
 
         if (data.access_token) {
-          // Store token as apiKey for the github-copilot provider
+          // Store token as apiKey for the correct provider
           const persistResult = this.providerService.setConfig(
-            "github-copilot",
+            flow.providerKey,
             ["apiKey"],
             data.access_token
           );
@@ -205,9 +217,15 @@ export class CopilotOauthService {
             return;
           }
 
+          // For enterprise, also persist the base URL so the fetch interceptor can find it
+          const apiBaseUrl = getCopilotApiBaseUrl(flow.domain);
+          if (flow.providerKey === "github-copilot-enterprise") {
+            this.providerService.setConfig(flow.providerKey, ["baseURL"], apiBaseUrl);
+          }
+
           // Fetch available models from Copilot API (best-effort, non-blocking on failure)
           try {
-            const modelsRes = await fetch(`${COPILOT_API_BASE_URL}/models`, {
+            const modelsRes = await fetch(`${apiBaseUrl}/models`, {
               headers: {
                 Authorization: `Bearer ${data.access_token}`,
                 "Openai-Intent": "conversation-edits",
@@ -224,7 +242,7 @@ export class CopilotOauthService {
                   .map((m) => m.id)
                   .filter((id) => COPILOT_MODEL_PREFIXES.some((prefix) => id.startsWith(prefix)));
                 if (modelIds.length > 0) {
-                  this.providerService.setModels("github-copilot", modelIds);
+                  this.providerService.setModels(flow.providerKey, modelIds);
                 }
               }
             }

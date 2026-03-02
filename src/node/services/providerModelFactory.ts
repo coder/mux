@@ -28,6 +28,7 @@ import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import { detectCopilotRequestContext } from "@/node/services/copilotHelpers";
 import {
   normalizeGatewayStreamUsage,
   normalizeGatewayGenerateResult,
@@ -1303,8 +1304,9 @@ export class ProviderModelFactory {
       }
 
       // GitHub Copilot — OpenAI-compatible with custom auth headers
-      if (providerName === "github-copilot") {
-        const creds = resolveProviderCredentials("github-copilot" as ProviderName, providerConfig);
+      // Handles both public (github-copilot) and enterprise (github-copilot-enterprise) providers
+      if (providerName === "github-copilot" || providerName === "github-copilot-enterprise") {
+        const creds = resolveProviderCredentials(providerName as ProviderName, providerConfig);
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
@@ -1320,24 +1322,40 @@ export class ProviderModelFactory {
           headers.set("Authorization", `Bearer ${creds.apiKey ?? ""}`);
           headers.set("Openai-Intent", "conversation-edits");
           headers.delete("x-api-key");
+
+          // Detect request context for Copilot-specific headers
+          const bodyStr = typeof init?.body === "string" ? init.body : null;
+          const { isAgent, hasVision } = detectCopilotRequestContext(bodyStr);
+          headers.set("x-initiator", isAgent ? "agent" : "user");
+          if (hasVision) {
+            headers.set("Copilot-Vision-Request", "true");
+          }
+
           return baseFetch(input, { ...init, headers });
         };
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
 
-        const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
+        const defaultBaseUrl =
+          providerName === "github-copilot-enterprise"
+            ? (providerConfig.baseURL ?? "https://api.githubcopilot.com")
+            : "https://api.githubcopilot.com";
+        const baseURL = providerConfig.baseURL ?? defaultBaseUrl;
         const provider = createOpenAICompatible({
-          name: "github-copilot",
+          name: providerName,
           baseURL,
           apiKey: "copilot", // placeholder — actual auth via custom fetch
           fetch: copilotFetch,
         });
+
+        // TODO: GPT-5+ should use the Responses API once @ai-sdk/openai-compatible
+        // supports provider.responses(). For now, chatModel works for all Copilot models.
         return Ok(provider.chatModel(modelId));
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)
       // Providers with custom logic (anthropic, openai, xai, ollama, openrouter, bedrock, mux-gateway,
-      // github-copilot) are handled explicitly above. New providers using the standard pattern need
-      // only be added to PROVIDER_DEFINITIONS - no code changes required here.
+      // github-copilot, github-copilot-enterprise) are handled explicitly above. New providers using
+      // the standard pattern need only be added to PROVIDER_DEFINITIONS - no code changes required here.
       const providerDef = PROVIDER_DEFINITIONS[providerName as ProviderName];
       if (providerDef) {
         // Resolve credentials from config + env (single source of truth)

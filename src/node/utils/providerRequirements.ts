@@ -53,6 +53,9 @@ export const PROVIDER_ENV_VARS: Partial<
   "github-copilot": {
     apiKey: ["GITHUB_COPILOT_TOKEN"],
   },
+  "github-copilot-enterprise": {
+    apiKey: ["GITHUB_COPILOT_ENTERPRISE_TOKEN"],
+  },
   bedrock: {
     region: ["AWS_REGION", "AWS_DEFAULT_REGION"],
   },

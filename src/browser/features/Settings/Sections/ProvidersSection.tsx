@@ -123,7 +123,7 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     return [];
   }
 
-  if (provider === "github-copilot") {
+  if (provider === "github-copilot" || provider === "github-copilot-enterprise") {
     return []; // OAuth-based, no manual key entry
   }
 
@@ -762,7 +762,7 @@ export function ProvidersSection() {
           ? "Re-login to Mux Gateway"
           : "Login to Mux Gateway";
 
-  // --- GitHub Copilot Device Code Flow ---
+  // --- GitHub Copilot Device Code Flow (shared by standard + enterprise) ---
   const [copilotLoginStatus, setCopilotLoginStatus] = useState<CopilotLoginStatus>("idle");
   const [copilotLoginError, setCopilotLoginError] = useState<string | null>(null);
   const [copilotFlowId, setCopilotFlowId] = useState<string | null>(null);
@@ -775,6 +775,27 @@ export function ProvidersSection() {
   const copilotLoginInProgress =
     copilotLoginStatus === "waiting" || copilotLoginStatus === "starting";
   const copilotIsLoggedIn = copilotApiKeySet || copilotLoginStatus === "success";
+
+  // --- GitHub Copilot Enterprise (reuses same Device Code flow with a custom domain) ---
+  const [copilotEnterpriseLoginStatus, setCopilotEnterpriseLoginStatus] =
+    useState<CopilotLoginStatus>("idle");
+  const [copilotEnterpriseLoginError, setCopilotEnterpriseLoginError] = useState<string | null>(
+    null
+  );
+  const [copilotEnterpriseFlowId, setCopilotEnterpriseFlowId] = useState<string | null>(null);
+  const [copilotEnterpriseUserCode, setCopilotEnterpriseUserCode] = useState<string | null>(null);
+  const [copilotEnterpriseVerificationUri, setCopilotEnterpriseVerificationUri] = useState<
+    string | null
+  >(null);
+  const [copilotEnterpriseDomain, setCopilotEnterpriseDomain] = useState("");
+  const copilotEnterpriseLoginAttemptRef = useRef(0);
+  const copilotEnterpriseFlowIdRef = useRef<string | null>(null);
+
+  const copilotEnterpriseApiKeySet = config?.["github-copilot-enterprise"]?.apiKeySet ?? false;
+  const copilotEnterpriseLoginInProgress =
+    copilotEnterpriseLoginStatus === "waiting" || copilotEnterpriseLoginStatus === "starting";
+  const copilotEnterpriseIsLoggedIn =
+    copilotEnterpriseApiKeySet || copilotEnterpriseLoginStatus === "success";
 
   const cancelCopilotLogin = () => {
     copilotLoginAttemptRef.current++;
@@ -791,6 +812,21 @@ export function ProvidersSection() {
     setCopilotLoginError(null);
   };
 
+  const cancelCopilotEnterpriseLogin = () => {
+    copilotEnterpriseLoginAttemptRef.current++;
+    if (api && copilotEnterpriseFlowId) {
+      void api.copilotOauth.cancelDeviceFlow({
+        flowId: copilotEnterpriseFlowId,
+      });
+    }
+    setCopilotEnterpriseFlowId(null);
+    copilotEnterpriseFlowIdRef.current = null;
+    setCopilotEnterpriseUserCode(null);
+    setCopilotEnterpriseVerificationUri(null);
+    setCopilotEnterpriseLoginStatus("idle");
+    setCopilotEnterpriseLoginError(null);
+  };
+
   // Cancel any in-flight Copilot login if the component unmounts.
   // Use a ref for api so this only fires on true unmount, not on api identity
   // changes (e.g. reconnection), which would spuriously cancel active flows.
@@ -800,6 +836,11 @@ export function ProvidersSection() {
     return () => {
       if (copilotFlowIdRef.current && apiRef.current) {
         void apiRef.current.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
+      }
+      if (copilotEnterpriseFlowIdRef.current && apiRef.current) {
+        void apiRef.current.copilotOauth.cancelDeviceFlow({
+          flowId: copilotEnterpriseFlowIdRef.current,
+        });
       }
     };
   }, []);
@@ -834,7 +875,7 @@ export function ProvidersSection() {
         setCopilotFlowId(null);
       }
 
-      const startResult = await api.copilotOauth.startDeviceFlow();
+      const startResult = await api.copilotOauth.startDeviceFlow({});
 
       if (attempt !== copilotLoginAttemptRef.current) {
         if (startResult.success) {
@@ -876,6 +917,80 @@ export function ProvidersSection() {
       const message = getErrorMessage(err);
       setCopilotLoginStatus("error");
       setCopilotLoginError(message);
+    }
+  };
+
+  const clearCopilotEnterpriseCredentials = () => {
+    if (!api) return;
+    cancelCopilotEnterpriseLogin();
+    updateOptimistically("github-copilot-enterprise", { apiKeySet: false });
+    void api.providers.setProviderConfig({
+      provider: "github-copilot-enterprise",
+      keyPath: ["apiKey"],
+      value: "",
+    });
+  };
+
+  const startCopilotEnterpriseLogin = async () => {
+    if (!copilotEnterpriseDomain.trim()) return;
+    const attempt = ++copilotEnterpriseLoginAttemptRef.current;
+    try {
+      setCopilotEnterpriseLoginError(null);
+      setCopilotEnterpriseLoginStatus("starting");
+
+      if (!api) {
+        setCopilotEnterpriseLoginStatus("error");
+        setCopilotEnterpriseLoginError("API not connected.");
+        return;
+      }
+
+      // Best-effort: cancel any in-progress flow before starting a new one.
+      if (copilotEnterpriseFlowIdRef.current) {
+        void api.copilotOauth.cancelDeviceFlow({ flowId: copilotEnterpriseFlowIdRef.current });
+        copilotEnterpriseFlowIdRef.current = null;
+        setCopilotEnterpriseFlowId(null);
+      }
+
+      const startResult = await api.copilotOauth.startDeviceFlow({
+        enterpriseDomain: copilotEnterpriseDomain.trim(),
+      });
+
+      if (attempt !== copilotEnterpriseLoginAttemptRef.current) {
+        if (startResult.success) {
+          void api.copilotOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
+        }
+        return;
+      }
+
+      if (!startResult.success) {
+        setCopilotEnterpriseLoginStatus("error");
+        setCopilotEnterpriseLoginError(startResult.error);
+        return;
+      }
+
+      const { flowId, verificationUri, userCode } = startResult.data;
+      setCopilotEnterpriseFlowId(flowId);
+      copilotEnterpriseFlowIdRef.current = flowId;
+      setCopilotEnterpriseUserCode(userCode);
+      setCopilotEnterpriseVerificationUri(verificationUri);
+      setCopilotEnterpriseLoginStatus("waiting");
+
+      const waitResult = await api.copilotOauth.waitForDeviceFlow({ flowId });
+
+      if (attempt !== copilotEnterpriseLoginAttemptRef.current) return;
+
+      if (waitResult.success) {
+        setCopilotEnterpriseLoginStatus("success");
+        return;
+      }
+
+      setCopilotEnterpriseLoginStatus("error");
+      setCopilotEnterpriseLoginError(waitResult.error);
+    } catch (err) {
+      if (attempt !== copilotEnterpriseLoginAttemptRef.current) return;
+      const message = getErrorMessage(err);
+      setCopilotEnterpriseLoginStatus("error");
+      setCopilotEnterpriseLoginError(message);
     }
   };
 
@@ -928,6 +1043,9 @@ export function ProvidersSection() {
       }
       if (prev === "github-copilot" && next !== "github-copilot") {
         cancelCopilotLogin();
+      }
+      if (prev === "github-copilot-enterprise" && next !== "github-copilot-enterprise") {
+        cancelCopilotEnterpriseLogin();
       }
       return next;
     });
@@ -1337,6 +1455,114 @@ export function ProvidersSection() {
                       {copilotLoginStatus === "error" && copilotLoginError && (
                         <p className="text-destructive text-xs">
                           Login failed: {copilotLoginError}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {provider === "github-copilot-enterprise" && (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">
+                        Enterprise Domain
+                      </label>
+                      <input
+                        type="text"
+                        value={copilotEnterpriseDomain}
+                        onChange={(e) => setCopilotEnterpriseDomain(e.target.value)}
+                        placeholder="github.mycompany.com"
+                        className="bg-background-secondary text-foreground placeholder:text-muted mt-1 w-full rounded-md border border-neutral-700 px-3 py-1.5 text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                        disabled={copilotEnterpriseLoginInProgress}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">
+                        Authentication
+                      </label>
+                      <span className="text-muted text-xs">
+                        {copilotEnterpriseIsLoggedIn ? "Logged in" : "Not logged in"}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            void startCopilotEnterpriseLogin();
+                          }}
+                          disabled={
+                            copilotEnterpriseLoginInProgress || !copilotEnterpriseDomain.trim()
+                          }
+                        >
+                          {copilotEnterpriseLoginStatus === "error"
+                            ? "Try again"
+                            : copilotEnterpriseLoginInProgress
+                              ? "Waiting for authorization..."
+                              : copilotEnterpriseIsLoggedIn
+                                ? "Re-login with GitHub"
+                                : "Login with GitHub"}
+                        </Button>
+
+                        {copilotEnterpriseLoginInProgress && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={cancelCopilotEnterpriseLogin}
+                          >
+                            Cancel
+                          </Button>
+                        )}
+
+                        {copilotEnterpriseIsLoggedIn && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={clearCopilotEnterpriseCredentials}
+                          >
+                            Log out
+                          </Button>
+                        )}
+                      </div>
+
+                      {copilotEnterpriseLoginStatus === "waiting" && copilotEnterpriseUserCode && (
+                        <div className="bg-background-tertiary space-y-2 rounded-md p-3">
+                          <p className="text-muted text-xs">Enter this code on GitHub:</p>
+                          <div className="flex items-center gap-2">
+                            <code className="text-foreground text-lg font-bold tracking-widest">
+                              {copilotEnterpriseUserCode}
+                            </code>
+                            <Button
+                              size="sm"
+                              aria-label="Copy and open GitHub verification page"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(copilotEnterpriseUserCode ?? "");
+                                if (copilotEnterpriseVerificationUri) {
+                                  window.open(
+                                    copilotEnterpriseVerificationUri,
+                                    "_blank",
+                                    "noopener"
+                                  );
+                                }
+                              }}
+                              className="h-8 px-3 text-xs"
+                              disabled={!copilotEnterpriseVerificationUri}
+                            >
+                              Copy & Open GitHub
+                            </Button>
+                          </div>
+                          <p className="text-muted inline-flex items-center gap-2 text-xs">
+                            <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                            Waiting for authorization...
+                          </p>
+                        </div>
+                      )}
+
+                      {copilotEnterpriseLoginStatus === "error" && copilotEnterpriseLoginError && (
+                        <p className="text-destructive text-xs">
+                          Login failed: {copilotEnterpriseLoginError}
                         </p>
                       )}
                     </div>

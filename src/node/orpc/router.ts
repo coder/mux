@@ -1307,8 +1307,10 @@ export const router = (authToken?: string) => {
       startDeviceFlow: t
         .input(schemas.copilotOauth.startDeviceFlow.input)
         .output(schemas.copilotOauth.startDeviceFlow.output)
-        .handler(({ context }) => {
-          return context.copilotOauthService.startDeviceFlow();
+        .handler(({ context, input }) => {
+          return context.copilotOauthService.startDeviceFlow({
+            enterpriseDomain: input.enterpriseDomain ?? undefined,
+          });
         }),
       waitForDeviceFlow: t
         .input(schemas.copilotOauth.waitForDeviceFlow.input)
