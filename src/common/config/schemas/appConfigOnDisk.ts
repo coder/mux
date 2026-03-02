@@ -46,6 +46,7 @@ export const AppConfigOnDiskSchema = z
     layoutPresets: z.unknown().optional(),
     taskSettings: TaskSettingsSchema.optional(),
     muxGatewayEnabled: z.boolean().optional(),
+    llmDebugLogs: z.boolean().optional(),
     muxGatewayModels: z.array(z.string()).optional(),
     defaultModel: z.string().optional(),
     hiddenModels: z.array(z.string()).optional(),

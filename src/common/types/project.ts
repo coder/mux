@@ -83,6 +83,8 @@ export interface ProjectsConfig {
    * Mirrors browser localStorage so switching server ports doesn't reset the UI.
    */
   muxGatewayEnabled?: boolean;
+  /** Enable recording AI SDK devtools logs to ~/.mux/sessions/<workspace>/devtools.jsonl */
+  llmDebugLogs?: boolean;
   muxGatewayModels?: string[];
 
   /**

@@ -321,6 +321,7 @@ export class Config {
           layoutPresets,
           taskSettings,
           muxGatewayEnabled,
+          llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
           muxGatewayModels,
           defaultModel,
           hiddenModels,
@@ -371,6 +372,11 @@ export class Config {
       const muxGatewayEnabled = parseOptionalBoolean(config.muxGatewayEnabled);
       if (muxGatewayEnabled !== undefined) {
         data.muxGatewayEnabled = muxGatewayEnabled;
+      }
+
+      const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);
+      if (llmDebugLogs !== undefined) {
+        data.llmDebugLogs = llmDebugLogs;
       }
 
       const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);
@@ -517,6 +523,10 @@ export class Config {
   getUpdateChannel(): UpdateChannel {
     const config = this.loadConfigOrDefault();
     return config.updateChannel === "nightly" ? "nightly" : "stable";
+  }
+
+  getLlmDebugLogsEnabled(): boolean {
+    return this.loadConfigOrDefault().llmDebugLogs === true;
   }
 
   async setUpdateChannel(channel: UpdateChannel): Promise<void> {
