@@ -10,6 +10,7 @@ import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
@@ -19,6 +20,7 @@ import {
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { normalizeGatewayModel, supports1MContext } from "./models";
@@ -72,6 +74,7 @@ function supportsOpenAIReasoningSummary(modelName: string): boolean {
  * @param muxProviderOptions - Optional provider overrides from config
  * @param workspaceId - Optional for non-OpenAI providers
  * @param openaiTruncationMode - Optional truncation mode for OpenAI responses (auto/disabled)
+ * @param providersConfig - Optional providers config for mapped model capability detection
  * @returns Provider options object for AI SDK
  */
 export function buildProviderOptions(
@@ -81,18 +84,30 @@ export function buildProviderOptions(
   lostResponseIds?: (id: string) => boolean,
   muxProviderOptions?: MuxProviderOptions,
   workspaceId?: string, // Optional for non-OpenAI providers
-  openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"]
+  openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"],
+  providersConfig?: ProvidersConfigMap | null
 ): ProviderOptions {
   // Caller is responsible for enforcing thinking policy before calling this function.
   // agentSession.ts is the canonical enforcement point.
   const effectiveThinking = thinkingLevel;
   // Parse provider from normalized model string
-  const [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
+  const normalizedModel = normalizeGatewayModel(modelString);
+  const [provider, modelName] = normalizedModel.split(":", 2);
+
+  // Resolve aliases to their base model for capability detection while keeping
+  // the original modelString for provider routing and previousResponseId lookups.
+  const capabilityModel = resolveModelForMetadata(normalizedModel, providersConfig ?? null);
+  const [resolvedCapabilityProvider, resolvedCapabilityModelName] = capabilityModel.split(":", 2);
+  const capProvider = resolvedCapabilityProvider || provider;
+  const capModelName = resolvedCapabilityModelName || modelName;
 
   log.debug("buildProviderOptions", {
     modelString,
     provider,
     modelName,
+    capabilityModel,
+    capProvider,
+    capModelName,
     thinkingLevel,
   });
 
@@ -102,7 +117,7 @@ export function buildProviderOptions(
   }
 
   // Build Anthropic-specific options
-  if (provider === "anthropic") {
+  if (capProvider === "anthropic") {
     const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
     const cacheTtl = disableBeta ? undefined : muxProviderOptions?.anthropic?.cacheTtl;
     const cacheControl = cacheTtl ? { type: "ephemeral" as const, ttl: cacheTtl } : undefined;
@@ -110,9 +125,9 @@ export function buildProviderOptions(
     // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
     // Opus 4.6 / Sonnet 4.6 use adaptive thinking (model decides when/how much to think).
     // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
-    const isOpus45 = modelName?.includes("opus-4-5") ?? false;
-    const isOpus46 = modelName?.includes("opus-4-6") ?? false;
-    const isSonnet46 = modelName?.includes("sonnet-4-6") ?? false;
+    const isOpus45 = capModelName?.includes("opus-4-5") ?? false;
+    const isOpus46 = capModelName?.includes("opus-4-6") ?? false;
+    const isSonnet46 = capModelName?.includes("sonnet-4-6") ?? false;
     const usesAdaptiveThinking = isOpus46 || isSonnet46;
 
     if (isOpus45 || usesAdaptiveThinking) {
@@ -172,7 +187,7 @@ export function buildProviderOptions(
   }
 
   // Build OpenAI-specific options
-  if (provider === "openai") {
+  if (capProvider === "openai") {
     const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
 
     // Extract previousResponseId from last assistant message for persistence
@@ -238,7 +253,7 @@ export function buildProviderOptions(
     const store = muxProviderOptions?.openai?.store;
     const isResponses = wireFormat === "responses";
     const truncationMode = openaiTruncationMode ?? "disabled";
-    const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(modelName);
+    const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(capModelName);
 
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,
@@ -286,8 +301,8 @@ export function buildProviderOptions(
   }
 
   // Build Google-specific options
-  if (provider === "google") {
-    const isGemini3 = modelString.includes("gemini-3");
+  if (capProvider === "google") {
+    const isGemini3 = capModelName.includes("gemini-3");
     let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
 
     if (effectiveThinking !== "off") {
@@ -322,7 +337,7 @@ export function buildProviderOptions(
   }
 
   // Build OpenRouter-specific options
-  if (provider === "openrouter") {
+  if (capProvider === "openrouter") {
     const reasoningEffort = OPENROUTER_REASONING_EFFORT[effectiveThinking];
 
     log.debug("buildProviderOptions: OpenRouter config", {
@@ -352,7 +367,7 @@ export function buildProviderOptions(
   }
 
   // Build xAI-specific options
-  if (provider === "xai") {
+  if (capProvider === "xai") {
     const overrides = muxProviderOptions?.xai ?? {};
 
     const defaultSearchParameters: XaiProviderOptions["searchParameters"] = {
@@ -414,7 +429,8 @@ function toWorkspaceHeaderValue(workspaceId: string): string {
 export function buildRequestHeaders(
   modelString: string,
   muxProviderOptions?: MuxProviderOptions,
-  workspaceId?: string
+  workspaceId?: string,
+  providersConfig?: ProvidersConfigMap | null
 ): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
 
@@ -424,14 +440,19 @@ export function buildRequestHeaders(
 
   const normalized = normalizeGatewayModel(modelString);
   const [provider] = normalized.split(":", 2);
+  const capabilityModel = resolveModelForMetadata(normalized, providersConfig ?? null);
+  const [resolvedCapabilityProvider] = capabilityModel.split(":", 2);
+  const capProvider = resolvedCapabilityProvider || provider;
 
-  if (provider === "anthropic") {
+  if (capProvider === "anthropic") {
     // ZDR: skip all Anthropic beta headers when beta features are disabled.
     if (!muxProviderOptions?.anthropic?.disableBetaFeatures) {
+      const explicitlyEnabled1MModel =
+        (muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
+        (muxProviderOptions?.anthropic?.use1MContextModels?.includes(capabilityModel) ?? false);
       const is1MEnabled =
-        ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
-          muxProviderOptions?.anthropic?.use1MContext === true) &&
-        supports1MContext(normalized);
+        (explicitlyEnabled1MModel || muxProviderOptions?.anthropic?.use1MContext === true) &&
+        supports1MContext(capabilityModel);
 
       if (is1MEnabled) {
         headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;

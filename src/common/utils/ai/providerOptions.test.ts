@@ -3,6 +3,7 @@
  */
 
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
 import { describe, test, expect, mock } from "bun:test";
 import {
@@ -21,6 +22,30 @@ void mock.module("@/node/services/log", () => ({
     error: (): void => undefined,
   },
 }));
+
+function createMockProvidersConfig(mappings: Record<string, string>): ProvidersConfigMap {
+  const config: ProvidersConfigMap = {};
+
+  for (const [customModelId, baseModelId] of Object.entries(mappings)) {
+    const [provider, modelId] = customModelId.split(":", 2);
+    if (!provider || !modelId) {
+      continue;
+    }
+
+    const existingProviderConfig = config[provider];
+    config[provider] = {
+      apiKeySet: existingProviderConfig?.apiKeySet ?? false,
+      isEnabled: existingProviderConfig?.isEnabled ?? true,
+      isConfigured: existingProviderConfig?.isConfigured ?? true,
+      models: [
+        ...(existingProviderConfig?.models ?? []),
+        { id: modelId, mappedToModel: baseModelId },
+      ],
+    };
+  }
+
+  return config;
+}
 
 describe("buildProviderOptions - Anthropic", () => {
   describe("Opus 4.5 (effort parameter)", () => {
@@ -267,6 +292,87 @@ describe("buildProviderOptions - Anthropic", () => {
 
       expect(anthropic.cacheControl).toEqual({ type: "ephemeral", ttl: "1h" });
     });
+  });
+});
+
+describe("buildProviderOptions - mappedToModel resolution", () => {
+  test("resolves custom alias to claude-sonnet-4-5 for thinking budget", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/sonnet": "anthropic:claude-sonnet-4-5-20250514",
+    });
+
+    const result = buildProviderOptions(
+      "anthropic:claude/sonnet",
+      "medium",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      providersConfig
+    );
+
+    expect(result).toEqual({
+      anthropic: {
+        disableParallelToolUse: false,
+        sendReasoning: true,
+        thinking: {
+          type: "enabled",
+          budgetTokens: 10000,
+        },
+      },
+    });
+  });
+
+  test("resolves custom alias to claude-opus-4-6 for adaptive thinking", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/opus": "anthropic:claude-opus-4-6-20260219",
+    });
+
+    const result = buildProviderOptions(
+      "anthropic:claude/opus",
+      "high",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      providersConfig
+    );
+    const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+    expect(anthropic.thinking).toEqual({ type: "adaptive" });
+    expect(anthropic.effort).toBe("high");
+  });
+
+  test("works without providersConfig (backward compat)", () => {
+    const result = buildProviderOptions("anthropic:claude-sonnet-4-5-20250514", "medium");
+
+    expect(result).toEqual({
+      anthropic: {
+        disableParallelToolUse: false,
+        sendReasoning: true,
+        thinking: {
+          type: "enabled",
+          budgetTokens: 10000,
+        },
+      },
+    });
+  });
+
+  test("buildRequestHeaders resolves alias for 1M context header", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/sonnet": "anthropic:claude-sonnet-4-6-20251022",
+    });
+
+    const result = buildRequestHeaders(
+      "anthropic:claude/sonnet",
+      { anthropic: { use1MContext: true } },
+      undefined,
+      providersConfig
+    );
+
+    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
   });
 });
 
