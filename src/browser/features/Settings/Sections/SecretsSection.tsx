@@ -290,9 +290,12 @@ export const SecretsSection: React.FC = () => {
     };
   }, [api]);
 
-  const handleOpAccountNameChange = useCallback(
+  const handleOpAccountNameChange = useCallback((value: string) => {
+    setOpAccountName(value);
+  }, []);
+
+  const handleOpAccountNameBlur = useCallback(
     (value: string) => {
-      setOpAccountName(value);
       void api?.config
         .updateOnePasswordAccountName({ onePasswordAccountName: value || null })
         .then(() => {
@@ -510,6 +513,9 @@ export const SecretsSection: React.FC = () => {
           value={opAccountName}
           onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
             handleOpAccountNameChange(e.target.value)
+          }
+          onBlur={(e: React.FocusEvent<HTMLInputElement>) =>
+            handleOpAccountNameBlur(e.target.value)
           }
           placeholder="my-team.1password.com"
           className="border-border-medium bg-background-secondary h-9 w-64"

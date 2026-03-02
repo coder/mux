@@ -1,7 +1,9 @@
 import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
+import type { ExternalSecretResolver } from "@/common/types/secrets";
 import type { Result } from "@/common/types/result";
-import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isOpReference } from "@/common/utils/opRef";
+import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import type { Config } from "@/node/config";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -31,7 +33,8 @@ export class VoiceService {
   constructor(
     private readonly config: Config,
     private readonly providerService?: ProviderService,
-    private readonly policyService?: PolicyService
+    private readonly policyService?: PolicyService,
+    private readonly opResolver?: ExternalSecretResolver
   ) {}
 
   /**
@@ -126,10 +129,15 @@ export class VoiceService {
     openaiConfig: OpenAITranscriptionConfig | undefined
   ): Promise<Result<string, string>> {
     const forcedBaseUrl = this.policyService?.getForcedBaseUrl("openai");
+    let resolvedApiKey = apiKey;
+    if (isOpReference(apiKey) && this.opResolver) {
+      resolvedApiKey = (await this.opResolver(apiKey)) ?? apiKey;
+    }
+
     const response = await fetch(this.resolveOpenAITranscriptionUrl(openaiConfig, forcedBaseUrl), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${resolvedApiKey}`,
       },
       body: this.createTranscriptionFormData(audioBase64),
     });
