@@ -61,14 +61,6 @@ export function redactConfigDocument(fileKey: ConfigFileKey, document: unknown):
   return cloned;
 }
 
-export function redactProvidersConfig(document: unknown): unknown {
-  return redactConfigDocument("providers", document);
-}
-
-export function redactAppConfig(document: unknown): unknown {
-  return redactConfigDocument("config", document);
-}
-
 function redactSecretsRecursively(node: unknown, policy: RedactionPolicy): void {
   if (Array.isArray(node)) {
     for (const item of node) {
