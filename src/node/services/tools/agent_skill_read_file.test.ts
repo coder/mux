@@ -276,7 +276,7 @@ describe("agent_skill_read_file", () => {
       }
     });
 
-    it("rejects symlinked skill directories through the runtime probe", async () => {
+    it("allows symlinked skill directories when containment still passes (runtime probe)", async () => {
       using tempDir = new TestTempDir("test-agent-skill-read-file-remote-runtime-symlinked-dir");
 
       const skillsRoot = path.join(tempDir.path, ".mux", "skills");
@@ -310,9 +310,9 @@ describe("agent_skill_read_file", () => {
       }
 
       const result = parsed.data;
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toMatch(/symbolic link/i);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.content).toMatch(/top secret/i);
       }
     });
 
@@ -414,7 +414,7 @@ describe("agent_skill_read_file", () => {
   });
 
   describe("symlink safety", () => {
-    it("rejects reads from a symlinked skill directory", async () => {
+    it("allows reads from a symlinked skill directory when containment still passes", async () => {
       using tempDir = new TestTempDir("test-agent-skill-read-file-symlinked-dir");
 
       const skillsRoot = path.join(tempDir.path, ".mux", "skills");
@@ -450,9 +450,9 @@ describe("agent_skill_read_file", () => {
       }
 
       const result = parsed.data;
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toMatch(/symbolic link/i);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.content).toMatch(/top secret/i);
       }
     });
 
