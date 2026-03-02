@@ -399,10 +399,10 @@ export const QueuedMessageWithReviews: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
 
-    // Validate queued mixed content: banner + review metadata + image thumbnail.
+    // Validate queued mixed content: banner + inline review content + image attachment.
     await canvas.findByText("Queued");
-    await canvas.findByText("2 reviews");
-    await canvas.findByRole("img", { name: "Queued image 1" });
+    await canvas.findByText("Consider using a constant for the token expiry duration");
+    await canvas.findByRole("img", { name: "Attachment 1" });
 
     await waitForChatInputAutofocusDone(canvasElement);
     blurActiveElement();
