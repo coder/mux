@@ -339,6 +339,78 @@ exit 1
       }
     });
 
+    it("sanitizes repo-derived folder names that contain shell metacharacters", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "sanitized-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-sanitize");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-sanitize-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const markerName = `WIN_marker_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const markerPath = path.join(process.cwd(), markerName);
+
+      await fs.rm(markerPath, { force: true });
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({
+          repoUrl: `git://localhost/$(touch ${markerName}).git`,
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+        const expectedFolderName = `touch-${markerName}`;
+
+        expect(cloneWorkPath).not.toContain("$(");
+        expect(path.dirname(cloneWorkPath)).toBe(path.resolve(cloneParentDir));
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+
+        let markerExists = true;
+        try {
+          await fs.access(markerPath);
+        } catch {
+          markerExists = false;
+        }
+        expect(markerExists).toBe(false);
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+        await fs.rm(markerPath, { force: true });
+      }
+    });
+
     it("returns error when clone destination already exists", async () => {
       const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
       const cloneParentDir = path.join(tempDir, "clones");

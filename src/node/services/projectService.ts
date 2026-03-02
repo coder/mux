@@ -114,13 +114,16 @@ function resolveProjectParentDir(
   return resolvePathWithTilde(trimmedParentDir);
 }
 
-// Strip filesystem-unsafe characters (including control chars U+0000–U+001F)
+// Derive a conservative folder name from user-controlled repo input.
+// This path can flow into shell-adjacent commands (for example when opening
+// native terminals), so we only keep letters/digits plus . _ -.
 function sanitizeRepoFolderName(name: string): string {
-  const unsafeCharsPattern = /[<>:"/\\|?*]/g;
   return name
-    .replace(unsafeCharsPattern, "-")
-    .replace(/^[.\s]+/, "")
-    .replace(/[.\s]+$/, "");
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.\s-]+/u, "")
+    .replace(/[.\s-]+$/u, "");
 }
 
 function deriveRepoFolderName(repoUrl: string): string {
