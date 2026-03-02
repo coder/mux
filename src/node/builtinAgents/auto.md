@@ -3,6 +3,7 @@ name: Auto
 description: Automatically selects the best agent for your task
 ui:
   color: var(--color-auto-mode)
+  routable: false
 subagent:
   runnable: false
 tools:
