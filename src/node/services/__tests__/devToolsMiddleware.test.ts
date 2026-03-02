@@ -29,12 +29,10 @@ function createMockModel(overrides: Partial<LanguageModelV3> = {}): LanguageMode
     provider: "test-provider",
     modelId: "test-model",
     supportedUrls: {},
-    doGenerate: async () => {
-      throw new Error("createMockModel.doGenerate should not be called in tests");
-    },
-    doStream: async () => {
-      throw new Error("createMockModel.doStream should not be called in tests");
-    },
+    doGenerate: () =>
+      Promise.reject(new Error("createMockModel.doGenerate should not be called in tests")),
+    doStream: () =>
+      Promise.reject(new Error("createMockModel.doStream should not be called in tests")),
     ...overrides,
   };
 }
@@ -150,10 +148,8 @@ describe("createDevToolsMiddleware", () => {
       const expectedResult = createGenerateResult();
 
       const result = await wrapGenerate({
-        doGenerate: async () => expectedResult,
-        doStream: async () => {
-          throw new Error("doStream should not be called");
-        },
+        doGenerate: () => Promise.resolve(expectedResult),
+        doStream: () => Promise.reject(new Error("doStream should not be called")),
         params,
         model,
       });
@@ -167,7 +163,7 @@ describe("createDevToolsMiddleware", () => {
         stepCount: 1,
       });
 
-      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0]!.id);
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
       expect(runWithSteps).not.toBeNull();
       expect(runWithSteps?.steps).toHaveLength(1);
 
@@ -204,23 +200,24 @@ describe("createDevToolsMiddleware", () => {
       const wrapGenerate = getWrapGenerate(middleware);
       const failure = new Error("generate failed");
 
-      await expect(
-        wrapGenerate({
-          doGenerate: async () => {
-            throw failure;
-          },
-          doStream: async () => {
-            throw new Error("doStream should not be called");
-          },
+      let thrownError: unknown;
+      try {
+        await wrapGenerate({
+          doGenerate: () => Promise.reject(failure),
+          doStream: () => Promise.reject(new Error("doStream should not be called")),
           params: createMockParams(),
           model: createMockModel(),
-        })
-      ).rejects.toThrow("generate failed");
+        });
+      } catch (error) {
+        thrownError = error;
+      }
+
+      expect(thrownError).toBe(failure);
 
       const runs = await service.getRuns("ws-1");
       expect(runs).toHaveLength(1);
 
-      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0]!.id);
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
       expect(runWithSteps).not.toBeNull();
       expect(runWithSteps?.steps).toHaveLength(1);
 
@@ -237,10 +234,8 @@ describe("createDevToolsMiddleware", () => {
       const expectedResult = createGenerateResult();
 
       const result = await wrapGenerate({
-        doGenerate: async () => expectedResult,
-        doStream: async () => {
-          throw new Error("doStream should not be called");
-        },
+        doGenerate: () => Promise.resolve(expectedResult),
+        doStream: () => Promise.reject(new Error("doStream should not be called")),
         params: createMockParams(),
         model: createMockModel(),
       });
@@ -256,13 +251,11 @@ describe("createDevToolsMiddleware", () => {
       let callCount = 0;
 
       const result = await wrapGenerate({
-        doGenerate: async () => {
+        doGenerate: () => {
           callCount += 1;
-          return expectedResult;
+          return Promise.resolve(expectedResult);
         },
-        doStream: async () => {
-          throw new Error("doStream should not be called");
-        },
+        doStream: () => Promise.reject(new Error("doStream should not be called")),
         params: createMockParams(),
         model: createMockModel(),
       });
@@ -301,14 +294,13 @@ describe("createDevToolsMiddleware", () => {
       });
 
       const result = await wrapStream({
-        doGenerate: async () => {
-          throw new Error("doGenerate should not be called");
-        },
-        doStream: async () => ({
-          stream,
-          request: { body: "stream-req" },
-          response: { headers: { "x-test": "1" } },
-        }),
+        doGenerate: () => Promise.reject(new Error("doGenerate should not be called")),
+        doStream: () =>
+          Promise.resolve({
+            stream,
+            request: { body: "stream-req" },
+            response: { headers: { "x-test": "1" } },
+          }),
         params: createMockParams(),
         model: createMockModel(),
       });
@@ -319,7 +311,7 @@ describe("createDevToolsMiddleware", () => {
       const runs = await service.getRuns("ws-1");
       expect(runs).toHaveLength(1);
 
-      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0]!.id);
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
       expect(runWithSteps).not.toBeNull();
       expect(runWithSteps?.steps).toHaveLength(1);
 
@@ -370,10 +362,8 @@ describe("createDevToolsMiddleware", () => {
       });
 
       const result = await wrapStream({
-        doGenerate: async () => {
-          throw new Error("doGenerate should not be called");
-        },
-        doStream: async () => ({ stream }),
+        doGenerate: () => Promise.reject(new Error("doGenerate should not be called")),
+        doStream: () => Promise.resolve({ stream }),
         params: createMockParams(),
         model: createMockModel(),
       });
@@ -381,7 +371,7 @@ describe("createDevToolsMiddleware", () => {
       await collectStream(result.stream);
 
       const runs = await service.getRuns("ws-1");
-      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0]!.id);
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
       expect(runWithSteps).not.toBeNull();
 
       const step = runWithSteps?.steps[0];
@@ -410,10 +400,8 @@ describe("createDevToolsMiddleware", () => {
       });
 
       const result = await wrapStream({
-        doGenerate: async () => {
-          throw new Error("doGenerate should not be called");
-        },
-        doStream: async () => ({ stream: neverEndingStream }),
+        doGenerate: () => Promise.reject(new Error("doGenerate should not be called")),
+        doStream: () => Promise.resolve({ stream: neverEndingStream }),
         params: createMockParams(),
         model: createMockModel(),
       });
@@ -424,7 +412,7 @@ describe("createDevToolsMiddleware", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const runs = await service.getRuns("ws-1");
-      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0]!.id);
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
       expect(runWithSteps).not.toBeNull();
 
       const step = runWithSteps?.steps[0];
@@ -444,19 +432,15 @@ describe("createDevToolsMiddleware", () => {
       const wrapGenerate = getWrapGenerate(middleware);
 
       await wrapGenerate({
-        doGenerate: async () => createGenerateResult({ response: { body: "first" } }),
-        doStream: async () => {
-          throw new Error("doStream should not be called");
-        },
+        doGenerate: () => Promise.resolve(createGenerateResult({ response: { body: "first" } })),
+        doStream: () => Promise.reject(new Error("doStream should not be called")),
         params: createMockParams(),
         model: createMockModel(),
       });
 
       await wrapGenerate({
-        doGenerate: async () => createGenerateResult({ response: { body: "second" } }),
-        doStream: async () => {
-          throw new Error("doStream should not be called");
-        },
+        doGenerate: () => Promise.resolve(createGenerateResult({ response: { body: "second" } })),
+        doStream: () => Promise.reject(new Error("doStream should not be called")),
         params: createMockParams(),
         model: createMockModel(),
       });
@@ -465,7 +449,7 @@ describe("createDevToolsMiddleware", () => {
       expect(runs).toHaveLength(1);
       expect(runs[0]?.stepCount).toBe(2);
 
-      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0]!.id);
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
       expect(runWithSteps).not.toBeNull();
       expect(runWithSteps?.steps).toHaveLength(2);
 

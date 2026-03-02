@@ -41,9 +41,7 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
         setSteps(result.steps);
       })
       .catch((detailError: unknown) => {
-        setError(
-          detailError instanceof Error ? detailError.message : "Failed to load run detail",
-        );
+        setError(detailError instanceof Error ? detailError.message : "Failed to load run detail");
       })
       .finally(() => {
         setLoading(false);
@@ -58,10 +56,7 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
         className="hover:bg-hover flex w-full items-center gap-2 px-2 py-1.5 text-left"
       >
         <ChevronRight
-          className={cn(
-            "h-3 w-3 shrink-0 transition-transform",
-            expanded && "rotate-90",
-          )}
+          className={cn("h-3 w-3 shrink-0 transition-transform", expanded && "rotate-90")}
         />
         <span className="text-foreground flex-1 truncate text-xs">
           {props.run.firstMessage || "\u2014"}
@@ -72,12 +67,8 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
         <span className="text-muted shrink-0 text-[10px]">
           {props.run.stepCount} step{props.run.stepCount !== 1 ? "s" : ""}
         </span>
-        {props.run.isInProgress && (
-          <Loader2 className="text-muted h-3 w-3 shrink-0 animate-spin" />
-        )}
-        {props.run.hasError && (
-          <AlertCircle className="text-destructive h-3 w-3 shrink-0" />
-        )}
+        {props.run.isInProgress && <Loader2 className="text-muted h-3 w-3 shrink-0 animate-spin" />}
+        {props.run.hasError && <AlertCircle className="text-destructive h-3 w-3 shrink-0" />}
       </button>
 
       {expanded && (

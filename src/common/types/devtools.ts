@@ -19,8 +19,8 @@ export interface DevToolsStep {
   output: DevToolsStepOutput | null;
   usage: DevToolsUsage | null;
   error: string | null;
-  rawRequest: unknown | null;
-  rawResponse: unknown | null;
+  rawRequest: unknown;
+  rawResponse: unknown;
 }
 
 export interface DevToolsStepInput {

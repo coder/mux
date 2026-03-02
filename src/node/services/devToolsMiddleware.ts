@@ -255,8 +255,8 @@ export function createDevToolsMiddleware(
     startedAtMs: number,
     error: unknown,
     output: DevToolsStepOutput | null = null,
-    rawRequest: unknown | null = null,
-    rawResponse: unknown | null = null
+    rawRequest: unknown = null,
+    rawResponse: unknown = null
   ): Promise<void> {
     await service.updateStep(workspaceId, stepId, {
       durationMs: Date.now() - startedAtMs,
@@ -385,9 +385,7 @@ export function createDevToolsMiddleware(
             break;
           }
           case "error": {
-            if (!finishReason) {
-              finishReason = "error";
-            }
+            finishReason ??= "error";
             break;
           }
           default:

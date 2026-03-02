@@ -22,6 +22,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
 function extractText(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -316,7 +320,7 @@ export class DevToolsService extends EventEmitter {
     let firstMessage = "";
     if (firstStep?.input && isRecord(firstStep.input)) {
       const prompt = firstStep.input.prompt;
-      if (Array.isArray(prompt)) {
+      if (isUnknownArray(prompt)) {
         for (let index = prompt.length - 1; index >= 0; index -= 1) {
           const message = prompt[index];
           if (!isRecord(message) || message.role !== "user") {

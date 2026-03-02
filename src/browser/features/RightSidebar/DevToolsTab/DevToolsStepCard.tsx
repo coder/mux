@@ -26,14 +26,9 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
         className="hover:bg-hover flex w-full items-center gap-1.5 px-2 py-1 text-left"
       >
         <ChevronRight
-          className={cn(
-            "h-3 w-3 shrink-0 transition-transform",
-            expanded && "rotate-90",
-          )}
+          className={cn("h-3 w-3 shrink-0 transition-transform", expanded && "rotate-90")}
         />
-        <span className="text-foreground text-xs font-medium">
-          Step {props.step.stepNumber}
-        </span>
+        <span className="text-foreground text-xs font-medium">Step {props.step.stepNumber}</span>
         <span className="text-muted text-[10px]">{props.step.modelId}</span>
         {props.step.durationMs != null && (
           <span className="text-muted text-[10px]">{props.step.durationMs}ms</span>
@@ -41,9 +36,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
         {props.step.usage?.totalTokens != null && (
           <span className="text-muted text-[10px]">{props.step.usage.totalTokens}tok</span>
         )}
-        {props.step.error && (
-          <AlertCircle className="text-destructive ml-auto h-3 w-3 shrink-0" />
-        )}
+        {props.step.error && <AlertCircle className="text-destructive ml-auto h-3 w-3 shrink-0" />}
       </button>
 
       {expanded && (
@@ -57,7 +50,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
                   "px-1.5 py-0.5 text-[10px] rounded",
                   activeSubTab === subTab
                     ? "bg-hover text-foreground"
-                    : "text-muted hover:text-foreground",
+                    : "text-muted hover:text-foreground"
                 )}
                 onClick={() => setActiveSubTab(subTab)}
               >
@@ -103,10 +96,10 @@ function StepInputView(props: { step: DevToolsStep }) {
             key={`${props.step.id}-prompt-${index}`}
             className="border-border-light rounded border p-1.5"
           >
-            <p className="text-foreground text-[10px] font-semibold">
-              {getPromptRole(promptPart)}
-            </p>
-            <pre className={PRE_CLASS_NAME}>{stringifyForDisplay(getPromptContent(promptPart))}</pre>
+            <p className="text-foreground text-[10px] font-semibold">{getPromptRole(promptPart)}</p>
+            <pre className={PRE_CLASS_NAME}>
+              {stringifyForDisplay(getPromptContent(promptPart))}
+            </pre>
           </div>
         ))}
       </div>
@@ -160,9 +153,7 @@ function StepOutputView(props: { step: DevToolsStep }) {
         </div>
       )}
 
-      {finishReason && (
-        <p className="text-muted text-[10px]">Finish reason: {finishReason}</p>
-      )}
+      {finishReason && <p className="text-muted text-[10px]">Finish reason: {finishReason}</p>}
 
       {props.step.error && (
         <p className="text-destructive text-[10px] break-all">Error: {props.step.error}</p>
@@ -207,7 +198,9 @@ function stringifyForDisplay(value: unknown): string {
     const json = JSON.stringify(value, null, 2);
     return json ?? "null";
   } catch (error) {
-    return error instanceof Error ? `Unable to format value: ${error.message}` : "Unable to format value";
+    return error instanceof Error
+      ? `Unable to format value: ${error.message}`
+      : "Unable to format value";
   }
 }
 
