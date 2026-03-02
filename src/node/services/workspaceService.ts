@@ -122,6 +122,7 @@ import {
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
 import { execFileAsync } from "@/node/utils/disposableExec";
+import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -4507,6 +4508,12 @@ export class WorkspaceService extends EventEmitter {
 
       const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
+      // Read trust state so untrusted projects can neutralize git hooks.
+      const projectConfig = this.config
+        .loadConfigOrDefault()
+        .projects.get(stripTrailingSlashes(metadata.projectPath));
+      const gitNoHooksEnv = projectConfig?.trusted === true ? undefined : GIT_NO_HOOKS_ENV;
+
       if (command != null) {
         if (command !== "git") {
           return Err("executeBash command mode only supports git");
@@ -4523,6 +4530,7 @@ export class WorkspaceService extends EventEmitter {
           ].join(" ");
           const commandResult = await execBuffered(runtime, commandScript, {
             cwd: workspacePath,
+            env: gitNoHooksEnv,
             timeout: options?.timeout_secs ?? 120,
           });
           const output = `${commandResult.stdout}${commandResult.stderr}`;
@@ -4551,7 +4559,11 @@ export class WorkspaceService extends EventEmitter {
         const startedAt = Date.now();
         const timeoutSecs = options?.timeout_secs ?? 120;
         try {
-          using proc = execFileAsync(command, ["-C", workspacePath, ...commandArgs]);
+          using proc = execFileAsync(
+            command,
+            ["-C", workspacePath, ...commandArgs],
+            gitNoHooksEnv ? { env: gitNoHooksEnv } : undefined
+          );
           const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>(
             (resolve, reject) => {
               const timeoutHandle = setTimeout(() => {
@@ -4609,11 +4621,6 @@ export class WorkspaceService extends EventEmitter {
 
       // Create scoped temp directory for this IPC call
       using tempDir = new DisposableTempDir("mux-ipc-bash");
-
-      // Read trust state so tool_env is sourced for trusted projects
-      const projectConfig = this.config
-        .loadConfigOrDefault()
-        .projects.get(stripTrailingSlashes(metadata.projectPath));
 
       // Create bash tool
       const bashTool = createBashTool({

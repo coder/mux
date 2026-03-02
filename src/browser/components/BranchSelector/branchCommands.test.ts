@@ -27,7 +27,7 @@ describe("BranchSelector command builders", () => {
         "for-each-ref",
         "--sort=-committerdate",
         "--format=%(refname:short)",
-        "--count=51",
+        "--count=53",
         "refs/remotes/origin';touch /tmp/mux_remote_injection;#",
       ],
     });
