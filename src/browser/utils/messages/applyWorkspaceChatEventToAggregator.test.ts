@@ -88,7 +88,22 @@ class StubAggregator implements WorkspaceChatEventAggregator {
 describe("applyWorkspaceChatEventToAggregator", () => {
   function withDispatchSpy<T>(run: (dispatched: Event[]) => T): T {
     const originalWindow = globalThis.window;
+    const originalCustomEvent = globalThis.CustomEvent;
     const dispatched: Event[] = [];
+
+    // CI bun environment may lack CustomEvent (it was previously provided by happy-dom).
+    // createCustomEvent() in src/common/constants/events.ts uses `new CustomEvent(...)`.
+    if (typeof globalThis.CustomEvent === "undefined") {
+      // Minimal polyfill: only needs to carry .type and .detail for our assertions.
+      globalThis.CustomEvent = class CustomEvent extends Event {
+        detail: unknown;
+
+        constructor(type: string, init?: CustomEventInit) {
+          super(type, init);
+          this.detail = init?.detail;
+        }
+      } as typeof globalThis.CustomEvent;
+    }
 
     globalThis.window = {
       dispatchEvent: (event: Event) => {
@@ -101,6 +116,7 @@ describe("applyWorkspaceChatEventToAggregator", () => {
       return run(dispatched);
     } finally {
       globalThis.window = originalWindow;
+      globalThis.CustomEvent = originalCustomEvent;
     }
   }
 
