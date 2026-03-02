@@ -461,9 +461,10 @@ export const StatsTabStreaming: AppStory = {
       canvas.getByRole("tab", { name: /^stats/i, selected: true });
     });
 
-    // Verify timing header is shown (with pulsing active indicator)
+    // Verify timing section is rendered (use testid since "Timing" appears in both
+    // the sub-tab toggle and the section header)
     await waitFor(() => {
-      canvas.getByText(/timing/i);
+      canvas.getByTestId("timing-section");
     });
 
     // Verify timing table components are displayed
