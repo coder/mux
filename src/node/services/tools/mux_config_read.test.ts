@@ -95,6 +95,27 @@ describe("mux_config_read", () => {
             nested: { signingKeys: "nested-plural-signing" },
             displayName: "Plural Provider",
           },
+          "custom-http": {
+            httpHeaders: {
+              Authorization: "Bearer http-header-secret",
+              "x-trace-id": "safe-trace",
+            },
+            baseUrl: "https://custom-http.example.com",
+          },
+          "custom-caps": {
+            Headers: {
+              "x-api-key": "caps-api-key-secret",
+              Accept: "application/json",
+            },
+            baseUrl: "https://custom-caps.example.com",
+          },
+          "custom-request": {
+            requestHeaders: {
+              Authorization: "Bearer request-header-secret",
+              "x-request-id": "safe-request-id",
+            },
+            baseUrl: "https://custom-request.example.com",
+          },
         },
         null,
         2
@@ -162,6 +183,34 @@ describe("mux_config_read", () => {
       // Non-secret keys are preserved.
       expect(customPluralData.displayName).toBe("Plural Provider");
 
+      // Header aliases are redacted.
+      const customHttpData = (fullResult.data as Record<string, unknown>)["custom-http"] as Record<
+        string,
+        unknown
+      >;
+      expect(customHttpData.httpHeaders).toEqual({
+        Authorization: REDACTED_SECRET_VALUE,
+        "x-trace-id": "safe-trace",
+      });
+      expect(customHttpData.baseUrl).toBe("https://custom-http.example.com");
+
+      const customCapsData = (fullResult.data as Record<string, unknown>)["custom-caps"] as Record<
+        string,
+        unknown
+      >;
+      expect(customCapsData.Headers).toEqual({
+        "x-api-key": REDACTED_SECRET_VALUE,
+        Accept: "application/json",
+      });
+
+      const customRequestData = (fullResult.data as Record<string, unknown>)[
+        "custom-request"
+      ] as Record<string, unknown>;
+      expect(customRequestData.requestHeaders).toEqual({
+        Authorization: REDACTED_SECRET_VALUE,
+        "x-request-id": "safe-request-id",
+      });
+
       const serialized = JSON.stringify(fullResult.data);
       expect(serialized).not.toContain("sk-ant-secret");
       expect(serialized).not.toContain("or-secret");
@@ -177,6 +226,9 @@ describe("mux_config_read", () => {
       expect(serialized).not.toContain("plural-token-secret");
       expect(serialized).not.toContain("plural-client-secret");
       expect(serialized).not.toContain("nested-plural-signing");
+      expect(serialized).not.toContain("http-header-secret");
+      expect(serialized).not.toContain("caps-api-key-secret");
+      expect(serialized).not.toContain("request-header-secret");
     }
 
     const pathResult = (await tool.execute!(
@@ -217,6 +269,16 @@ describe("mux_config_read", () => {
     expect(privateKeyPathResult.success).toBe(true);
     if (privateKeyPathResult.success) {
       expect(privateKeyPathResult.data).toBe(REDACTED_SECRET_VALUE);
+    }
+
+    const httpHeaderPathResult = (await tool.execute!(
+      { file: "providers", path: ["custom-http", "httpHeaders", "Authorization"] },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+
+    expect(httpHeaderPathResult.success).toBe(true);
+    if (httpHeaderPathResult.success) {
+      expect(httpHeaderPathResult.data).toBe(REDACTED_SECRET_VALUE);
     }
   });
 

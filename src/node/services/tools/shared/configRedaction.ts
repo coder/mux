@@ -82,7 +82,7 @@ function redactSecretsRecursively(node: unknown, policy: RedactionPolicy): void 
   }
 
   for (const [key, value] of Object.entries(node)) {
-    if (policy.redactSensitiveHeaders && key === "headers" && isObjectRecord(value)) {
+    if (policy.redactSensitiveHeaders && isHeaderContainerKey(key) && isObjectRecord(value)) {
       redactSensitiveHeaders(value);
       continue;
     }
@@ -100,6 +100,40 @@ function redactSecretsRecursively(node: unknown, policy: RedactionPolicy): void 
   }
 }
 
+function splitKeySegments(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+// Normalized aliases for header container keys. Matching is case-insensitive and
+// plural-aware so httpHeaders, Headers, requestHeaders, etc. all trigger redaction.
+const HEADER_CONTAINER_ALIASES = new Set([
+  "header",
+  "http_header",
+  "request_header",
+  "custom_header",
+  "default_header",
+]);
+
+function isHeaderContainerKey(key: string): boolean {
+  const segments = splitKeySegments(key);
+  if (segments.length === 0) {
+    return false;
+  }
+
+  const lastSegment = segments[segments.length - 1];
+  if (lastSegment === undefined) {
+    return false;
+  }
+
+  const normalizedTail = singularizeTailWord(lastSegment);
+  const normalized = [...segments.slice(0, -1), normalizedTail].join("_");
+  return HEADER_CONTAINER_ALIASES.has(normalized);
+}
+
 // Lightweight singularization for secret-tail detection: strips trailing "s" so
 // pluralized custom-provider key names (e.g. apiKeys, accessTokens, clientSecrets)
 // match the canonical set.
@@ -110,11 +144,7 @@ function singularizeTailWord(word: string): string {
 // Provider configs are catchall-based, so custom providers can store credentials under
 // non-standard key names that are unknown to our explicit allowlist.
 function looksLikeProviderSecretKey(key: string): boolean {
-  const segments = key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
+  const segments = splitKeySegments(key);
 
   if (segments.length === 0) {
     return false;
