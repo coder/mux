@@ -602,7 +602,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 label: "Tool",
                 placeholder: "Select a tool…",
                 getOptions: () =>
-                  (["costs", "review", "output", "terminal"] as TabType[]).map((tab) => ({
+                  (["costs", "review", "output", "debug", "terminal"] as TabType[]).map((tab) => ({
                     id: tab,
                     label:
                       tab === "costs"
@@ -611,7 +611,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                           ? "Review"
                           : tab === "output"
                             ? "Output"
-                            : "Terminal",
+                            : tab === "debug"
+                              ? "Debug"
+                              : "Terminal",
                     keywords: [tab],
                   })),
               },

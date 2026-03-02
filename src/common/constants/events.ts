@@ -98,6 +98,12 @@ export const CUSTOM_EVENTS = {
    * No detail
    */
   OPEN_DEBUG_LLM_REQUEST: "mux:openDebugLlmRequest",
+
+  /**
+   * Event emitted when LLM debug logs are toggled in Settings.
+   * Detail: { enabled: boolean }
+   */
+  LLM_DEBUG_LOGS_CHANGED: "mux:llmDebugLogsChanged",
 } as const;
 
 /**
@@ -150,6 +156,9 @@ export interface CustomEventPayloads {
     workspaceId: string;
   };
   [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
+  [CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED]: {
+    enabled: boolean;
+  };
 }
 
 /**

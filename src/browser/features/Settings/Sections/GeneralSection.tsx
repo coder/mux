@@ -12,6 +12,7 @@ import { Switch } from "@/browser/components/Switch/Switch";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   EDITOR_CONFIG_KEY,
   DEFAULT_EDITOR_CONFIG,
@@ -234,6 +235,11 @@ export function GeneralSection() {
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
     setLlmDebugLogs(checked);
+    window.dispatchEvent(
+      createCustomEvent(CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED, {
+        enabled: checked,
+      })
+    );
     void api?.config.updateLlmDebugLogs({ enabled: checked }).catch(() => {
       // Best-effort — no serialized update chain needed for this low-frequency toggle.
     });

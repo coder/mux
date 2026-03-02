@@ -659,6 +659,51 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const [isTouchReviewImmersive, setIsTouchReviewImmersive] = React.useState(false);
 
+  // API for reading config and managing terminal sessions.
+  const { api } = useAPI();
+  const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!api) {
+      setLlmDebugLogsEnabled(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    void api.config
+      .getConfig()
+      .then((cfg) => {
+        if (cancelled) {
+          return;
+        }
+
+        setLlmDebugLogsEnabled(cfg.llmDebugLogs === true);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setLlmDebugLogsEnabled(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  React.useEffect(() => {
+    const handleLlmDebugLogsChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ enabled: boolean }>).detail;
+      setLlmDebugLogsEnabled(detail?.enabled === true);
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED, handleLlmDebugLogsChanged);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED, handleLlmDebugLogsChanged);
+  }, []);
+
   // Read last-used focused tab for better defaults when initializing a new layout.
   const initialActiveTab = React.useMemo<TabType>(() => {
     const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
@@ -731,6 +776,25 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // Legacy "stats" tabs in persisted layouts are stripped during parsing
   // (see stripLegacyStatsTab in rightSidebarLayout.ts).
+  // If LLM debug logs are enabled, ensure the Debug tab exists in the layout.
+  // If disabled, ensure it doesn't linger in persisted layouts.
+  React.useEffect(() => {
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasDebug = collectAllTabs(prev.root).includes("debug");
+
+      if (llmDebugLogsEnabled && !hasDebug) {
+        // Add debug tab to the focused tabset without stealing focus.
+        return addTabToFocusedTabset(prev, "debug", false);
+      }
+
+      if (!llmDebugLogsEnabled && hasDebug) {
+        return removeTabEverywhere(prev, "debug");
+      }
+
+      return prev;
+    });
+  }, [initialActiveTab, llmDebugLogsEnabled, setLayoutRaw]);
   // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
   React.useEffect(() => {
     if (!isRightSidebarLayoutState(layoutRaw)) {
@@ -901,9 +965,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     const stored = readPersistedState<Record<string, string>>(terminalTitlesKey, {});
     return new Map(Object.entries(stored) as Array<[TabType, string]>);
   });
-
-  // API for opening terminal windows and managing sessions
-  const { api } = useAPI();
 
   const removeTerminalTab = React.useCallback(
     (tab: TabType) => {
