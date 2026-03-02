@@ -81,6 +81,35 @@ export interface WorkspaceChatEventAggregator {
   clearTokenState(messageId: string): void;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function isSuccessfulProposePlanResult(result: unknown): boolean {
+  if (!isRecord(result)) return false;
+  if (result.success !== true) return false;
+
+  const hasFileResult = typeof result.planPath === "string";
+  const hasLegacyResult = typeof result.title === "string" && typeof result.plan === "string";
+  return hasFileResult || hasLegacyResult;
+}
+
+function shouldRefreshAgentsAfterToolCallEnd(event: ToolCallEndEvent): boolean {
+  if (event.replay === true) return false;
+  if (event.toolName !== "propose_plan") return false;
+  return isSuccessfulProposePlanResult(event.result);
+}
+
+function dispatchAgentsRefreshRequested(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED));
+}
+
+function dispatchMuxGatewaySessionExpired(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
+}
+
 /**
  * Applies a single workspace chat event to a StreamingMessageAggregator-like instance.
  *
@@ -129,9 +158,7 @@ export function applyWorkspaceChatEventToAggregator(
     if (allowSideEffects && event.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
       // Dispatch session-expired event; useGateway() listens for it and
       // optimistically marks the gateway as unconfigured to stop routing.
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
-      }
+      dispatchMuxGatewaySessionExpired();
     }
 
     aggregator.handleStreamError(event);
@@ -150,6 +177,13 @@ export function applyWorkspaceChatEventToAggregator(
 
   if (isToolCallEnd(event)) {
     aggregator.handleToolCallEnd(event);
+
+    if (allowSideEffects && shouldRefreshAgentsAfterToolCallEnd(event)) {
+      // Keep agent discovery in sync when propose_plan succeeds so conditionally visible
+      // agents (for example, orchestrator with ui.requires: ["plan"]) appear immediately.
+      dispatchAgentsRefreshRequested();
+    }
+
     return "immediate";
   }
 

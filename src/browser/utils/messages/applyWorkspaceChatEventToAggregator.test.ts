@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { GlobalWindow } from "happy-dom";
 
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { DeleteMessage, StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
 import type {
   ReasoningDeltaEvent,
@@ -85,6 +87,21 @@ class StubAggregator implements WorkspaceChatEventAggregator {
 }
 
 describe("applyWorkspaceChatEventToAggregator", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+  });
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  });
+
   test("stream-start routes to handleStreamStart", () => {
     const aggregator = new StubAggregator();
 
@@ -188,6 +205,77 @@ describe("applyWorkspaceChatEventToAggregator", () => {
 
     expect(hint).toBe("throttled");
     expect(aggregator.calls).toEqual(["handleToolCallDelta:tool-1"]);
+  });
+
+  test("tool-call-end dispatches AGENTS_REFRESH_REQUESTED for successful propose_plan", () => {
+    const aggregator = new StubAggregator();
+    const refreshEvents: Event[] = [];
+
+    window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, (event) => {
+      refreshEvents.push(event);
+    });
+
+    const event: WorkspaceChatMessage = {
+      type: "tool-call-end",
+      workspaceId: "ws-1",
+      messageId: "msg-1",
+      toolCallId: "tool-1",
+      toolName: "propose_plan",
+      result: { success: true, planPath: "~/.mux/plans/demo/ws-1.md" },
+      timestamp: 1,
+    };
+
+    const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
+
+    expect(hint).toBe("immediate");
+    expect(aggregator.calls).toEqual(["handleToolCallEnd:tool-1"]);
+    expect(refreshEvents.length).toBe(1);
+  });
+
+  test("tool-call-end does not dispatch AGENTS_REFRESH_REQUESTED for replayed/failed/non-plan events", () => {
+    const aggregator = new StubAggregator();
+    const refreshEvents: Event[] = [];
+
+    window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, (event) => {
+      refreshEvents.push(event);
+    });
+
+    const replayedProposePlan: WorkspaceChatMessage = {
+      type: "tool-call-end",
+      workspaceId: "ws-1",
+      messageId: "msg-1",
+      toolCallId: "tool-replay",
+      toolName: "propose_plan",
+      result: { success: true, planPath: "~/.mux/plans/demo/ws-1.md" },
+      timestamp: 1,
+      replay: true,
+    };
+
+    const failedProposePlan: WorkspaceChatMessage = {
+      type: "tool-call-end",
+      workspaceId: "ws-1",
+      messageId: "msg-2",
+      toolCallId: "tool-failed",
+      toolName: "propose_plan",
+      result: { success: false, error: "Plan file missing" },
+      timestamp: 2,
+    };
+
+    const nonPlanTool: WorkspaceChatMessage = {
+      type: "tool-call-end",
+      workspaceId: "ws-1",
+      messageId: "msg-3",
+      toolCallId: "tool-bash",
+      toolName: "bash",
+      result: { success: true },
+      timestamp: 3,
+    };
+
+    expect(applyWorkspaceChatEventToAggregator(aggregator, replayedProposePlan)).toBe("immediate");
+    expect(applyWorkspaceChatEventToAggregator(aggregator, failedProposePlan)).toBe("immediate");
+    expect(applyWorkspaceChatEventToAggregator(aggregator, nonPlanTool)).toBe("immediate");
+
+    expect(refreshEvents.length).toBe(0);
   });
 
   test("message routes to handleMessage", () => {

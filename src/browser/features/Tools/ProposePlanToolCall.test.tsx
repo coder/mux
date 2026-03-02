@@ -13,8 +13,6 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
-
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
 import { ProposePlanToolCall } from "./ProposePlanToolCall";
@@ -654,112 +652,5 @@ describe("ProposePlanToolCall", () => {
     expect(summaryMessage.metadata?.agentId).toBe("plan");
     expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
     expect(summaryMessage.parts?.[0]?.text).toContain(planPath);
-  });
-
-  test("dispatches AGENTS_REFRESH_REQUESTED once when latest plan completes successfully", async () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    mockApi = {
-      config: {
-        getConfig: () =>
-          Promise.resolve({
-            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-            agentAiDefaults: {},
-            subagentAiDefaults: {},
-          }),
-      },
-      workspace: {
-        getPlanContent: () =>
-          Promise.resolve({
-            success: true,
-            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
-          }),
-        replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
-        sendMessage: () => Promise.resolve({ success: true, data: undefined }),
-      },
-    };
-
-    const refreshEvents: Event[] = [];
-    const handler = (event: Event) => refreshEvents.push(event);
-    window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handler);
-
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{ success: true, planPath }}
-        workspaceId="ws-123"
-        isLatest={true}
-      />
-    );
-
-    await waitFor(() => expect(refreshEvents.length).toBe(1));
-
-    view.rerender(
-      <AgentProvider
-        value={{
-          agentId: "plan",
-          setAgentId: noop,
-          currentAgent: TEST_AGENTS.find((entry) => entry.id === "plan"),
-          agents: TEST_AGENTS,
-          loaded: true,
-          loadFailed: false,
-          refresh: () => Promise.resolve(),
-          refreshing: false,
-          disableWorkspaceAgents: false,
-          setDisableWorkspaceAgents: noop,
-        }}
-      >
-        <TooltipProvider>
-          <ProposePlanToolCall
-            args={{}}
-            status="completed"
-            result={{ success: true, planPath }}
-            workspaceId="ws-123"
-            isLatest={true}
-          />
-        </TooltipProvider>
-      </AgentProvider>
-    );
-
-    expect(refreshEvents.length).toBe(1);
-
-    window.removeEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handler);
-  });
-
-  test("does not dispatch AGENTS_REFRESH_REQUESTED for failed or non-latest propose_plan", () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    const refreshEvents: Event[] = [];
-    const handler = (event: Event) => refreshEvents.push(event);
-    window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handler);
-
-    renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{ success: false, error: "Plan file missing" }}
-        workspaceId="ws-123"
-        isLatest={true}
-      />
-    );
-
-    expect(refreshEvents.length).toBe(0);
-
-    cleanup();
-
-    renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{ success: true, planPath }}
-        workspaceId="ws-123"
-        isLatest={false}
-      />
-    );
-
-    expect(refreshEvents.length).toBe(0);
-
-    window.removeEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handler);
   });
 });
