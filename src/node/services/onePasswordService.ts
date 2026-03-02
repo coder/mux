@@ -4,8 +4,22 @@ import { OP_REF_PREFIX } from "@/common/utils/opRef";
 import { log } from "@/node/services/log";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const RESOLVE_TIMEOUT_MS = 10_000; // 10 seconds
 const INTEGRATION_NAME = "Mux Desktop";
 const INTEGRATION_VERSION = "1.0.0";
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  assert(ms > 0, "withTimeout requires a positive timeout");
+
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => {
+        reject(new Error(message));
+      }, ms)
+    ),
+  ]);
+}
 
 interface CacheEntry {
   value: string;
@@ -34,11 +48,15 @@ export class OnePasswordService {
     }
 
     const initPromise = (async () => {
-      const client = await createClient({
-        auth: new DesktopAuth(this.accountName),
-        integrationName: INTEGRATION_NAME,
-        integrationVersion: INTEGRATION_VERSION,
-      });
+      const client = await withTimeout(
+        createClient({
+          auth: new DesktopAuth(this.accountName),
+          integrationName: INTEGRATION_NAME,
+          integrationVersion: INTEGRATION_VERSION,
+        }),
+        RESOLVE_TIMEOUT_MS,
+        `1Password client initialization timed out after ${RESOLVE_TIMEOUT_MS}ms`
+      );
 
       this.client = client;
       return client;
@@ -139,7 +157,11 @@ export class OnePasswordService {
 
     const resolveWithClient = async (): Promise<string | undefined> => {
       const client = await this.getClient();
-      const value = await client.secrets.resolve(decodedRef);
+      const value = await withTimeout(
+        client.secrets.resolve(decodedRef),
+        RESOLVE_TIMEOUT_MS,
+        `1Password resolution timed out after ${RESOLVE_TIMEOUT_MS}ms for ${ref}`
+      );
       if (typeof value !== "string") {
         log.warn("[OnePasswordService] Resolved secret was not a string", {
           ref,
