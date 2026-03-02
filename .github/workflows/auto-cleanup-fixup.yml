@@ -58,12 +58,14 @@ jobs:
 
       - name: Attach auto-cleanup branch to failed revision
         if: ${{ steps.precheck.outputs.enabled == 'true' }}
+        env:
+          FAILED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          git checkout -B auto-cleanup "${{ github.event.workflow_run.head_sha }}"
+          git checkout -B auto-cleanup "$FAILED_HEAD_SHA"
           actual_sha=$(git rev-parse HEAD)
-          if [ "$actual_sha" != "${{ github.event.workflow_run.head_sha }}" ]; then
+          if [ "$actual_sha" != "$FAILED_HEAD_SHA" ]; then
             echo "❌ Expected HEAD to match failed run SHA"
-            echo "expected=${{ github.event.workflow_run.head_sha }} actual=$actual_sha"
+            echo "expected=$FAILED_HEAD_SHA actual=$actual_sha"
             exit 1
           fi
 
