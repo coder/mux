@@ -13,6 +13,7 @@ import { Button } from "@/browser/components/Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import { matchesKeybind, formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { parseReviewLineRange } from "@/common/types/review";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -67,6 +68,11 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
     // Match: optional digits, space, optional digits, space, then +/-/space
     return /^\s*\d*\s+\d*\s+[+-\s]/.test(firstLine);
   }, [code]);
+
+  const plainCodeStartLine = useMemo(() => {
+    const parsed = parseReviewLineRange(lineRange);
+    return parsed?.new?.start ?? parsed?.old?.start ?? 1;
+  }, [lineRange]);
 
   const handleStartEdit = useCallback(() => {
     setEditValue(comment);
@@ -215,7 +221,9 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
                 .split("\n")
                 .map((line) => ` ${line}`)
                 .join("\n")}
-              showLineNumbers={false}
+              showLineNumbers={true}
+              lineNumberMode="new"
+              newStart={plainCodeStartLine}
               fontSize="11px"
               filePath={filePath}
               maxHeight="none"
