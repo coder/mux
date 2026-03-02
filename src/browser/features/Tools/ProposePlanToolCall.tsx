@@ -37,6 +37,7 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
@@ -168,6 +169,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const isImplementingRef = useRef(false);
   const isContinuingInAutoRef = useRef(false);
   const isMountedRef = useRef(true);
+  const hasRequestedAgentRefreshRef = useRef(false);
   const { api } = useAPI();
   const { agentId: currentAgentId } = useAgent();
   const isAutoMode = currentAgentId === "auto";
@@ -200,6 +202,20 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (isEphemeralPreview || !isLatest || status !== "completed") return;
+    if (hasRequestedAgentRefreshRef.current) return;
+
+    const isSuccess = isProposePlanResult(result) || isLegacyProposePlanResult(result);
+    if (!isSuccess) return;
+
+    hasRequestedAgentRefreshRef.current = true;
+    // Plan file now exists on disk — refresh the agent list so conditionally visible
+    // agents (for example, orchestrator with ui.requires: ["plan"]) become
+    // selectable immediately.
+    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED));
+  }, [isEphemeralPreview, isLatest, status, result]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
