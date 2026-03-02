@@ -9,7 +9,6 @@ import {
   hasOwnRecordKey,
   isObjectRecord,
   parseArrayIndex,
-  requireMuxHelpWorkspace,
 } from "@/node/services/tools/shared/configToolUtils";
 import { redactConfigDocument } from "@/node/services/tools/shared/configRedaction";
 // Parse-only read: schema validation is deferred to write boundaries,
@@ -25,9 +24,6 @@ export const createMuxConfigReadTool: ToolFactory = (config: ToolConfiguration) 
       { abortSignal: _abortSignal }
     ): Promise<MuxConfigReadToolResult> => {
       try {
-        const workspaceGuard = requireMuxHelpWorkspace(config, "mux_config_read");
-        if (workspaceGuard) return workspaceGuard;
-
         const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "mux_config_read");
         const rawDocument = await readConfigDocumentUnvalidated(muxHome, args.file);
         const redactedDocument = redactConfigDocument(args.file, rawDocument);

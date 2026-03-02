@@ -12,7 +12,6 @@ import {
   stripScopedInstructionSections,
 } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getMuxHome } from "@/common/constants/paths";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { assertNever } from "@/common/utils/assertNever";
@@ -268,7 +267,7 @@ export async function readToolInstructions(
 
   return extractToolInstructions(globalInstructions, contextInstructions, modelString, {
     enableAgentReport: Boolean(metadata.parentWorkspaceId),
-    enableMuxGlobalAgentsTools: metadata.id === MUX_HELP_CHAT_WORKSPACE_ID,
+    enableMuxGlobalAgentsTools: true,
     agentInstructions,
   });
 }

@@ -1597,7 +1597,11 @@ export function getToolSchemas(): Record<string, ToolSchema> {
  */
 export function getAvailableTools(
   modelString: string,
-  options?: { enableAgentReport?: boolean; enableMuxGlobalAgentsTools?: boolean }
+  options?: {
+    enableAgentReport?: boolean;
+    /** @deprecated Mux global tools are always included. */
+    enableMuxGlobalAgentsTools?: boolean;
+  }
 ): string[] {
   const [provider] = modelString.split(":");
   const enableAgentReport = options?.enableAgentReport ?? true;
@@ -1605,17 +1609,13 @@ export function getAvailableTools(
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const baseTools = [
-    ...(options?.enableMuxGlobalAgentsTools
-      ? [
-          "mux_global_agents_read",
-          "mux_global_agents_write",
-          "agent_skill_list",
-          "agent_skill_write",
-          "agent_skill_delete",
-          "mux_config_read",
-          "mux_config_write",
-        ]
-      : []),
+    "mux_global_agents_read",
+    "mux_global_agents_write",
+    "agent_skill_list",
+    "agent_skill_write",
+    "agent_skill_delete",
+    "mux_config_read",
+    "mux_config_write",
     "file_read",
     "agent_skill_read",
     "agent_skill_read_file",
