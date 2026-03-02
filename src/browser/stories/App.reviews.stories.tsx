@@ -399,11 +399,12 @@ export const QueuedMessageWithReviews: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
 
-    // Header remains visible while collapsed.
+    // Header is always visible. Expand only if the queued body is currently collapsed.
     const header = await canvas.findByRole("button", { name: /queued/i });
+    if (!canvas.queryByText("Consider using a constant for the token expiry duration")) {
+      await userEvent.click(header);
+    }
 
-    // Expand to validate queued mixed content: inline review content + image attachment.
-    await userEvent.click(header);
     await canvas.findByText("Consider using a constant for the token expiry duration");
     await canvas.findByRole("img", { name: "Attachment 1" });
 

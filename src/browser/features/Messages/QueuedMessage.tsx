@@ -34,7 +34,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
   onEdit,
   onSendImmediately,
 }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const preview = deriveQueuedPreview(message);
 

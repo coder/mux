@@ -16,6 +16,10 @@ function createQueuedMessage(overrides?: Partial<QueuedMessageData>): QueuedMess
 }
 
 function expandQueuedMessage(view: ReturnType<typeof render>) {
+  if (view.container.querySelector('[data-component="QueuedMessageCard"]')) {
+    return;
+  }
+
   const header = view.getByRole("button", { name: /queued/i });
   fireEvent.click(header);
 }
@@ -33,7 +37,7 @@ describe("QueuedMessage banner", () => {
     cleanupDom = null;
   });
 
-  test("starts collapsed — body content is hidden", () => {
+  test("starts expanded — body content is visible", () => {
     const view = render(
       <QueuedMessage
         message={createQueuedMessage()}
@@ -43,20 +47,20 @@ describe("QueuedMessage banner", () => {
     );
 
     expect(view.getByRole("button", { name: /queued/i })).toBeTruthy();
-    expect(view.queryByText("Review this change before sending")).toBeNull();
-    expect(view.queryByText("Edit")).toBeNull();
+    expect(view.getByText("Review this change before sending")).toBeTruthy();
+    expect(view.getByText("Edit")).toBeTruthy();
   });
 
-  test("expands and collapses on header click", () => {
+  test("collapses and re-expands on header click", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} onEdit={mock(() => {})} />);
 
     const header = view.getByRole("button", { name: /queued/i });
     fireEvent.click(header);
-    expect(view.getByText("Review this change before sending")).toBeTruthy();
-
-    fireEvent.click(header);
     expect(view.queryByText("Review this change before sending")).toBeNull();
     expect(view.queryByText("Edit")).toBeNull();
+
+    fireEvent.click(header);
+    expect(view.getByText("Review this change before sending")).toBeTruthy();
   });
 
   test("renders queued preview text and label", () => {
