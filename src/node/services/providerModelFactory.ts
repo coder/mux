@@ -526,11 +526,10 @@ export class ProviderModelFactory {
     //   2. make devtools
     //   3. Open http://localhost:4983
     // DevTools middleware currently supports LanguageModelV3 instances only.
+    // This debugging path should never break successful model creation for non-v3 providers,
+    // so we fall back to the original model when wrapping is unsupported.
     if (typeof result.data === "string" || result.data.specificationVersion !== "v3") {
-      return Err({
-        type: "unknown",
-        raw: "Failed to enable AI SDK DevTools middleware: expected a LanguageModelV3 instance",
-      });
+      return result;
     }
 
     return Ok(
