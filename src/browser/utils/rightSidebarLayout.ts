@@ -147,9 +147,12 @@ function stripLegacyStatsTab(node: Record<string, unknown>): void {
       if (filtered.length !== (node.tabs as unknown[]).length) {
         // Ensure at least one tab remains — a stats-only tabset becomes ["costs"]
         node.tabs = filtered.length > 0 ? filtered : ["costs"];
-        // If the active tab was "stats", fall back to the first remaining tab
+        // If the active tab was "stats", map to "costs" (its semantic replacement)
+        // when present; otherwise fall back to the first remaining tab
         if (node.activeTab === "stats") {
-          node.activeTab = (node.tabs as unknown[])[0] ?? "costs";
+          node.activeTab = (node.tabs as unknown[]).includes("costs")
+            ? "costs"
+            : ((node.tabs as unknown[])[0] ?? "costs");
         }
       }
     }

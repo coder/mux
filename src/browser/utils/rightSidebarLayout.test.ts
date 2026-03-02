@@ -451,6 +451,29 @@ test("parseRightSidebarLayoutState falls back activeTab when stats was active", 
   expect(result.root.tabs).toEqual(["costs", "review", "explorer"]);
   expect(result.root.activeTab).toBe("costs");
 });
+test("parseRightSidebarLayoutState maps stats activeTab to costs even when reordered", () => {
+  // Tabs reordered so "costs" is NOT first — activeTab should still map to "costs"
+  const raw = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "tabset",
+      id: "tabset-1",
+      tabs: ["review", "costs", "stats", "explorer"],
+      activeTab: "stats",
+    },
+  };
+
+  const result = parseRightSidebarLayoutState(raw, "costs");
+
+  expect(result.root.type).toBe("tabset");
+  if (result.root.type !== "tabset") throw new Error("expected tabset");
+
+  // "stats" stripped; activeTab should map to "costs" (semantic replacement), not "review" (first tab)
+  expect(result.root.tabs).toEqual(["review", "costs", "explorer"]);
+  expect(result.root.activeTab).toBe("costs");
+});
 
 test("parseRightSidebarLayoutState handles split layouts with legacy stats", () => {
   const raw = {
