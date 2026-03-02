@@ -1610,6 +1610,7 @@ export const config = {
       // Mux Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
+      llmDebugLogs: z.boolean(),
       onePasswordAccountName: z.string().nullish(),
     }),
   },

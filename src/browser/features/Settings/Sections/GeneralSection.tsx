@@ -161,6 +161,7 @@ export function GeneralSection() {
 
   // Backend config: default to ON so archiving is safest even before async load completes.
   const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
+  const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const stopCoderWorkspaceOnArchiveLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
@@ -184,6 +185,7 @@ export function GeneralSection() {
         }
 
         setStopCoderWorkspaceOnArchive(cfg.stopCoderWorkspaceOnArchive);
+        setLlmDebugLogs(cfg.llmDebugLogs === true);
       })
       .catch(() => {
         // Best-effort only. Keep the default (ON) if config fails to load.
@@ -229,6 +231,13 @@ export function GeneralSection() {
     },
     [api]
   );
+
+  const handleLlmDebugLogsChange = (checked: boolean) => {
+    setLlmDebugLogs(checked);
+    void api?.config.updateLlmDebugLogs({ enabled: checked }).catch(() => {
+      // Best-effort — no serialized update chain needed for this low-frequency toggle.
+    });
+  };
 
   const { statsTabState, setStatsTabEnabled } = useFeatureFlags();
 
@@ -406,6 +415,20 @@ export function GeneralSection() {
               checked={statsTabState?.enabled ?? true}
               onCheckedChange={handleStatsTabToggle}
               aria-label="Toggle Stats tab"
+            />
+          </div>
+
+          <div className="flex items-center justify-between py-3">
+            <div className="flex-1 pr-4">
+              <div className="text-foreground text-sm">LLM Debug Logs</div>
+              <div className="text-muted mt-0.5 text-xs">
+                Record inputs and outputs for every LLM call
+              </div>
+            </div>
+            <Switch
+              checked={llmDebugLogs}
+              onCheckedChange={handleLlmDebugLogsChange}
+              aria-label="Toggle LLM Debug Logs"
             />
           </div>
         </div>

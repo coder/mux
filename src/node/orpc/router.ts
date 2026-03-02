@@ -580,6 +580,7 @@ export const router = (authToken?: string) => {
             // Mux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
+            llmDebugLogs: config.llmDebugLogs === true,
             onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
