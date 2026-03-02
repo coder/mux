@@ -12,15 +12,19 @@
 
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
-import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
 import { CostsTab } from "./CostsTab";
 import { TimingPanel, ModelBreakdownPanel } from "./StatsTab";
 
 type StatsSubTab = "cost" | "timing" | "models";
 
-const BASE_OPTIONS: Array<ToggleOption<StatsSubTab>> = [{ value: "cost", label: "Cost" }];
+type StatsOption = {
+  value: StatsSubTab;
+  label: string;
+};
 
-const ALL_OPTIONS: Array<ToggleOption<StatsSubTab>> = [
+const BASE_OPTIONS: Array<StatsOption> = [{ value: "cost", label: "Cost" }];
+
+const ALL_OPTIONS: Array<StatsOption> = [
   { value: "cost", label: "Cost" },
   { value: "timing", label: "Timing" },
   { value: "models", label: "Models" },
@@ -45,7 +49,25 @@ export function StatsContainer(props: StatsContainerProps) {
     <div>
       {options.length > 1 && (
         <div className="mb-3">
-          <ToggleGroup options={options} value={effectiveTab} onChange={setSubTab} />
+          <div className="flex gap-1">
+            {options.map((option) => {
+              const isActive = option.value === effectiveTab;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                    isActive
+                      ? "bg-accent text-foreground"
+                      : "text-muted hover:text-foreground hover:bg-accent/50"
+                  }`}
+                  onClick={() => setSubTab(option.value)}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
       {effectiveTab === "cost" && <CostsTab workspaceId={props.workspaceId} />}

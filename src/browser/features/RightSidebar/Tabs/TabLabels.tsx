@@ -11,10 +11,10 @@ import React from "react";
 import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
-import { formatTabDuration, type ReviewStats } from "./registry";
+import { type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
-import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
 interface StatsTabLabelProps {
@@ -22,12 +22,11 @@ interface StatsTabLabelProps {
 }
 
 /**
- * Unified Stats tab label with session cost and duration badges.
- * Subscribes to workspace usage and stats directly to avoid re-rendering parent components.
+ * Unified Stats tab label with a session cost badge.
+ * Subscribes to workspace usage directly to avoid re-rendering parent components.
  */
 export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
-  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
 
   const sessionCost = React.useMemo(() => {
     const parts: ChatUsageDisplay[] = [];
@@ -47,13 +46,6 @@ export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => 
     return total > 0 ? total : null;
   }, [usage.sessionTotal, usage.liveCostUsage]);
 
-  const sessionDuration = React.useMemo(() => {
-    const baseDuration = statsSnapshot?.session?.totalDurationMs ?? 0;
-    const activeDuration = statsSnapshot?.active?.elapsedMs ?? 0;
-    const total = baseDuration + activeDuration;
-    return total > 0 ? total : null;
-  }, [statsSnapshot]);
-
   return (
     <>
       Stats
@@ -61,9 +53,6 @@ export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => 
         <span className="text-muted text-[10px] tabular-nums">
           ${sessionCost < 0.01 ? "<0.01" : sessionCost.toFixed(2)}
         </span>
-      )}
-      {sessionDuration !== null && (
-        <span className="text-muted text-[10px]">{formatTabDuration(sessionDuration)}</span>
       )}
     </>
   );
