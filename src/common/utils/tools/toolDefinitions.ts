@@ -1031,7 +1031,7 @@ export const TOOL_DEFINITIONS = {
   switch_agent: {
     description:
       "Switch to a different agent and restart the stream. " +
-      "Only UI-selectable agents can be targeted. " +
+      "Only agents listed below can be targeted. " +
       "The current stream will end and a new stream will start with the selected agent.",
     schema: SwitchAgentToolArgsSchema,
   },
