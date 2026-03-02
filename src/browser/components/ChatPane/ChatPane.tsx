@@ -18,6 +18,7 @@ import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/Positioned
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "@/browser/features/Messages/MessageRenderer";
+import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import type { UserMessageNavigation } from "@/browser/features/Messages/UserMessage";
 import { InterruptedBarrier } from "@/browser/features/Messages/ChatBarrier/InterruptedBarrier";
 import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditCutoffBarrier";
@@ -902,9 +903,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
                     <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
                       <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
-                      <div className="text-foreground break-words whitespace-pre-wrap">
-                        {queuedAgentTaskPrompt ?? ""}
-                      </div>
+                      <MarkdownRenderer
+                        content={queuedAgentTaskPrompt ?? ""}
+                        className="user-message-markdown text-foreground"
+                        preserveLineBreaks
+                        style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+                      />
                     </div>
                   </div>
                 )}
