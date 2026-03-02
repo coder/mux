@@ -117,6 +117,7 @@ describe("createAnalyticsQueryTool", () => {
       value: i * 0.01,
     }));
 
+    const backendRowCount = oversizedRows.length + 200;
     const executeRawQuery = mock(() =>
       Promise.resolve({
         columns: [
@@ -125,7 +126,7 @@ describe("createAnalyticsQueryTool", () => {
         ],
         rows: oversizedRows,
         truncated: false,
-        rowCount: oversizedRows.length,
+        rowCount: backendRowCount,
         durationMs: 3,
       })
     );
@@ -144,8 +145,8 @@ describe("createAnalyticsQueryTool", () => {
 
     expect(result.success).toBe(true);
     expect(result.rows).toHaveLength(TOOL_RESULT_ROW_LIMIT);
-    // rowCount reflects the full query result size, not the capped size
-    expect(result.rowCount).toBe(TOOL_RESULT_ROW_LIMIT + 50);
+    // rowCount should preserve backend metadata, not be recomputed from capped rows
+    expect(result.rowCount).toBe(backendRowCount);
     expect(result.truncated).toBe(true);
   });
 

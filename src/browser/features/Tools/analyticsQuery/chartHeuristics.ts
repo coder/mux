@@ -2,7 +2,9 @@ import assert from "@/common/utils/assert";
 import type { ChartType, ColumnMeta } from "./types";
 
 export function isNumericType(type: string): boolean {
-  return /int|double|float|decimal|numeric|bigint|real/i.test(type);
+  return /\b(int|integer|smallint|tinyint|bigint|double|float|decimal|numeric|real|hugeint)\b/i.test(
+    type
+  );
 }
 
 export function isDateType(type: string): boolean {

@@ -12,6 +12,7 @@ describe("isNumericType", () => {
   test("rejects non-numeric SQL types", () => {
     expect(isNumericType("VARCHAR")).toBe(false);
     expect(isNumericType("DATE")).toBe(false);
+    expect(isNumericType("INTERVAL")).toBe(false);
   });
 });
 
