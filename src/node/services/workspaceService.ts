@@ -88,7 +88,7 @@ import type { TaskService } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
 import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
-import { secretsToRecord } from "@/common/types/secrets";
+import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 
 import {
   copyPlanFileAcrossRuntimes,
@@ -990,7 +990,8 @@ export class WorkspaceService extends EventEmitter {
     policyService?: PolicyService,
     telemetryService?: TelemetryService,
     experimentsService?: ExperimentsService,
-    sessionTimingService?: SessionTimingService
+    sessionTimingService?: SessionTimingService,
+    private readonly opResolver?: ExternalSecretResolver
   ) {
     super();
     this.policyService = policyService;
@@ -1803,7 +1804,10 @@ export class WorkspaceService extends EventEmitter {
       session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
 
       // Background init: run postCreateSetup (if present) then initWorkspace
-      const secrets = await secretsToRecord(this.config.getEffectiveSecrets(projectPath));
+      const secrets = await secretsToRecord(
+        this.config.getEffectiveSecrets(projectPath),
+        this.opResolver
+      );
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
       //
       // If the user cancelled creation while create() was still in flight, avoid spawning
@@ -3113,7 +3117,10 @@ export class WorkspaceService extends EventEmitter {
       } = forkResult.data;
 
       // Run init for forked workspace (fire-and-forget like create())
-      const secrets = await secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
+      const secrets = await secretsToRecord(
+        this.config.getEffectiveSecrets(foundProjectPath),
+        this.opResolver
+      );
       runBackgroundInit(
         targetRuntime,
         {
@@ -4515,7 +4522,7 @@ export class WorkspaceService extends EventEmitter {
       const bashTool = createBashTool({
         cwd: workspacePath,
         runtime,
-        secrets: await secretsToRecord(projectSecrets),
+        secrets: await secretsToRecord(projectSecrets, this.opResolver),
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
         trusted: projectConfig?.trusted ?? false,

@@ -98,7 +98,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.policyService,
     opts.telemetryService,
     opts.experimentsService,
-    opts.sessionTimingService
+    opts.sessionTimingService,
+    opts.opResolver
   );
   workspaceService.setMCPServerManager(mcpServerManager);
 
@@ -107,7 +108,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     historyService,
     aiService,
     workspaceService,
-    initStateManager
+    initStateManager,
+    opts.opResolver
   );
   aiService.setTaskService(taskService);
   workspaceService.setTaskService(taskService);

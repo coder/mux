@@ -68,7 +68,7 @@ import {
   readSubagentReportArtifactsFile,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
-import { secretsToRecord } from "@/common/types/secrets";
+import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 
 export type TaskKind = "agent";
@@ -280,7 +280,8 @@ export class TaskService {
     private readonly historyService: HistoryService,
     private readonly aiService: AIService,
     private readonly workspaceService: WorkspaceService,
-    private readonly initStateManager: InitStateManager
+    private readonly initStateManager: InitStateManager,
+    private readonly opResolver?: ExternalSecretResolver
   ) {
     this.gitPatchArtifactService = new GitPatchArtifactService(config);
 
@@ -1090,7 +1091,10 @@ export class TaskService {
     await this.emitWorkspaceMetadata(taskId);
 
     // Kick init (best-effort, async).
-    const secrets = await secretsToRecord(this.config.getEffectiveSecrets(parentMeta.projectPath));
+    const secrets = await secretsToRecord(
+      this.config.getEffectiveSecrets(parentMeta.projectPath),
+      this.opResolver
+    );
     runBackgroundInit(
       runtimeForTaskWorkspace,
       {
@@ -2344,7 +2348,8 @@ export class TaskService {
           trunkBranch,
         });
         const secrets = await secretsToRecord(
-          this.config.getEffectiveSecrets(taskEntry.projectPath)
+          this.config.getEffectiveSecrets(taskEntry.projectPath),
+          this.opResolver
         );
         let skipInitHook = false;
         const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
