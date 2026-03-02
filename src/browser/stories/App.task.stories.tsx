@@ -259,7 +259,13 @@ Found **47 test files** across the project:
     const canvas = within(canvasElement);
     const toolHeader = await canvas.findByText("task", { selector: "span" });
     await userEvent.click(toolHeader);
-    await canvas.findByText("Found 47 test files across the project:");
+
+    await waitFor(() => {
+      const reportText = canvasElement.textContent ?? "";
+      if (!reportText.includes("Found 47 test files")) {
+        throw new Error("Expected report summary text was not rendered");
+      }
+    });
   },
 };
 

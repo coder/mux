@@ -6,7 +6,9 @@
  */
 
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { within } from "@storybook/test";
 import type { ComponentProps } from "react";
+import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
 import { CodeExecutionToolCall as CodeExecutionToolCallCard } from "@/browser/features/Tools/CodeExecutionToolCall";
 import type {
   CodeExecutionResult,
@@ -25,6 +27,14 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const STABLE_TIMESTAMP = 1_700_000_000_000;
+
+const STORYBOOK_WORKSPACE_ID = "storybook-code-execution";
+
+async function assertCodeExecutionCardRenders(canvasElement: HTMLElement, expectedText: string) {
+  const canvas = within(canvasElement);
+  await canvas.findByText("Code Execution");
+  await canvas.findByText(expectedText);
+}
 
 const SAMPLE_CODE = `// Read a file and make an edit
 const content = await mux.file_read({ path: "src/config.ts" });
@@ -62,11 +72,13 @@ return results;`;
 
 function renderCodeExecutionCard(props: ComponentProps<typeof CodeExecutionToolCallCard>) {
   return (
-    <div className="bg-background flex min-h-screen items-start p-6">
-      <div className="w-full max-w-3xl">
-        <CodeExecutionToolCallCard {...props} />
+    <BackgroundBashProvider workspaceId={STORYBOOK_WORKSPACE_ID}>
+      <div className="bg-background flex min-h-screen items-start p-6">
+        <div className="w-full max-w-3xl">
+          <CodeExecutionToolCallCard {...props} />
+        </div>
       </div>
-    </div>
+    </BackgroundBashProvider>
   );
 }
 
@@ -202,6 +214,9 @@ export const Completed: Story = {
       status: "completed",
       nestedCalls: completedNestedCalls,
     }),
+  play: async ({ canvasElement }) => {
+    await assertCodeExecutionCardRenders(canvasElement, "echo 'Config updated!'");
+  },
 };
 
 /** Code execution in progress with some completed nested tools */
@@ -274,6 +289,9 @@ export const Failed: Story = {
         },
       ],
     }),
+  play: async ({ canvasElement }) => {
+    await assertCodeExecutionCardRenders(canvasElement, "cat /nonexistent");
+  },
 };
 
 /** Code execution with no tool calls (pure computation) */
@@ -371,6 +389,9 @@ export const Interrupted: Story = {
         },
       ],
     }),
+  play: async ({ canvasElement }) => {
+    await assertCodeExecutionCardRenders(canvasElement, "sleep 60");
+  },
 };
 
 /**
