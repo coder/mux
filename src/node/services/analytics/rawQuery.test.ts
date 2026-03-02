@@ -191,9 +191,23 @@ describe("executeRawQuery", () => {
     );
   });
 
+  test("rejects queries using quoted read_csv_auto", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM \"read_csv_auto\"('/etc/passwd')",
+      /disallowed SQL: .*read_csv_auto/i
+    );
+  });
+
   test("rejects queries using read_parquet", async () => {
     await expectValidationFailure(
       "SELECT * FROM read_parquet('file.parquet')",
+      /disallowed SQL: .*read_parquet/i
+    );
+  });
+
+  test("rejects queries using quoted read_parquet", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM \"read_parquet\"('s3://bucket/data.parquet')",
       /disallowed SQL: .*read_parquet/i
     );
   });
