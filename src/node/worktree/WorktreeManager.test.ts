@@ -23,9 +23,6 @@ function initGitRepoWithSubmodule(projectPath: string, submoduleSourcePath: stri
     cwd: projectPath,
     stdio: "ignore",
   });
-  // Local-path submodules are used only in tests; allow file transport so
-  // `git submodule update --init --recursive` can run inside worktrees.
-  execSync("git config protocol.file.allow always", { cwd: projectPath, stdio: "ignore" });
   execSync('git commit -m "add submodule"', { cwd: projectPath, stdio: "ignore" });
 }
 
@@ -86,23 +83,35 @@ describe("WorktreeManager.createWorkspace", () => {
       const manager = new WorktreeManager(srcBaseDir);
       const initLogger = createNullInitLogger();
 
-      const createResult = await manager.createWorkspace({
-        projectPath,
-        branchName: "feature_with_submodule",
-        trunkBranch: "main",
-        initLogger,
-      });
-      expect(createResult.success).toBe(true);
-      if (!createResult.success || !createResult.workspacePath) return;
+      // Test-only: allow local-path submodule transport for temp fixture repos.
+      const previousAllowProtocol = process.env.GIT_ALLOW_PROTOCOL;
+      process.env.GIT_ALLOW_PROTOCOL = "file";
 
-      const submoduleStatus = execSync("git submodule status", {
-        cwd: createResult.workspacePath,
-        stdio: ["ignore", "pipe", "ignore"],
-      })
-        .toString()
-        .trim();
+      try {
+        const createResult = await manager.createWorkspace({
+          projectPath,
+          branchName: "feature_with_submodule",
+          trunkBranch: "main",
+          initLogger,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success || !createResult.workspacePath) return;
 
-      expect(submoduleStatus.startsWith("-")).toBe(false);
+        const submoduleStatus = execSync("git submodule status", {
+          cwd: createResult.workspacePath,
+          stdio: ["ignore", "pipe", "ignore"],
+        })
+          .toString()
+          .trim();
+
+        expect(submoduleStatus.startsWith("-")).toBe(false);
+      } finally {
+        if (previousAllowProtocol === undefined) {
+          delete process.env.GIT_ALLOW_PROTOCOL;
+        } else {
+          process.env.GIT_ALLOW_PROTOCOL = previousAllowProtocol;
+        }
+      }
     } finally {
       await fsPromises.rm(rootDir, { recursive: true, force: true });
     }

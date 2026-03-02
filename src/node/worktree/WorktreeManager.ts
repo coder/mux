@@ -243,16 +243,7 @@ export class WorktreeManager {
       initLogger.logStep("Initializing git submodules...");
       using submoduleProc = execFileAsync(
         "git",
-        [
-          "-c",
-          "protocol.file.allow=always",
-          "-C",
-          workspacePath,
-          "submodule",
-          "update",
-          "--init",
-          "--recursive",
-        ],
+        ["-C", workspacePath, "submodule", "update", "--init", "--recursive"],
         noHooksEnv
       );
       await submoduleProc.result;
