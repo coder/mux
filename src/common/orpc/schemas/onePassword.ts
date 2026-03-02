@@ -18,15 +18,16 @@ export const onePassword = {
         id: z.string(),
         title: z.string(),
         sectionTitle: z.string().nullish(),
+        sectionId: z.string().nullish(),
       })
     ),
   },
   buildReference: {
     input: z.object({
-      vaultTitle: z.string(),
-      itemTitle: z.string(),
-      fieldTitle: z.string(),
-      sectionTitle: z.string().nullish(),
+      vaultId: z.string(),
+      itemId: z.string(),
+      fieldId: z.string(),
+      sectionId: z.string().nullish(),
     }),
     output: z.object({ reference: z.string() }),
   },

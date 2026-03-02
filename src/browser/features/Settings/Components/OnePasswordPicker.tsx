@@ -21,6 +21,7 @@ interface OnePasswordField {
   id: string;
   title: string;
   sectionTitle?: string | null;
+  sectionId?: string | null;
 }
 
 type PickerStep =
@@ -186,6 +187,7 @@ export function OnePasswordPicker(props: OnePasswordPickerProps) {
   };
 
   const handleFieldSelect = async (field: OnePasswordField) => {
+    assert(field.id.length > 0, "OnePasswordPicker: field.id must be non-empty");
     assert(field.title.length > 0, "OnePasswordPicker: field.title must be non-empty");
 
     if (!api) {
@@ -204,10 +206,10 @@ export function OnePasswordPicker(props: OnePasswordPickerProps) {
 
     try {
       const result = await api.onePassword.buildReference({
-        vaultTitle: step.vault.title,
-        itemTitle: step.item.title,
-        fieldTitle: field.title,
-        sectionTitle: field.sectionTitle,
+        vaultId: step.vault.id,
+        itemId: step.item.id,
+        fieldId: field.id,
+        sectionId: field.sectionId,
       });
 
       if (requestVersion !== requestVersionRef.current) {

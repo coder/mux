@@ -4268,10 +4268,10 @@ export const router = (authToken?: string) => {
         .output(schemas.onePassword.buildReference.output)
         .handler(({ input }) => ({
           reference: OnePasswordService.buildReference(
-            input.vaultTitle,
-            input.itemTitle,
-            input.fieldTitle,
-            input.sectionTitle ?? undefined
+            input.vaultId,
+            input.itemId,
+            input.fieldId,
+            input.sectionId ?? undefined
           ),
         })),
     },

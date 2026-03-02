@@ -161,7 +161,7 @@ export class OnePasswordService {
   async getItemFields(
     vaultId: string,
     itemId: string
-  ): Promise<Array<{ id: string; title: string; sectionTitle?: string }>> {
+  ): Promise<Array<{ id: string; title: string; sectionTitle?: string; sectionId?: string }>> {
     try {
       const client = await this.getClient();
       const item = await client.items.get(vaultId, itemId);
@@ -174,6 +174,7 @@ export class OnePasswordService {
         id: field.id,
         title: field.title,
         sectionTitle: field.sectionId ? sectionTitles.get(field.sectionId) : undefined,
+        sectionId: field.sectionId ?? undefined,
       }));
     } catch (error) {
       log.warn("[OnePasswordService] Failed to list item fields", { error, vaultId, itemId });
@@ -182,20 +183,20 @@ export class OnePasswordService {
   }
 
   static buildReference(
-    vaultTitle: string,
-    itemTitle: string,
-    fieldTitle: string,
-    sectionTitle?: string
+    vaultId: string,
+    itemId: string,
+    fieldId: string,
+    sectionId?: string
   ): string {
     // The 1Password op:// reference format uses raw characters — spaces
     // are valid, but forward slashes in segment names are an inherent
     // limitation of the scheme (/ is the delimiter). Do NOT
     // encodeURIComponent: the SDK rejects percent-encoded characters.
     const segments = [
-      `${OP_REF_PREFIX}${vaultTitle}`,
-      itemTitle,
-      ...(sectionTitle ? [sectionTitle] : []),
-      fieldTitle,
+      `${OP_REF_PREFIX}${vaultId}`,
+      itemId,
+      ...(sectionId ? [sectionId] : []),
+      fieldId,
     ];
 
     return segments.join("/");

@@ -311,16 +311,16 @@ describe("OnePasswordService", () => {
     );
 
     expect(await service.getItemFields("vault-a", "item-a")).toEqual([
-      { id: "f1", title: "username", sectionTitle: "Login" },
-      { id: "f2", title: "password", sectionTitle: "Login" },
-      { id: "f3", title: "token", sectionTitle: undefined },
-      { id: "f4", title: "notes", sectionTitle: undefined },
+      { id: "f1", title: "username", sectionTitle: "Login", sectionId: "s1" },
+      { id: "f2", title: "password", sectionTitle: "Login", sectionId: "s1" },
+      { id: "f3", title: "token", sectionTitle: undefined, sectionId: "s2" },
+      { id: "f4", title: "notes", sectionTitle: undefined, sectionId: undefined },
     ]);
   });
 
-  it("buildReference() constructs op://vault/item/field", () => {
-    expect(OnePasswordService.buildReference("Vault", "Item", "password")).toBe(
-      "op://Vault/Item/password"
+  it("buildReference() constructs op://vault/item/field from IDs", () => {
+    expect(OnePasswordService.buildReference("vault-uuid", "item-uuid", "field-uuid")).toBe(
+      "op://vault-uuid/item-uuid/field-uuid"
     );
   });
 
@@ -330,10 +330,10 @@ describe("OnePasswordService", () => {
     );
   });
 
-  it("buildReference() includes section when provided", () => {
-    expect(OnePasswordService.buildReference("Vault", "Item", "password", "Login")).toBe(
-      "op://Vault/Item/Login/password"
-    );
+  it("buildReference() includes section ID when provided", () => {
+    expect(
+      OnePasswordService.buildReference("vault-uuid", "item-uuid", "field-uuid", "section-uuid")
+    ).toBe("op://vault-uuid/item-uuid/section-uuid/field-uuid");
   });
 
   it("buildReference() keeps forward slashes raw within segment titles", () => {
