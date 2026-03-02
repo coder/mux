@@ -6,6 +6,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Button } from "@/browser/components/Button/Button";
 import { Input } from "@/browser/components/Input/Input";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
 import {
   ToggleGroup,
@@ -688,9 +689,12 @@ export const SecretsSection: React.FC = () => {
                 {isOp ? (
                   <span className="text-foreground flex items-center gap-1 self-center px-2.5 font-mono text-[13px]">
                     <KeyRound className="h-3 w-3 shrink-0" />
-                    <span className="truncate" title={opReference}>
-                      {opLabel ?? opReference}
-                    </span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="truncate">{opLabel ?? opReference}</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">{opReference}</TooltipContent>
+                    </Tooltip>
                   </span>
                 ) : isReference ? (
                   <Select

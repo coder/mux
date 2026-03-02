@@ -1467,13 +1467,17 @@ export function ProvidersSection() {
                                     config?.[provider]?.apiKeyOpRef ? (
                                       <span className="text-muted inline-flex max-w-[260px] min-w-0 items-center gap-1">
                                         <KeyRound className="h-3 w-3 shrink-0" />
-                                        <span
-                                          className="truncate"
-                                          title={config?.[provider]?.apiKeyOpRef}
-                                        >
-                                          {config?.[provider]?.apiKeyOpLabel ??
-                                            config?.[provider]?.apiKeyOpRef}
-                                        </span>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <span className="truncate">
+                                              {config?.[provider]?.apiKeyOpLabel ??
+                                                config?.[provider]?.apiKeyOpRef}
+                                            </span>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="top">
+                                            {config?.[provider]?.apiKeyOpRef}
+                                          </TooltipContent>
+                                        </Tooltip>
                                       </span>
                                     ) : (
                                       <>
