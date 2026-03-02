@@ -648,7 +648,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
                     : `git am failed (exitCode=${amResult.exitCode})`,
                 note: mergeNotes(
                   patchPathNote,
-                  "Dry run failed; the patch does not apply cleanly against the current HEAD. Do not attempt a real apply in this workspace; delegate conflict resolution to a sub-agent that can replay and resolve the patch."
+                  "Dry run failed; the patch does not apply cleanly against the current HEAD. If this is a parent integration workspace, do not attempt a real apply here; delegate conflict resolution to a sub-agent that can replay and resolve the patch. Dedicated reconciliation workspaces can proceed with real apply plus manual conflict resolution (`git am --continue` / `git am --abort`)."
                 ),
               },
               "task_apply_git_patch"
