@@ -91,7 +91,7 @@ describe("QueuedMessage banner", () => {
     expect(view.queryByText("Send now")).toBeNull();
   });
 
-  test("shows attachment indicator when fileParts are present", () => {
+  test("renders file attachment links when non-image fileParts are present", () => {
     const view = render(
       <QueuedMessage
         message={createQueuedMessage({
@@ -106,10 +106,10 @@ describe("QueuedMessage banner", () => {
       />
     );
 
-    expect(view.getByText("1 file")).toBeTruthy();
+    expect(view.getByRole("link", { name: "example.ts" })).toBeTruthy();
   });
 
-  test("shows review indicator when reviews are present", () => {
+  test("renders review content inline when reviews are present", () => {
     const view = render(
       <QueuedMessage
         message={createQueuedMessage({
@@ -117,7 +117,7 @@ describe("QueuedMessage banner", () => {
             {
               filePath: "src/example.ts",
               lineRange: "+1-2",
-              selectedCode: "const value = 1;",
+              selectedCode: "",
               userNote: "Double-check this logic.",
             },
           ],
@@ -125,7 +125,8 @@ describe("QueuedMessage banner", () => {
       />
     );
 
-    expect(view.getByText("1 review")).toBeTruthy();
+    expect(view.getByText(/src\/example\.ts/)).toBeTruthy();
+    expect(view.getByText("Double-check this logic.")).toBeTruthy();
   });
 
   test("strips serialized review payload from preview text", () => {
@@ -138,7 +139,7 @@ describe("QueuedMessage banner", () => {
             {
               filePath: "src/example.ts",
               lineRange: "+1-2",
-              selectedCode: "const x = 1;",
+              selectedCode: "",
               userNote: "Fix this",
             },
           ],
@@ -160,7 +161,7 @@ describe("QueuedMessage banner", () => {
             {
               filePath: "a.ts",
               lineRange: "+1-2",
-              selectedCode: "code",
+              selectedCode: "",
               userNote: "note",
             },
           ],
@@ -171,7 +172,40 @@ describe("QueuedMessage banner", () => {
     expect(view.getByText("Do this please")).toBeTruthy();
   });
 
-  test("renders image thumbnails for image file parts", () => {
+  test("renders combined text, reviews, and attachments via UserMessageContent", () => {
+    const view = render(
+      <QueuedMessage
+        message={createQueuedMessage({
+          content:
+            "<review>\nRe src/App.tsx:+12-14\n```\nconst ready = true;\n```\n> Please validate edge cases\n</review>\n\nPlease review the bundle output",
+          reviews: [
+            {
+              filePath: "src/App.tsx",
+              lineRange: "+12-14",
+              selectedCode: "",
+              userNote: "Please validate edge cases",
+            },
+          ],
+          fileParts: [
+            {
+              url: "file:///tmp/screenshot.png",
+              mediaType: "image/png",
+              filename: "screenshot.png",
+            },
+            { url: "file:///tmp/data.json", mediaType: "application/json", filename: "data.json" },
+          ],
+        })}
+      />
+    );
+
+    expect(view.getByText("Please review the bundle output")).toBeTruthy();
+    expect(view.getByText(/src\/App\.tsx/)).toBeTruthy();
+    expect(view.getByText("Please validate edge cases")).toBeTruthy();
+    expect(view.getByRole("link", { name: "data.json" })).toBeTruthy();
+    expect(view.getByAltText("Attachment 1")).toBeTruthy();
+  });
+
+  test("renders image attachments using attachment alt text", () => {
     const view = render(
       <QueuedMessage
         message={createQueuedMessage({
@@ -190,11 +224,13 @@ describe("QueuedMessage banner", () => {
 
     const images = view.container.querySelectorAll("img");
     expect(images.length).toBe(2);
+    expect(view.getByAltText("Attachment 1")).toBeTruthy();
+    expect(view.getByAltText("Attachment 2")).toBeTruthy();
     expect(images[0]?.getAttribute("src")).toBe("file:///tmp/screenshot.png");
     expect(images[1]?.getAttribute("src")).toBe("file:///tmp/photo.jpg");
   });
 
-  test("limits image thumbnails to three with overflow indicator", () => {
+  test("renders all image attachments without overflow counters", () => {
     const view = render(
       <QueuedMessage
         message={createQueuedMessage({
@@ -210,11 +246,12 @@ describe("QueuedMessage banner", () => {
     );
 
     const images = view.container.querySelectorAll("img");
-    expect(images.length).toBe(3);
-    expect(view.getByText("+2")).toBeTruthy();
+    expect(images.length).toBe(5);
+    expect(view.getByAltText("Attachment 5")).toBeTruthy();
+    expect(view.queryByText("+2")).toBeNull();
   });
 
-  test("file counter only counts non-image attachments", () => {
+  test("renders mixed image and file attachments inline", () => {
     const view = render(
       <QueuedMessage
         message={createQueuedMessage({
@@ -231,12 +268,14 @@ describe("QueuedMessage banner", () => {
       />
     );
 
-    expect(view.getByText("2 files")).toBeTruthy();
     const images = view.container.querySelectorAll("img");
     expect(images.length).toBe(1);
+    expect(view.getByAltText("Attachment 1")).toBeTruthy();
+    expect(view.getByRole("link", { name: "data.csv" })).toBeTruthy();
+    expect(view.getByRole("link", { name: "doc.pdf" })).toBeTruthy();
   });
 
-  test("image-only queue renders thumbnails with no file counter", () => {
+  test("image-only queue uses fallback text and attachment rendering", () => {
     const view = render(
       <QueuedMessage
         message={createQueuedMessage({
@@ -251,7 +290,10 @@ describe("QueuedMessage banner", () => {
 
     const images = view.container.querySelectorAll("img");
     expect(images.length).toBe(2);
-    expect(view.getByText("2 images")).toBeTruthy();
+    expect(view.getByText("Queued message ready")).toBeTruthy();
+    expect(view.getByAltText("Attachment 1")).toBeTruthy();
+    expect(view.getByAltText("Attachment 2")).toBeTruthy();
     expect(view.queryByText(/\d+ file/)).toBeNull();
+    expect(view.queryByText(/\d+ image/)).toBeNull();
   });
 });
