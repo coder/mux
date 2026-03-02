@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
+import { describe, expect, test } from "bun:test";
 
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { DeleteMessage, StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
@@ -87,20 +86,23 @@ class StubAggregator implements WorkspaceChatEventAggregator {
 }
 
 describe("applyWorkspaceChatEventToAggregator", () => {
-  let originalWindow: typeof globalThis.window;
-  let originalDocument: typeof globalThis.document;
+  function withDispatchSpy<T>(run: (dispatched: Event[]) => T): T {
+    const originalWindow = globalThis.window;
+    const dispatched: Event[] = [];
 
-  beforeEach(() => {
-    originalWindow = globalThis.window;
-    originalDocument = globalThis.document;
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-  });
+    globalThis.window = {
+      dispatchEvent: (event: Event) => {
+        dispatched.push(event);
+        return true;
+      },
+    } as unknown as Window & typeof globalThis;
 
-  afterEach(() => {
-    globalThis.window = originalWindow;
-    globalThis.document = originalDocument;
-  });
+    try {
+      return run(dispatched);
+    } finally {
+      globalThis.window = originalWindow;
+    }
+  }
 
   test("stream-start routes to handleStreamStart", () => {
     const aggregator = new StubAggregator();
@@ -209,11 +211,6 @@ describe("applyWorkspaceChatEventToAggregator", () => {
 
   test("tool-call-end dispatches AGENTS_REFRESH_REQUESTED for successful propose_plan", () => {
     const aggregator = new StubAggregator();
-    const refreshEvents: Event[] = [];
-
-    window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, (event) => {
-      refreshEvents.push(event);
-    });
 
     const event: WorkspaceChatMessage = {
       type: "tool-call-end",
@@ -225,20 +222,18 @@ describe("applyWorkspaceChatEventToAggregator", () => {
       timestamp: 1,
     };
 
-    const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
+    withDispatchSpy((dispatched) => {
+      const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
 
-    expect(hint).toBe("immediate");
-    expect(aggregator.calls).toEqual(["handleToolCallEnd:tool-1"]);
-    expect(refreshEvents.length).toBe(1);
+      expect(hint).toBe("immediate");
+      expect(aggregator.calls).toEqual(["handleToolCallEnd:tool-1"]);
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]?.type).toBe(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED);
+    });
   });
 
   test("tool-call-end does not dispatch AGENTS_REFRESH_REQUESTED for replayed/failed/non-plan events", () => {
     const aggregator = new StubAggregator();
-    const refreshEvents: Event[] = [];
-
-    window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, (event) => {
-      refreshEvents.push(event);
-    });
 
     const replayedProposePlan: WorkspaceChatMessage = {
       type: "tool-call-end",
@@ -271,11 +266,15 @@ describe("applyWorkspaceChatEventToAggregator", () => {
       timestamp: 3,
     };
 
-    expect(applyWorkspaceChatEventToAggregator(aggregator, replayedProposePlan)).toBe("immediate");
-    expect(applyWorkspaceChatEventToAggregator(aggregator, failedProposePlan)).toBe("immediate");
-    expect(applyWorkspaceChatEventToAggregator(aggregator, nonPlanTool)).toBe("immediate");
+    withDispatchSpy((dispatched) => {
+      expect(applyWorkspaceChatEventToAggregator(aggregator, replayedProposePlan)).toBe(
+        "immediate"
+      );
+      expect(applyWorkspaceChatEventToAggregator(aggregator, failedProposePlan)).toBe("immediate");
+      expect(applyWorkspaceChatEventToAggregator(aggregator, nonPlanTool)).toBe("immediate");
 
-    expect(refreshEvents.length).toBe(0);
+      expect(dispatched).toHaveLength(0);
+    });
   });
 
   test("message routes to handleMessage", () => {
