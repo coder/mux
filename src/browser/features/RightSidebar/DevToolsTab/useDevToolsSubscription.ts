@@ -23,13 +23,10 @@ export function useDevToolsSubscription(workspaceId: string) {
     let iterator: AsyncIterator<DevToolsEvent> | null = null;
 
     const subscribe = async () => {
-      const subscribedIterator = await api.devtools.subscribe(
-        { workspaceId },
-        { signal },
-      );
+      const subscribedIterator = await api.devtools.subscribe({ workspaceId }, { signal });
 
       if (signal.aborted) {
-        subscribedIterator.return?.();
+        void subscribedIterator.return?.();
         return;
       }
 
@@ -47,7 +44,7 @@ export function useDevToolsSubscription(workspaceId: string) {
             break;
           case "run-updated":
             setRuns((previousRuns) =>
-              previousRuns.map((run) => (run.id === event.run.id ? event.run : run)),
+              previousRuns.map((run) => (run.id === event.run.id ? event.run : run))
             );
             break;
           case "step-created":
@@ -65,15 +62,13 @@ export function useDevToolsSubscription(workspaceId: string) {
     subscribe().catch((subscriptionError: unknown) => {
       if (signal.aborted || isAbortError(subscriptionError)) return;
       setError(
-        subscriptionError instanceof Error
-          ? subscriptionError.message
-          : "Subscription failed",
+        subscriptionError instanceof Error ? subscriptionError.message : "Subscription failed"
       );
     });
 
     return () => {
       controller.abort();
-      iterator?.return?.();
+      void iterator?.return?.();
     };
   }, [api, workspaceId]);
 

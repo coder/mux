@@ -19,7 +19,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
   const [activeSubTab, setActiveSubTab] = useState<StepSubTab>("input");
 
   return (
-    <div className="rounded border border-border-light bg-background">
+    <div className="border-border-light bg-background rounded border">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -47,7 +47,7 @@ export function DevToolsStepCard(props: DevToolsStepCardProps) {
       </button>
 
       {expanded && (
-        <div className="border-t border-border-light px-2 py-1.5">
+        <div className="border-border-light border-t px-2 py-1.5">
           <div className="flex items-center gap-1">
             {STEP_SUB_TABS.map((subTab) => (
               <button
@@ -101,7 +101,7 @@ function StepInputView(props: { step: DevToolsStep }) {
         {prompt.map((promptPart, index) => (
           <div
             key={`${props.step.id}-prompt-${index}`}
-            className="rounded border border-border-light p-1.5"
+            className="border-border-light rounded border p-1.5"
           >
             <p className="text-foreground text-[10px] font-semibold">
               {getPromptRole(promptPart)}

@@ -13,17 +13,18 @@ export function DevToolsTab(props: DevToolsTabProps) {
   const { runs, error } = useDevToolsSubscription(props.workspaceId);
   const [clearing, setClearing] = useState(false);
 
-  const handleClear = async () => {
+  const handleClear = () => {
     if (!api || clearing) return;
 
     setClearing(true);
-    try {
-      await api.devtools.clear({ workspaceId: props.workspaceId });
-    } catch (clearError) {
-      console.warn("Failed to clear debug logs:", clearError);
-    } finally {
-      setClearing(false);
-    }
+    void api.devtools
+      .clear({ workspaceId: props.workspaceId })
+      .catch((clearError: unknown) => {
+        console.warn("Failed to clear debug logs:", clearError);
+      })
+      .finally(() => {
+        setClearing(false);
+      });
   };
 
   if (error) {
@@ -36,8 +37,8 @@ export function DevToolsTab(props: DevToolsTabProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border-light px-3 py-2">
-        <h3 className="text-foreground text-xs font-semibold uppercase tracking-wide">
+      <div className="border-border-light flex items-center justify-between border-b px-3 py-2">
+        <h3 className="text-foreground text-xs font-semibold tracking-wide uppercase">
           Debug Logs
         </h3>
         {runs.length > 0 && (
@@ -69,11 +70,7 @@ export function DevToolsTab(props: DevToolsTabProps) {
         ) : (
           <div className="flex flex-col gap-1.5">
             {runs.map((run) => (
-              <DevToolsRunCard
-                key={run.id}
-                run={run}
-                workspaceId={props.workspaceId}
-              />
+              <DevToolsRunCard key={run.id} run={run} workspaceId={props.workspaceId} />
             ))}
           </div>
         )}

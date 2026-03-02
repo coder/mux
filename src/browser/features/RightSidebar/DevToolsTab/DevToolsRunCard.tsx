@@ -51,7 +51,7 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
   };
 
   return (
-    <div className="rounded border border-border-light bg-background-secondary">
+    <div className="border-border-light bg-background-secondary rounded border">
       <button
         type="button"
         onClick={handleToggle}
@@ -63,7 +63,7 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
             expanded && "rotate-90",
           )}
         />
-        <span className="flex-1 truncate text-xs text-foreground">
+        <span className="text-foreground flex-1 truncate text-xs">
           {props.run.firstMessage || "\u2014"}
         </span>
         {props.run.modelId && (
@@ -73,18 +73,18 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
           {props.run.stepCount} step{props.run.stepCount !== 1 ? "s" : ""}
         </span>
         {props.run.isInProgress && (
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted" />
+          <Loader2 className="text-muted h-3 w-3 shrink-0 animate-spin" />
         )}
         {props.run.hasError && (
-          <AlertCircle className="h-3 w-3 shrink-0 text-destructive" />
+          <AlertCircle className="text-destructive h-3 w-3 shrink-0" />
         )}
       </button>
 
       {expanded && (
-        <div className="border-t border-border-light px-2 py-1.5">
+        <div className="border-border-light border-t px-2 py-1.5">
           {loading ? (
             <div className="flex justify-center py-2">
-              <Loader2 className="h-4 w-4 animate-spin text-muted" />
+              <Loader2 className="text-muted h-4 w-4 animate-spin" />
             </div>
           ) : error ? (
             <p className="text-destructive py-1 text-[10px]">{error}</p>
