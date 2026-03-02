@@ -874,6 +874,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
       setModels: () => Promise.resolve({ success: true, data: undefined }),
     },
+    onePassword: {
+      isAvailable: () => Promise.resolve({ available: false }),
+      listVaults: () => Promise.resolve([]),
+      listItems: () => Promise.resolve([]),
+      getItemFields: () => Promise.resolve([]),
+      buildReference: () => Promise.resolve({ reference: "" }),
+    },
     muxGateway: {
       getAccountStatus: () =>
         Promise.resolve({
