@@ -2,8 +2,9 @@
  * UI integration tests for the built-in "Chat with Mux" system workspace.
  *
  * These tests validate:
- * - App boots into /workspace/mux-chat instead of the Welcome screen.
- * - Clicking the Mux logo navigates to /workspace/mux-chat.
+ * - App boots into the landing page (no auto-navigate to mux-chat).
+ * - Clicking the Mux logo navigates to /workspace/mux-chat from the landing page.
+ * - Clicking the Mux logo navigates back to /workspace/mux-chat from another workspace.
  * - Chat with Mux is permanent: no Archive button + Ctrl+N does not start workspace creation.
  */
 
@@ -43,7 +44,7 @@ describe("Chat with Mux system workspace (UI)", () => {
     await preloadTestModules();
   });
 
-  test("boots into Chat with Mux (no Welcome screen)", async () => {
+  test("boots into landing page, Mux logo navigates to mux-chat", async () => {
     const env = await createTestEnvironment();
     const cleanupDom = installDom();
 
@@ -51,10 +52,28 @@ describe("Chat with Mux system workspace (UI)", () => {
 
     try {
       await view.waitForReady();
-      await waitForWorkspaceChatToRender(view.container);
 
+      // App should start at the landing page (home), not auto-navigate to mux-chat.
+      expect(window.location.pathname).toBe("/");
+
+      // Click the Mux logo to navigate to Chat with Mux.
+      const logoButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            'button[aria-label="Open Chat with Mux"]'
+          ) as HTMLElement | null;
+          if (!btn) throw new Error("Mux logo button not found");
+          return btn;
+        },
+        { timeout: 10_000 }
+      );
+
+      await act(async () => {
+        fireEvent.click(logoButton);
+      });
+
+      await waitForWorkspaceChatToRender(view.container);
       expect(window.location.pathname).toBe(`/workspace/${MUX_HELP_CHAT_WORKSPACE_ID}`);
-      expect(view.queryByText("Welcome to Mux")).toBeNull();
 
       // On first boot, the mux-chat workspace should seed a synthetic welcome message.
       await waitFor(
@@ -148,6 +167,23 @@ describe("Chat with Mux system workspace (UI)", () => {
 
     try {
       await view.waitForReady();
+
+      // Navigate to mux-chat via the logo button (app starts at landing page).
+      const logoButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            'button[aria-label="Open Chat with Mux"]'
+          ) as HTMLElement | null;
+          if (!btn) throw new Error("Mux logo button not found");
+          return btn;
+        },
+        { timeout: 10_000 }
+      );
+
+      await act(async () => {
+        fireEvent.click(logoButton);
+      });
+
       await waitForWorkspaceChatToRender(view.container);
 
       // The system project itself should be hidden from the sidebar projects list.
@@ -179,5 +215,5 @@ describe("Chat with Mux system workspace (UI)", () => {
       await cleanupView(view, cleanupDom);
       await cleanupTestEnvironment(env);
     }
-  }, 30_000);
+  }, 60_000);
 });
