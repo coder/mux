@@ -143,6 +143,7 @@ export const SecretsSection: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const scopeLabel = scope === "global" ? "Global" : "Project";
+  const showSourceColumn = scope === "project" || opAvailable;
 
   // When re-opened with a new project hint (e.g., clicking the secrets button again
   // for a different project), sync the scope and clear the one-shot hint.
@@ -539,13 +540,13 @@ export const SecretsSection: React.FC = () => {
       ) : (
         <div
           className={`[&>label]:text-muted grid ${
-            scope === "project"
+            showSourceColumn
               ? "grid-cols-[1fr_auto_1fr_auto_auto]"
               : "grid-cols-[1fr_1fr_auto_auto]"
           } items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]`}
         >
           <label>Key</label>
-          {scope === "project" && <label>Source</label>}
+          {showSourceColumn && <label>Source</label>}
           <label>Value</label>
           <div />
           <div />
@@ -579,7 +580,7 @@ export const SecretsSection: React.FC = () => {
                   className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
                 />
 
-                {scope === "project" && (
+                {showSourceColumn && (
                   <Select
                     value={kind}
                     onValueChange={(value) => {
@@ -596,6 +597,10 @@ export const SecretsSection: React.FC = () => {
                         return;
                       }
 
+                      if (value === "global" && scope !== "project") {
+                        return;
+                      }
+
                       setOpPickerIndex(null);
                       updateSecretValueKind(index, value);
                     }}
@@ -609,9 +614,11 @@ export const SecretsSection: React.FC = () => {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="literal">Value</SelectItem>
-                      <SelectItem value="global" disabled={availableKeys.length === 0}>
-                        Global
-                      </SelectItem>
+                      {scope === "project" && (
+                        <SelectItem value="global" disabled={availableKeys.length === 0}>
+                          Global
+                        </SelectItem>
+                      )}
                       {opAvailable && <SelectItem value="op">1Password</SelectItem>}
                     </SelectContent>
                   </Select>
