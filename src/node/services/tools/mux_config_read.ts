@@ -12,7 +12,9 @@ import {
   requireMuxHelpWorkspace,
 } from "@/node/services/tools/shared/configToolUtils";
 import { redactConfigDocument } from "@/node/services/tools/shared/configRedaction";
-import { readConfigDocument } from "@/node/services/tools/shared/configReadWrite";
+// Parse-only read: schema validation is deferred to write boundaries,
+// so Chat with Mux can inspect schema-invalid configs before repair.
+import { readConfigDocumentUnvalidated } from "@/node/services/tools/shared/configReadWrite";
 
 export const createMuxConfigReadTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -27,7 +29,7 @@ export const createMuxConfigReadTool: ToolFactory = (config: ToolConfiguration) 
         if (workspaceGuard) return workspaceGuard;
 
         const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "mux_config_read");
-        const rawDocument = await readConfigDocument(muxHome, args.file);
+        const rawDocument = await readConfigDocumentUnvalidated(muxHome, args.file);
         const redactedDocument = redactConfigDocument(args.file, rawDocument);
         const data = args.path != null ? getAtPath(redactedDocument, args.path) : redactedDocument;
 

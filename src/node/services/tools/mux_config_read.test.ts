@@ -186,4 +186,53 @@ describe("mux_config_read", () => {
       expect(nestedResult.data).toBeNull();
     }
   });
+
+  it("reads parseable but schema-invalid config data for recovery", async () => {
+    using muxHome = new TestTempDir("mux-config-read");
+
+    // Seed a config with an out-of-range value that fails schema validation
+    await fs.writeFile(
+      path.join(muxHome.path, "config.json"),
+      JSON.stringify(
+        {
+          taskSettings: { maxParallelAgentTasks: 999 },
+          defaultModel: "anthropic:claude-sonnet-4-20250514",
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      { file: "config" },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toMatchObject({
+        taskSettings: { maxParallelAgentTasks: 999 },
+        defaultModel: "anthropic:claude-sonnet-4-20250514",
+      });
+    }
+  });
+
+  it("fails when config file contains malformed JSON", async () => {
+    using muxHome = new TestTempDir("mux-config-read");
+
+    await fs.writeFile(path.join(muxHome.path, "config.json"), "{ not valid json !!!", "utf-8");
+
+    const tool = await createReadTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      { file: "config" },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("Failed to read mux config");
+    }
+  });
 });
