@@ -98,8 +98,7 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
     : { xAxis: "", yAxes: [] };
 
   const title = props.args.title ?? successResult?.title ?? "Query results";
-  const isRowCountLowerBound =
-    successResult != null && (successResult.rowCountExact === false || successResult.truncated);
+  const isRowCountLowerBound = successResult?.rowCountExact === false;
 
   const handleDrillDown = (context: DrillDownContext) => {
     if (typeof window === "undefined") {
@@ -125,7 +124,8 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
         <ToolName>{title}</ToolName>
         {successResult && (
           <span className="text-muted text-[10px] whitespace-nowrap">
-            {successResult.rowCount.toLocaleString()} rows · {successResult.durationMs}ms
+            {successResult.rowCount.toLocaleString()}
+            {isRowCountLowerBound ? "+" : ""} rows · {successResult.durationMs}ms
           </span>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
