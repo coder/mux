@@ -52,7 +52,7 @@ import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
-import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
+import { useStartWorkspaceCreation } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import {
   clearPendingWorkspaceAiSettings,
@@ -91,7 +91,6 @@ function AppInner() {
   // Get workspace state from context
   const {
     workspaceMetadata,
-    loading,
     setWorkspaceMetadata,
     removeWorkspace,
     updateWorkspaceTitle,
@@ -173,11 +172,8 @@ function AppInner() {
   useEffect(() => {
     document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
   }, [sidebarCollapsed]);
-  const defaultProjectPath = getFirstProjectPath(userProjects);
   const creationProjectPath =
-    !selectedWorkspace && !currentWorkspaceId
-      ? (pendingNewWorkspaceProject ?? defaultProjectPath)
-      : null;
+    !selectedWorkspace && !currentWorkspaceId ? pendingNewWorkspaceProject : null;
 
   // History navigation (back/forward)
   const navigate = useNavigate();
@@ -1071,8 +1067,6 @@ function AppInner() {
               })()
             ) : (
               <LandingPage
-                currentWorkspaceId={currentWorkspaceId}
-                loading={loading}
                 leftSidebarCollapsed={sidebarCollapsed}
                 onToggleLeftSidebarCollapsed={handleToggleSidebar}
               />

@@ -22,8 +22,6 @@ import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
 const CARD_CLASS = "bg-background-secondary border-border-medium rounded-lg border p-3";
 
 interface LandingPageProps {
-  currentWorkspaceId: string | null;
-  loading: boolean;
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
 }
@@ -34,31 +32,6 @@ interface LandingPageProps {
  * session stats, and recent workspaces at a glance.
  */
 export function LandingPage(props: LandingPageProps) {
-  // When a workspace ID is set but hasn't resolved yet, show loading/not-found
-  // instead of the full landing page (preserves existing UX).
-  if (props.currentWorkspaceId) {
-    return (
-      <div className="bg-dark flex flex-1 flex-col overflow-hidden">
-        <LandingTitlebar
-          leftSidebarCollapsed={props.leftSidebarCollapsed}
-          onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
-        />
-        <div
-          className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl flex-1 text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
-          style={{
-            padding: "clamp(40px, 10vh, 100px) 20px",
-            fontSize: "clamp(14px, 2vw, 16px)",
-          }}
-        >
-          <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-            Opening workspace…
-          </h2>
-          <p>{props.loading ? "Loading workspace metadata…" : "Workspace not found."}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="bg-dark flex flex-1 flex-col overflow-hidden">
       <LandingTitlebar

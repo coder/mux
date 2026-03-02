@@ -8,11 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
@@ -64,15 +60,9 @@ function getInitialRoute(): string {
     }
   }
 
-  // In Electron (file://), fallback to localStorage for workspace restoration
-  const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
-    SELECTED_WORKSPACE_KEY,
-    null
-  );
-  if (savedWorkspace?.workspaceId) {
-    return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
-  }
-  return `/workspace/${encodeURIComponent(MUX_HELP_CHAT_WORKSPACE_ID)}`;
+  // Start at home — the landing page is the default startup view.
+  // Users pick a workspace from the landing page or sidebar.
+  return "/";
 }
 
 /** Sync router state to browser URL (dev server only, not Electron/Storybook). */
