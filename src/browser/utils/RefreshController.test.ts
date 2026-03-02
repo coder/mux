@@ -166,10 +166,12 @@ describe("RefreshController", () => {
         throw new Error("boom");
       }
     });
-    const onComplete = mock<(info: { timestamp: number; trigger: string }) => void>(() => {});
+    const onComplete = mock<(info: { timestamp: number; trigger: string }) => void>(
+      () => undefined
+    );
     const onError = mock<
       (info: { timestamp: number; trigger: string; errorMessage: string }) => void
-    >(() => {});
+    >(() => undefined);
 
     const controller = new RefreshController({
       onRefresh,
@@ -201,10 +203,12 @@ describe("RefreshController", () => {
   it("recovers if async onRefresh rejects", async () => {
     const refresh = deferred<void>();
     const onRefresh = mock(() => refresh.promise);
-    const onComplete = mock<(info: { timestamp: number; trigger: string }) => void>(() => {});
+    const onComplete = mock<(info: { timestamp: number; trigger: string }) => void>(
+      () => undefined
+    );
     const onError = mock<
       (info: { timestamp: number; trigger: string; errorMessage: string }) => void
-    >(() => {});
+    >(() => undefined);
 
     const controller = new RefreshController({
       onRefresh,
