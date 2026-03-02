@@ -1,7 +1,8 @@
 import assert from "node:assert";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
+import { devToolsMiddleware } from "@ai-sdk/devtools";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import type { LanguageModel } from "ai";
+import { wrapLanguageModel, type LanguageModel } from "ai";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
@@ -511,6 +512,36 @@ export class ProviderModelFactory {
    * supported by the provider will work without modification.
    */
   async createModel(
+    modelString: string,
+    muxProviderOptions?: MuxProviderOptions
+  ): Promise<Result<LanguageModel, SendMessageError>> {
+    const result = await this._createModelCore(modelString, muxProviderOptions);
+    if (!result.success || process.env.MUX_DEVTOOLS !== "1") {
+      return result;
+    }
+
+    // AI SDK DevTools is an opt-in developer workflow for richer debugging.
+    // Enable with:
+    //   1. MUX_DEVTOOLS=1 make dev
+    //   2. make devtools
+    //   3. Open http://localhost:4983
+    // DevTools middleware currently supports LanguageModelV3 instances only.
+    if (typeof result.data === "string" || result.data.specificationVersion !== "v3") {
+      return Err({
+        type: "unknown",
+        raw: "Failed to enable AI SDK DevTools middleware: expected a LanguageModelV3 instance",
+      });
+    }
+
+    return Ok(
+      wrapLanguageModel({
+        model: result.data,
+        middleware: devToolsMiddleware(),
+      })
+    );
+  }
+
+  private async _createModelCore(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions
   ): Promise<Result<LanguageModel, SendMessageError>> {
