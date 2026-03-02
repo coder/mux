@@ -17,14 +17,14 @@ import { TimingPanel, ModelBreakdownPanel } from "./StatsTab";
 
 type StatsSubTab = "cost" | "timing" | "models";
 
-type StatsOption = {
+interface StatsOption {
   value: StatsSubTab;
   label: string;
-};
+}
 
-const BASE_OPTIONS: Array<StatsOption> = [{ value: "cost", label: "Cost" }];
+const BASE_OPTIONS: StatsOption[] = [{ value: "cost", label: "Cost" }];
 
-const ALL_OPTIONS: Array<StatsOption> = [
+const ALL_OPTIONS: StatsOption[] = [
   { value: "cost", label: "Cost" },
   { value: "timing", label: "Timing" },
   { value: "models", label: "Models" },
