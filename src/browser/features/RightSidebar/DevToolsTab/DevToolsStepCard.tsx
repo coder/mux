@@ -263,7 +263,7 @@ function ToolCallCard(props: { toolCall: unknown }) {
 function MessageBubble(props: { message: unknown }) {
   const [expanded, setExpanded] = useState(false);
   const role = getPromptRole(props.message);
-  const content = stringifyForDisplay(getPromptContent(props.message));
+  const content = extractDisplayContent(getPromptContent(props.message));
   const isTruncated = content.length > 500;
   const displayContent = !expanded && isTruncated ? `${content.slice(0, 500)}…` : content;
 
@@ -369,6 +369,77 @@ function formatPreviewValue(value: unknown): string {
   }
 
   return stringifyForDisplay(value).replace(/\s+/g, " ").trim();
+}
+
+function extractDisplayContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const textParts: string[] = [];
+
+    for (const part of content) {
+      const displayPart = extractDisplayContentPart(part);
+      if (displayPart != null && displayPart.length > 0) {
+        textParts.push(displayPart);
+      }
+    }
+
+    return textParts.join("\n");
+  }
+
+  const singlePartDisplay = extractDisplayContentPart(content);
+  if (singlePartDisplay != null && singlePartDisplay.length > 0) {
+    return singlePartDisplay;
+  }
+
+  return stringifyForDisplay(content);
+}
+
+function extractDisplayContentPart(part: unknown): string | null {
+  if (typeof part === "string") {
+    return part;
+  }
+
+  if (!isRecord(part)) {
+    return stringifyForDisplay(part);
+  }
+
+  if (isProviderOptionsOnlyContentPart(part)) {
+    return null;
+  }
+
+  if (part.type === "text" && typeof part.text === "string") {
+    return part.text;
+  }
+
+  if (part.type === "reasoning" && typeof part.text === "string") {
+    return `[Thinking] ${part.text}`;
+  }
+
+  if (part.type === "tool-result" && typeof part.toolName === "string") {
+    const output = extractToolResultOutput(part.output);
+    return `[Tool Result: ${part.toolName}]\n${stringifyForDisplay(output)}`;
+  }
+
+  if (typeof part.type === "string") {
+    return `[${part.type}]`;
+  }
+
+  return stringifyForDisplay(part);
+}
+
+function isProviderOptionsOnlyContentPart(part: Record<string, unknown>): boolean {
+  return Object.keys(part).every((key) => key === "providerOptions") && "providerOptions" in part;
+}
+
+function extractToolResultOutput(output: unknown): unknown {
+  if (isRecord(output) && output.type === "json" && "value" in output) {
+    return output.value;
+  }
+
+  return output;
 }
 
 function stringifyForDisplay(value: unknown): string {

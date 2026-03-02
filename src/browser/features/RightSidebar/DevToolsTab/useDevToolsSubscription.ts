@@ -1,21 +1,24 @@
 import { useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { isAbortError } from "@/browser/utils/isAbortError";
-import type { DevToolsEvent, DevToolsRunSummary } from "@/common/types/devtools";
+import type { DevToolsEvent, DevToolsRunSummary, DevToolsStep } from "@/common/types/devtools";
 import { assertNever } from "@/common/utils/assertNever";
 
 export function useDevToolsSubscription(workspaceId: string) {
   const { api } = useAPI();
   const [runs, setRuns] = useState<DevToolsRunSummary[]>([]);
+  const [stepsByRun, setStepsByRun] = useState<Map<string, DevToolsStep[]>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api) {
       setRuns([]);
+      setStepsByRun(new Map());
       return;
     }
 
     setRuns([]);
+    setStepsByRun(new Map());
     setError(null);
 
     const controller = new AbortController();
@@ -38,6 +41,7 @@ export function useDevToolsSubscription(workspaceId: string) {
         switch (event.type) {
           case "snapshot":
             setRuns(event.runs);
+            setStepsByRun(new Map());
             break;
           case "run-created":
             setRuns((previousRuns) => [event.run, ...previousRuns]);
@@ -48,10 +52,14 @@ export function useDevToolsSubscription(workspaceId: string) {
             );
             break;
           case "step-created":
+            setStepsByRun((previousStepsByRun) => upsertStep(previousStepsByRun, event.step));
+            break;
           case "step-updated":
+            setStepsByRun((previousStepsByRun) => upsertStep(previousStepsByRun, event.step));
             break;
           case "cleared":
             setRuns([]);
+            setStepsByRun(new Map());
             break;
           default:
             assertNever(event);
@@ -72,5 +80,28 @@ export function useDevToolsSubscription(workspaceId: string) {
     };
   }, [api, workspaceId]);
 
-  return { runs, error };
+  return { runs, stepsByRun, error };
+}
+
+function upsertStep(
+  previousStepsByRun: Map<string, DevToolsStep[]>,
+  incomingStep: DevToolsStep
+): Map<string, DevToolsStep[]> {
+  const nextStepsByRun = new Map(previousStepsByRun);
+  const previousSteps = nextStepsByRun.get(incomingStep.runId) ?? [];
+  const existingStepIndex = previousSteps.findIndex((step) => step.id === incomingStep.id);
+
+  if (existingStepIndex === -1) {
+    nextStepsByRun.set(incomingStep.runId, sortSteps([...previousSteps, incomingStep]));
+    return nextStepsByRun;
+  }
+
+  const updatedSteps = [...previousSteps];
+  updatedSteps[existingStepIndex] = incomingStep;
+  nextStepsByRun.set(incomingStep.runId, sortSteps(updatedSteps));
+  return nextStepsByRun;
+}
+
+function sortSteps(steps: DevToolsStep[]): DevToolsStep[] {
+  return [...steps].sort((left, right) => left.stepNumber - right.stepNumber);
 }

@@ -10,7 +10,7 @@ interface DevToolsTabProps {
 
 export function DevToolsTab(props: DevToolsTabProps) {
   const { api } = useAPI();
-  const { runs, error } = useDevToolsSubscription(props.workspaceId);
+  const { runs, stepsByRun, error } = useDevToolsSubscription(props.workspaceId);
   const [clearing, setClearing] = useState(false);
 
   const handleClear = () => {
@@ -70,7 +70,12 @@ export function DevToolsTab(props: DevToolsTabProps) {
         ) : (
           <div className="flex flex-col gap-1.5">
             {runs.map((run) => (
-              <DevToolsRunCard key={run.id} run={run} workspaceId={props.workspaceId} />
+              <DevToolsRunCard
+                key={run.id}
+                run={run}
+                workspaceId={props.workspaceId}
+                liveSteps={stepsByRun.get(run.id)}
+              />
             ))}
           </div>
         )}

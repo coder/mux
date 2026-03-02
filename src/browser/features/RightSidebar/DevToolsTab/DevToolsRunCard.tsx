@@ -9,6 +9,7 @@ import { DevToolsStepCard } from "./DevToolsStepCard";
 interface DevToolsRunCardProps {
   run: DevToolsRunSummary;
   workspaceId: string;
+  liveSteps?: DevToolsStep[];
 }
 
 export function DevToolsRunCard(props: DevToolsRunCardProps) {
@@ -19,11 +20,13 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const displaySteps = props.liveSteps ?? steps;
+
   const handleToggle = () => {
     const nextExpanded = !expanded;
     setExpanded(nextExpanded);
 
-    if (!nextExpanded || steps !== null || !api) {
+    if (!nextExpanded || props.liveSteps != null || steps !== null || !api) {
       return;
     }
 
@@ -79,15 +82,15 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
 
       {expanded && (
         <div className="border-border-light border-t px-2 py-1.5">
-          {loading ? (
+          {loading && displaySteps == null ? (
             <div className="flex justify-center py-2">
               <Loader2 className="text-muted h-4 w-4 animate-spin" />
             </div>
-          ) : error ? (
+          ) : error && displaySteps == null ? (
             <p className="text-destructive py-1 text-[10px]">{error}</p>
-          ) : steps && steps.length > 0 ? (
+          ) : displaySteps && displaySteps.length > 0 ? (
             <div className="flex flex-col gap-1">
-              {steps.map((step) => (
+              {displaySteps.map((step) => (
                 <DevToolsStepCard key={step.id} step={step} />
               ))}
             </div>
