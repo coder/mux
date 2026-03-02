@@ -5,6 +5,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Button } from "@/browser/components/Button/Button";
+import { Input } from "@/browser/components/Input/Input";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
 import {
   ToggleGroup,
@@ -134,6 +135,8 @@ export const SecretsSection: React.FC = () => {
   const [opAvailable, setOpAvailable] = useState(false);
   const [opPickerIndex, setOpPickerIndex] = useState<number | null>(null);
 
+  const [opAccountName, setOpAccountName] = useState("");
+
   // Track the last plaintext value per row index so toggling Source back to
   // "Value" restores the user's input instead of clearing it.
   const lastLiteralValuesRef = useRef<Map<number, string>>(new Map());
@@ -259,6 +262,39 @@ export const SecretsSection: React.FC = () => {
       cancelled = true;
     };
   }, [api]);
+
+  useEffect(() => {
+    if (!api) {
+      setOpAccountName("");
+      return;
+    }
+
+    let cancelled = false;
+    void api.config
+      .getConfig()
+      .then((config) => {
+        if (cancelled) {
+          return;
+        }
+
+        setOpAccountName(config.onePasswordAccountName ?? "");
+      })
+      .catch(() => {
+        // Best-effort only.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  const handleOpAccountNameChange = useCallback(
+    (value: string) => {
+      setOpAccountName(value);
+      void api?.config.updateOnePasswordAccountName({ onePasswordAccountName: value || null });
+    },
+    [api]
+  );
 
   // Load global secret keys (used for {secret:"KEY"} project secret values).
   useEffect(() => {
@@ -455,6 +491,24 @@ export const SecretsSection: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex-1">
+          <div className="text-foreground text-sm">1Password Account</div>
+          <div className="text-muted text-xs">
+            Your 1Password account name (for example &apos;my-team.1password.com&apos;). Required
+            for 1Password integration.
+          </div>
+        </div>
+        <Input
+          value={opAccountName}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            handleOpAccountNameChange(e.target.value)
+          }
+          placeholder="my-team.1password.com"
+          className="border-border-medium bg-background-secondary h-9 w-64"
+        />
+      </div>
+
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-muted text-xs">

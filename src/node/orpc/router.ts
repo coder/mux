@@ -579,6 +579,7 @@ export const router = (authToken?: string) => {
             // Mux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
+            onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
       updateAgentAiDefaults: t
@@ -684,6 +685,20 @@ export const router = (authToken?: string) => {
               ...config,
               // Default ON: store `false` only.
               stopCoderWorkspaceOnArchive: input.stopCoderWorkspaceOnArchive ? undefined : false,
+            };
+          });
+        }),
+      updateOnePasswordAccountName: t
+        .input(schemas.config.updateOnePasswordAccountName.input)
+        .output(schemas.config.updateOnePasswordAccountName.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const trimmedAccountName = input.onePasswordAccountName?.trim() ?? undefined;
+            const normalizedAccountName =
+              trimmedAccountName === "" ? undefined : trimmedAccountName;
+            return {
+              ...config,
+              onePasswordAccountName: normalizedAccountName,
             };
           });
         }),

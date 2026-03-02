@@ -126,6 +126,8 @@ export interface MockORPCClientOptions {
   runtimeEnablement?: Record<string, boolean>;
   /** Initial default runtime for config.getConfig (global) */
   defaultRuntime?: RuntimeEnablementId | null;
+  /** Initial 1Password account name for config.getConfig */
+  onePasswordAccountName?: string | null;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => (() => void) | void;
   /** Mock for executeBash per workspace */
@@ -331,6 +333,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     stopCoderWorkspaceOnArchive: initialStopCoderWorkspaceOnArchive = true,
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
+    onePasswordAccountName: initialOnePasswordAccountName = null,
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
@@ -547,6 +550,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   let defaultRuntime: RuntimeEnablementId | null = initialDefaultRuntime ?? null;
+  let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let globalSecretsState: Secret[] = [...globalSecrets];
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
@@ -707,6 +711,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
+          onePasswordAccountName,
           muxGovernorEnrolled,
         }),
       saveConfig: (input: {
@@ -749,6 +754,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateCoderPrefs: (input: { stopCoderWorkspaceOnArchive: boolean }) => {
         stopCoderWorkspaceOnArchive = input.stopCoderWorkspaceOnArchive;
+        return Promise.resolve(undefined);
+      },
+      updateOnePasswordAccountName: (input: { onePasswordAccountName?: string | null }) => {
+        onePasswordAccountName = input.onePasswordAccountName ?? null;
         return Promise.resolve(undefined);
       },
       updateRuntimeEnablement: (input: {

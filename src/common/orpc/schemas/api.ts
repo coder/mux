@@ -1606,6 +1606,7 @@ export const config = {
       // Mux Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
+      onePasswordAccountName: z.string().nullish(),
     }),
   },
   saveConfig: {
@@ -1641,6 +1642,14 @@ export const config = {
     input: z
       .object({
         stopCoderWorkspaceOnArchive: z.boolean(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateOnePasswordAccountName: {
+    input: z
+      .object({
+        onePasswordAccountName: z.string().nullish(),
       })
       .strict(),
     output: z.void(),
