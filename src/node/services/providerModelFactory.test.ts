@@ -10,7 +10,6 @@ import {
   classifyCopilotInitiator,
   modelCostsIncluded,
   MUX_AI_PROVIDER_USER_AGENT,
-  resolveAIProviderBodySource,
   resolveAIProviderHeaderSource,
 } from "./providerModelFactory";
 import { ProviderService } from "./providerService";
@@ -241,37 +240,6 @@ describe("classifyCopilotInitiator", () => {
 
   it("returns 'user' when body has no messages field", () => {
     expect(classifyCopilotInitiator(JSON.stringify({ model: "gpt-4o" }))).toBe("user");
-  });
-});
-
-describe("resolveAIProviderBodySource", () => {
-  it("prefers init.body when provided", () => {
-    const input = new Request("https://example.com", {
-      method: "POST",
-      body: JSON.stringify({ messages: [{ role: "tool", content: "from request" }] }),
-    });
-    const initBody = JSON.stringify({ messages: [{ role: "user", content: "from init" }] });
-
-    const result = resolveAIProviderBodySource(input, { body: initBody });
-
-    expect(result).toBe(initBody);
-  });
-
-  it("uses Request.body when init.body is missing", () => {
-    const input = new Request("https://example.com", {
-      method: "POST",
-      body: JSON.stringify({ messages: [{ role: "user", content: "hello" }] }),
-    });
-
-    const result = resolveAIProviderBodySource(input, undefined);
-
-    expect(result).toBe(input.body);
-  });
-
-  it("returns undefined for non-Request inputs without init body", () => {
-    const result = resolveAIProviderBodySource("https://example.com", undefined);
-
-    expect(result).toBeUndefined();
   });
 });
 
