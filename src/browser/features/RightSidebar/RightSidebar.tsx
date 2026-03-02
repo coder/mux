@@ -15,6 +15,7 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import { StatsContainer } from "@/browser/features/RightSidebar/StatsContainer";
+import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary";
 
 import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
@@ -502,7 +503,9 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
         {props.node.activeTab === "costs" && (
           <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
-            <StatsContainer workspaceId={props.workspaceId} />
+            <ErrorBoundary workspaceInfo="Stats tab">
+              <StatsContainer workspaceId={props.workspaceId} />
+            </ErrorBoundary>
           </div>
         )}
 
