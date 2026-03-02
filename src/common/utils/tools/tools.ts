@@ -14,6 +14,7 @@ import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/t
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
