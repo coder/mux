@@ -399,8 +399,11 @@ export const QueuedMessageWithReviews: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
 
-    // Validate queued mixed content: banner + inline review content + image attachment.
-    await canvas.findByText("Queued");
+    // Header remains visible while collapsed.
+    const header = await canvas.findByRole("button", { name: /queued/i });
+
+    // Expand to validate queued mixed content: inline review content + image attachment.
+    await userEvent.click(header);
     await canvas.findByText("Consider using a constant for the token expiry duration");
     await canvas.findByRole("img", { name: "Attachment 1" });
 

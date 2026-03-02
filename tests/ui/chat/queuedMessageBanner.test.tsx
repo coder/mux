@@ -15,6 +15,11 @@ function createQueuedMessage(overrides?: Partial<QueuedMessageData>): QueuedMess
   };
 }
 
+function expandQueuedMessage(view: ReturnType<typeof render>) {
+  const header = view.getByRole("button", { name: /queued/i });
+  fireEvent.click(header);
+}
+
 describe("QueuedMessage banner", () => {
   let cleanupDom: (() => void) | null = null;
 
@@ -28,16 +33,44 @@ describe("QueuedMessage banner", () => {
     cleanupDom = null;
   });
 
+  test("starts collapsed — body content is hidden", () => {
+    const view = render(
+      <QueuedMessage
+        message={createQueuedMessage()}
+        onEdit={mock(() => {})}
+        onSendImmediately={mock(async () => {})}
+      />
+    );
+
+    expect(view.getByRole("button", { name: /queued/i })).toBeTruthy();
+    expect(view.queryByText("Review this change before sending")).toBeNull();
+    expect(view.queryByText("Edit")).toBeNull();
+  });
+
+  test("expands and collapses on header click", () => {
+    const view = render(<QueuedMessage message={createQueuedMessage()} onEdit={mock(() => {})} />);
+
+    const header = view.getByRole("button", { name: /queued/i });
+    fireEvent.click(header);
+    expect(view.getByText("Review this change before sending")).toBeTruthy();
+
+    fireEvent.click(header);
+    expect(view.queryByText("Review this change before sending")).toBeNull();
+    expect(view.queryByText("Edit")).toBeNull();
+  });
+
   test("renders queued preview text and label", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} />);
 
     expect(view.getByText("Queued")).toBeTruthy();
+    expandQueuedMessage(view);
     expect(view.getByText("Review this change before sending")).toBeTruthy();
   });
 
   test("renders an inner queued bubble inside the banner", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} />);
 
+    expandQueuedMessage(view);
     const banner = view.container.querySelector('[data-component="QueuedMessageBanner"]');
     const bubble = view.container.querySelector('[data-component="QueuedMessageCard"]');
 
@@ -57,6 +90,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     expect(view.getByText("Edit")).toBeTruthy();
     expect(view.getByText("Send now")).toBeTruthy();
   });
@@ -66,6 +100,7 @@ describe("QueuedMessage banner", () => {
 
     const view = render(<QueuedMessage message={createQueuedMessage()} onEdit={onEdit} />);
 
+    expandQueuedMessage(view);
     fireEvent.click(view.getByText("Edit"));
 
     expect(onEdit).toHaveBeenCalledTimes(1);
@@ -78,6 +113,7 @@ describe("QueuedMessage banner", () => {
       <QueuedMessage message={createQueuedMessage()} onSendImmediately={onSendImmediately} />
     );
 
+    expandQueuedMessage(view);
     fireEvent.click(view.getByText("Send now"));
 
     await waitFor(() => {
@@ -88,6 +124,7 @@ describe("QueuedMessage banner", () => {
   test("does not render Send now button when onSendImmediately is absent", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} onEdit={mock(() => {})} />);
 
+    expandQueuedMessage(view);
     expect(view.queryByText("Send now")).toBeNull();
   });
 
@@ -106,6 +143,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     expect(view.getByRole("link", { name: "example.ts" })).toBeTruthy();
   });
 
@@ -125,6 +163,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     expect(view.getByText(/src\/example\.ts/)).toBeTruthy();
     expect(view.getByText("Double-check this logic.")).toBeTruthy();
   });
@@ -147,6 +186,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     expect(view.queryByText(/Re src\/example\.ts/)).toBeNull();
     expect(view.queryByText(/<review>/)).toBeNull();
     expect(view.getByText("Please also check the tests")).toBeTruthy();
@@ -169,6 +209,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     expect(view.getByText("Do this please")).toBeTruthy();
   });
 
@@ -198,6 +239,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     expect(view.getByText("Please review the bundle output")).toBeTruthy();
     expect(view.getByText(/src\/App\.tsx/)).toBeTruthy();
     expect(view.getByText("Please validate edge cases")).toBeTruthy();
@@ -222,6 +264,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     const images = view.container.querySelectorAll("img");
     expect(images.length).toBe(2);
     expect(view.getByAltText("Attachment 1")).toBeTruthy();
@@ -245,6 +288,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     const images = view.container.querySelectorAll("img");
     expect(images.length).toBe(5);
     expect(view.getByAltText("Attachment 5")).toBeTruthy();
@@ -268,6 +312,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     const images = view.container.querySelectorAll("img");
     expect(images.length).toBe(1);
     expect(view.getByAltText("Attachment 1")).toBeTruthy();
@@ -288,6 +333,7 @@ describe("QueuedMessage banner", () => {
       />
     );
 
+    expandQueuedMessage(view);
     const images = view.container.querySelectorAll("img");
     expect(images.length).toBe(2);
     expect(view.getByText("Queued message ready")).toBeTruthy();
