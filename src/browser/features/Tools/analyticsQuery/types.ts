@@ -20,6 +20,7 @@ export interface AnalyticsQueryResult {
   rows: Array<Record<string, unknown>>;
   truncated: boolean;
   rowCount: number;
+  rowCountExact?: boolean;
   durationMs: number;
   visualization?: ChartType | null;
   title?: string | null;

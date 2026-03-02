@@ -117,6 +117,7 @@ describe("AnalyticsQueryToolCall", () => {
       rows: [{ model: "gpt-5", total_cost_usd: 1.2 }],
       truncated: true,
       rowCount: 500,
+      rowCountExact: false,
       durationMs: 11,
       visualization: "table",
       x_axis: "model",
@@ -131,7 +132,7 @@ describe("AnalyticsQueryToolCall", () => {
       />
     );
 
-    expect(view.getByText(/Showing 1 of 500 rows/i)).toBeTruthy();
+    expect(view.getByText(/Showing 1 of 500\+ rows/i)).toBeTruthy();
   });
 
   test("renders chart selector controls", () => {

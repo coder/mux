@@ -98,6 +98,8 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
     : { xAxis: "", yAxes: [] };
 
   const title = props.args.title ?? successResult?.title ?? "Query results";
+  const isRowCountLowerBound =
+    successResult != null && (successResult.rowCountExact === false || successResult.truncated);
 
   const handleDrillDown = (context: DrillDownContext) => {
     if (typeof window === "undefined") {
@@ -147,7 +149,8 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
                 <div className="text-warning mb-2 flex items-center gap-1 text-[10px]">
                   <AlertTriangle className="size-3" />
                   Showing {successResult.rows.length.toLocaleString()} of{" "}
-                  {successResult.rowCount.toLocaleString()} rows (results truncated).
+                  {successResult.rowCount.toLocaleString()}
+                  {isRowCountLowerBound ? "+" : ""} rows (results truncated).
                 </div>
               )}
 
