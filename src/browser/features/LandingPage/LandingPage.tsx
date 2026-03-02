@@ -6,7 +6,11 @@ import { Button } from "@/browser/components/Button/Button";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { useRouter } from "@/browser/contexts/RouterContext";
-import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
+import {
+  useWorkspaceMetadata,
+  useWorkspaceContext,
+  toWorkspaceSelection,
+} from "@/browser/contexts/WorkspaceContext";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import {
   useMuxGatewayAccountStatus,
@@ -156,8 +160,8 @@ function SessionStatsRow() {
 // ─── Recent workspaces section ───────────────────────────────────────────
 function RecentWorkspacesSection() {
   const { workspaceMetadata } = useWorkspaceMetadata();
+  const { setSelectedWorkspace } = useWorkspaceContext();
   const workspaceRecency = useWorkspaceRecency();
-  const { navigateToWorkspace } = useRouter();
 
   // Sort all workspaces by recency, take top 4
   const recentWorkspaces = useMemo(() => {
@@ -177,7 +181,7 @@ function RecentWorkspacesSection() {
             key={ws.id}
             workspaceId={ws.id}
             title={ws.title ?? ws.name}
-            onClick={() => navigateToWorkspace(ws.id)}
+            onClick={() => setSelectedWorkspace(toWorkspaceSelection(ws))}
           />
         ))}
       </div>
