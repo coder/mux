@@ -88,6 +88,13 @@ describe("mux_config_read", () => {
             nested: { signingKey: "sign-key-value" },
             displayName: "Custom Auth Provider",
           },
+          "custom-plural": {
+            apiKeys: ["key-1", "key-2"],
+            accessTokens: "plural-token-secret",
+            clientSecrets: "plural-client-secret",
+            nested: { signingKeys: "nested-plural-signing" },
+            displayName: "Plural Provider",
+          },
         },
         null,
         2
@@ -143,6 +150,18 @@ describe("mux_config_read", () => {
       // Non-secret keys are preserved.
       expect(customAuthData.displayName).toBe("Custom Auth Provider");
 
+      const customPluralData = (fullResult.data as Record<string, unknown>)[
+        "custom-plural"
+      ] as Record<string, unknown>;
+      expect(customPluralData.apiKeys).toBe(REDACTED_SECRET_VALUE);
+      expect(customPluralData.accessTokens).toBe(REDACTED_SECRET_VALUE);
+      expect(customPluralData.clientSecrets).toBe(REDACTED_SECRET_VALUE);
+      expect((customPluralData.nested as Record<string, unknown>).signingKeys).toBe(
+        REDACTED_SECRET_VALUE
+      );
+      // Non-secret keys are preserved.
+      expect(customPluralData.displayName).toBe("Plural Provider");
+
       const serialized = JSON.stringify(fullResult.data);
       expect(serialized).not.toContain("sk-ant-secret");
       expect(serialized).not.toContain("or-secret");
@@ -154,6 +173,10 @@ describe("mux_config_read", () => {
       expect(serialized).not.toContain("ck-hidden-value");
       expect(serialized).not.toContain("svc-key-secret");
       expect(serialized).not.toContain("sign-key-value");
+      expect(serialized).not.toContain("key-1");
+      expect(serialized).not.toContain("plural-token-secret");
+      expect(serialized).not.toContain("plural-client-secret");
+      expect(serialized).not.toContain("nested-plural-signing");
     }
 
     const pathResult = (await tool.execute!(
@@ -174,6 +197,16 @@ describe("mux_config_read", () => {
     expect(tokenPathResult.success).toBe(true);
     if (tokenPathResult.success) {
       expect(tokenPathResult.data).toBe(REDACTED_SECRET_VALUE);
+    }
+
+    const pluralTokenPathResult = (await tool.execute!(
+      { file: "providers", path: ["custom-plural", "accessTokens"] },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+
+    expect(pluralTokenPathResult.success).toBe(true);
+    if (pluralTokenPathResult.success) {
+      expect(pluralTokenPathResult.data).toBe(REDACTED_SECRET_VALUE);
     }
 
     const privateKeyPathResult = (await tool.execute!(

@@ -100,6 +100,13 @@ function redactSecretsRecursively(node: unknown, policy: RedactionPolicy): void 
   }
 }
 
+// Lightweight singularization for secret-tail detection: strips trailing "s" so
+// pluralized custom-provider key names (e.g. apiKeys, accessTokens, clientSecrets)
+// match the canonical set.
+function singularizeTailWord(word: string): string {
+  return word.endsWith("s") && word.length > 1 ? word.slice(0, -1) : word;
+}
+
 // Provider configs are catchall-based, so custom providers can store credentials under
 // non-standard key names that are unknown to our explicit allowlist.
 function looksLikeProviderSecretKey(key: string): boolean {
@@ -114,12 +121,23 @@ function looksLikeProviderSecretKey(key: string): boolean {
   }
 
   const tail1 = segments.at(-1);
-  if (tail1 && SECRET_TAIL_WORDS.has(tail1)) {
+  if (tail1 && SECRET_TAIL_WORDS.has(singularizeTailWord(tail1))) {
     return true;
   }
 
-  const tail2 = segments.slice(-2).join("_");
-  return SECRET_TAIL_PAIRS.has(tail2);
+  if (segments.length >= 2) {
+    const secondToLast = segments[segments.length - 2];
+    const last = segments[segments.length - 1];
+
+    if (secondToLast === undefined || last === undefined) {
+      return false;
+    }
+
+    const tail2 = `${secondToLast}_${singularizeTailWord(last)}`;
+    return SECRET_TAIL_PAIRS.has(tail2);
+  }
+
+  return false;
 }
 
 function redactSensitiveHeaders(headers: Record<string, unknown>): void {
