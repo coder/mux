@@ -1,11 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createServer } from "http";
 
 import {
   MCPServerManager,
   isClosedClientError,
-  raceWithAbort,
-  raceWithTimeout,
+  runMCPToolWithDeadline,
   wrapMCPTools,
 } from "./mcpServerManager";
 import type { MCPConfigService } from "./mcpConfigService";
@@ -803,38 +802,73 @@ describe("wrapMCPTools", () => {
     expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
-  test("raceWithTimeout rejects after timeout", async () => {
-    const pending = Promise.withResolvers<never>();
+  test("runMCPToolWithDeadline rejects after timeout", async () => {
+    const { promise } = Promise.withResolvers<unknown>();
 
     let caught: unknown;
     try {
-      await raceWithTimeout(pending.promise, 50, "testTool");
+      await runMCPToolWithDeadline(() => promise, {
+        toolName: "slowTool",
+        timeoutMs: 50,
+      });
     } catch (error) {
       caught = error;
     }
 
     expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe("MCP tool 'testTool' timed out after 50ms");
+    expect((caught as Error).message).toContain("timed out");
+    expect((caught as Error).message).toContain("slowTool");
   });
 
-  test("raceWithAbort drains pre-started promise on pre-aborted signal", async () => {
-    const { promise, reject } = Promise.withResolvers<never>();
+  test("runMCPToolWithDeadline skips start when pre-aborted", async () => {
+    const startFn = mock(() => Promise.resolve("should not run"));
     const controller = new AbortController();
     controller.abort();
 
     let caught: unknown;
     try {
-      await raceWithAbort(promise, controller.signal);
+      await runMCPToolWithDeadline(startFn, {
+        toolName: "test",
+        timeoutMs: 300_000,
+        signal: controller.signal,
+      });
     } catch (error) {
       caught = error;
     }
-
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toBe("Interrupted");
+    expect(startFn).not.toHaveBeenCalled();
+  });
 
-    // Late-reject the orphaned promise — should NOT produce unhandled rejection
-    // because raceWithAbort attached a drain handler.
-    reject(new Error("late failure"));
+  test("runMCPToolWithDeadline clears timeout when abort wins", async () => {
+    const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+    try {
+      const { promise } = Promise.withResolvers<unknown>();
+      const controller = new AbortController();
+
+      // Start the deadline race with a hung promise, then abort.
+      const resultPromise = runMCPToolWithDeadline(() => promise, {
+        toolName: "hangingTool",
+        timeoutMs: 300_000,
+        signal: controller.signal,
+      });
+      controller.abort();
+
+      let caught: unknown;
+      try {
+        await resultPromise;
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe("Interrupted");
+      // The timeout timer must be cleared eagerly when abort wins —
+      // not left dangling for 5 minutes.
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+    } finally {
+      clearTimeoutSpy.mockRestore();
+    }
   });
 
   test("passes through successful execution results", async () => {
