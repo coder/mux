@@ -3,7 +3,7 @@ import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { AnalyticsQueryToolCall } from "./AnalyticsQueryToolCall";
-import type { AnalyticsQueryResult } from "./types";
+import type { AnalyticsQueryResult, AnalyticsQueryToolResult } from "./types";
 
 function renderWithTooltip(ui: JSX.Element) {
   return render(<TooltipProvider>{ui}</TooltipProvider>);
@@ -92,6 +92,26 @@ describe("AnalyticsQueryToolCall", () => {
 
     expect(view.getByText(/2 rows/i)).toBeTruthy();
     expect(view.getByText(/37ms/i)).toBeTruthy();
+  });
+
+  test("ignores malformed success result missing numeric metadata", () => {
+    const malformedResult = {
+      success: true,
+      columns: [{ name: "model", type: "VARCHAR" }],
+      rows: [{ model: "gpt-5" }],
+      truncated: false,
+    } as unknown as AnalyticsQueryToolResult;
+
+    const view = renderWithTooltip(
+      <AnalyticsQueryToolCall
+        args={{ sql: "SELECT model FROM events" }}
+        result={malformedResult}
+        status="completed"
+      />
+    );
+
+    expect(view.getByText("Query results")).toBeTruthy();
+    expect(view.queryByText(/rows ·/i)).toBeNull();
   });
 
   test("shows tool error result", () => {

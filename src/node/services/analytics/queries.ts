@@ -1031,7 +1031,7 @@ export async function executeRawQuery(
   validateRawQuerySql(cleanSql);
 
   const fetchLimit = RAW_QUERY_ROW_LIMIT + 1;
-  const wrappedSql = `SELECT * FROM (${cleanSql}) AS __q LIMIT ${fetchLimit}`;
+  const wrappedSql = `SELECT * FROM (\n${cleanSql}\n) AS __q LIMIT ${fetchLimit}`;
 
   const startMs = performance.now();
   const result = await conn.run(wrappedSql);

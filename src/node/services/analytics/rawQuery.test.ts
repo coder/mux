@@ -48,6 +48,10 @@ function createMockConn(
   };
 }
 
+function expectedWrappedSql(sql: string): string {
+  return `SELECT * FROM (\n${sql}\n) AS __q LIMIT ${RAW_QUERY_ROW_LIMIT + 1}`;
+}
+
 async function expectQueryFailure(promise: Promise<unknown>, errorPattern: RegExp): Promise<void> {
   try {
     await promise;
@@ -97,7 +101,7 @@ describe("executeRawQuery", () => {
     );
 
     expect(runMock).toHaveBeenCalledWith(
-      "SELECT * FROM (SELECT model, input_tokens, created_at FROM events) AS __q LIMIT 10001"
+      expectedWrappedSql("SELECT model, input_tokens, created_at FROM events")
     );
     expect(result.columns).toEqual([
       { name: "model", type: "VARCHAR" },
@@ -127,10 +131,23 @@ describe("executeRawQuery", () => {
 
     const result = await executeRawQuery(conn, "  SELECT 1 AS value FROM events;;   ");
 
-    expect(runMock).toHaveBeenCalledWith(
-      "SELECT * FROM (SELECT 1 AS value FROM events) AS __q LIMIT 10001"
-    );
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql("SELECT 1 AS value FROM events"));
     expect(result.rows).toEqual([{ value: 1 }]);
+  });
+
+  test("keeps wrapper terminator outside trailing line comments", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "value", type: "INTEGER" }],
+        rows: [{ value: 1 }],
+      })
+    );
+
+    const sql = "SELECT 1 AS value -- trailing comment";
+
+    await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
   });
 
   test("rejects duckdb system functions", async () => {
@@ -180,7 +197,7 @@ describe("executeRawQuery", () => {
 
     const result = await executeRawQuery(conn, sql);
 
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
     expect(result.rows).toEqual([{ request_count: 3 }]);
   });
 
@@ -246,7 +263,7 @@ describe("executeRawQuery", () => {
 
     const result = await executeRawQuery(conn, sql);
 
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
     expect(result.rows).toEqual([{ request_count: 1 }]);
   });
 
@@ -262,7 +279,7 @@ describe("executeRawQuery", () => {
 
     const result = await executeRawQuery(conn, sql);
 
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
     expect(result.rows).toEqual([{ request_count: 1 }]);
   });
 
@@ -278,7 +295,7 @@ describe("executeRawQuery", () => {
 
     const result = await executeRawQuery(conn, sql);
 
-    expect(runMock).toHaveBeenCalledWith(`SELECT * FROM (${sql}) AS __q LIMIT 10001`);
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
     expect(result.rows).toEqual([{ request_count: 1 }]);
   });
 
@@ -321,7 +338,7 @@ describe("executeRawQuery", () => {
     const result = await executeRawQuery(conn, "SELECT COUNT(*) AS request_count FROM events");
 
     expect(runMock).toHaveBeenCalledWith(
-      "SELECT * FROM (SELECT COUNT(*) AS request_count FROM events) AS __q LIMIT 10001"
+      expectedWrappedSql("SELECT COUNT(*) AS request_count FROM events")
     );
     expect(result.rows).toEqual([{ request_count: 7 }]);
   });
@@ -340,7 +357,7 @@ describe("executeRawQuery", () => {
     );
 
     expect(runMock).toHaveBeenCalledWith(
-      "SELECT * FROM (SELECT COUNT(*) AS delegation_count FROM delegation_rollups) AS __q LIMIT 10001"
+      expectedWrappedSql("SELECT COUNT(*) AS delegation_count FROM delegation_rollups")
     );
     expect(result.rows).toEqual([{ delegation_count: 2 }]);
   });
@@ -355,9 +372,7 @@ describe("executeRawQuery", () => {
 
     const result = await executeRawQuery(conn, "SELECT read_count FROM events");
 
-    expect(runMock).toHaveBeenCalledWith(
-      "SELECT * FROM (SELECT read_count FROM events) AS __q LIMIT 10001"
-    );
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql("SELECT read_count FROM events"));
     expect(result.rows).toEqual([{ read_count: 5 }]);
   });
 
@@ -454,7 +469,9 @@ describe("executeRawQuery", () => {
     );
 
     expect(runMock).toHaveBeenCalledWith(
-      "SELECT * FROM (WITH cte AS (INSERT INTO events (workspace_id) VALUES ('x')) SELECT * FROM cte) AS __q LIMIT 10001"
+      expectedWrappedSql(
+        "WITH cte AS (INSERT INTO events (workspace_id) VALUES ('x')) SELECT * FROM cte"
+      )
     );
   });
 });

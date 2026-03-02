@@ -60,18 +60,20 @@ const CHART_TYPE_OPTIONS: ChartTypeOption[] = [
   { type: "stacked_bar", icon: BarChart3, label: "Stacked" },
 ];
 
-function isAnalyticsQuerySuccessResult(
-  result: AnalyticsQueryToolResult | undefined
-): result is AnalyticsQueryResult {
+function isAnalyticsQuerySuccessResult(result: unknown): result is AnalyticsQueryResult {
   if (!result || typeof result !== "object") {
     return false;
   }
 
-  if (result.success !== true) {
-    return false;
-  }
+  const parsedResult = result as Record<string, unknown>;
 
-  return Array.isArray(result.columns) && Array.isArray(result.rows);
+  return (
+    parsedResult.success === true &&
+    Array.isArray(parsedResult.columns) &&
+    Array.isArray(parsedResult.rows) &&
+    typeof parsedResult.rowCount === "number" &&
+    typeof parsedResult.durationMs === "number"
+  );
 }
 
 function escapeDoubleQuotes(value: string): string {
