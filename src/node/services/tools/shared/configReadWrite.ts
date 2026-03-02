@@ -85,6 +85,22 @@ export async function readConfigDocumentUnvalidated(
   return readParsedConfigDocument(muxHomeDir, fileKey);
 }
 
+// Prevent writes from escaping the mux config boundary via symlinked targets.
+async function assertWritableConfigTarget(filePath: string, fileKey: ConfigFileKey): Promise<void> {
+  try {
+    const stat = await fs.lstat(filePath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing to write symlinked mux config target for "${fileKey}"`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return; // file doesn't exist yet — creation is fine
+    }
+
+    throw error;
+  }
+}
+
 export async function writeConfigDocument<TKey extends ConfigFileKey>(
   muxHomeDir: string,
   fileKey: TKey,
@@ -96,6 +112,7 @@ export async function writeConfigDocument<TKey extends ConfigFileKey>(
   const serialized = JSON.stringify(validatedDocument, null, 2);
 
   await fs.mkdir(muxHomeDir, { recursive: true });
+  await assertWritableConfigTarget(filePath, fileKey);
 
   if (entry.fileKind === "jsonc") {
     writeFileAtomic.sync(filePath, `${PROVIDERS_JSONC_COMMENT_HEADER}${serialized}`, {

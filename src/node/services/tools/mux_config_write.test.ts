@@ -516,4 +516,61 @@ describe("mux_config_write", () => {
     };
     expect(providersDocument).toEqual({ anthropic: { apiKey: "sk-ant-fixed" } });
   });
+
+  it("rejects writes to symlinked config.json target", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    // Create an external file that should NOT be modified
+    const externalTarget = path.join(muxHome.path, "external-config.json");
+    const originalContent = JSON.stringify({ untouched: true }, null, 2);
+    await fs.writeFile(externalTarget, originalContent, "utf-8");
+
+    // Symlink config.json → external target
+    await fs.symlink(externalTarget, path.join(muxHome.path, "config.json"));
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "config",
+        operations: [{ op: "set", path: ["defaultModel"], value: "openai:gpt-4o" }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/symlink/i);
+    }
+
+    // External target must remain unchanged
+    expect(await fs.readFile(externalTarget, "utf-8")).toBe(originalContent);
+  });
+
+  it("rejects writes to symlinked providers.jsonc target", async () => {
+    using muxHome = new TestTempDir("mux-config-write");
+
+    const externalTarget = path.join(muxHome.path, "external-providers.jsonc");
+    const originalContent = JSON.stringify({}, null, 2);
+    await fs.writeFile(externalTarget, originalContent, "utf-8");
+
+    await fs.symlink(externalTarget, path.join(muxHome.path, "providers.jsonc"));
+
+    const tool = await createWriteTool(muxHome.path, MUX_HELP_CHAT_WORKSPACE_ID);
+    const result = (await tool.execute!(
+      {
+        file: "providers",
+        operations: [{ op: "set", path: ["anthropic", "apiKey"], value: "sk-ant-123" }],
+        confirm: true,
+      },
+      mockToolCallOptions
+    )) as MuxConfigWriteResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/symlink/i);
+    }
+
+    expect(await fs.readFile(externalTarget, "utf-8")).toBe(originalContent);
+  });
 });
