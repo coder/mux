@@ -30,7 +30,7 @@ type PickerStep =
   | { kind: "field"; vault: OnePasswordVault; item: OnePasswordItem };
 
 interface OnePasswordPickerProps {
-  onSelect: (opRef: string) => void;
+  onSelect: (opRef: string, opLabel: string) => void;
   onCancel: () => void;
 }
 
@@ -210,13 +210,17 @@ export function OnePasswordPicker(props: OnePasswordPickerProps) {
         itemId: step.item.id,
         fieldId: field.id,
         sectionId: field.sectionId,
+        vaultTitle: step.vault.title,
+        itemTitle: step.item.title,
+        fieldTitle: field.title,
+        sectionTitle: field.sectionTitle,
       });
 
       if (requestVersion !== requestVersionRef.current) {
         return;
       }
 
-      props.onSelect(result.reference);
+      props.onSelect(result.reference, result.label);
     } catch (err) {
       if (requestVersion !== requestVersionRef.current) {
         return;

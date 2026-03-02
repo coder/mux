@@ -78,7 +78,7 @@ function secretValuesEqual(a: Secret["value"], b: Secret["value"]): boolean {
   }
 
   if (isOpSecretValue(a) && isOpSecretValue(b)) {
-    return a.op === b.op;
+    return a.op === b.op && a.opLabel === b.opLabel;
   }
 
   return false;
@@ -562,6 +562,7 @@ export const SecretsSection: React.FC = () => {
                 : "literal";
             const referencedKey = isSecretReferenceValue(secretValue) ? secretValue.secret : "";
             const opReference = isOp ? secretValue.op : "";
+            const opLabel = isOp ? secretValue.opLabel : undefined;
             const availableKeys =
               referencedKey && !sortedGlobalSecretKeys.includes(referencedKey)
                 ? [referencedKey, ...sortedGlobalSecretKeys]
@@ -627,7 +628,9 @@ export const SecretsSection: React.FC = () => {
                 {isOp ? (
                   <span className="text-foreground flex items-center gap-1 self-center px-2.5 font-mono text-[13px]">
                     <KeyRound className="h-3 w-3 shrink-0" />
-                    <span className="truncate">{opReference}</span>
+                    <span className="truncate" title={opReference}>
+                      {opLabel ?? opReference}
+                    </span>
                   </span>
                 ) : isReference ? (
                   <Select
@@ -694,7 +697,7 @@ export const SecretsSection: React.FC = () => {
                 {opPickerIndex === index && (
                   <div className="col-span-full">
                     <OnePasswordPicker
-                      onSelect={(opRef) => {
+                      onSelect={(opRef, opLabel) => {
                         setOpPickerIndex(null);
                         setVisibleSecrets((prev) => {
                           if (!prev.has(index)) {
@@ -705,7 +708,7 @@ export const SecretsSection: React.FC = () => {
                           next.delete(index);
                           return next;
                         });
-                        updateSecretValue(index, { op: opRef });
+                        updateSecretValue(index, { op: opRef, opLabel });
                       }}
                       onCancel={() => setOpPickerIndex(null)}
                     />

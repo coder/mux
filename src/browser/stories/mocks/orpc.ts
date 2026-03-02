@@ -887,7 +887,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       listVaults: () => Promise.resolve([]),
       listItems: () => Promise.resolve([]),
       getItemFields: () => Promise.resolve([]),
-      buildReference: () => Promise.resolve({ reference: "" }),
+      buildReference: () => Promise.resolve({ reference: "", label: "" }),
     },
     muxGateway: {
       getAccountStatus: () =>

@@ -1467,7 +1467,8 @@ export function ProvidersSection() {
                                           className="truncate"
                                           title={config?.[provider]?.apiKeyOpRef}
                                         >
-                                          {config?.[provider]?.apiKeyOpRef}
+                                          {config?.[provider]?.apiKeyOpLabel ??
+                                            config?.[provider]?.apiKeyOpRef}
                                         </span>
                                       </span>
                                     ) : (
@@ -1524,12 +1525,13 @@ export function ProvidersSection() {
                           </div>
                           {opPickerProvider === provider && fieldConfig.key === "apiKey" && (
                             <OnePasswordPicker
-                              onSelect={(opRef) => {
+                              onSelect={(opRef, opLabel) => {
                                 setOpPickerProvider(null);
                                 updateOptimistically(provider, {
                                   apiKeySet: true,
                                   apiKeyIsOpRef: true,
                                   apiKeyOpRef: opRef,
+                                  apiKeyOpLabel: opLabel,
                                 });
 
                                 if (!api) {
@@ -1540,6 +1542,11 @@ export function ProvidersSection() {
                                   provider,
                                   keyPath: ["apiKey"],
                                   value: opRef,
+                                });
+                                void api.providers.setProviderConfig({
+                                  provider,
+                                  keyPath: ["apiKeyOpLabel"],
+                                  value: opLabel,
                                 });
                               }}
                               onCancel={() => setOpPickerProvider(null)}
