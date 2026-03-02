@@ -390,6 +390,7 @@ export const QueuedMessageWithReviews: AppStory = {
               displayText: "Please also check this issue",
               fileParts: queuedFileParts,
               reviews: queuedReviews,
+              queueDispatchMode: "tool-end",
             } as unknown as WorkspaceChatMessage);
           },
         });

@@ -63,12 +63,20 @@ describe("QueuedMessage banner", () => {
     expect(view.getByText("Review this change before sending")).toBeTruthy();
   });
 
-  test("renders queued preview text and label", () => {
+  test("renders queued preview text and step-dispatch label", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} />);
 
-    expect(view.getByText("Queued")).toBeTruthy();
+    expect(view.getByText("Queued - Sending after step")).toBeTruthy();
     expandQueuedMessage(view);
     expect(view.getByText("Review this change before sending")).toBeTruthy();
+  });
+
+  test("renders turn-dispatch label when queue mode is turn-end", () => {
+    const view = render(
+      <QueuedMessage message={createQueuedMessage({ queueDispatchMode: "turn-end" })} />
+    );
+
+    expect(view.getByText("Queued - Sending after turn")).toBeTruthy();
   });
 
   test("renders an inner queued bubble inside the banner", () => {

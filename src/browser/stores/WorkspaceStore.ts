@@ -785,6 +785,7 @@ export class WorkspaceStore {
             content: data.displayText,
             fileParts: data.fileParts,
             reviews: data.reviews,
+            queueDispatchMode: data.queueDispatchMode,
             hasCompactionRequest: data.hasCompactionRequest,
           }
         : null;

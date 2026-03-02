@@ -8,7 +8,10 @@ import type {
 import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
 
 // Keep pending edit data normalized with required arrays so edits can't drop attachments/reviews.
-export interface PendingUserMessage extends Omit<QueuedMessage, "id" | "hasCompactionRequest"> {
+export interface PendingUserMessage extends Omit<
+  QueuedMessage,
+  "id" | "hasCompactionRequest" | "queueDispatchMode"
+> {
   fileParts: FilePart[];
   reviews: ReviewNoteDataForDisplay[];
 }

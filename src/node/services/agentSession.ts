@@ -1607,6 +1607,7 @@ export class AgentSession {
           displayText: this.messageQueue.getDisplayText(),
           fileParts: this.messageQueue.getFileParts(),
           reviews: this.messageQueue.getReviews(),
+          queueDispatchMode: this.messageQueue.getQueueDispatchMode(),
           hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
         },
       });
@@ -3898,6 +3899,7 @@ export class AgentSession {
       displayText: this.messageQueue.getDisplayText(),
       fileParts: this.messageQueue.getFileParts(),
       reviews: this.messageQueue.getReviews(),
+      queueDispatchMode: this.messageQueue.getQueueDispatchMode(),
       hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
     });
   }

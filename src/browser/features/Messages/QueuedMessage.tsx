@@ -37,6 +37,8 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
   const [isExpanded, setIsExpanded] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const preview = deriveQueuedPreview(message);
+  const queueStatusLabel =
+    message.queueDispatchMode === "turn-end" ? "Sending after turn" : "Sending after step";
 
   const handleToggle = () => {
     setIsExpanded((prev) => !prev);
@@ -63,7 +65,9 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
         className="group mx-auto flex w-full max-w-4xl items-center gap-2 px-2 py-1 text-xs transition-colors"
       >
         <Send className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-        <span className="text-muted group-hover:text-secondary transition-colors">Queued</span>
+        <span className="text-muted group-hover:text-secondary transition-colors">
+          Queued - {queueStatusLabel}
+        </span>
         <div className="ml-auto">
           {isExpanded ? (
             <ChevronDown className="text-muted group-hover:text-secondary size-3.5 transition-colors" />

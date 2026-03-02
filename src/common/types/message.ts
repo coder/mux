@@ -679,12 +679,16 @@ export type DisplayedMessage =
 /** Convenience type alias for user-role DisplayedMessage */
 export type DisplayedUserMessage = Extract<DisplayedMessage, { type: "user" }>;
 
+type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
+
 export interface QueuedMessage {
   id: string;
   content: string;
   fileParts?: FilePart[];
   /** Structured review data for rich UI display (from muxMetadata) */
   reviews?: ReviewNoteDataForDisplay[];
+  /** How the backend will flush this queue (step-level vs turn-level boundary). */
+  queueDispatchMode?: QueueDispatchMode;
   /** True when the queued message is a compaction request (/compact) */
   hasCompactionRequest?: boolean;
 }

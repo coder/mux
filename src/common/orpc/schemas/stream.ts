@@ -483,6 +483,7 @@ export const QueuedMessageChangedEventSchema = z.object({
   displayText: z.string(),
   fileParts: z.array(FilePartSchema).optional(),
   reviews: z.array(ReviewNoteDataSchema).optional(),
+  queueDispatchMode: z.enum(["tool-end", "turn-end"]).optional(),
   /** True when the queued message is a compaction request (/compact) */
   hasCompactionRequest: z.boolean().optional(),
 });
