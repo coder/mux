@@ -117,8 +117,8 @@ test.describe("review refresh", () => {
     const timestamp1 = await refreshButton.getAttribute("data-last-refresh-timestamp");
     console.log(`[e2e] Before tab switch: timestamp=${timestamp1}`);
 
-    // Switch to Costs tab
-    await ui.metaSidebar.selectTab("Costs");
+    // Switch to Stats tab
+    await ui.metaSidebar.selectTab("Stats");
 
     // Switch back to Review tab
     await ui.metaSidebar.selectTab("Review");
@@ -176,8 +176,8 @@ test.describe("review refresh", () => {
     await ui.projects.openFirstWorkspace();
     await ui.metaSidebar.expectVisible();
 
-    // Start on a different tab (Costs)
-    await ui.metaSidebar.selectTab("Costs");
+    // Start on a different tab (Stats)
+    await ui.metaSidebar.selectTab("Stats");
 
     // Now switch to Review tab
     await ui.metaSidebar.selectTab("Review");
