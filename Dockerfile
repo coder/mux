@@ -94,6 +94,8 @@ COPY --from=builder /app/node_modules/asn1 ./node_modules/asn1
 COPY --from=builder /app/node_modules/safer-buffer ./node_modules/safer-buffer
 COPY --from=builder /app/node_modules/bcrypt-pbkdf ./node_modules/bcrypt-pbkdf
 COPY --from=builder /app/node_modules/tweetnacl ./node_modules/tweetnacl
+# - @1password/sdk + sdk-core: externalized; contains native WASM for secret resolution
+COPY --from=builder /app/node_modules/@1password ./node_modules/@1password
 
 # Copy frontend/static assets from least to most volatile for better cache reuse.
 # Vite outputs JS/CSS/HTML directly to dist/ (assetsDir: ".").
