@@ -13,7 +13,10 @@ import {
   requireWorkspaceId,
 } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
-import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
+import {
+  ForegroundWaitBackgroundedError,
+  type AgentTaskStatusLookup,
+} from "@/node/services/taskService";
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
@@ -95,7 +98,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const rejectedAgentTaskStatuses =
         rejectedAgentTaskIds.length > 0
           ? taskService.getAgentTaskStatuses(rejectedAgentTaskIds)
-          : new Map<string, ReturnType<typeof taskService.getAgentTaskStatus>>();
+          : new Map<string, AgentTaskStatusLookup>();
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
@@ -166,10 +169,10 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           }
 
           if (!descendantAgentTaskIdSet.has(taskId)) {
-            const globalStatus = rejectedAgentTaskStatuses.get(taskId) ?? null;
+            const lookup = rejectedAgentTaskStatuses.get(taskId);
             const activeTaskIds =
               activeDescendantAgentTaskIds.length > 0 ? activeDescendantAgentTaskIds : undefined;
-            if (!globalStatus) {
+            if (!lookup?.exists) {
               return { status: "not_found" as const, taskId, activeTaskIds };
             }
             return { status: "invalid_scope" as const, taskId, activeTaskIds };

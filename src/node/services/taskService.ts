@@ -75,6 +75,11 @@ export type TaskKind = "agent";
 
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
 
+export interface AgentTaskStatusLookup {
+  exists: boolean;
+  taskStatus: AgentTaskStatus | null;
+}
+
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
   kind: TaskKind;
@@ -1696,22 +1701,24 @@ export class TaskService {
     return status ?? null;
   }
 
-  getAgentTaskStatuses(taskIds: string[]): Map<string, AgentTaskStatus | null> {
+  getAgentTaskStatuses(taskIds: string[]): Map<string, AgentTaskStatusLookup> {
     for (const taskId of taskIds) {
       assert(taskId.length > 0, "getAgentTaskStatuses: taskId must be non-empty");
     }
 
     if (taskIds.length === 0) {
-      return new Map<string, AgentTaskStatus | null>();
+      return new Map<string, AgentTaskStatusLookup>();
     }
 
     const cfg = this.config.loadConfigOrDefault();
-    const statuses = new Map<string, AgentTaskStatus | null>();
+    const statuses = new Map<string, AgentTaskStatusLookup>();
 
     for (const taskId of taskIds) {
       const entry = findWorkspaceEntry(cfg, taskId);
-      const status = entry?.workspace.taskStatus;
-      statuses.set(taskId, status ?? null);
+      statuses.set(taskId, {
+        exists: entry != null,
+        taskStatus: entry?.workspace.taskStatus ?? null,
+      });
     }
 
     return statuses;

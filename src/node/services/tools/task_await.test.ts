@@ -153,7 +153,7 @@ describe("task_await tool", () => {
 
     const getAgentTaskStatuses = mock((taskIds: string[]) => {
       expect(taskIds).toEqual(["other"]);
-      return new Map([["other", "running" as const]]);
+      return new Map([["other", { exists: true, taskStatus: "running" as const }]]);
     });
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["child"]),
@@ -188,7 +188,7 @@ describe("task_await tool", () => {
     });
     const getAgentTaskStatuses = mock((taskIds: string[]) => {
       expect(taskIds).toEqual(["hallucinated"]);
-      return new Map([["hallucinated", null]]);
+      return new Map([["hallucinated", { exists: false, taskStatus: null }]]);
     });
 
     const taskService = {
@@ -226,7 +226,7 @@ describe("task_await tool", () => {
     });
     const getAgentTaskStatuses = mock((taskIds: string[]) => {
       expect(taskIds).toEqual(["other-workspace"]);
-      return new Map([["other-workspace", "running" as const]]);
+      return new Map([["other-workspace", { exists: true, taskStatus: "running" as const }]]);
     });
 
     const taskService = {
@@ -265,8 +265,8 @@ describe("task_await tool", () => {
     const getAgentTaskStatuses = mock((taskIds: string[]) => {
       expect(taskIds).toEqual(["external-1", "external-2"]);
       return new Map([
-        ["external-1", "running" as const],
-        ["external-2", null],
+        ["external-1", { exists: true, taskStatus: "running" as const }],
+        ["external-2", { exists: false, taskStatus: null }],
       ]);
     });
 
