@@ -2,6 +2,7 @@ import type { ConfigOperation } from "@/common/config/schemas/configOperations";
 import {
   deepClone,
   hasOwnRecordKey,
+  isObjectRecord,
   parseArrayIndex,
 } from "@/node/services/tools/shared/configToolUtils";
 import type * as z from "zod";
@@ -62,13 +63,16 @@ export function normalizeMutationRoot(
   currentDocument: unknown,
   policy: MutationRootPolicy
 ): MutableContainer {
-  if (isMutableContainer(currentDocument)) {
+  if (policy.rootContainer === "array") {
+    return Array.isArray(currentDocument) ? currentDocument : [];
+  }
+
+  // Object policy: arrays are NOT valid object roots despite being mutable containers.
+  if (isObjectRecord(currentDocument)) {
     return currentDocument;
   }
 
-  // Recovery-first: parseable but invalid roots (string/number/boolean/null)
-  // must not block repair operations.
-  return policy.rootContainer === "array" ? [] : {};
+  return {};
 }
 
 // Apply path operations first, then validate the entire document against the canonical

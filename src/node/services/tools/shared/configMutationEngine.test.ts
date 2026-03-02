@@ -131,6 +131,20 @@ describe("applyMutations", () => {
     }
   });
 
+  it("normalizes array root to object when policy requires object", () => {
+    const result = applyMutations(
+      [],
+      [{ op: "set", path: ["name"], value: "fixed" }],
+      z.object({ name: z.string() }),
+      OBJECT_ROOT_POLICY
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.document).toEqual({ name: "fixed" });
+    }
+  });
+
   it("applies multiple operations in sequence", () => {
     const result = applyMutations(
       {},
