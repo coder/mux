@@ -84,7 +84,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
             </>
           )}
 
-          {status === "executing" && !result && (
+          {status === "executing" && result === undefined && (
             <DetailSection>
               <DetailContent className="px-2 py-1.5">
                 Waiting for result

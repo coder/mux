@@ -196,7 +196,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
             </>
           )}
 
-          {status === "executing" && !result && (
+          {status === "executing" && result === undefined && (
             <DetailSection>
               <div className="text-secondary text-[11px]">
                 Waiting for result

@@ -93,7 +93,7 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
             </DetailSection>
           )}
 
-          {status === "executing" && !result && (
+          {status === "executing" && result === undefined && (
             <DetailSection>
               <DetailContent>
                 Waiting for result
