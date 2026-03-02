@@ -1,11 +1,40 @@
 import assert from "node:assert";
-import { createClient, DesktopAuth, DesktopSessionExpiredError, type Client } from "@1password/sdk";
+import type { Client } from "@1password/sdk";
 import { OP_REF_PREFIX } from "@/common/utils/opRef";
 import { log } from "@/node/services/log";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const INTEGRATION_NAME = "Mux Desktop";
 const INTEGRATION_VERSION = "1.0.0";
+
+type OnePasswordSdkModule = typeof import("@1password/sdk");
+
+// Lazily imported — the 1Password SDK contains native WASM bindings
+// that are externalized from the server bundle. Dynamic import ensures
+// the module is only loaded when 1Password is actually configured,
+// preventing MODULE_NOT_FOUND crashes in Docker/server environments
+// where the SDK is not installed.
+let sdkModule: OnePasswordSdkModule | null = null;
+
+async function loadSdk(): Promise<OnePasswordSdkModule> {
+  if (!sdkModule) {
+    sdkModule = await import("@1password/sdk");
+  }
+
+  return sdkModule;
+}
+
+function isDesktopSessionExpiredError(error: unknown): boolean {
+  if (error == null || typeof error !== "object") {
+    return false;
+  }
+
+  if (!("name" in error)) {
+    return false;
+  }
+
+  return error.name === "DesktopSessionExpiredError";
+}
 
 interface CacheEntry {
   value: string;
@@ -33,18 +62,19 @@ export class OnePasswordService {
       return this.initPromise;
     }
 
-    const initPromise = createClient({
-      auth: new DesktopAuth(this.accountName),
-      integrationName: INTEGRATION_NAME,
-      integrationVersion: INTEGRATION_VERSION,
-    })
-      .then((client) => {
-        this.client = client;
-        return client;
-      })
-      .finally(() => {
-        this.initPromise = null;
+    const initPromise = (async () => {
+      const sdk = await loadSdk();
+      const client = await sdk.createClient({
+        auth: new sdk.DesktopAuth(this.accountName),
+        integrationName: INTEGRATION_NAME,
+        integrationVersion: INTEGRATION_VERSION,
       });
+
+      this.client = client;
+      return client;
+    })().finally(() => {
+      this.initPromise = null;
+    });
 
     this.initPromise = initPromise;
     return initPromise;
@@ -68,7 +98,7 @@ export class OnePasswordService {
     try {
       return await attempt();
     } catch (error) {
-      if (error instanceof DesktopSessionExpiredError) {
+      if (isDesktopSessionExpiredError(error)) {
         this.client = null;
         this.initPromise = null;
 
@@ -158,7 +188,7 @@ export class OnePasswordService {
     try {
       return await resolveWithClient();
     } catch (error) {
-      if (error instanceof DesktopSessionExpiredError) {
+      if (isDesktopSessionExpiredError(error)) {
         this.client = null;
         this.initPromise = null;
 

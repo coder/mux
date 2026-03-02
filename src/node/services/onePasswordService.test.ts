@@ -9,7 +9,12 @@ class MockDesktopAuth {
   constructor(public readonly account: string) {}
 }
 
-class MockDesktopSessionExpiredError extends Error {}
+class MockDesktopSessionExpiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DesktopSessionExpiredError";
+  }
+}
 
 void mock.module("@1password/sdk", () => ({
   createClient: mockCreateClient,
@@ -213,6 +218,12 @@ describe("OnePasswordService", () => {
 
     const firstPromise = service.resolve("op://vault/item/field-a");
     const secondPromise = service.resolve("op://vault/item/field-b");
+
+    // Dynamic SDK import adds an async boundary before createClient executes.
+    // Flush microtasks so both requests race through the shared initPromise path.
+    for (let i = 0; i < 10 && mockCreateClient.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
 
     expect(mockCreateClient).toHaveBeenCalledTimes(1);
 
