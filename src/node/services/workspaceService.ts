@@ -120,6 +120,7 @@ import {
   upsertSubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+import { execFileAsync } from "@/node/utils/disposableExec";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -4448,7 +4449,9 @@ export class WorkspaceService extends EventEmitter {
     script: string,
     options?: {
       timeout_secs?: number;
-    }
+    },
+    command?: string,
+    args?: string[]
   ): Promise<Result<BashToolResult>> {
     // Block bash execution while workspace is being removed to prevent races with directory deletion.
     // A common case: subagent calls agent_report → frontend's GitStatusStore triggers a git status
@@ -4479,18 +4482,15 @@ export class WorkspaceService extends EventEmitter {
     // Same behavior as AI tools - 5 min timeout, then proceeds anyway
     await this.initStateManager.waitForInit(workspaceId);
 
+    if (args != null && command == null) {
+      return Err("executeBash command args require a command");
+    }
+
     try {
       // Get actual workspace path from config
-      const workspace = this.config.findWorkspace(workspaceId);
-      if (!workspace) {
+      if (!this.config.findWorkspace(workspaceId)) {
         return Err(`Workspace ${workspaceId} not found in config`);
       }
-
-      // Load project secrets
-      const projectSecrets = this.config.getEffectiveSecrets(metadata.projectPath);
-
-      // Create scoped temp directory for this IPC call
-      using tempDir = new DisposableTempDir("mux-ipc-bash");
 
       // Create runtime and compute workspace path
       const runtime = createRuntime(metadata.runtimeConfig, {
@@ -4505,6 +4505,84 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+      if (command != null) {
+        if (command !== "git") {
+          return Err("executeBash command mode only supports git");
+        }
+
+        const commandArgs = args ?? [];
+        const runInRemoteShell =
+          isSSHRuntime(metadata.runtimeConfig) || isDockerRuntime(metadata.runtimeConfig);
+
+        if (runInRemoteShell) {
+          const commandScript = [
+            shellQuote(command),
+            ...commandArgs.map((arg) => shellQuote(arg)),
+          ].join(" ");
+          const commandResult = await execBuffered(runtime, commandScript, {
+            cwd: workspacePath,
+            timeout: options?.timeout_secs ?? 120,
+          });
+          const output = `${commandResult.stdout}${commandResult.stderr}`;
+
+          if (commandResult.exitCode === 0) {
+            return Ok({
+              success: true,
+              wall_duration_ms: commandResult.duration,
+              output,
+              exitCode: 0,
+            });
+          }
+
+          return Ok({
+            success: false,
+            wall_duration_ms: commandResult.duration,
+            output: output.length > 0 ? output : undefined,
+            exitCode: commandResult.exitCode,
+            error:
+              commandResult.stderr.trim() ||
+              commandResult.stdout.trim() ||
+              `Command failed with exit code ${commandResult.exitCode}`,
+          });
+        }
+
+        const startedAt = Date.now();
+        try {
+          using proc = execFileAsync(command, ["-C", workspacePath, ...commandArgs]);
+          const { stdout, stderr } = await proc.result;
+          return Ok({
+            success: true,
+            wall_duration_ms: Date.now() - startedAt,
+            output: `${stdout}${stderr}`,
+            exitCode: 0,
+          });
+        } catch (error) {
+          const commandError = error as {
+            code?: unknown;
+            stdout?: unknown;
+            stderr?: unknown;
+          };
+          const exitCode = typeof commandError.code === "number" ? commandError.code : 1;
+          const stdout = typeof commandError.stdout === "string" ? commandError.stdout : "";
+          const stderr = typeof commandError.stderr === "string" ? commandError.stderr : "";
+          const output = `${stdout}${stderr}`;
+
+          return Ok({
+            success: false,
+            wall_duration_ms: Date.now() - startedAt,
+            output: output.length > 0 ? output : undefined,
+            exitCode,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+
+      // Load project secrets
+      const projectSecrets = this.config.getEffectiveSecrets(metadata.projectPath);
+
+      // Create scoped temp directory for this IPC call
+      using tempDir = new DisposableTempDir("mux-ipc-bash");
 
       // Read trust state so tool_env is sourced for trusted projects
       const projectConfig = this.config

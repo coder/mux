@@ -1093,6 +1093,10 @@ export const workspace = {
     input: z.object({
       workspaceId: z.string(),
       script: z.string(),
+      // Optional argv mode. When provided, backend executes command+args directly where possible
+      // (without shell interpolation) and falls back to shell-quoted argv for remote runtimes.
+      command: z.string().nullish(),
+      args: z.array(z.string()).nullish(),
       options: z
         .object({
           timeout_secs: z.number().optional(),

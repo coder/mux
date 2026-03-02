@@ -3002,7 +3002,9 @@ export const router = (authToken?: string) => {
           const result = await context.workspaceService.executeBash(
             input.workspaceId,
             input.script,
-            input.options
+            input.options,
+            input.command ?? undefined,
+            input.args ?? undefined
           );
           if (!result.success) {
             return { success: false, error: result.error };
