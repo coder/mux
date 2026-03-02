@@ -29,6 +29,7 @@ const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 
 export interface AgentSkillsRoots {
   projectRoot: string;
+  projectUniversalRoot?: string;
   globalRoot: string;
   universalRoot?: string;
 }
@@ -43,9 +44,18 @@ export function getDefaultAgentSkillsRoots(
 
   return {
     projectRoot: runtime.normalizePath(".mux/skills", workspacePath),
+    projectUniversalRoot: runtime.normalizePath(".agents/skills", workspacePath),
     globalRoot: GLOBAL_SKILLS_ROOT,
     universalRoot: UNIVERSAL_SKILLS_ROOT,
   };
+}
+
+function getProjectSkillRoots(roots: AgentSkillsRoots): string[] {
+  const orderedRoots = [roots.projectRoot, roots.projectUniversalRoot].filter(
+    (root): root is string => root != null && root.length > 0
+  );
+
+  return Array.from(new Set(orderedRoots));
 }
 
 function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
@@ -54,6 +64,13 @@ function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
   );
 
   return Array.from(new Set(orderedRoots));
+}
+
+function buildScanOrder(roots: AgentSkillsRoots): Array<{ scope: AgentSkillScope; root: string }> {
+  return [
+    ...getProjectSkillRoots(roots).map((root) => ({ scope: "project" as const, root })),
+    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
+  ];
 }
 
 async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> {
@@ -215,11 +232,8 @@ export async function discoverAgentSkills(
 
   const byName = new Map<SkillName, AgentSkillDescriptor>();
 
-  // Project skills take precedence over global roots.
-  const scans: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
-    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
-  ];
+  // Scan order encodes precedence: earlier roots win when names collide.
+  const scans = buildScanOrder(roots);
 
   for (const scan of scans) {
     let resolvedRoot: string;
@@ -244,7 +258,7 @@ export async function discoverAgentSkills(
 
       const directoryName = nameParsed.data;
 
-      if (scan.scope === "global" && byName.has(directoryName)) {
+      if (byName.has(directoryName)) {
         continue;
       }
 
@@ -257,7 +271,7 @@ export async function discoverAgentSkills(
       );
       if (!descriptor) continue;
 
-      // Precedence: project overwrites global.
+      // First discovered descriptor wins because duplicates are skipped above.
       byName.set(descriptor.name, descriptor);
     }
   }
@@ -291,11 +305,8 @@ export async function discoverAgentSkillsDiagnostics(
   const byName = new Map<SkillName, AgentSkillDescriptor>();
   const invalidSkills: AgentSkillIssue[] = [];
 
-  // Project skills take precedence over global roots.
-  const scans: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
-    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
-  ];
+  // Scan order encodes precedence: earlier roots win when names collide.
+  const scans = buildScanOrder(roots);
 
   for (const scan of scans) {
     let resolvedRoot: string;
@@ -327,7 +338,7 @@ export async function discoverAgentSkillsDiagnostics(
 
       const directoryName = nameParsed.data;
 
-      if (scan.scope === "global" && byName.has(directoryName)) {
+      if (byName.has(directoryName)) {
         continue;
       }
 
@@ -343,7 +354,7 @@ export async function discoverAgentSkillsDiagnostics(
       );
       if (!descriptor) continue;
 
-      // Precedence: project overwrites global.
+      // First discovered descriptor wins because duplicates are skipped above.
       byName.set(descriptor.name, descriptor);
     }
   }
@@ -437,11 +448,8 @@ export async function readAgentSkill(
 
   const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
 
-  // Project overrides all global roots.
-  const candidates: Array<{ scope: AgentSkillScope; root: string }> = [
-    { scope: "project", root: roots.projectRoot },
-    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
-  ];
+  // Scan order encodes precedence: earlier roots win when names collide.
+  const candidates = buildScanOrder(roots);
 
   for (const candidate of candidates) {
     let resolvedRoot: string;

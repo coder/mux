@@ -17,6 +17,7 @@ describe("task_terminate tool", () => {
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
     const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["child-task"]),
       terminateDescendantAgentTask: mock(
         (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
           Promise.resolve(Err("Task not found"))
@@ -30,7 +31,7 @@ describe("task_terminate tool", () => {
     );
 
     expect(result).toEqual({
-      results: [{ status: "not_found", taskId: "missing-task" }],
+      results: [{ status: "not_found", taskId: "missing-task", activeTaskIds: ["child-task"] }],
     });
   });
 
@@ -39,6 +40,7 @@ describe("task_terminate tool", () => {
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
     const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["child-task"]),
       terminateDescendantAgentTask: mock(
         (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
           Promise.resolve(Err("Task is not a descendant of this workspace"))
@@ -52,7 +54,7 @@ describe("task_terminate tool", () => {
     );
 
     expect(result).toEqual({
-      results: [{ status: "invalid_scope", taskId: "other-task" }],
+      results: [{ status: "invalid_scope", taskId: "other-task", activeTaskIds: ["child-task"] }],
     });
   });
 

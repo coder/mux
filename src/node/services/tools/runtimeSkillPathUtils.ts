@@ -181,10 +181,9 @@ export async function resolveContainedSkillFilePathOnRuntime(
   const resolvedTarget = resolveSkillFilePathForRuntime(runtime, skillDir, filePath);
   const probe = await inspectContainmentOnRuntime(runtime, skillDir, resolvedTarget.resolvedPath);
 
-  if (probe.skillDirSymlink) {
-    throw new Error("Skill directory is a symbolic link and cannot be accessed.");
-  }
-
+  // Do not reject symlinked skill directories here.
+  // Skill discovery intentionally supports symlinked skill dirs; containment is enforced by
+  // comparing fully-resolved real paths to ensure the target stays inside the resolved root.
   if (!probe.withinRoot) {
     throw new Error(
       `Invalid filePath (path escapes skill directory after symlink resolution): ${filePath}`

@@ -7,10 +7,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { applyMutations } from "@/node/services/tools/shared/configMutationEngine";
 import { REDACTED_SECRET_VALUE } from "@/node/services/tools/shared/configRedaction";
-import {
-  getMuxHomeFromWorkspaceSessionDir,
-  requireMuxHelpWorkspace,
-} from "@/node/services/tools/shared/configToolUtils";
+import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/shared/configToolUtils";
 import {
   readConfigDocumentUnvalidated,
   writeConfigDocument,
@@ -35,9 +32,6 @@ export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration)
       { abortSignal: _abortSignal }
     ): Promise<MuxConfigWriteToolResult> => {
       try {
-        const workspaceGuard = requireMuxHelpWorkspace(config, "mux_config_write");
-        if (workspaceGuard) return workspaceGuard;
-
         if (!args.confirm) {
           return {
             success: false,

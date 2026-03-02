@@ -335,6 +335,7 @@ export const TaskAwaitToolNotFoundResultSchema = z
   .object({
     status: z.literal("not_found"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -342,6 +343,7 @@ export const TaskAwaitToolInvalidScopeResultSchema = z
   .object({
     status: z.literal("invalid_scope"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -451,6 +453,7 @@ export const TaskTerminateToolNotFoundResultSchema = z
   .object({
     status: z.literal("not_found"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -458,6 +461,7 @@ export const TaskTerminateToolInvalidScopeResultSchema = z
   .object({
     status: z.literal("invalid_scope"),
     taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -772,7 +776,7 @@ export const TOOL_DEFINITIONS = {
   agent_skill_read: {
     description:
       "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
-      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, ~/.mux/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
+      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, <projectRoot>/.agents/skills/<name>/SKILL.md, ~/.mux/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
     schema: z
       .object({
         name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
@@ -1027,7 +1031,7 @@ export const TOOL_DEFINITIONS = {
   switch_agent: {
     description:
       "Switch to a different agent and restart the stream. " +
-      "Only UI-selectable agents can be targeted. " +
+      "Only agents listed below can be targeted. " +
       "The current stream will end and a new stream will start with the selected agent.",
     schema: SwitchAgentToolArgsSchema,
   },
@@ -1593,7 +1597,11 @@ export function getToolSchemas(): Record<string, ToolSchema> {
  */
 export function getAvailableTools(
   modelString: string,
-  options?: { enableAgentReport?: boolean; enableMuxGlobalAgentsTools?: boolean }
+  options?: {
+    enableAgentReport?: boolean;
+    /** @deprecated Mux global tools are always included. */
+    enableMuxGlobalAgentsTools?: boolean;
+  }
 ): string[] {
   const [provider] = modelString.split(":");
   const enableAgentReport = options?.enableAgentReport ?? true;
@@ -1601,17 +1609,13 @@ export function getAvailableTools(
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const baseTools = [
-    ...(options?.enableMuxGlobalAgentsTools
-      ? [
-          "mux_global_agents_read",
-          "mux_global_agents_write",
-          "agent_skill_list",
-          "agent_skill_write",
-          "agent_skill_delete",
-          "mux_config_read",
-          "mux_config_write",
-        ]
-      : []),
+    "mux_global_agents_read",
+    "mux_global_agents_write",
+    "agent_skill_list",
+    "agent_skill_write",
+    "agent_skill_delete",
+    "mux_config_read",
+    "mux_config_write",
     "file_read",
     "agent_skill_read",
     "agent_skill_read_file",

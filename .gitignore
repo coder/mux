@@ -82,6 +82,9 @@ docs/mermaid.min.js
 # Secrets
 .env
 
+# AI SDK DevTools (local dev only)
+.devtools
+
 # Nix
 .envrc
 .direnv

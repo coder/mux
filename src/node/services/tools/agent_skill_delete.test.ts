@@ -51,21 +51,6 @@ async function writeSkillFixture(muxHome: string, name: string): Promise<void> {
 }
 
 describe("agent_skill_delete", () => {
-  it("rejects deletes outside Chat with Mux workspace", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-delete-reject");
-
-    const tool = await createDeleteTool(tempDir.path, "regular-workspace");
-    const result = (await tool.execute!(
-      { name: "demo-skill", filePath: "SKILL.md", confirm: true },
-      mockToolCallOptions
-    )) as AgentSkillDeleteToolResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toMatch(/only available/i);
-    }
-  });
-
   it("requires confirm: true before deleting", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-confirm");
 

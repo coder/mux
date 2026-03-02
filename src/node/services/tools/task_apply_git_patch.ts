@@ -226,6 +226,29 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
     }
   }
 
+  async function isGitAmInProgress(params: { cwd: string }): Promise<boolean> {
+    assert(params.cwd.length > 0, "isGitAmInProgress: cwd must be non-empty");
+
+    try {
+      const checkResult = await execBuffered(
+        config.runtime,
+        'test -d "$(git rev-parse --git-path rebase-apply)"',
+        {
+          cwd: params.cwd,
+          timeout: 30,
+        }
+      );
+
+      return checkResult.exitCode === 0;
+    } catch (error) {
+      log.debug("task_apply_git_patch: failed to detect git am progress state", {
+        cwd: params.cwd,
+        error,
+      });
+      return false;
+    }
+  }
+
   async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
     workspaceId: string;
     workspaceSessionDir: string;
@@ -648,7 +671,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
                     : `git am failed (exitCode=${amResult.exitCode})`,
                 note: mergeNotes(
                   patchPathNote,
-                  "Dry run failed; the patch does not apply cleanly. Applying for real will likely require conflict resolution."
+                  "Dry run failed; the patch does not apply cleanly against the current HEAD. If this is a parent integration workspace, do not attempt a real apply here; delegate conflict resolution to a sub-agent that can replay and resolve the patch. Dedicated reconciliation workspaces can proceed with real apply plus manual conflict resolution (`git am --continue` / `git am --abort`)."
                 ),
               },
               "task_apply_git_patch"
@@ -769,6 +792,11 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
 
         const conflictPaths = await tryGetConflictPaths({ cwd: config.cwd });
         const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
+        const gitAmInProgress = await isGitAmInProgress({ cwd: config.cwd });
+        const conflictRecoveryNote =
+          conflictPaths.length > 0 || gitAmInProgress
+            ? "git am stopped in conflict-recovery state. Resolve conflicts/issues and run `git am --continue`, or run `git am --abort` to restore a clean working tree and delegate resolution to a sub-agent."
+            : "git am failed before entering conflict-recovery state. Review the error output above and fix the patch/input before retrying.";
 
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
@@ -782,10 +810,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
               errorOutput.length > 0
                 ? errorOutput
                 : `git am failed (exitCode=${amResult.exitCode})`,
-            note: mergeNotes(
-              patchPathNote,
-              "If git am stopped due to conflicts, resolve them then run `git am --continue` or `git am --abort`."
-            ),
+            note: mergeNotes(patchPathNote, conflictRecoveryNote),
           },
           "task_apply_git_patch"
         );

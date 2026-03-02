@@ -2,7 +2,6 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import { tool } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { AgentSkillDescriptorSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentSkillListToolResult } from "@/common/types/tools";
@@ -109,13 +108,6 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
       includeUnadvertised,
     }: AgentSkillListToolArgs): Promise<AgentSkillListToolResult> => {
       try {
-        if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-          return {
-            success: false,
-            error: "agent_skill_list is only available in the Chat with Mux system workspace",
-          };
-        }
-
         const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "agent_skill_list");
 
         let muxHomeReal: string;

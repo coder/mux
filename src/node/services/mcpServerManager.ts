@@ -36,7 +36,7 @@ export function isClosedClientError(error: unknown): boolean {
   );
 }
 
-export const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
+const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
 
 /**
  * Thrown by runMCPToolWithDeadline when abort or timeout wins the race.
@@ -546,7 +546,7 @@ export interface MCPWorkspaceStats {
   transportMode: MCPTransportMode;
 }
 
-export interface MCPToolsForWorkspaceResult {
+interface MCPToolsForWorkspaceResult {
   tools: Record<string, Tool>;
   stats: MCPWorkspaceStats;
 }

@@ -1,5 +1,4 @@
 import { type Tool } from "ai";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -442,7 +441,9 @@ export async function getToolsForModel(
   const allowlistedToolNames = new Set(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
-      enableMuxGlobalAgentsTools: workspaceId === MUX_HELP_CHAT_WORKSPACE_ID,
+      // Mux global tools are always created; tool policy (agent frontmatter)
+      // controls which agents can actually use them.
+      enableMuxGlobalAgentsTools: true,
     })
   );
   for (const toolName of Object.keys(mcpTools ?? {})) {

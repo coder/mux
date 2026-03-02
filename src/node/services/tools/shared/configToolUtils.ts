@@ -1,5 +1,4 @@
 import path from "node:path";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 
 /**
@@ -15,23 +14,6 @@ export function getMuxHomeFromWorkspaceSessionDir(
   }
   const sessionsDir = path.dirname(config.workspaceSessionDir);
   return path.dirname(sessionsDir);
-}
-
-/**
- * Guard that restricts a tool to the Chat with Mux system workspace.
- * Returns an error result if the workspace doesn't match, or null if allowed.
- */
-export function requireMuxHelpWorkspace(
-  config: ToolConfiguration,
-  toolName: string
-): { success: false; error: string } | null {
-  if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-    return {
-      success: false,
-      error: `${toolName} is only available in the Chat with Mux system workspace`,
-    };
-  }
-  return null;
 }
 
 /**

@@ -93,6 +93,82 @@ describe("agentSkillsService", () => {
     expect(resolved.package.frontmatter.description).toBe("from universal only");
   });
 
+  test("discovers skills from project .agents/skills", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const projectUniversalSkillsRoot = path.join(project.path, ".agents", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectUniversalSkillsRoot, "project-universal", "from project universal");
+
+    const roots = {
+      projectRoot: projectSkillsRoot,
+      projectUniversalRoot: projectUniversalSkillsRoot,
+      globalRoot: globalSkillsRoot,
+    };
+    const runtime = new LocalRuntime(project.path);
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    const projectUniversal = skills.find((s) => s.name === "project-universal");
+    expect(projectUniversal).toBeDefined();
+    expect(projectUniversal!.scope).toBe("project");
+    expect(projectUniversal!.description).toBe("from project universal");
+  });
+
+  test(".mux/skills overrides .agents/skills at project level", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const projectUniversalSkillsRoot = path.join(project.path, ".agents", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectUniversalSkillsRoot, "shared-project", "from project universal");
+    await writeSkill(projectSkillsRoot, "shared-project", "from project mux");
+
+    const roots = {
+      projectRoot: projectSkillsRoot,
+      projectUniversalRoot: projectUniversalSkillsRoot,
+      globalRoot: globalSkillsRoot,
+    };
+    const runtime = new LocalRuntime(project.path);
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    const sharedProject = skills.find((s) => s.name === "shared-project");
+    expect(sharedProject).toBeDefined();
+    expect(sharedProject!.scope).toBe("project");
+    expect(sharedProject!.description).toBe("from project mux");
+  });
+
+  test("discoverAgentSkillsDiagnostics includes project .agents/skills", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const projectUniversalSkillsRoot = path.join(project.path, ".agents", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectUniversalSkillsRoot, "diag-project-universal", "from diagnostics root");
+
+    const roots = {
+      projectRoot: projectSkillsRoot,
+      projectUniversalRoot: projectUniversalSkillsRoot,
+      globalRoot: globalSkillsRoot,
+    };
+    const runtime = new LocalRuntime(project.path);
+
+    const diagnostics = await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
+
+    const diagSkill = diagnostics.skills.find((s) => s.name === "diag-project-universal");
+    expect(diagSkill).toBeDefined();
+    expect(diagSkill!.scope).toBe("project");
+    expect(diagSkill!.description).toBe("from diagnostics root");
+  });
+
   test("readAgentSkill resolves project before global", async () => {
     using project = new DisposableTempDir("agent-skills-project");
     using global = new DisposableTempDir("agent-skills-global");

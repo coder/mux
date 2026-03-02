@@ -2,7 +2,6 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import { tool } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import type { AgentSkillDeleteToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -23,7 +22,7 @@ interface AgentSkillDeleteToolArgs {
 }
 
 /**
- * Chat-with-Mux-only tool that deletes global skills/files under ~/.mux/skills/.
+ * Tool that deletes global skills/files under ~/.mux/skills/.
  */
 export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -35,13 +34,6 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
       filePath,
       confirm,
     }: AgentSkillDeleteToolArgs): Promise<AgentSkillDeleteToolResult> => {
-      if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-        return {
-          success: false,
-          error: "agent_skill_delete is only available in the Chat with Mux system workspace",
-        };
-      }
-
       if (!confirm) {
         return {
           success: false,

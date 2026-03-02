@@ -28,6 +28,7 @@ const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]
     name: "Exec",
     description: "Implement changes in the repository",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: true,
   },
   {
@@ -36,6 +37,7 @@ const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]
     name: "Plan",
     description: "Create a plan before coding",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: true,
   },
   {
@@ -44,6 +46,7 @@ const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]
     name: "Ask",
     description: "Delegate questions to Explore sub-agents and synthesize an answer.",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: false,
   },
   {
@@ -52,6 +55,7 @@ const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]
     name: "Auto",
     description: "Automatically selects the best agent for your task",
     uiSelectable: true,
+    uiRoutable: true,
     subagentRunnable: false,
   },
   {
@@ -60,6 +64,7 @@ const DEFAULT_AGENT_DESCRIPTORS: Awaited<ReturnType<ORPCClient["agents"]["list"]
     name: "Explore",
     description: "Read-only exploration",
     uiSelectable: false,
+    uiRoutable: false,
     subagentRunnable: true,
   },
 ];

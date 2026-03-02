@@ -30,6 +30,7 @@ const AUTO_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Auto",
   uiSelectable: true,
+  uiRoutable: true,
   subagentRunnable: false,
 };
 
@@ -38,6 +39,7 @@ const EXEC_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Exec",
   uiSelectable: true,
+  uiRoutable: true,
   subagentRunnable: false,
 };
 
@@ -46,6 +48,7 @@ const PLAN_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Plan",
   uiSelectable: true,
+  uiRoutable: true,
   subagentRunnable: false,
 };
 
