@@ -115,6 +115,16 @@ export function parseRightSidebarLayoutState(
   raw: unknown,
   activeTabFallback: TabType
 ): RightSidebarLayoutState {
+  // Pre-parse migration: strip legacy "stats" tabs from raw data before validation.
+  // The standalone "stats" tab was absorbed into the "costs" tab as sub-tabs.
+  // Must run before isRightSidebarLayoutState since isTabType now rejects "stats".
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    if (r.root && typeof r.root === "object") {
+      stripLegacyStatsTab(r.root as Record<string, unknown>);
+    }
+  }
+
   if (isRightSidebarLayoutState(raw)) {
     // Migrate: inject "explorer" tab if missing from persisted layout
     if (!layoutContainsTab(raw.root, "explorer")) {
@@ -124,6 +134,33 @@ export function parseRightSidebarLayoutState(
   }
 
   return getDefaultRightSidebarLayoutState(activeTabFallback);
+}
+
+/**
+ * Recursively strip legacy "stats" tabs from raw layout data.
+ * Mutates the object in-place before validation so isTabType doesn't reject the layout.
+ */
+function stripLegacyStatsTab(node: Record<string, unknown>): void {
+  if (node.type === "tabset") {
+    if (Array.isArray(node.tabs)) {
+      const filtered = (node.tabs as unknown[]).filter((t) => t !== "stats");
+      if (filtered.length !== (node.tabs as unknown[]).length) {
+        node.tabs = filtered;
+        // If the active tab was "stats", fall back to the first remaining tab
+        if (node.activeTab === "stats") {
+          node.activeTab = filtered[0] ?? "costs";
+        }
+      }
+    }
+    return;
+  }
+  if (node.type === "split" && Array.isArray(node.children)) {
+    for (const child of node.children) {
+      if (child && typeof child === "object") {
+        stripLegacyStatsTab(child as Record<string, unknown>);
+      }
+    }
+  }
 }
 
 export function findTabset(

@@ -712,19 +712,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setIsReviewImmersive(false);
   }, [hasReviewPanelMounted, isReviewImmersive, setIsReviewImmersive]);
 
-  // Clean up any "stats" tabs lingering in persisted layouts from before the merge.
-  // The standalone "stats" tab was absorbed into the "costs" tab as sub-tabs.
-  React.useEffect(() => {
-    setLayoutRaw((prevRaw) => {
-      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
-      // Cast needed: "stats" is no longer a valid TabType, but may exist in persisted data.
-      const hasStats = collectAllTabs(prev.root).includes("stats" as TabType);
-      if (hasStats) {
-        return removeTabEverywhere(prev, "stats" as TabType);
-      }
-      return prev;
-    });
-  }, [initialActiveTab, setLayoutRaw]);
+  // Legacy "stats" tabs in persisted layouts are stripped during parsing
+  // (see stripLegacyStatsTab in rightSidebarLayout.ts).
   // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
   React.useEffect(() => {
     if (!isRightSidebarLayoutState(layoutRaw)) {

@@ -7,6 +7,7 @@ import {
   getDefaultRightSidebarLayoutState,
   isRightSidebarLayoutState,
   moveTabToTabset,
+  parseRightSidebarLayoutState,
   removeTabEverywhere,
   reorderTabInTabset,
   selectTabInFocusedTabset,
@@ -402,4 +403,98 @@ test("persisted layouts with invalid parentTab field are rejected", () => {
     parentTab: { "file:src/foo.ts": 42 }, // value is not a string
   };
   expect(isRightSidebarLayoutState(raw)).toBe(false);
+});
+test("parseRightSidebarLayoutState strips legacy 'stats' tabs from persisted layouts", () => {
+  // Simulate a persisted layout that still contains the old "stats" tab
+  const raw = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "tabset",
+      id: "tabset-1",
+      tabs: ["costs", "review", "stats", "explorer"],
+      activeTab: "costs",
+    },
+  };
+
+  const result = parseRightSidebarLayoutState(raw, "costs");
+
+  // Should parse successfully (not fall back to defaults)
+  expect(result.root.type).toBe("tabset");
+  if (result.root.type !== "tabset") throw new Error("expected tabset");
+
+  // "stats" should be stripped, other tabs preserved
+  expect(result.root.tabs).toEqual(["costs", "review", "explorer"]);
+  expect(result.root.activeTab).toBe("costs");
+});
+
+test("parseRightSidebarLayoutState falls back activeTab when stats was active", () => {
+  const raw = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "tabset",
+      id: "tabset-1",
+      tabs: ["costs", "stats", "review", "explorer"],
+      activeTab: "stats",
+    },
+  };
+
+  const result = parseRightSidebarLayoutState(raw, "costs");
+
+  expect(result.root.type).toBe("tabset");
+  if (result.root.type !== "tabset") throw new Error("expected tabset");
+
+  // "stats" stripped; activeTab should fall back to first remaining tab
+  expect(result.root.tabs).toEqual(["costs", "review", "explorer"]);
+  expect(result.root.activeTab).toBe("costs");
+});
+
+test("parseRightSidebarLayoutState handles split layouts with legacy stats", () => {
+  const raw = {
+    version: 1,
+    nextId: 3,
+    focusedTabsetId: "tabset-1",
+    root: {
+      type: "split",
+      id: "split-1",
+      direction: "horizontal",
+      sizes: [50, 50],
+      children: [
+        {
+          type: "tabset",
+          id: "tabset-1",
+          tabs: ["costs", "stats", "explorer"],
+          activeTab: "costs",
+        },
+        {
+          type: "tabset",
+          id: "tabset-2",
+          tabs: ["review", "stats"],
+          activeTab: "stats",
+        },
+      ],
+    },
+  };
+
+  const result = parseRightSidebarLayoutState(raw, "costs");
+
+  // Both tabsets should have stats stripped
+  expect(result.root.type).toBe("split");
+  if (result.root.type !== "split") throw new Error("expected split");
+
+  const left = result.root.children[0];
+  const right = result.root.children[1];
+
+  expect(left.type).toBe("tabset");
+  expect(right.type).toBe("tabset");
+
+  if (left.type !== "tabset" || right.type !== "tabset") throw new Error("expected tabsets");
+
+  expect(left.tabs).toEqual(["costs", "explorer"]);
+  expect(left.activeTab).toBe("costs");
+  expect(right.tabs).toEqual(["review"]);
+  expect(right.activeTab).toBe("review");
 });
