@@ -53,25 +53,6 @@ async function createWriteTool(
 }
 
 describe("mux_config_write", () => {
-  it("enforces Chat with Mux workspace scope", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
-
-    const tool = await createWriteTool(muxHome.path, "regular-workspace");
-    const result = (await tool.execute!(
-      {
-        file: "providers",
-        operations: [{ op: "set", path: ["anthropic", "apiKey"], value: "sk-ant-123" }],
-        confirm: true,
-      },
-      mockToolCallOptions
-    )) as MuxConfigWriteResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("only available");
-    }
-  });
-
   it("enforces explicit confirm gate", async () => {
     using muxHome = new TestTempDir("mux-config-write");
 

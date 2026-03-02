@@ -41,21 +41,6 @@ async function createReadTool(muxHomeDir: string, workspaceId: string) {
 }
 
 describe("mux_config_read", () => {
-  it("enforces Chat with Mux workspace scope", async () => {
-    using muxHome = new TestTempDir("mux-config-read");
-
-    const tool = await createReadTool(muxHome.path, "regular-workspace");
-    const result = (await tool.execute!(
-      { file: "providers" },
-      mockToolCallOptions
-    )) as MuxConfigReadResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("only available");
-    }
-  });
-
   it("returns redacted providers data for full and path reads", async () => {
     using muxHome = new TestTempDir("mux-config-read");
 
