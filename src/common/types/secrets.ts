@@ -100,7 +100,15 @@ export async function secretsToRecord(
           return undefined;
         }
 
-        const value = await externalResolver(raw.op);
+        let value: string | undefined;
+        try {
+          value = await externalResolver(raw.op);
+        } catch {
+          // Defensive: treat resolver failures like unresolved references.
+          resolved.set(key, undefined);
+          return undefined;
+        }
+
         resolved.set(key, value ?? undefined);
         return value ?? undefined;
       }
