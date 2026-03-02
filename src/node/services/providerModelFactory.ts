@@ -95,6 +95,19 @@ export function resolveAIProviderHeaderSource(
 }
 
 /**
+ * Resolve the request body source for provider fetch calls.
+ *
+ * fetch(Request) stores payload on the Request object rather than init.body.
+ * Prefer init.body when present, then fall back to Request.body.
+ */
+export function resolveAIProviderBodySource(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): BodyInit | null | undefined {
+  return init?.body ?? (input instanceof Request ? input.body : undefined);
+}
+
+/**
  * Build request headers for provider fetch calls.
  *
  * Always includes Mux attribution in User-Agent while preserving provider SDK info
@@ -1376,7 +1389,8 @@ export class ProviderModelFactory {
           // We inspect the last message role: only a genuine user message at the
           // end of the messages array indicates a user-initiated turn. Tool results
           // (role "tool") and assistant continuations are agent-initiated.
-          headers.set("X-Initiator", classifyCopilotInitiator(init?.body));
+          const body = resolveAIProviderBodySource(input, init);
+          headers.set("X-Initiator", classifyCopilotInitiator(body));
           headers.delete("x-api-key");
           return baseFetch(input, { ...init, headers });
         };
