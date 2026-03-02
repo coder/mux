@@ -61,33 +61,39 @@ function formatBytesSI(bytes: number): string {
  * Converts MCP's "image" content type to AI SDK's "media" type.
  * Truncates large images to prevent context overflow.
  */
-export function transformMCPResult(result: MCPCallToolResult): unknown {
+export function transformMCPResult(result: unknown): unknown {
+  if (!result || typeof result !== "object") {
+    return result;
+  }
+
+  const typed = result as MCPCallToolResult;
+
   // If it's an error or has toolResult, pass through as-is
-  if (result.isError || result.toolResult !== undefined) {
+  if (typed.isError || typed.toolResult !== undefined) {
     return result;
   }
 
   // If no content array, pass through
-  if (!result.content || !Array.isArray(result.content)) {
+  if (!typed.content || !Array.isArray(typed.content)) {
     return result;
   }
 
   // Check if any content is an image
-  const hasImage = result.content.some((c) => c.type === "image");
+  const hasImage = typed.content.some((c) => c.type === "image");
   if (!hasImage) {
     return result;
   }
 
   // Debug: log what we received from MCP
   log.debug("[MCP] transformMCPResult input", {
-    contentTypes: result.content.map((c) => c.type),
-    imageItems: result.content
+    contentTypes: typed.content.map((c) => c.type),
+    imageItems: typed.content
       .filter((c): c is MCPImageContent => c.type === "image")
       .map((c) => ({ type: c.type, mimeType: c.mimeType, dataLen: c.data?.length })),
   });
 
   // Transform to AI SDK content format
-  const transformedContent: AISDKContentPart[] = result.content.map((item) => {
+  const transformedContent: AISDKContentPart[] = typed.content.map((item) => {
     if (item.type === "text") {
       return { type: "text" as const, text: item.text };
     }

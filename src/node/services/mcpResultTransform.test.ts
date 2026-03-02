@@ -97,6 +97,18 @@ describe("transformMCPResult", () => {
   });
 
   describe("existing functionality", () => {
+    it("should return null for null input", () => {
+      expect(transformMCPResult(null)).toBeNull();
+    });
+
+    it("should return undefined for undefined input", () => {
+      expect(transformMCPResult(undefined)).toBeUndefined();
+    });
+
+    it("should return primitive string input unchanged", () => {
+      expect(transformMCPResult("serena")).toBe("serena");
+    });
+
     it("should pass through error results unchanged", () => {
       const errorResult = {
         isError: true,
