@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import type { Client } from "@1password/sdk";
+import { log } from "@/node/services/log";
 
 const mockCreateClient = mock(() => Promise.resolve({} as Client));
 const mockLogWarn = mock(() => undefined);
@@ -14,12 +15,6 @@ void mock.module("@1password/sdk", () => ({
   createClient: mockCreateClient,
   DesktopAuth: MockDesktopAuth,
   DesktopSessionExpiredError: MockDesktopSessionExpiredError,
-}));
-
-void mock.module("@/node/services/log", () => ({
-  log: {
-    warn: mockLogWarn,
-  },
 }));
 
 import { OnePasswordService } from "./onePasswordService";
@@ -79,6 +74,7 @@ describe("OnePasswordService", () => {
     mockClient = createMockClient();
     mockCreateClient.mockClear();
     mockLogWarn.mockClear();
+    spyOn(log, "warn").mockImplementation(mockLogWarn);
 
     mockCreateClient.mockImplementation(() => Promise.resolve(mockClient as unknown as Client));
   });
