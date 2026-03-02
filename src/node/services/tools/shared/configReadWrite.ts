@@ -36,7 +36,7 @@ interface JsonParseErrorLike {
   message?: unknown;
 }
 
-export function getConfigDocumentPath(muxHomeDir: string, fileKey: ConfigFileKey): string {
+function getConfigDocumentPath(muxHomeDir: string, fileKey: ConfigFileKey): string {
   const entry = CONFIG_FILE_REGISTRY[fileKey];
   return path.join(muxHomeDir, entry.fileName);
 }
