@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "../SettingsButton/SettingsButton";
-import { GatewayIcon } from "../icons/GatewayIcon/GatewayIcon";
+import { GatewayIcon } from "../Icons/GatewayIcon/GatewayIcon";
 import { Button } from "../Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";

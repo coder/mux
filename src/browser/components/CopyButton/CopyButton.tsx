@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CopyIcon } from "@/browser/components/icons/CopyIcon/CopyIcon";
+import { CopyIcon } from "@/browser/components/Icons/CopyIcon/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
 interface CopyButtonProps {

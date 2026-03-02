@@ -10,7 +10,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { Button } from "@/browser/components/Button/Button";
 import { Check, ExternalLink, Link2, Loader2, Trash2 } from "lucide-react";
-import { CopyIcon } from "@/browser/components/icons/CopyIcon/CopyIcon";
+import { CopyIcon } from "@/browser/components/Icons/CopyIcon/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
 import {

@@ -1,5 +1,5 @@
 import { useTheme } from "@/browser/contexts/ThemeContext";
-import { Shimmer } from "@/browser/features/AIElements/Shimmer";
+import { Shimmer } from "@/browser/components/Shimmer/Shimmer";
 import { LoadingAnimation } from "@/browser/components/LoadingAnimation/LoadingAnimation";
 
 interface CreationCenterContentProps {

@@ -273,10 +273,10 @@ export const CodeReview: AppStory = {
         window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "950");
         window.localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
 
-        const REVIEW_DIFF = `diff --git a/src/browser/components/WorkspaceShell.tsx b/src/browser/components/WorkspaceShell.tsx
+        const REVIEW_DIFF = `diff --git a/src/browser/features/Workspace/WorkspaceShell.tsx b/src/browser/features/Workspace/WorkspaceShell.tsx
 index aaa1111..bbb2222 100644
---- a/src/browser/components/WorkspaceShell.tsx
-+++ b/src/browser/components/WorkspaceShell.tsx
+--- a/src/browser/features/Workspace/WorkspaceShell.tsx
++++ b/src/browser/features/Workspace/WorkspaceShell.tsx
 @@ -1,8 +1,18 @@
  import React from 'react';
 +import { useRightSidebarLayout } from '../Hooks/useRightSidebarLayout';
@@ -328,7 +328,7 @@ index 0000000..def5678
 +  return layout;
 +}`;
 
-        const REVIEW_NUMSTAT = `10\t2\tsrc/browser/components/WorkspaceShell.tsx
+        const REVIEW_NUMSTAT = `10\t2\tsrc/browser/features/Workspace/WorkspaceShell.tsx
 12\t0\tsrc/browser/utils/layout.ts
 18\t0\tsrc/browser/hooks/useRightSidebarLayout.ts`;
 
@@ -354,7 +354,7 @@ index 0000000..def5678
                     toolCalls: [
                       createFileReadTool(
                         "call-read-1",
-                        "src/browser/components/WorkspaceShell.tsx",
+                        "src/browser/features/Workspace/WorkspaceShell.tsx",
                         'import React from \'react\';\nimport { useRightSidebarLayout } from \'../hooks/useRightSidebarLayout\';\nimport { clamp } from \'../utils/layout\';\n\nexport function WorkspaceShell(props: WorkspaceShellProps) {\n  const layout = useRightSidebarLayout(props.workspaceId);\n  const sidebarWidth = clamp(layout.width, 200, 800);\n  return (\n    <div className="shell">\n      <header className="shell-header" aria-label="Workspace">Mux</header>\n      <main className="shell-content" style={{ marginRight: sidebarWidth }} />\n      <aside className="shell-sidebar" style={{ width: sidebarWidth }} />\n    </div>\n  );\n}'
                       ),
                       createFileReadTool(

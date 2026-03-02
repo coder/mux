@@ -5,7 +5,7 @@ import {
   FILE_SUGGESTION_KEYS,
 } from "@/browser/features/ChatInput/CommandSuggestions";
 import type { Toast } from "@/browser/features/ChatInput/ChatInputToast";
-import { ConnectionStatusToast } from "@/browser/components/ConnectionStatusToast/ConnectionStatusToast";
+import { ConnectionStatusToast } from "@/browser/features/AppShell/ConnectionStatusToast/ConnectionStatusToast";
 import { ChatInputToast } from "@/browser/features/ChatInput/ChatInputToast";
 import type { SendMessageError } from "@/common/types/errors";
 import { createErrorToast } from "@/browser/features/ChatInput/ChatInputToasts";
@@ -65,7 +65,7 @@ import {
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
-import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
+import { AgentModePicker } from "@/browser/features/Chat/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
 import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";

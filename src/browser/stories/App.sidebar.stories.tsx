@@ -88,7 +88,10 @@ function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
 
     const dirtyFiles =
       dirtyCount > 0
-        ? [" M src/App.tsx", " M src/browser/components/GitStatusIndicatorView.tsx"].join("\n")
+        ? [
+            " M src/App.tsx",
+            " M src/browser/features/Project/GitStatus/GitStatusIndicatorView.tsx",
+          ].join("\n")
         : "";
 
     return [

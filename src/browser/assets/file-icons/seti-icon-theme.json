@@ -3,7 +3,7 @@
     "This file has been generated from data in https://github.com/jesseweed/seti-ui",
     "- icon definitions: https://github.com/jesseweed/seti-ui/blob/master/styles/_fonts/seti.less",
     "- icon colors: https://github.com/jesseweed/seti-ui/blob/master/styles/ui-variables.less",
-    "- file associations: https://github.com/jesseweed/seti-ui/blob/master/styles/components/icons/mapping.less",
+    "- file associations: https://github.com/jesseweed/seti-ui/tree/master/styles/components/icons",
     "If you want to provide a fix or improvement, please create a pull request against the jesseweed/seti-ui repository.",
     "Once accepted there, we are happy to receive an update request."
   ],

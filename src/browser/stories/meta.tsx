@@ -8,7 +8,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { FC, ReactNode } from "react";
 import { useRef } from "react";
-import { AppLoader } from "../components/AppLoader/AppLoader";
+import { AppLoader } from "../features/AppShell/AppLoader/AppLoader";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { APIClient } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";

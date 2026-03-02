@@ -7,8 +7,8 @@ import {
   LocalIcon,
   SSHIcon,
   WorktreeIcon,
-} from "mux/browser/components/icons/RuntimeIcons/RuntimeIcons";
-import { Shimmer } from "mux/browser/features/AIElements/Shimmer";
+} from "mux/browser/components/Icons/RuntimeIcons/RuntimeIcons";
+import { Shimmer } from "mux/browser/components/Shimmer/Shimmer";
 import { Button } from "mux/browser/components/Button/Button";
 import { Input } from "mux/browser/components/Input/Input";
 import { Popover, PopoverContent, PopoverTrigger } from "mux/browser/components/Popover/Popover";

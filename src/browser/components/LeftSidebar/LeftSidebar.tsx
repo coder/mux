@@ -1,7 +1,7 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import ProjectSidebar from "../ProjectSidebar/ProjectSidebar";
+import ProjectSidebar from "@/browser/features/Project/ProjectSidebar/ProjectSidebar";
 import { TitleBar } from "../TitleBar/TitleBar";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 

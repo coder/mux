@@ -1,5 +1,5 @@
 import { cn } from "@/common/lib/utils";
-import { GatewayIcon } from "../icons/GatewayIcon/GatewayIcon";
+import { GatewayIcon } from "../Icons/GatewayIcon/GatewayIcon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 
 interface GatewayToggleButtonProps {

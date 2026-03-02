@@ -8,7 +8,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/browser/components/Dialog/Dialog";
-import { DirectoryPickerModal } from "../DirectoryPickerModal/DirectoryPickerModal";
+import { DirectoryPickerModal } from "@/browser/features/Project/DirectoryPickerModal/DirectoryPickerModal";
 import { Button } from "@/browser/components/Button/Button";
 import {
   ToggleGroup,

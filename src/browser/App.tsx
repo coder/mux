@@ -6,10 +6,10 @@ import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useProjectContext } from "./contexts/ProjectContext";
-import type { WorkspaceSelection } from "./components/ProjectSidebar/ProjectSidebar";
+import type { WorkspaceSelection } from "./features/Project/ProjectSidebar/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal/ProjectCreateModal";
-import { AIView } from "./components/AIView/AIView";
+import { AIView } from "./features/Chat/AIView/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary/ErrorBoundary";
 import {
   usePersistedState,
@@ -29,7 +29,7 @@ import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandR
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
-import { CommandPalette } from "./components/CommandPalette/CommandPalette";
+import { CommandPalette } from "./features/CommandPalette/CommandPalette/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
@@ -81,7 +81,7 @@ import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
-import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner/WindowsToolchainBanner";
+import { WindowsToolchainBanner } from "./features/AppShell/WindowsToolchainBanner/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";

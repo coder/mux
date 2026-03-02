@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
 import { Loader2, Wrench, CheckCircle2, AlertCircle } from "lucide-react";
-import { Shimmer } from "../AIElements/Shimmer";
+import { Shimmer } from "@/browser/components/Shimmer/Shimmer";
 import { formatDuration } from "@/common/utils/formatDuration";
 
 interface InitMessageProps {
