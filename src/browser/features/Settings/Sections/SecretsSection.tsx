@@ -840,6 +840,7 @@ export const SecretsSection: React.FC = () => {
                 {scope === "global" && (
                   <div className="flex items-center justify-center self-center">
                     <Switch
+                      size="sm"
                       checked={!!secret.injectAll}
                       onCheckedChange={(checked) => updateSecretInjectAll(index, checked)}
                       disabled={saving}
