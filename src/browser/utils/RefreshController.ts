@@ -332,17 +332,31 @@ export class RefreshController {
     };
 
     const handleSuccess = () => {
-      this._lastRefreshInfo = { timestamp: Date.now(), trigger };
-      this.onRefreshComplete?.(this._lastRefreshInfo);
+      const info: LastRefreshInfo = { timestamp: Date.now(), trigger };
+      this._lastRefreshInfo = info;
+
       finalizeInFlight();
+
+      try {
+        this.onRefreshComplete?.(info);
+      } catch (error) {
+        console.error("[RefreshController] onRefreshComplete callback threw", error);
+      }
     };
 
     const handleFailure = (error: unknown) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.debug(`onRefresh failed: ${errorMessage}`);
       // Do NOT mutate _lastRefreshInfo — failure must not look like success.
-      this.onRefreshError?.({ timestamp: Date.now(), trigger, errorMessage });
+      const failureInfo: RefreshFailureInfo = { timestamp: Date.now(), trigger, errorMessage };
+
       finalizeInFlight();
+
+      try {
+        this.onRefreshError?.(failureInfo);
+      } catch (callbackError) {
+        console.error("[RefreshController] onRefreshError callback threw", callbackError);
+      }
     };
 
     // Unified promise pipeline: normalizes sync throws and async rejections

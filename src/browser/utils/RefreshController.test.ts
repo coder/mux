@@ -1,4 +1,4 @@
-import { describe, it, expect, mock } from "bun:test";
+import { describe, it, expect, mock, vi } from "bun:test";
 
 import { RefreshController } from "./RefreshController";
 
@@ -228,6 +228,66 @@ describe("RefreshController", () => {
     expect(onComplete).toHaveBeenCalledTimes(0);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0].errorMessage).toBe("async boom");
+
+    controller.dispose();
+  });
+
+  it("onRefreshComplete callback throw does not wedge controller", async () => {
+    const onRefresh = vi.fn(() => undefined);
+    const onRefreshComplete = vi.fn(() => {
+      throw new Error("callback boom");
+    });
+
+    const controller = new RefreshController({
+      onRefresh,
+      onRefreshComplete,
+      debounceMs: 20,
+    });
+
+    controller.requestImmediate();
+    await sleep(10);
+
+    expect(controller.isRefreshing).toBe(false);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefreshComplete).toHaveBeenCalledTimes(1);
+
+    controller.requestImmediate();
+    await sleep(10);
+
+    expect(controller.isRefreshing).toBe(false);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(onRefreshComplete).toHaveBeenCalledTimes(2);
+
+    controller.dispose();
+  });
+
+  it("onRefreshError callback throw does not wedge controller", async () => {
+    const onRefresh = vi.fn(() => {
+      throw new Error("refresh fail");
+    });
+    const onRefreshError = vi.fn(() => {
+      throw new Error("callback boom");
+    });
+
+    const controller = new RefreshController({
+      onRefresh,
+      onRefreshError,
+      debounceMs: 20,
+    });
+
+    controller.requestImmediate();
+    await sleep(10);
+
+    expect(controller.isRefreshing).toBe(false);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefreshError).toHaveBeenCalledTimes(1);
+
+    controller.requestImmediate();
+    await sleep(10);
+
+    expect(controller.isRefreshing).toBe(false);
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+    expect(onRefreshError).toHaveBeenCalledTimes(2);
 
     controller.dispose();
   });
