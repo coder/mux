@@ -16,6 +16,7 @@ import {
   CHART_AXIS_TICK,
   CHART_TOOLTIP_CONTENT_STYLE,
   formatBucketLabel,
+  formatBucketTooltipLabel,
   formatUsd,
 } from "./analyticsUtils";
 
@@ -23,6 +24,7 @@ interface SpendChartProps {
   data: SpendOverTimeItem[] | null;
   loading: boolean;
   error: string | null;
+  granularity: "hour" | "day" | "week";
 }
 
 interface SpendChartRow {
@@ -68,7 +70,13 @@ export function SpendChart(props: SpendChartProps) {
   return (
     <div className="bg-background-secondary border-border-medium rounded-lg border p-4">
       <h2 className="text-foreground text-sm font-semibold">Spend over time</h2>
-      <p className="text-muted mt-1 text-xs">Model-attributed spend per time bucket.</p>
+      <p className="text-muted mt-1 text-xs">
+        {props.granularity === "week"
+          ? "Model-attributed weekly spend."
+          : props.granularity === "hour"
+            ? "Model-attributed hourly spend."
+            : "Model-attributed daily spend."}
+      </p>
 
       {props.loading ? (
         <div className="mt-3">
@@ -97,7 +105,9 @@ export function SpendChart(props: SpendChartProps) {
                 stroke={CHART_AXIS_STROKE}
               />
               <Tooltip
-                labelFormatter={(value) => formatBucketLabel(String(value))}
+                labelFormatter={(value) =>
+                  formatBucketTooltipLabel(String(value), props.granularity)
+                }
                 formatter={(value: number, key: string) => [formatUsd(Number(value)), key]}
                 cursor={{ fill: "var(--color-hover)" }}
                 contentStyle={CHART_TOOLTIP_CONTENT_STYLE}

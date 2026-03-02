@@ -104,3 +104,22 @@ export function formatBucketLabel(bucket: string): string {
     timeZone: "UTC",
   });
 }
+
+/** Granularity-aware label for tooltip headers.
+ *  Weekly buckets render as a date range (e.g. "Feb 23 – Mar 1");
+ *  all other granularities delegate to `formatBucketLabel`. */
+export function formatBucketTooltipLabel(
+  bucket: string,
+  granularity: "hour" | "day" | "week"
+): string {
+  if (granularity !== "week") return formatBucketLabel(bucket);
+
+  const start = new Date(bucket);
+  if (!Number.isFinite(start.getTime())) return bucket;
+
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", timeZone: "UTC" };
+  return `${start.toLocaleDateString(undefined, opts)} – ${end.toLocaleDateString(undefined, opts)}`;
+}

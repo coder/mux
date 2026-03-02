@@ -274,6 +274,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             data={spendOverTime.data}
             loading={spendOverTime.loading}
             error={spendOverTime.error}
+            granularity={dateRange.granularity}
           />
           <ModelBreakdown spendByProject={spendByProject} spendByModel={spendByModel} />
           <TokensByModelChart
