@@ -4,8 +4,10 @@ import assert from "@/common/utils/assert";
  * Correlates DevTools middleware steps with HTTP request headers.
  *
  * The middleware injects a synthetic header (x-mux-devtools-step-id) into
- * AI SDK call params. The fetch wrapper intercepts it, strips it before
- * sending, and captures all real request headers keyed by step ID.
+ * AI SDK call params. The default fetch function calls captureAndStripDevToolsHeader()
+ * after building final headers (including the Mux user-agent), which captures
+ * all real request headers keyed by step ID and strips the synthetic header
+ * before the request is sent.
  */
 export const DEVTOOLS_STEP_ID_HEADER = "x-mux-devtools-step-id";
 
@@ -22,35 +24,23 @@ export function consumeCapturedRequestHeaders(stepId: string): Record<string, st
 }
 
 /**
- * Wraps a fetch function to intercept the synthetic step ID header.
- * When present, strips it from the outgoing request and captures all
- * remaining request headers into the shared map.
+ * Inspects a Headers object for the synthetic DevTools step ID header.
+ * If present, captures all remaining headers into the shared map and
+ * strips the synthetic header. Mutates the Headers object in place.
+ *
+ * Called inside defaultFetchWithUnlimitedTimeout after buildAIProviderRequestHeaders
+ * so captured headers include the Mux user-agent and all provider-added headers.
+ * No-op when the synthetic header is absent (i.e., devtools middleware is not active).
  */
-export function wrapFetchWithHeaderCapture(baseFetch: typeof fetch): typeof fetch {
-  assert(typeof baseFetch === "function", "wrapFetchWithHeaderCapture requires a fetch function");
+export function captureAndStripDevToolsHeader(headers: Headers): void {
+  const rawStepId = headers.get(DEVTOOLS_STEP_ID_HEADER);
+  if (rawStepId == null) return;
 
-  const wrappedFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const headerSource = init?.headers ?? (input instanceof Request ? input.headers : undefined);
-    const headers = new Headers(headerSource);
-    const rawStepId = headers.get(DEVTOOLS_STEP_ID_HEADER);
+  // Strip synthetic header — must never reach the provider API
+  headers.delete(DEVTOOLS_STEP_ID_HEADER);
 
-    if (rawStepId != null) {
-      headers.delete(DEVTOOLS_STEP_ID_HEADER);
-
-      const stepId = rawStepId.trim();
-      if (stepId.length > 0) {
-        capturedRequestHeaders.set(stepId, Object.fromEntries(headers.entries()));
-      }
-
-      const cleanedInit: RequestInit = {
-        ...(init ?? {}),
-        headers,
-      };
-      return baseFetch(input, cleanedInit);
-    }
-
-    return baseFetch(input, init);
-  };
-
-  return Object.assign(wrappedFetch, baseFetch) as typeof fetch;
+  const stepId = rawStepId.trim();
+  if (stepId.length > 0) {
+    capturedRequestHeaders.set(stepId, Object.fromEntries(headers.entries()));
+  }
 }

@@ -28,7 +28,7 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { DevToolsService } from "@/node/services/devToolsService";
-import { wrapFetchWithHeaderCapture } from "@/node/services/devToolsHeaderCapture";
+import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
@@ -145,6 +145,11 @@ const defaultFetchWithUnlimitedTimeout = (async (
 ): Promise<Response> => {
   const headerSource = resolveAIProviderHeaderSource(input, init);
   const headers = buildAIProviderRequestHeaders(headerSource);
+
+  // Capture final request headers for DevTools if a synthetic step ID is present.
+  // This runs after buildAIProviderRequestHeaders so the Mux user-agent is included.
+  // The synthetic header is stripped before the request is sent.
+  captureAndStripDevToolsHeader(headers);
 
   // dispatcher is a Node.js undici-specific property for custom HTTP agents
   const requestInit: RequestInitWithDispatcher = {
@@ -531,15 +536,7 @@ export class ProviderModelFactory {
     this.devToolsService = devToolsService;
   }
 
-  private wrapProviderFetchForDevTools(baseFetch: typeof fetch): typeof fetch {
-    assert(typeof baseFetch === "function", "ProviderModelFactory expected fetch function");
 
-    if (!this.devToolsService?.enabled) {
-      return baseFetch;
-    }
-
-    return wrapFetchWithHeaderCapture(baseFetch);
-  }
 
   /**
    * Resolve an API key that may be a 1Password op:// reference.
@@ -767,7 +764,7 @@ export class ProviderModelFactory {
         const fetchWithCacheControl = disableBeta
           ? baseFetch
           : wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl);
-        const providerFetch = this.wrapProviderFetchForDevTools(fetchWithCacheControl);
+        const providerFetch = fetchWithCacheControl;
         const provider = createAnthropic({
           ...normalizedConfig,
           fetch: providerFetch,
@@ -1087,9 +1084,9 @@ export class ProviderModelFactory {
 
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
-        const providerFetch = this.wrapProviderFetchForDevTools(
+        const providerFetch = 
           fetchWithOpenAITruncation as typeof fetch
-        );
+        ;
         const provider = createOpenAI({
           ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
@@ -1174,7 +1171,7 @@ export class ProviderModelFactory {
         }
 
         const { createXai } = await PROVIDER_REGISTRY.xai();
-        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
+        const providerFetch = baseFetch;
         const provider = createXai({
           apiKey: resolvedApiKey,
           baseURL: creds.baseUrl ?? baseURL,
@@ -1192,7 +1189,7 @@ export class ProviderModelFactory {
 
         // Lazy-load Ollama provider to reduce startup time
         const { createOllama } = await PROVIDER_REGISTRY.ollama();
-        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
+        const providerFetch = baseFetch;
         const provider = createOllama({
           ...providerConfig,
           fetch: providerFetch,
@@ -1259,7 +1256,7 @@ export class ProviderModelFactory {
 
         // Lazy-load OpenRouter provider to reduce startup time
         const { createOpenRouter } = await PROVIDER_REGISTRY.openrouter();
-        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
+        const providerFetch = baseFetch;
         const provider = createOpenRouter({
           apiKey: resolvedApiKey,
           baseURL: creds.baseUrl ?? baseUrl,
@@ -1287,7 +1284,7 @@ export class ProviderModelFactory {
             : undefined;
 
         const baseFetch = getProviderFetch(providerConfig);
-        const providerFetch = this.wrapProviderFetchForDevTools(baseFetch);
+        const providerFetch = baseFetch;
         const { createAmazonBedrock } = await PROVIDER_REGISTRY.bedrock();
 
         // Check if explicit credentials are provided in config
@@ -1367,7 +1364,7 @@ export class ProviderModelFactory {
           fetchWithCacheControl,
           this.providerService
         );
-        const providerFetch = this.wrapProviderFetchForDevTools(fetchWithAutoLogout);
+        const providerFetch = fetchWithAutoLogout;
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
@@ -1485,7 +1482,7 @@ export class ProviderModelFactory {
           return baseFetch(input, { ...init, headers });
         };
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
-        const providerFetch = this.wrapProviderFetchForDevTools(copilotFetch);
+        const providerFetch = copilotFetch;
 
         const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
         const provider = createOpenAICompatible({
@@ -1533,7 +1530,7 @@ export class ProviderModelFactory {
           ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
         };
 
-        const providerFetch = this.wrapProviderFetchForDevTools(getProviderFetch(providerConfig));
+        const providerFetch = getProviderFetch(providerConfig);
         const provider = factory({
           ...configWithCreds,
           fetch: providerFetch,

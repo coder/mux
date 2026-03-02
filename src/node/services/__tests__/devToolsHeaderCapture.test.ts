@@ -1,78 +1,59 @@
-import { describe, expect, it, vi } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
   DEVTOOLS_STEP_ID_HEADER,
+  captureAndStripDevToolsHeader,
   consumeCapturedRequestHeaders,
-  wrapFetchWithHeaderCapture,
-} from "@/node/services/devToolsHeaderCapture";
-
-function createMockFetch(
-  implementation: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = () =>
-    Promise.resolve(new Response("ok"))
-) {
-  const mockFetch = vi.fn(implementation);
-  const fetchWithPreconnect = Object.assign(mockFetch, {
-    preconnect: fetch.preconnect.bind(fetch),
-  }) as unknown as typeof fetch;
-
-  return {
-    mockFetch,
-    fetchWithPreconnect,
-  };
-}
+} from "../devToolsHeaderCapture";
 
 describe("devToolsHeaderCapture", () => {
-  it("wrapFetchWithHeaderCapture captures and strips synthetic header", async () => {
-    const { mockFetch, fetchWithPreconnect } = createMockFetch();
-    const wrapped = wrapFetchWithHeaderCapture(fetchWithPreconnect);
-
-    await wrapped("https://api.example.com", {
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": "sk-123",
-        [DEVTOOLS_STEP_ID_HEADER]: "step-abc",
-      },
+  it("captures headers and strips synthetic header from Headers object", () => {
+    const headers = new Headers({
+      "content-type": "application/json",
+      "x-api-key": "sk-123",
+      "user-agent": "mux/1.0 ai-sdk/anthropic/3.0",
+      [DEVTOOLS_STEP_ID_HEADER]: "step-abc",
     });
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    captureAndStripDevToolsHeader(headers);
 
-    const sentInit = mockFetch.mock.calls[0]?.[1];
-    expect(sentInit).toBeDefined();
-    const sentHeaders = new Headers(sentInit?.headers);
+    // Synthetic header was stripped from the Headers object
+    expect(headers.get(DEVTOOLS_STEP_ID_HEADER)).toBeNull();
+    // Other headers remain intact
+    expect(headers.get("content-type")).toBe("application/json");
 
-    expect(sentHeaders.get(DEVTOOLS_STEP_ID_HEADER)).toBeNull();
-    expect(sentHeaders.get("content-type")).toBe("application/json");
-    expect(sentHeaders.get("x-api-key")).toBe("sk-123");
-
+    // Captured headers include real headers but not the synthetic one
     const captured = consumeCapturedRequestHeaders("step-abc");
     expect(captured).not.toBeNull();
-    expect(captured?.["content-type"]).toBe("application/json");
-    expect(captured?.["x-api-key"]).toBe("sk-123");
-    expect(captured?.[DEVTOOLS_STEP_ID_HEADER]).toBeUndefined();
+    expect(captured!["content-type"]).toBe("application/json");
+    expect(captured!["x-api-key"]).toBe("sk-123");
+    expect(captured!["user-agent"]).toBe("mux/1.0 ai-sdk/anthropic/3.0");
+    expect(captured![DEVTOOLS_STEP_ID_HEADER]).toBeUndefined();
   });
 
   it("consumeCapturedRequestHeaders returns null for unknown stepId", () => {
-    expect(consumeCapturedRequestHeaders("unknown-step-id")).toBeNull();
+    expect(consumeCapturedRequestHeaders("unknown")).toBeNull();
   });
 
-  it("consumeCapturedRequestHeaders cleans up after read", async () => {
-    const { fetchWithPreconnect } = createMockFetch();
-    const wrapped = wrapFetchWithHeaderCapture(fetchWithPreconnect);
+  it("consumeCapturedRequestHeaders cleans up after read", () => {
+    const headers = new Headers({
+      [DEVTOOLS_STEP_ID_HEADER]: "step-1",
+    });
+    captureAndStripDevToolsHeader(headers);
 
-    await wrapped("https://api.example.com", {
-      headers: { [DEVTOOLS_STEP_ID_HEADER]: "step-cleanup" },
+    consumeCapturedRequestHeaders("step-1"); // first read
+    expect(consumeCapturedRequestHeaders("step-1")).toBeNull(); // second read → null
+  });
+
+  it("is a no-op when synthetic header is absent", () => {
+    const headers = new Headers({
+      "content-type": "application/json",
+      "x-api-key": "sk-123",
     });
 
-    expect(consumeCapturedRequestHeaders("step-cleanup")).not.toBeNull();
-    expect(consumeCapturedRequestHeaders("step-cleanup")).toBeNull();
-  });
+    captureAndStripDevToolsHeader(headers);
 
-  it("passes through unchanged when no synthetic header is present", async () => {
-    const { mockFetch, fetchWithPreconnect } = createMockFetch();
-    const wrapped = wrapFetchWithHeaderCapture(fetchWithPreconnect);
-    const init: RequestInit = { headers: { "x-api-key": "sk-123" } };
-
-    await wrapped("https://api.example.com", init);
-
-    expect(mockFetch).toHaveBeenCalledWith("https://api.example.com", init);
+    // Headers unchanged
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.get("x-api-key")).toBe("sk-123");
   });
 });
