@@ -36,6 +36,66 @@ export function isClosedClientError(error: unknown): boolean {
   );
 }
 
+export const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
+
+export async function raceWithAbort<T>(op: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    return op;
+  }
+  if (signal.aborted) {
+    throw new Error("Interrupted");
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(new Error("Interrupted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    op.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+export async function raceWithTimeout<T>(
+  op: Promise<T>,
+  timeoutMs: number,
+  toolName: string
+): Promise<T> {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    handle = setTimeout(
+      () => reject(new Error(`MCP tool '${toolName}' timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    if (
+      handle !== undefined &&
+      typeof handle === "object" &&
+      "unref" in handle &&
+      typeof handle.unref === "function"
+    ) {
+      handle.unref();
+    }
+  });
+
+  try {
+    return await Promise.race([op, timeout]);
+  } finally {
+    if (handle) {
+      clearTimeout(handle);
+    }
+  }
+}
+
+function shouldRecycleClientAfterToolError(error: unknown): boolean {
+  if (isClosedClientError(error)) {
+    return true;
+  }
+
+  const message = getErrorMessage(error);
+  return message === "Interrupted" || message.includes("timed out");
+}
+
 /**
  * Wrap MCP tools to transform their results to AI SDK format.
  * This ensures image content is properly converted to media type.
@@ -46,26 +106,34 @@ export function wrapMCPTools(
 ): Record<string, Tool> {
   const { onActivity, onClosed } = options ?? {};
   const wrapped: Record<string, Tool> = {};
-  for (const [name, tool] of Object.entries(tools)) {
+  for (const [toolName, tool] of Object.entries(tools)) {
     // Only wrap tools that have an execute function
     if (!tool.execute) {
-      wrapped[name] = tool;
+      wrapped[toolName] = tool;
       continue;
     }
 
     const originalExecute = tool.execute;
-    wrapped[name] = {
+    wrapped[toolName] = {
       ...tool,
-      execute: async (args: Parameters<typeof originalExecute>[0], options) => {
+      execute: async (args: Parameters<typeof originalExecute>[0], context) => {
         // Mark the MCP server set as active *before* execution, so failed tool
         // calls (including closed-client races) still count as activity.
         onActivity?.();
 
         try {
-          const result: unknown = await originalExecute(args, options);
+          const abortSignal =
+            context && typeof context === "object" && "abortSignal" in context
+              ? (context as { abortSignal?: AbortSignal }).abortSignal
+              : undefined;
+          const callPromise = originalExecute(args, context);
+          // The MCP client only checks abort at request boundaries; race the in-flight
+          // call against both timeout and abort so hung servers cannot stall streams.
+          const timedPromise = raceWithTimeout(callPromise, MCP_TOOL_CALL_TIMEOUT_MS, toolName);
+          const result: unknown = await raceWithAbort(timedPromise, abortSignal);
           return transformMCPResult(result as MCPCallToolResult);
         } catch (error) {
-          if (isClosedClientError(error)) {
+          if (shouldRecycleClientAfterToolError(error)) {
             try {
               onClosed?.();
             } catch {

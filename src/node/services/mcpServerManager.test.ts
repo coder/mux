@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createServer } from "http";
 
-import { MCPServerManager, isClosedClientError, wrapMCPTools } from "./mcpServerManager";
+import {
+  MCPServerManager,
+  isClosedClientError,
+  raceWithTimeout,
+  wrapMCPTools,
+} from "./mcpServerManager";
 import type { MCPConfigService } from "./mcpConfigService";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { Tool } from "ai";
@@ -718,6 +723,62 @@ describe("wrapMCPTools", () => {
 
     expect(didThrow).toBe(true);
     expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects with Interrupted when aborted during execution", async () => {
+    const controller = new AbortController();
+    const tool = {
+      execute: mock(() => new Promise(() => {})),
+      parameters: {},
+    } as unknown as Tool;
+
+    const onClosed = mock(() => undefined);
+    const wrapped = wrapMCPTools({ hangTool: tool }, { onClosed });
+
+    const promise = wrapped.hangTool.execute!({}, { abortSignal: controller.signal } as never);
+    controller.abort();
+
+    await expect(promise).rejects.toThrow("Interrupted");
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects immediately if signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const tool = {
+      execute: mock(() => Promise.resolve({ content: [{ type: "text", text: "ok" }] })),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool });
+    await expect(
+      wrapped.myTool.execute!({}, { abortSignal: controller.signal } as never)
+    ).rejects.toThrow("Interrupted");
+  });
+
+  test("calls onClosed when execute throws a timeout error", async () => {
+    const onClosed = mock(() => undefined);
+    const timeoutError = new Error("MCP tool 'myTool' timed out after 50ms");
+    const tool = {
+      execute: mock(() => Promise.reject(timeoutError)),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
+
+    await expect(wrapped.myTool.execute!({}, {} as never)).rejects.toThrow(
+      "MCP tool 'myTool' timed out after 50ms"
+    );
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  test("raceWithTimeout rejects after timeout", async () => {
+    const never = new Promise<never>(() => {});
+
+    await expect(raceWithTimeout(never, 50, "testTool")).rejects.toThrow(
+      "MCP tool 'testTool' timed out after 50ms"
+    );
   });
 
   test("passes through successful execution results", async () => {
