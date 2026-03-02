@@ -8,7 +8,7 @@
  */
 
 import React from "react";
-import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
+import { BugPlay, ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 import { type ReviewStats } from "./registry";
@@ -84,6 +84,14 @@ export const ExplorerTabLabel: React.FC = () => (
   <span className="inline-flex items-center gap-1">
     <FolderTree className="h-3 w-3 shrink-0" />
     Explorer
+  </span>
+);
+
+/** Debug tab label with bug icon */
+export const DebugTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <BugPlay className="h-3 w-3 shrink-0" />
+    Debug
   </span>
 );
 

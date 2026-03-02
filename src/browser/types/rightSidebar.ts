@@ -5,6 +5,7 @@ export const RIGHT_SIDEBAR_TABS = [
   "explorer",
   // "stats" removed — absorbed into "costs" as sub-tabs
   "output",
+  "debug",
 ] as const;
 
 /** Base tab types that are always valid */

@@ -20,6 +20,7 @@ import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary"
 import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
 
+import { DevToolsTab } from "./DevToolsTab";
 import {
   matchesKeybind,
   KEYBINDS,
@@ -84,6 +85,7 @@ import {
   getTabContentClassName,
   type ReviewStats,
 } from "@/browser/features/RightSidebar/Tabs";
+import { DebugTabLabel } from "./Tabs/TabLabels";
 import { FileViewerTab } from "@/browser/features/RightSidebar/FileViewer";
 import { ExplorerTab } from "@/browser/features/RightSidebar/ExplorerTab";
 import {
@@ -385,6 +387,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <ExplorerTabLabel />;
     } else if (tab === "output") {
       label = <OutputTabLabel />;
+    } else if (tab === "debug") {
+      label = <DebugTabLabel />;
     } else if (isTerminal) {
       const terminalIndex = terminalTabs.indexOf(tab);
       label = (
@@ -425,11 +429,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const outputPanelId = `${tabsetBaseId}-panel-output`;
+  const debugPanelId = `${tabsetBaseId}-panel-debug`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const outputTabId = `${tabsetBaseId}-tab-output`;
+  const debugTabId = `${tabsetBaseId}-tab-debug`;
 
   // Generate sortable IDs for tabs in this tabset
   const sortableIds = items.map((item) => `${props.node.id}:${item.tab}`);
@@ -512,6 +518,14 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         {props.node.activeTab === "output" && (
           <div role="tabpanel" id={outputPanelId} aria-labelledby={outputTabId} className="h-full">
             <OutputTab workspaceId={props.workspaceId} />
+          </div>
+        )}
+
+        {props.node.activeTab === "debug" && (
+          <div role="tabpanel" id={debugPanelId} aria-labelledby={debugTabId}>
+            <ErrorBoundary workspaceInfo="Debug tab">
+              <DevToolsTab workspaceId={props.workspaceId} />
+            </ErrorBoundary>
           </div>
         )}
 
