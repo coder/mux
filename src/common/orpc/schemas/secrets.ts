@@ -11,11 +11,10 @@ export const SecretValueSchema = z.union([
       secret: z.string(),
     })
     .strict(),
-  z
-    .object({
-      op: z.string(),
-    })
-    .strict(),
+  z.object({
+    op: z.string(),
+    opLabel: z.string().optional(),
+  }),
 ]);
 
 export const SecretSchema = z

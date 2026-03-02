@@ -341,4 +341,22 @@ describe("OnePasswordService", () => {
       OnePasswordService.buildReference("Vault/Prod", "Item/Main", "pass/word", "Login/Primary")
     ).toBe("op://Vault/Prod/Item/Main/Login/Primary/pass/word");
   });
+
+  it("buildLabel() joins vault, item, and field titles with separators", () => {
+    expect(OnePasswordService.buildLabel("Mux", "OpenAI Key", "password")).toBe(
+      "Mux / OpenAI Key / password"
+    );
+  });
+
+  it("buildLabel() includes section title when provided", () => {
+    expect(OnePasswordService.buildLabel("Mux", "OpenAI Key", "password", "Credentials")).toBe(
+      "Mux / OpenAI Key / Credentials / password"
+    );
+  });
+
+  it("buildLabel() treats empty section title as absent", () => {
+    expect(OnePasswordService.buildLabel("Mux", "OpenAI Key", "password", "")).toBe(
+      "Mux / OpenAI Key / password"
+    );
+  });
 });

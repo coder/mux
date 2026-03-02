@@ -28,7 +28,11 @@ export const onePassword = {
       itemId: z.string(),
       fieldId: z.string(),
       sectionId: z.string().nullish(),
+      vaultTitle: z.string().optional(),
+      itemTitle: z.string().optional(),
+      fieldTitle: z.string().optional(),
+      sectionTitle: z.string().nullish(),
     }),
-    output: z.object({ reference: z.string() }),
+    output: z.object({ reference: z.string(), label: z.string() }),
   },
 };

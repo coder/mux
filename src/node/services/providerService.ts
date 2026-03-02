@@ -96,6 +96,7 @@ export class ProviderService {
     for (const provider of this.list()) {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
+        apiKeyOpLabel?: string;
         baseUrl?: string;
         models?: unknown[];
         serviceTier?: string;
@@ -142,6 +143,7 @@ export class ProviderService {
         apiKeySet: !!config.apiKey,
         apiKeyIsOpRef: apiKeyIsOpRef || undefined,
         apiKeyOpRef: apiKeyIsOpRef ? config.apiKey : undefined,
+        apiKeyOpLabel: apiKeyIsOpRef ? config.apiKeyOpLabel : undefined,
         // Users can disable providers without removing credentials from providers.jsonc.
         isEnabled,
         isConfigured: false, // computed below

@@ -4273,6 +4273,12 @@ export const router = (authToken?: string) => {
             input.fieldId,
             input.sectionId ?? undefined
           ),
+          label: OnePasswordService.buildLabel(
+            input.vaultTitle || input.vaultId,
+            input.itemTitle || input.itemId,
+            input.fieldTitle || input.fieldId,
+            input.sectionTitle || input.sectionId || undefined
+          ),
         })),
     },
     ssh: {

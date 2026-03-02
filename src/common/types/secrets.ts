@@ -18,7 +18,7 @@ export function isSecretReferenceValue(value: unknown): value is { secret: strin
   );
 }
 
-export function isOpSecretValue(value: unknown): value is { op: string } {
+export function isOpSecretValue(value: unknown): value is { op: string; opLabel?: string } {
   return (
     typeof value === "object" &&
     value !== null &&

@@ -202,6 +202,16 @@ export class OnePasswordService {
     return segments.join("/");
   }
 
+  static buildLabel(
+    vaultTitle: string,
+    itemTitle: string,
+    fieldTitle: string,
+    sectionTitle?: string
+  ): string {
+    const segments = [vaultTitle, itemTitle, ...(sectionTitle ? [sectionTitle] : []), fieldTitle];
+
+    return segments.join(" / ");
+  }
   reset(): void {
     this.client = null;
     this.initPromise = null;
