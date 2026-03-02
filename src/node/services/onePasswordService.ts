@@ -71,7 +71,11 @@ export class OnePasswordService {
 
   async resolve(ref: string): Promise<string | undefined> {
     if (!ref.startsWith(OP_REF_PREFIX)) {
-      log.warn("Invalid 1Password reference (not an op:// URI)", { ref });
+      // Redact the value — if someone accidentally stored a raw API key
+      // as an op reference, logging it would leak the credential.
+      log.warn("Invalid 1Password reference (not an op:// URI)", {
+        ref: `[redacted, length=${ref.length}]`,
+      });
       return undefined;
     }
 
