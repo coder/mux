@@ -79,30 +79,24 @@ export interface TabConfig {
 }
 
 /** Static tab configurations (non-terminal tabs) */
-export const TAB_CONFIGS: Record<"costs" | "review" | "explorer" | "stats" | "output", TabConfig> =
-  {
-    costs: {
-      name: "Costs",
-      contentClassName: "overflow-y-auto p-[15px]",
-    },
-    review: {
-      name: "Review",
-      contentClassName: "overflow-y-auto p-0",
-    },
-    explorer: {
-      name: "Explorer",
-      contentClassName: "overflow-y-auto p-0",
-    },
-    stats: {
-      name: "Stats",
-      contentClassName: "overflow-y-auto p-[15px]",
-      featureFlag: "statsTab",
-    },
-    output: {
-      name: "Output",
-      contentClassName: "overflow-hidden p-0",
-    },
-  };
+export const TAB_CONFIGS: Record<"costs" | "review" | "explorer" | "output", TabConfig> = {
+  costs: {
+    name: "Stats", // Renamed from "Costs" — now hosts Cost/Timing/Models sub-tabs
+    contentClassName: "overflow-y-auto p-[15px]",
+  },
+  review: {
+    name: "Review",
+    contentClassName: "overflow-y-auto p-0",
+  },
+  explorer: {
+    name: "Explorer",
+    contentClassName: "overflow-y-auto p-0",
+  },
+  output: {
+    name: "Output",
+    contentClassName: "overflow-hidden p-0",
+  },
+};
 
 /** Terminal tab configuration */
 export const TERMINAL_TAB_CONFIG: TabConfig = {
@@ -120,13 +114,7 @@ export const FILE_TAB_CONFIG: TabConfig = {
 
 /** Get config for a tab type */
 export function getTabConfig(tab: TabType): TabConfig {
-  if (
-    tab === "costs" ||
-    tab === "review" ||
-    tab === "explorer" ||
-    tab === "stats" ||
-    tab === "output"
-  ) {
+  if (tab === "costs" || tab === "review" || tab === "explorer" || tab === "output") {
     return TAB_CONFIGS[tab];
   }
   // File tabs

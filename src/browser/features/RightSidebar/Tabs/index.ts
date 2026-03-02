@@ -22,11 +22,10 @@ export {
 } from "./registry";
 
 export {
-  CostsTabLabel,
+  StatsTabLabel,
   ExplorerTabLabel,
   OutputTabLabel,
   FileTabLabel,
   ReviewTabLabel,
-  StatsTabLabel,
   TerminalTabLabel,
 } from "./TabLabels";

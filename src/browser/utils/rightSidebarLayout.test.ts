@@ -79,11 +79,11 @@ test("addTabToFocusedTabset can add a tab without stealing focus", () => {
     root: { type: "tabset", id: "tabset-1", tabs: ["costs", "review"], activeTab: "costs" },
   };
 
-  const s1 = addTabToFocusedTabset(s0, "stats", false);
+  const s1 = addTabToFocusedTabset(s0, "output", false);
 
   expect(s1.root.type).toBe("tabset");
   if (s1.root.type !== "tabset") throw new Error("expected tabset");
-  expect(s1.root.tabs).toEqual(["costs", "review", "stats"]);
+  expect(s1.root.tabs).toEqual(["costs", "review", "output"]);
   expect(s1.root.activeTab).toBe("costs");
 });
 

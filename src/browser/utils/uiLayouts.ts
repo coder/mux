@@ -146,7 +146,7 @@ function toPresetTab(
   }
 
   // Base tabs are already compatible.
-  if (tab === "costs" || tab === "review" || tab === "explorer" || tab === "stats") {
+  if (tab === "costs" || tab === "review" || tab === "explorer") {
     return tab;
   }
 

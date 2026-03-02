@@ -17,16 +17,17 @@ import { cn } from "@/common/lib/utils";
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
-interface CostsTabLabelProps {
+interface StatsTabLabelProps {
   workspaceId: string;
 }
 
 /**
- * Costs tab label with session cost badge.
- * Subscribes to workspace usage directly to avoid re-rendering parent components.
+ * Unified Stats tab label with session cost and duration badges.
+ * Subscribes to workspace usage and stats directly to avoid re-rendering parent components.
  */
-export const CostsTabLabel: React.FC<CostsTabLabelProps> = ({ workspaceId }) => {
+export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
+  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
 
   const sessionCost = React.useMemo(() => {
     const parts: ChatUsageDisplay[] = [];
@@ -46,13 +47,23 @@ export const CostsTabLabel: React.FC<CostsTabLabelProps> = ({ workspaceId }) => 
     return total > 0 ? total : null;
   }, [usage.sessionTotal, usage.liveCostUsage]);
 
+  const sessionDuration = React.useMemo(() => {
+    const baseDuration = statsSnapshot?.session?.totalDurationMs ?? 0;
+    const activeDuration = statsSnapshot?.active?.elapsedMs ?? 0;
+    const total = baseDuration + activeDuration;
+    return total > 0 ? total : null;
+  }, [statsSnapshot]);
+
   return (
     <>
-      Costs
+      Stats
       {sessionCost !== null && (
         <span className="text-muted text-[10px] tabular-nums">
           ${sessionCost < 0.01 ? "<0.01" : sessionCost.toFixed(2)}
         </span>
+      )}
+      {sessionDuration !== null && (
+        <span className="text-muted text-[10px]">{formatTabDuration(sessionDuration)}</span>
       )}
     </>
   );
@@ -78,36 +89,6 @@ export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) =
     )}
   </>
 );
-
-interface StatsTabLabelProps {
-  workspaceId: string;
-}
-
-/**
- * Stats tab label with session duration badge.
- * Subscribes to workspace stats directly to avoid re-rendering parent components.
- */
-export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => {
-  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
-
-  const sessionDuration = React.useMemo(() => {
-    const baseDuration = statsSnapshot?.session?.totalDurationMs ?? 0;
-    const activeDuration = statsSnapshot?.active?.elapsedMs ?? 0;
-    const total = baseDuration + activeDuration;
-    return total > 0 ? total : null;
-  }, [statsSnapshot]);
-
-  return (
-    <>
-      Stats
-      {sessionDuration !== null && (
-        <span className="text-muted text-[10px] tabular-nums">
-          {formatTabDuration(sessionDuration)}
-        </span>
-      )}
-    </>
-  );
-};
 
 /** Explorer tab label with folder tree icon */
 export const ExplorerTabLabel: React.FC = () => (

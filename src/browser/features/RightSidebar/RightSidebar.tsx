@@ -13,13 +13,10 @@ import {
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
-import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
-import { CostsTab } from "@/browser/features/RightSidebar/CostsTab";
+import { StatsContainer } from "@/browser/features/RightSidebar/StatsContainer";
 
 import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
-import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary";
-import { StatsTab } from "@/browser/features/RightSidebar/StatsTab";
 import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
 
 import {
@@ -77,12 +74,11 @@ import {
   type TerminalSessionCreateOptions,
 } from "@/browser/utils/terminal";
 import {
-  CostsTabLabel,
+  StatsTabLabel,
   ExplorerTabLabel,
   OutputTabLabel,
   FileTabLabel,
   ReviewTabLabel,
-  StatsTabLabel,
   TerminalTabLabel,
   getTabContentClassName,
   type ReviewStats,
@@ -244,7 +240,6 @@ interface RightSidebarTabsetNodeProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   reviewStats: ReviewStats | null;
   onReviewStatsChange: (stats: ReviewStats | null) => void;
-  statsTabEnabled: boolean;
   /** Whether immersive review should use touch/mobile UX affordances. */
   isTouchReviewImmersive: boolean;
   /** Update touch/mobile immersive affordance mode from child controls/events. */
@@ -341,10 +336,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const terminalTabs = props.node.tabs.filter(isTerminalTab);
 
   const items = props.node.tabs.flatMap((tab) => {
-    if (tab === "stats" && !props.statsTabEnabled) {
-      return [];
-    }
-
     const tabId = `${tabsetBaseId}-tab-${tab}`;
     const panelId = `${tabsetBaseId}-panel-${tab}`;
 
@@ -386,13 +377,11 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     let label: React.ReactNode;
 
     if (tab === "costs") {
-      label = <CostsTabLabel workspaceId={props.workspaceId} />;
+      label = <StatsTabLabel workspaceId={props.workspaceId} />;
     } else if (tab === "review") {
       label = <ReviewTabLabel reviewStats={props.reviewStats} />;
     } else if (tab === "explorer") {
       label = <ExplorerTabLabel />;
-    } else if (tab === "stats") {
-      label = <StatsTabLabel workspaceId={props.workspaceId} />;
     } else if (tab === "output") {
       label = <OutputTabLabel />;
     } else if (isTerminal) {
@@ -434,13 +423,11 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
-  const statsPanelId = `${tabsetBaseId}-panel-stats`;
   const outputPanelId = `${tabsetBaseId}-panel-output`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
-  const statsTabId = `${tabsetBaseId}-tab-stats`;
   const outputTabId = `${tabsetBaseId}-tab-output`;
 
   // Generate sortable IDs for tabs in this tabset
@@ -515,7 +502,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
         {props.node.activeTab === "costs" && (
           <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
-            <CostsTab workspaceId={props.workspaceId} />
+            <StatsContainer workspaceId={props.workspaceId} />
           </div>
         )}
 
@@ -555,19 +542,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </div>
           );
         })}
-
-        {props.node.tabs.includes("stats") && props.statsTabEnabled && (
-          <div
-            role="tabpanel"
-            id={statsPanelId}
-            aria-labelledby={statsTabId}
-            hidden={props.node.activeTab !== "stats"}
-          >
-            <ErrorBoundary workspaceInfo="Stats tab">
-              <StatsTab workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
-        )}
 
         {props.node.activeTab === "explorer" && (
           <div
@@ -668,10 +642,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const [isTouchReviewImmersive, setIsTouchReviewImmersive] = React.useState(false);
 
-  // Stats tab feature flag
-  const { statsTabState } = useFeatureFlags();
-  const statsTabEnabled = Boolean(statsTabState?.enabled);
-
   // Read last-used focused tab for better defaults when initializing a new layout.
   const initialActiveTab = React.useMemo<TabType>(() => {
     const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
@@ -742,25 +712,19 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setIsReviewImmersive(false);
   }, [hasReviewPanelMounted, isReviewImmersive, setIsReviewImmersive]);
 
-  // If the Stats tab feature is enabled, ensure it exists in the layout.
-  // If disabled, ensure it doesn't linger in persisted layouts.
+  // Clean up any "stats" tabs lingering in persisted layouts from before the merge.
+  // The standalone "stats" tab was absorbed into the "costs" tab as sub-tabs.
   React.useEffect(() => {
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
-      const hasStats = collectAllTabs(prev.root).includes("stats");
-
-      if (statsTabEnabled && !hasStats) {
-        // Add stats tab to the focused tabset without stealing focus.
-        return addTabToFocusedTabset(prev, "stats", false);
+      // Cast needed: "stats" is no longer a valid TabType, but may exist in persisted data.
+      const hasStats = collectAllTabs(prev.root).includes("stats" as TabType);
+      if (hasStats) {
+        return removeTabEverywhere(prev, "stats" as TabType);
       }
-
-      if (!statsTabEnabled && hasStats) {
-        return removeTabEverywhere(prev, "stats");
-      }
-
       return prev;
     });
-  }, [initialActiveTab, setLayoutRaw, statsTabEnabled]);
+  }, [initialActiveTab, setLayoutRaw]);
   // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
   React.useEffect(() => {
     if (!isRightSidebarLayoutState(layoutRaw)) {
@@ -1355,7 +1319,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         focusTrigger={focusTrigger}
         onReviewNote={onReviewNote}
         reviewStats={reviewStats}
-        statsTabEnabled={statsTabEnabled}
         onReviewStatsChange={setReviewStats}
         isTouchReviewImmersive={isTouchReviewImmersive}
         onTouchReviewImmersiveChange={setIsTouchReviewImmersive}

@@ -349,7 +349,6 @@ const SAMPLE_DIFF = `--- /tmp/Button.old.tsx	2026-01-15 05:00:17.950815972 +0000
  * Text file viewer showing TypeScript file with syntax highlighting
  */
 // Helper to create a layout state with a file tab open
-// Includes "stats" tab to prevent the stats feature flag effect from adding it and activating it
 function createFileTabLayout(filePath: string) {
   const fileTab = `file:${filePath}`;
   return {
@@ -359,7 +358,7 @@ function createFileTabLayout(filePath: string) {
     root: {
       type: "tabset",
       id: "tabset-1",
-      tabs: ["costs", "review", "explorer", "stats", fileTab],
+      tabs: ["costs", "review", "explorer", fileTab],
       activeTab: fileTab,
     },
   };
