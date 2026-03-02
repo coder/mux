@@ -17,32 +17,61 @@ const PROVIDER_SECRET_KEYS = new Set([
 
 const APP_SECRET_KEYS = new Set(["muxGovernorToken"]);
 
+interface RedactionPolicy {
+  explicitSecretKeys: ReadonlySet<string>;
+  redactSensitiveHeaders: boolean;
+  redactGenericSecretLikeKeys: boolean;
+}
+
+const CONFIG_REDACTION_POLICIES: Record<ConfigFileKey, RedactionPolicy> = {
+  config: {
+    explicitSecretKeys: APP_SECRET_KEYS,
+    redactSensitiveHeaders: true,
+    redactGenericSecretLikeKeys: false,
+  },
+  providers: {
+    explicitSecretKeys: PROVIDER_SECRET_KEYS,
+    redactSensitiveHeaders: true,
+    redactGenericSecretLikeKeys: true,
+  },
+};
+
 const AUTH_HEADER_NAME_PATTERN = /(authorization|api[-_]?key|token|secret|password|cookie)/i;
+const SECRET_TAIL_WORDS = new Set([
+  "token",
+  "secret",
+  "password",
+  "passphrase",
+  "credential",
+  "credentials",
+]);
+const SECRET_TAIL_PAIRS = new Set([
+  "api_key",
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "client_secret",
+]);
 
 export function redactConfigDocument(fileKey: ConfigFileKey, document: unknown): unknown {
-  if (fileKey === "providers") {
-    return redactProvidersConfig(document);
-  }
-
-  return redactAppConfig(document);
+  const policy = CONFIG_REDACTION_POLICIES[fileKey];
+  const cloned = deepClone(document);
+  redactSecretsRecursively(cloned, policy);
+  return cloned;
 }
 
 export function redactProvidersConfig(document: unknown): unknown {
-  const cloned = deepClone(document);
-  redactSecretsRecursively(cloned, PROVIDER_SECRET_KEYS);
-  return cloned;
+  return redactConfigDocument("providers", document);
 }
 
 export function redactAppConfig(document: unknown): unknown {
-  const cloned = deepClone(document);
-  redactSecretsRecursively(cloned, APP_SECRET_KEYS);
-  return cloned;
+  return redactConfigDocument("config", document);
 }
 
-function redactSecretsRecursively(node: unknown, secretKeys: ReadonlySet<string>): void {
+function redactSecretsRecursively(node: unknown, policy: RedactionPolicy): void {
   if (Array.isArray(node)) {
     for (const item of node) {
-      redactSecretsRecursively(item, secretKeys);
+      redactSecretsRecursively(item, policy);
     }
     return;
   }
@@ -52,18 +81,44 @@ function redactSecretsRecursively(node: unknown, secretKeys: ReadonlySet<string>
   }
 
   for (const [key, value] of Object.entries(node)) {
-    if (key === "headers" && isObjectRecord(value)) {
+    if (policy.redactSensitiveHeaders && key === "headers" && isObjectRecord(value)) {
       redactSensitiveHeaders(value);
       continue;
     }
 
-    if (secretKeys.has(key) && shouldRedactValue(value)) {
+    const shouldRedact =
+      policy.explicitSecretKeys.has(key) ||
+      (policy.redactGenericSecretLikeKeys && looksLikeProviderSecretKey(key));
+
+    if (shouldRedact && shouldRedactValue(value)) {
       node[key] = REDACTED_SECRET_VALUE;
       continue;
     }
 
-    redactSecretsRecursively(value, secretKeys);
+    redactSecretsRecursively(value, policy);
   }
+}
+
+// Provider configs are catchall-based, so custom providers can store credentials under
+// non-standard key names that are unknown to our explicit allowlist.
+function looksLikeProviderSecretKey(key: string): boolean {
+  const segments = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return false;
+  }
+
+  const tail1 = segments.at(-1);
+  if (tail1 && SECRET_TAIL_WORDS.has(tail1)) {
+    return true;
+  }
+
+  const tail2 = segments.slice(-2).join("_");
+  return SECRET_TAIL_PAIRS.has(tail2);
 }
 
 function redactSensitiveHeaders(headers: Record<string, unknown>): void {

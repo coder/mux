@@ -74,6 +74,13 @@ describe("mux_config_read", () => {
             apiKey: "or-secret",
             order: "quality",
           },
+          "custom-llm": {
+            token: "top-secret-token",
+            clientSecret: "client-secret-value",
+            nested: { authToken: "nested-secret" },
+            tokenizer: "cl100k_base",
+            baseUrl: "https://custom.example.com",
+          },
         },
         null,
         2
@@ -104,10 +111,25 @@ describe("mux_config_read", () => {
         },
       });
 
+      // Generic secret-like keys in custom providers are redacted.
+      const customData = (fullResult.data as Record<string, unknown>)["custom-llm"] as Record<
+        string,
+        unknown
+      >;
+      expect(customData.token).toBe(REDACTED_SECRET_VALUE);
+      expect(customData.clientSecret).toBe(REDACTED_SECRET_VALUE);
+      expect((customData.nested as Record<string, unknown>).authToken).toBe(REDACTED_SECRET_VALUE);
+      // Non-secret keys are preserved.
+      expect(customData.tokenizer).toBe("cl100k_base");
+      expect(customData.baseUrl).toBe("https://custom.example.com");
+
       const serialized = JSON.stringify(fullResult.data);
       expect(serialized).not.toContain("sk-ant-secret");
       expect(serialized).not.toContain("or-secret");
       expect(serialized).not.toContain("super-secret");
+      expect(serialized).not.toContain("top-secret-token");
+      expect(serialized).not.toContain("client-secret-value");
+      expect(serialized).not.toContain("nested-secret");
     }
 
     const pathResult = (await tool.execute!(
@@ -118,6 +140,16 @@ describe("mux_config_read", () => {
     expect(pathResult.success).toBe(true);
     if (pathResult.success) {
       expect(pathResult.data).toBe(REDACTED_SECRET_VALUE);
+    }
+
+    const tokenPathResult = (await tool.execute!(
+      { file: "providers", path: ["custom-llm", "token"] },
+      mockToolCallOptions
+    )) as MuxConfigReadResult;
+
+    expect(tokenPathResult.success).toBe(true);
+    if (tokenPathResult.success) {
+      expect(tokenPathResult.data).toBe(REDACTED_SECRET_VALUE);
     }
   });
 
