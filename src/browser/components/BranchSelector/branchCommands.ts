@@ -26,7 +26,7 @@ export function buildRemoteBranchListCommand(
       "--sort=-committerdate",
       "--format=%(refname:short)",
       `--count=${maxRemoteBranches + 1}`,
-      `refs/remotes/${remote}/*`,
+      `refs/remotes/${remote}`,
     ],
   };
 }

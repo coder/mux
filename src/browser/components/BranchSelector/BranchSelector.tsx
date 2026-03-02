@@ -180,10 +180,12 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         });
 
         if (result.success && result.data.success && result.data.output) {
+          // `for-each-ref refs/remotes/<remote>` includes the remote symref (`<remote>`)
+          // and may include `<remote>/HEAD`; hide those pseudo-refs from selectable branches.
           const branches = result.data.output
             .split("\n")
             .map((b) => b.trim())
-            .filter((b) => b.length > 0);
+            .filter((b) => b.length > 0 && b !== remote && b !== `${remote}/HEAD`);
           const truncated = branches.length > MAX_REMOTE_BRANCHES;
           setRemoteStates((prev) => ({
             ...prev,
