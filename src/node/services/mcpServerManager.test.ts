@@ -750,6 +750,7 @@ describe("wrapMCPTools", () => {
 
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toBe("Interrupted");
+    expect((caught as Error).name).toBe("MCPDeadlineError");
     expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
@@ -779,9 +780,9 @@ describe("wrapMCPTools", () => {
     expect(executeMock).not.toHaveBeenCalled();
   });
 
-  test("calls onClosed when execute throws a timeout error", async () => {
+  test("does NOT call onClosed for upstream error containing 'timed out'", async () => {
     const onClosed = mock(() => undefined);
-    const timeoutError = new Error("MCP tool 'myTool' timed out after 50ms");
+    const timeoutError = new Error("upstream request timed out");
     const tool = {
       execute: mock(() => Promise.reject(timeoutError)),
       parameters: {},
@@ -798,11 +799,11 @@ describe("wrapMCPTools", () => {
     }
 
     expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe("MCP tool 'myTool' timed out after 50ms");
-    expect(onClosed).toHaveBeenCalledTimes(1);
+    expect((caught as Error).message).toBe("upstream request timed out");
+    expect(onClosed).not.toHaveBeenCalled();
   });
 
-  test("runMCPToolWithDeadline rejects after timeout", async () => {
+  test("runMCPToolWithDeadline rejects with MCPDeadlineError after timeout", async () => {
     const { promise } = Promise.withResolvers<unknown>();
 
     let caught: unknown;
@@ -818,6 +819,7 @@ describe("wrapMCPTools", () => {
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toContain("timed out");
     expect((caught as Error).message).toContain("slowTool");
+    expect((caught as Error).name).toBe("MCPDeadlineError");
   });
 
   test("runMCPToolWithDeadline skips start when pre-aborted", async () => {

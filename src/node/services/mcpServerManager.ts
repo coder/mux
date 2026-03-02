@@ -39,6 +39,18 @@ export function isClosedClientError(error: unknown): boolean {
 export const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
 
 /**
+ * Thrown by runMCPToolWithDeadline when abort or timeout wins the race.
+ * Typed so shouldRecycleClientAfterToolError can distinguish wrapper-generated
+ * deadline errors from MCP server errors that coincidentally contain similar text.
+ */
+class MCPDeadlineError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MCPDeadlineError";
+  }
+}
+
+/**
  * Run an MCP tool call with unified timeout + abort lifecycle.
  * All cleanup (timer, abort listener) happens in one `finally` block,
  * so abort cannot leave orphaned timers or dangling promises.
@@ -51,7 +63,7 @@ export async function runMCPToolWithDeadline<T>(
 
   // Pre-abort short-circuit: skip all async work if already canceled.
   if (signal?.aborted) {
-    throw new Error("Interrupted");
+    throw new MCPDeadlineError("Interrupted");
   }
 
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -62,7 +74,7 @@ export async function runMCPToolWithDeadline<T>(
 
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutHandle = setTimeout(
-      () => reject(new Error(`MCP tool '${toolName}' timed out after ${timeoutMs}ms`)),
+      () => reject(new MCPDeadlineError(`MCP tool '${toolName}' timed out after ${timeoutMs}ms`)),
       timeoutMs
     );
     if (
@@ -77,7 +89,7 @@ export async function runMCPToolWithDeadline<T>(
 
   const aborted = signal
     ? new Promise<never>((_resolve, reject) => {
-        const onAbort = () => reject(new Error("Interrupted"));
+        const onAbort = () => reject(new MCPDeadlineError("Interrupted"));
         signal.addEventListener("abort", onAbort, { once: true });
         cleanupAbort = () => signal.removeEventListener("abort", onAbort);
       })
@@ -98,12 +110,7 @@ export async function runMCPToolWithDeadline<T>(
 }
 
 function shouldRecycleClientAfterToolError(error: unknown): boolean {
-  if (isClosedClientError(error)) {
-    return true;
-  }
-
-  const message = getErrorMessage(error);
-  return message === "Interrupted" || message.includes("timed out");
+  return isClosedClientError(error) || error instanceof MCPDeadlineError;
 }
 
 /**
