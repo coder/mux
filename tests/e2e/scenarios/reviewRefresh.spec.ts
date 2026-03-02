@@ -16,15 +16,21 @@ test.describe("review refresh", () => {
     const refreshButton = page.getByTestId("review-refresh");
     await expect(refreshButton).toBeVisible({ timeout: 10_000 });
 
+    // Capture any pre-existing timestamp (from mount-time auto-refresh or empty)
+    const tsBefore = Number(
+      (await refreshButton.getAttribute("data-last-refresh-timestamp")) || "0"
+    );
+
     // First manual refresh.
     // Use force click because an onboarding/tutorial backdrop can intermittently
     // intercept pointer events in CI even when the refresh button is visible.
     await refreshButton.click({ force: true });
 
-    // Wait for data attributes to be populated (indicating refresh completed)
-    await expect(refreshButton).toHaveAttribute("data-last-refresh-trigger", "manual", {
-      timeout: 10_000,
-    });
+    // Wait for timestamp to advance past the pre-click value
+    await expect(async () => {
+      const ts = Number(await refreshButton.getAttribute("data-last-refresh-timestamp"));
+      expect(ts).toBeGreaterThan(tsBefore);
+    }).toPass({ timeout: 10_000 });
 
     const timestamp1 = await refreshButton.getAttribute("data-last-refresh-timestamp");
     expect(timestamp1).toBeTruthy();
