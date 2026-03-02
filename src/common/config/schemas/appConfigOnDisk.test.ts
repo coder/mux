@@ -54,6 +54,14 @@ describe("AppConfigOnDiskSchema", () => {
     );
   });
 
+  it("preserves unknown future runtimeEnablement keys for forward-compatibility", () => {
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        runtimeEnablement: { ssh: false, future_runtime: false },
+      }).success
+    ).toBe(true);
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const valid = { futureField: "something" };
 
