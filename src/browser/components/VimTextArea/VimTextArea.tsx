@@ -252,7 +252,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       padding: "0.375rem 0.5rem",
       fontSize: "13px",
       ...(rest.style ?? {}),
-      ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
+      // Reserve scrollbar space on the trailing edge only; both-edges shifts placeholder text right.
+      ...(trailingAction ? { scrollbarGutter: "stable" } : {}),
       // Focus border color from agent definition
       "--focus-border-color": !isEditing ? focusBorderColor : undefined,
     };
