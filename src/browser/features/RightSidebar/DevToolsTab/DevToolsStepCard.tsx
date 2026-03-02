@@ -165,15 +165,6 @@ function StepOutputView(props: { step: DevToolsStep }) {
 function StepRawView(props: { step: DevToolsStep }) {
   return (
     <div className="space-y-3">
-      <div>
-        <div className="text-muted mb-1 text-xs font-medium">Request</div>
-        <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">
-          {props.step.rawRequest != null
-            ? stringifyForDisplay(props.step.rawRequest)
-            : "No request body captured"}
-        </pre>
-      </div>
-
       {props.step.requestHeaders != null && Object.keys(props.step.requestHeaders).length > 0 && (
         <div>
           <div className="text-muted mb-1 text-xs font-medium">Request Headers</div>
@@ -182,6 +173,15 @@ function StepRawView(props: { step: DevToolsStep }) {
           </pre>
         </div>
       )}
+
+      <div>
+        <div className="text-muted mb-1 text-xs font-medium">Request Body</div>
+        <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">
+          {props.step.rawRequest != null
+            ? stringifyForDisplay(props.step.rawRequest)
+            : "No request body captured"}
+        </pre>
+      </div>
 
       {props.step.responseHeaders != null && Object.keys(props.step.responseHeaders).length > 0 && (
         <div>
@@ -193,7 +193,7 @@ function StepRawView(props: { step: DevToolsStep }) {
       )}
 
       <div>
-        <div className="text-muted mb-1 text-xs font-medium">Response</div>
+        <div className="text-muted mb-1 text-xs font-medium">Response Body</div>
         <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">
           {props.step.rawResponse != null
             ? stringifyForDisplay(props.step.rawResponse)
