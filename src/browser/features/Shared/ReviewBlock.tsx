@@ -207,9 +207,14 @@ const ReviewBlockCore: React.FC<ReviewBlockCoreProps> = ({
               {code}
             </pre>
           ) : (
-            // Standard diff format (without reliable start numbers) - highlight but omit gutters
+            // Plain code without diff markers: prefix each line with a
+            // space so DiffRenderer treats them as context lines and keeps
+            // the first real character intact.
             <DiffRenderer
-              content={code}
+              content={code
+                .split("\n")
+                .map((line) => ` ${line}`)
+                .join("\n")}
               showLineNumbers={false}
               fontSize="11px"
               filePath={filePath}

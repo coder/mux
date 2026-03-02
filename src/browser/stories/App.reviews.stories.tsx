@@ -359,12 +359,19 @@ export const QueuedMessageWithReviews: AppStory = {
                 lineRange: "42-48",
                 selectedCode:
                   "const token = generateToken();\nconst expiry = Date.now() + 3600000;",
+                selectedDiff:
+                  " const token = generateToken();\n const expiry = Date.now() + 3600000;",
+                oldStart: 42,
+                newStart: 42,
                 userNote: "Consider using a constant for the token expiry duration",
               },
               {
                 filePath: "src/utils/helpers.ts",
                 lineRange: "15",
                 selectedCode: "function validate(input) { return input.length > 0; }",
+                selectedDiff: " function validate(input) { return input.length > 0; }",
+                oldStart: 15,
+                newStart: 15,
                 userNote: "This validation could be more robust",
               },
             ];

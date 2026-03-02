@@ -176,12 +176,17 @@ export function createReview(
   status: "pending" | "attached" | "checked" = "pending",
   createdAt?: number
 ): Review {
+  const startLine = Number.parseInt(lineRange.split("-")[0] ?? "", 10) || 1;
+
   return {
     id,
     data: {
       filePath,
       lineRange,
       selectedCode: "// sample code",
+      selectedDiff: " // sample code",
+      oldStart: startLine,
+      newStart: startLine,
       userNote: note,
     },
     status,
