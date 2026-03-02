@@ -88,12 +88,31 @@ describe("buildSwitchAgentDescription", () => {
       createAgentDescriptor("exec", {
         description: "Execution mode",
         uiSelectable: true,
-        uiRoutable: false,
+        uiRoutable: true,
       }),
     ]);
 
     expect(description).toContain("Available agents (use `agentId` parameter):");
     expect(description).toContain("- exec: Execution mode");
+  });
+
+  test("excludes visible agent with explicit routable: false", () => {
+    const desc = buildSwitchAgentDescription({
+      availableSubagents: [
+        {
+          id: "restricted",
+          name: "Restricted",
+          description: "Restricted agent",
+          uiSelectable: true,
+          subagentRunnable: false,
+          scope: "project",
+          uiRoutable: false,
+        },
+      ],
+    } as unknown as ToolConfiguration);
+
+    expect(desc).not.toContain("restricted");
+    expect(desc).not.toContain("Available agents");
   });
 
   test("includes hidden agents with uiRoutable: true", () => {
@@ -126,7 +145,7 @@ describe("buildSwitchAgentDescription", () => {
     const description = buildDescriptionWithAgents([
       createAgentDescriptor("custom", {
         uiSelectable: true,
-        uiRoutable: false,
+        uiRoutable: true,
       }),
     ]);
 
@@ -139,7 +158,7 @@ describe("buildSwitchAgentDescription", () => {
       createAgentDescriptor("visible", {
         description: "Visible",
         uiSelectable: true,
-        uiRoutable: false,
+        uiRoutable: true,
       }),
       createAgentDescriptor("hidden", {
         description: "Hidden",

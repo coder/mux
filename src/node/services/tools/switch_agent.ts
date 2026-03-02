@@ -4,8 +4,9 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 export function buildSwitchAgentDescription(config: ToolConfiguration): string {
   const baseDescription = TOOL_DEFINITIONS.switch_agent.description;
-  const availableAgents =
-    config.availableSubagents?.filter((agent) => agent.uiSelectable || agent.uiRoutable) ?? [];
+  // uiRoutable already incorporates uiSelectable as a fallback (via resolveUiRoutable),
+  // so checking uiRoutable alone is sufficient and respects explicit routable: false.
+  const availableAgents = config.availableSubagents?.filter((agent) => agent.uiRoutable) ?? [];
 
   if (availableAgents.length === 0) {
     return baseDescription;

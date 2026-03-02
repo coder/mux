@@ -4099,10 +4099,14 @@ export class AgentSession {
           : typeof resolvedFrontmatter.ui?.selectable === "boolean"
             ? resolvedFrontmatter.ui.selectable
             : true;
-      const isRoutable = resolvedFrontmatter.ui?.routable === true;
+      // An agent is routable if explicitly opted in via ui.routable,
+      // or if ui.routable is unset and the agent is UI-selectable.
+      // This means explicit ui.routable: false blocks routing even for
+      // visible agents.
+      const isRoutable = resolvedFrontmatter.ui?.routable ?? uiSelectableBase;
 
-      if (!uiSelectableBase && !isRoutable) {
-        log.warn("switch_agent target is not UI-selectable; skipping synthetic follow-up", {
+      if (!isRoutable) {
+        log.warn("switch_agent target is not routable; skipping synthetic follow-up", {
           workspaceId: this.workspaceId,
           targetAgentId: parsedAgentId.data,
         });
