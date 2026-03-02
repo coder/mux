@@ -64,7 +64,7 @@ export function normalizeMutationRoot(
   policy: MutationRootPolicy
 ): MutableContainer {
   if (policy.rootContainer === "array") {
-    return Array.isArray(currentDocument) ? currentDocument : [];
+    return Array.isArray(currentDocument) ? (currentDocument as unknown[]) : [];
   }
 
   // Object policy: arrays are NOT valid object roots despite being mutable containers.
