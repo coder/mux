@@ -145,7 +145,15 @@ describe("createDevToolsMiddleware", () => {
       const wrapGenerate = getWrapGenerate(middleware);
       const model = createMockModel();
       const params = createMockParams();
-      const expectedResult = createGenerateResult();
+      const expectedResult = createGenerateResult({
+        response: {
+          body: "test-resp",
+          headers: {
+            "content-type": "application/json",
+            "x-request-id": "abc",
+          },
+        },
+      });
 
       const result = await wrapGenerate({
         doGenerate: () => Promise.resolve(expectedResult),
@@ -190,6 +198,7 @@ describe("createDevToolsMiddleware", () => {
         totalTokens: 15,
       });
       expect(step?.rawRequest).toEqual(expectedResult.request?.body);
+      expect(step?.responseHeaders).toEqual(expectedResult.response?.headers);
       expect(step?.rawResponse).toEqual(expectedResult.response?.body);
       expect(step?.rawChunks).toBeNull();
       expect(step?.error).toBeNull();
@@ -306,7 +315,7 @@ describe("createDevToolsMiddleware", () => {
           Promise.resolve({
             stream,
             request: { body: "stream-req" },
-            response: { headers: { "x-test": "1" } },
+            response: { headers: { "content-type": "text/event-stream" } },
           }),
         params: createMockParams(),
         model: createMockModel(),
@@ -336,6 +345,7 @@ describe("createDevToolsMiddleware", () => {
         totalTokens: 7,
       });
       expect(step?.rawRequest).toEqual("stream-req");
+      expect(step?.responseHeaders).toEqual({ "content-type": "text/event-stream" });
       expect(step?.rawResponse).toEqual(expectedForwardedChunks);
       expect(step?.rawChunks).toEqual([rawChunkValue]);
       expect(step?.error).toBeNull();

@@ -174,6 +174,15 @@ function StepRawView(props: { step: DevToolsStep }) {
         </pre>
       </div>
 
+      {props.step.responseHeaders != null && Object.keys(props.step.responseHeaders).length > 0 && (
+        <div>
+          <div className="text-muted mb-1 text-xs font-medium">Response Headers</div>
+          <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">
+            {JSON.stringify(props.step.responseHeaders, null, 2)}
+          </pre>
+        </div>
+      )}
+
       <div>
         <div className="text-muted mb-1 text-xs font-medium">Response</div>
         <pre className="bg-background-secondary max-h-64 overflow-auto rounded p-2 text-xs">

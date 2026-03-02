@@ -1721,6 +1721,7 @@ const DevToolsStepSchema = z.object({
   usage: DevToolsUsageSchema.nullable(),
   error: z.string().nullable(),
   rawRequest: z.unknown().nullable(),
+  responseHeaders: z.record(z.string(), z.string()).nullable(),
   rawResponse: z.unknown().nullable(),
   rawChunks: z.unknown().nullable(),
 });

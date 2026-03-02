@@ -27,6 +27,7 @@ function makeStep(overrides: Partial<DevToolsStep> & { id: string; runId: string
     usage: null,
     error: null,
     rawRequest: null,
+    responseHeaders: null,
     rawResponse: null,
     rawChunks: null,
     ...rest,
@@ -249,13 +250,14 @@ describe("DevToolsService", () => {
       });
     });
 
-    it("defaults rawChunks to null when replaying legacy step entries", async () => {
+    it("defaults missing raw fields to null when replaying legacy step entries", async () => {
       const config = createTestConfig({ sessionsDir, enabled: true });
       const run = makeRun("run-1");
       const legacyStep = {
         ...makeStep({ id: "step-1", runId: "run-1" }),
       };
       delete (legacyStep as Record<string, unknown>).rawChunks;
+      delete (legacyStep as Record<string, unknown>).responseHeaders;
       const logPath = getDevtoolsLogPath(sessionsDir, "ws-1");
 
       await fs.mkdir(path.dirname(logPath), { recursive: true });
@@ -269,6 +271,7 @@ describe("DevToolsService", () => {
       const runWithSteps = await service.getRunWithSteps("ws-1", "run-1");
 
       expect(runWithSteps).not.toBeNull();
+      expect(runWithSteps?.steps[0]?.responseHeaders).toBeNull();
       expect(runWithSteps?.steps[0]?.rawChunks).toBeNull();
     });
 

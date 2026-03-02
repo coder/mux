@@ -95,6 +95,7 @@ function createEmptyStep(
     usage: null,
     error: null,
     rawRequest: null,
+    responseHeaders: null,
     rawResponse: null,
     rawChunks: null,
   };
@@ -245,7 +246,7 @@ export function createDevToolsMiddleware(
     startedAtMs: number,
     update: Pick<
       DevToolsStep,
-      "output" | "usage" | "rawRequest" | "rawResponse" | "rawChunks" | "error"
+      "output" | "usage" | "rawRequest" | "responseHeaders" | "rawResponse" | "rawChunks" | "error"
     >
   ): Promise<void> {
     await service.updateStep(workspaceId, stepId, {
@@ -260,6 +261,7 @@ export function createDevToolsMiddleware(
     error: unknown,
     output: DevToolsStepOutput | null = null,
     rawRequest: unknown = null,
+    responseHeaders: Record<string, string> | null = null,
     rawResponse: unknown = null,
     rawChunks: unknown = null
   ): Promise<void> {
@@ -268,6 +270,7 @@ export function createDevToolsMiddleware(
       output,
       error: extractErrorMessage(error),
       rawRequest,
+      responseHeaders,
       rawResponse,
       rawChunks,
     });
@@ -290,6 +293,10 @@ export function createDevToolsMiddleware(
           output: extractGenerateOutput(result),
           usage: extractUsage(result.usage),
           rawRequest: result.request?.body ?? null,
+          responseHeaders:
+            result.response?.headers != null
+              ? Object.fromEntries(Object.entries(result.response.headers))
+              : null,
           rawResponse: result.response?.body ?? null,
           rawChunks: null,
           error: null,
@@ -321,6 +328,10 @@ export function createDevToolsMiddleware(
       }
 
       const { stream, ...rest } = streamResult;
+      const responseHeaders =
+        rest.response?.headers != null
+          ? Object.fromEntries(Object.entries(rest.response.headers))
+          : null;
       const reader = stream.getReader();
 
       const currentText = new Map<string, string>();
@@ -338,7 +349,13 @@ export function createDevToolsMiddleware(
       const finalizeStep = async (
         update: Pick<
           DevToolsStep,
-          "output" | "usage" | "error" | "rawRequest" | "rawResponse" | "rawChunks"
+          | "output"
+          | "usage"
+          | "error"
+          | "rawRequest"
+          | "responseHeaders"
+          | "rawResponse"
+          | "rawChunks"
         >
       ): Promise<void> => {
         if (stepFinalized) {
@@ -435,6 +452,7 @@ export function createDevToolsMiddleware(
                   usage,
                   error: null,
                   rawRequest: rest.request?.body ?? null,
+                  responseHeaders,
                   rawResponse: fullStreamChunks,
                   rawChunks,
                 });
@@ -457,6 +475,7 @@ export function createDevToolsMiddleware(
               usage,
               error: extractErrorMessage(error),
               rawRequest: rest.request?.body ?? null,
+              responseHeaders,
               rawResponse: fullStreamChunks,
               rawChunks,
             });
@@ -473,6 +492,7 @@ export function createDevToolsMiddleware(
               usage,
               error: "Request aborted",
               rawRequest: rest.request?.body ?? null,
+              responseHeaders,
               rawResponse: fullStreamChunks,
               rawChunks,
             });
