@@ -219,7 +219,6 @@ describe("OnePasswordService", () => {
     const firstPromise = service.resolve("op://vault/item/field-a");
     const secondPromise = service.resolve("op://vault/item/field-b");
 
-    // Dynamic SDK import adds an async boundary before createClient executes.
     // Flush microtasks so both requests race through the shared initPromise path.
     for (let i = 0; i < 10 && mockCreateClient.mock.calls.length === 0; i += 1) {
       await Promise.resolve();
