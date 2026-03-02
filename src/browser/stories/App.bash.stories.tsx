@@ -8,11 +8,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { ReactNode } from "react";
 import { userEvent, waitFor } from "@storybook/test";
+import { APIProvider } from "@/browser/contexts/API";
+import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
 import { BashBackgroundListToolCall } from "@/browser/features/Tools/BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "@/browser/features/Tools/BashBackgroundTerminateToolCall";
 import { BashOutputToolCall } from "@/browser/features/Tools/BashOutputToolCall";
 import { BashToolCall } from "@/browser/features/Tools/BashToolCall";
-import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { lightweightMeta, StoryUiShell } from "./meta.js";
 
 const STORYBOOK_WORKSPACE_ID = "storybook-bash";
@@ -21,13 +23,19 @@ const meta = {
   ...lightweightMeta,
   title: "App/Bash",
   decorators: [
-    (Story) => (
-      <StoryUiShell>
-        <BackgroundBashProvider workspaceId={STORYBOOK_WORKSPACE_ID}>
-          <Story />
-        </BackgroundBashProvider>
-      </StoryUiShell>
-    ),
+    (Story) => {
+      const client = createMockORPCClient();
+
+      return (
+        <APIProvider client={client}>
+          <StoryUiShell>
+            <BackgroundBashProvider workspaceId={STORYBOOK_WORKSPACE_ID}>
+              <Story />
+            </BackgroundBashProvider>
+          </StoryUiShell>
+        </APIProvider>
+      );
+    },
   ],
 } satisfies Meta;
 
