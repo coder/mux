@@ -190,6 +190,12 @@ export function createDevToolsMiddleware(
   assert(workspaceId.trim().length > 0, "createDevToolsMiddleware requires a workspaceId");
   assert(service, "createDevToolsMiddleware requires a DevToolsService");
 
+  // Safety net: finalize any in-progress steps left from earlier middleware instances
+  // (e.g. process crashes or interrupted streams that missed cleanup paths).
+  if (service.enabled) {
+    void service.finalizeStaleSteps(workspaceId);
+  }
+
   const runId = randomUUID();
   let runCreated = false;
   let runCreationPromise: Promise<void> | null = null;
@@ -259,50 +265,6 @@ export function createDevToolsMiddleware(
     params.headers = Object.fromEntries(headers.entries());
   }
 
-  async function updateStepSuccess(
-    stepId: string,
-    startedAtMs: number,
-    update: Pick<
-      DevToolsStep,
-      | "output"
-      | "usage"
-      | "rawRequest"
-      | "requestHeaders"
-      | "responseHeaders"
-      | "rawResponse"
-      | "rawChunks"
-      | "error"
-    >
-  ): Promise<void> {
-    await service.updateStep(workspaceId, stepId, {
-      durationMs: Date.now() - startedAtMs,
-      ...update,
-    });
-  }
-
-  async function updateStepWithError(
-    stepId: string,
-    startedAtMs: number,
-    error: unknown,
-    output: DevToolsStepOutput | null = null,
-    rawRequest: unknown = null,
-    requestHeaders: Record<string, string> | null = null,
-    responseHeaders: Record<string, string> | null = null,
-    rawResponse: unknown = null,
-    rawChunks: unknown = null
-  ): Promise<void> {
-    await service.updateStep(workspaceId, stepId, {
-      durationMs: Date.now() - startedAtMs,
-      output,
-      error: extractErrorMessage(error),
-      rawRequest,
-      requestHeaders,
-      responseHeaders,
-      rawResponse,
-      rawChunks,
-    });
-  }
-
   return {
     specificationVersion: "v3",
 
@@ -314,11 +276,50 @@ export function createDevToolsMiddleware(
       const { stepId, startedAtMs } = await createStep("generate", params, model);
       injectStepIdHeader(params, stepId);
 
+      let finalized = false;
+      const finalizeStep = async (update: Partial<DevToolsStep>): Promise<void> => {
+        if (finalized) {
+          return;
+        }
+
+        finalized = true;
+        if (params.abortSignal != null) {
+          params.abortSignal.removeEventListener("abort", abortHandler);
+        }
+
+        await service.updateStep(workspaceId, stepId, {
+          durationMs: Date.now() - startedAtMs,
+          ...update,
+        });
+      };
+
+      const abortHandler = (): void => {
+        const capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
+        void finalizeStep({
+          output: null,
+          usage: null,
+          error: "Request aborted",
+          rawRequest: null,
+          requestHeaders: capturedRequestHeaders,
+          responseHeaders: null,
+          rawResponse: null,
+          rawChunks: null,
+        });
+      };
+
+      if (params.abortSignal != null) {
+        if (params.abortSignal.aborted) {
+          abortHandler();
+        } else {
+          params.abortSignal.addEventListener("abort", abortHandler, { once: true });
+        }
+      }
+
       try {
         const result = await doGenerate();
         const capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
 
-        await updateStepSuccess(stepId, startedAtMs, {
+        await finalizeStep({
           output: extractGenerateOutput(result),
           usage: extractUsage(result.usage),
           rawRequest: result.request?.body ?? null,
@@ -335,7 +336,16 @@ export function createDevToolsMiddleware(
         return result;
       } catch (error) {
         const capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
-        await updateStepWithError(stepId, startedAtMs, error, null, null, capturedRequestHeaders);
+        await finalizeStep({
+          output: null,
+          usage: null,
+          error: extractErrorMessage(error),
+          rawRequest: null,
+          requestHeaders: capturedRequestHeaders,
+          responseHeaders: null,
+          rawResponse: null,
+          rawChunks: null,
+        });
         throw error;
       }
     },
@@ -351,23 +361,10 @@ export function createDevToolsMiddleware(
       const { stepId, startedAtMs } = await createStep("stream", params, model);
       injectStepIdHeader(params, stepId);
 
-      let streamResult: LanguageModelV3StreamResult;
+      let finalized = false;
       let capturedRequestHeaders: Record<string, string> | null = null;
-      try {
-        streamResult = await doStream();
-        capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
-      } catch (error) {
-        capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
-        await updateStepWithError(stepId, startedAtMs, error, null, null, capturedRequestHeaders);
-        throw error;
-      }
-
-      const { stream, ...rest } = streamResult;
-      const responseHeaders =
-        rest.response?.headers != null
-          ? Object.fromEntries(Object.entries(rest.response.headers))
-          : null;
-      const reader = stream.getReader();
+      let rawRequest: unknown = null;
+      let responseHeaders: Record<string, string> | null = null;
 
       const currentText = new Map<string, string>();
       const currentReasoning = new Map<string, string>();
@@ -379,7 +376,13 @@ export function createDevToolsMiddleware(
 
       let finishReason: string | undefined;
       let usage: DevToolsUsage | null = null;
-      let stepFinalized = false;
+
+      const buildOutput = (): DevToolsStepOutput => ({
+        textParts,
+        reasoningParts,
+        toolCalls,
+        finishReason,
+      });
 
       const finalizeStep = async (
         update: Pick<
@@ -394,16 +397,68 @@ export function createDevToolsMiddleware(
           | "rawChunks"
         >
       ): Promise<void> => {
-        if (stepFinalized) {
+        if (finalized) {
           return;
         }
 
-        stepFinalized = true;
+        finalized = true;
+        if (params.abortSignal != null) {
+          params.abortSignal.removeEventListener("abort", abortHandler);
+        }
+
         await service.updateStep(workspaceId, stepId, {
           durationMs: Date.now() - startedAtMs,
           ...update,
         });
       };
+
+      const abortHandler = (): void => {
+        void finalizeStep({
+          output: buildOutput(),
+          usage,
+          error: "Request aborted",
+          rawRequest,
+          requestHeaders: capturedRequestHeaders,
+          responseHeaders,
+          rawResponse: fullStreamChunks,
+          rawChunks,
+        });
+      };
+
+      if (params.abortSignal != null) {
+        if (params.abortSignal.aborted) {
+          abortHandler();
+        } else {
+          params.abortSignal.addEventListener("abort", abortHandler, { once: true });
+        }
+      }
+
+      let streamResult: LanguageModelV3StreamResult;
+      try {
+        streamResult = await doStream();
+        capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
+      } catch (error) {
+        capturedRequestHeaders = consumeCapturedRequestHeaders(stepId);
+        await finalizeStep({
+          output: null,
+          usage: null,
+          error: extractErrorMessage(error),
+          rawRequest: null,
+          requestHeaders: capturedRequestHeaders,
+          responseHeaders: null,
+          rawResponse: null,
+          rawChunks: null,
+        });
+        throw error;
+      }
+
+      const { stream, ...rest } = streamResult;
+      rawRequest = rest.request?.body ?? null;
+      responseHeaders =
+        rest.response?.headers != null
+          ? Object.fromEntries(Object.entries(rest.response.headers))
+          : null;
+      const reader = stream.getReader();
 
       const collectChunk = (chunk: LanguageModelV3StreamPart): boolean => {
         if (chunk.type === "raw") {
@@ -470,13 +525,6 @@ export function createDevToolsMiddleware(
         return true;
       };
 
-      const buildOutput = (): DevToolsStepOutput => ({
-        textParts,
-        reasoningParts,
-        toolCalls,
-        finishReason,
-      });
-
       const trackedStream = new ReadableStream<LanguageModelV3StreamPart>({
         async pull(controller): Promise<void> {
           try {
@@ -487,7 +535,7 @@ export function createDevToolsMiddleware(
                   output: buildOutput(),
                   usage,
                   error: null,
-                  rawRequest: rest.request?.body ?? null,
+                  rawRequest,
                   requestHeaders: capturedRequestHeaders,
                   responseHeaders,
                   rawResponse: fullStreamChunks,
@@ -511,7 +559,7 @@ export function createDevToolsMiddleware(
               output: buildOutput(),
               usage,
               error: extractErrorMessage(error),
-              rawRequest: rest.request?.body ?? null,
+              rawRequest,
               requestHeaders: capturedRequestHeaders,
               responseHeaders,
               rawResponse: fullStreamChunks,
@@ -529,7 +577,7 @@ export function createDevToolsMiddleware(
               output: buildOutput(),
               usage,
               error: "Request aborted",
-              rawRequest: rest.request?.body ?? null,
+              rawRequest,
               requestHeaders: capturedRequestHeaders,
               responseHeaders,
               rawResponse: fullStreamChunks,

@@ -532,6 +532,85 @@ describe("createDevToolsMiddleware", () => {
       });
     });
 
+    it("finalizes step as aborted when AbortSignal fires during stream", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const middleware = createDevToolsMiddleware("ws-1", service);
+      const wrapStream = getWrapStream(middleware);
+      const abortController = new AbortController();
+
+      const neverEndingStream = new ReadableStream<LanguageModelV3StreamPart>({
+        start(controller) {
+          controller.enqueue({ type: "text-start", id: "t1" });
+          controller.enqueue({ type: "text-delta", id: "t1", delta: "partial" });
+        },
+      });
+
+      const result = await wrapStream({
+        doGenerate: () => Promise.reject(new Error("doGenerate should not be called")),
+        doStream: () => Promise.resolve({ stream: neverEndingStream }),
+        params: {
+          ...createMockParams(),
+          abortSignal: abortController.signal,
+        },
+        model: createMockModel(),
+      });
+
+      const reader = result.stream.getReader();
+      await reader.read();
+
+      abortController.abort();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const runs = await service.getRuns("ws-1");
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
+      expect(runWithSteps).not.toBeNull();
+
+      const step = runWithSteps?.steps[0];
+      expect(step?.error).toBe("Request aborted");
+      expect(step?.durationMs).not.toBeNull();
+
+      await reader.cancel();
+    });
+
+    it("does not double-finalize when abort fires after normal completion", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const middleware = createDevToolsMiddleware("ws-1", service);
+      const wrapStream = getWrapStream(middleware);
+      const abortController = new AbortController();
+
+      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+        start(controller) {
+          controller.enqueue({
+            type: "finish",
+            finishReason: { unified: "stop", raw: "stop" },
+            usage: createUsage(1, 1),
+          });
+          controller.close();
+        },
+      });
+
+      const result = await wrapStream({
+        doGenerate: () => Promise.reject(new Error("doGenerate should not be called")),
+        doStream: () => Promise.resolve({ stream }),
+        params: {
+          ...createMockParams(),
+          abortSignal: abortController.signal,
+        },
+        model: createMockModel(),
+      });
+
+      await collectStream(result.stream);
+      abortController.abort();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const runs = await service.getRuns("ws-1");
+      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
+      expect(runWithSteps).not.toBeNull();
+
+      const step = runWithSteps?.steps[0];
+      expect(step?.error).toBeNull();
+    });
+
     it("multiple steps in one middleware instance share the same runId", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const middleware = createDevToolsMiddleware("ws-1", service);

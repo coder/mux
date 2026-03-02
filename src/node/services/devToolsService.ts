@@ -176,6 +176,35 @@ export class DevToolsService extends EventEmitter {
     }
   }
 
+  async finalizeStaleSteps(workspaceId: string): Promise<void> {
+    if (!this.enabled) {
+      return;
+    }
+
+    assert(
+      workspaceId.trim().length > 0,
+      "DevToolsService.finalizeStaleSteps requires a workspaceId"
+    );
+
+    await this.ensureLoaded(workspaceId);
+    const data = this.getOrCreateWorkspaceData(workspaceId);
+
+    const nowMs = Date.now();
+    for (const step of data.steps.values()) {
+      if (step.durationMs != null || step.error != null) {
+        continue;
+      }
+
+      const startedAtMs = new Date(step.startedAt).getTime();
+      const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0;
+
+      await this.updateStep(workspaceId, step.id, {
+        durationMs,
+        error: "Interrupted (stale)",
+      });
+    }
+  }
+
   async getRuns(workspaceId: string): Promise<DevToolsRunSummary[]> {
     if (!this.enabled) {
       return [];

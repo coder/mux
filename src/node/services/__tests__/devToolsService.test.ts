@@ -149,6 +149,28 @@ describe("DevToolsService", () => {
       expect(runs[0]?.totalDurationMs).toBeNull();
     });
 
+    it("finalizeStaleSteps marks in-progress steps as interrupted", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      await service.createRun("ws-1", makeRun("run-1"));
+      await service.createStep("ws-1", makeStep({ id: "s-1", runId: "run-1", durationMs: null }));
+      await service.createStep("ws-1", makeStep({ id: "s-2", runId: "run-1", durationMs: 500 }));
+
+      await service.finalizeStaleSteps("ws-1");
+
+      const detail = await service.getRunWithSteps("ws-1", "run-1");
+      expect(detail).not.toBeNull();
+
+      const staleStep = detail?.steps.find((step) => step.id === "s-1");
+      expect(staleStep).toBeDefined();
+      expect(staleStep?.error).toBe("Interrupted (stale)");
+      expect(staleStep?.durationMs).not.toBeNull();
+
+      const completeStep = detail?.steps.find((step) => step.id === "s-2");
+      expect(completeStep).toBeDefined();
+      expect(completeStep?.error).toBeNull();
+      expect(completeStep?.durationMs).toBe(500);
+    });
+
     it("updateStep merges fields", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       await service.createRun("ws-1", makeRun("run-1"));
