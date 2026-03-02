@@ -2,9 +2,12 @@ import { z } from "zod";
 
 import { AgentIdSchema, RuntimeEnablementIdSchema } from "../../schemas/ids";
 import { ProjectConfigSchema } from "../../schemas/project";
+import { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { TaskSettingsSchema } from "./taskSettings";
 
+export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
+export type { RuntimeEnablementOverrides } from "../../schemas/runtimeEnablement";
 export { PlanSubagentExecutorRoutingSchema, TaskSettingsSchema } from "./taskSettings";
 export type { PlanSubagentExecutorRouting, TaskSettings } from "./taskSettings";
 
@@ -22,10 +25,6 @@ export const SubagentAiDefaultsEntrySchema = z.object({
 });
 
 export const SubagentAiDefaultsSchema = z.record(AgentIdSchema, SubagentAiDefaultsEntrySchema);
-
-export const RuntimeEnablementOverridesSchema = z
-  .record(RuntimeEnablementIdSchema, z.literal(false))
-  .optional();
 
 export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 
@@ -59,7 +58,7 @@ export const AppConfigOnDiskSchema = z
     stopCoderWorkspaceOnArchive: z.boolean().optional(),
     terminalDefaultShell: z.string().optional(),
     updateChannel: UpdateChannelSchema.optional(),
-    runtimeEnablement: RuntimeEnablementOverridesSchema,
+    runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
   })
   .passthrough();
@@ -68,7 +67,6 @@ export type AgentAiDefaultsEntry = z.infer<typeof AgentAiDefaultsEntrySchema>;
 export type AgentAiDefaults = z.infer<typeof AgentAiDefaultsSchema>;
 export type SubagentAiDefaultsEntry = z.infer<typeof SubagentAiDefaultsEntrySchema>;
 export type SubagentAiDefaults = z.infer<typeof SubagentAiDefaultsSchema>;
-export type RuntimeEnablementOverrides = z.infer<typeof RuntimeEnablementOverridesSchema>;
 export type FeatureFlagOverride = z.infer<typeof FeatureFlagOverrideSchema>;
 export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
 

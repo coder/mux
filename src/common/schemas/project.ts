@@ -8,14 +8,7 @@ import { ThinkingLevelSchema } from "@/common/types/thinking";
 import { z } from "zod";
 
 import { RuntimeEnablementIdSchema } from "./ids";
-
-const RuntimeEnablementOverridesSchema = z
-  .object(
-    Object.fromEntries(
-      RuntimeEnablementIdSchema.options.map((runtimeId) => [runtimeId, z.literal(false)])
-    ) as Record<string, z.ZodLiteral<false>>
-  )
-  .partial();
+import { RuntimeEnablementOverridesSchema } from "./runtimeEnablement";
 
 /**
  * Section schema for organizing workspaces within a project.

@@ -42,6 +42,18 @@ describe("AppConfigOnDiskSchema", () => {
     expect(AppConfigOnDiskSchema.safeParse(valid).success).toBe(true);
   });
 
+  it("accepts sparse runtimeEnablement overrides", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ runtimeEnablement: { ssh: false } }).success).toBe(
+      true
+    );
+  });
+
+  it("rejects runtimeEnablement values other than false", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ runtimeEnablement: { ssh: true } }).success).toBe(
+      false
+    );
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const valid = { futureField: "something" };
 
