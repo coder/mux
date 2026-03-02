@@ -153,4 +153,64 @@ describe("RefreshController", () => {
 
     expect(onRefresh).not.toHaveBeenCalled();
   });
+
+  it("recovers if onRefresh throws synchronously", () => {
+    let shouldThrow = true;
+    const onRefresh = mock(() => {
+      if (shouldThrow) {
+        shouldThrow = false;
+        throw new Error("boom");
+      }
+    });
+
+    const controller = new RefreshController({ onRefresh, debounceMs: 20 });
+
+    // First call throws — controller must still clear inFlight
+    controller.requestImmediate();
+    expect(controller.isRefreshing).toBe(false);
+
+    // Second call succeeds — must not be blocked by stale inFlight
+    controller.requestImmediate();
+    expect(onRefresh).toHaveBeenCalledTimes(2);
+
+    controller.dispose();
+  });
+
+  it("recovers if async onRefresh rejects", async () => {
+    let rejectRefresh!: (reason?: unknown) => void;
+
+    class PromiseWithHandledFinally<T> extends Promise<T> {
+      override finally(onFinally?: (() => void) | null): Promise<T> {
+        const settled = super.finally(onFinally);
+        void settled.catch(() => {});
+        return settled;
+      }
+    }
+
+    const onRefresh = mock(
+      () =>
+        new PromiseWithHandledFinally<void>((_resolve, reject) => {
+          rejectRefresh = reject;
+        })
+    );
+    const onComplete = mock<(info: { timestamp: number; trigger: string }) => void>(() => {});
+
+    const controller = new RefreshController({
+      onRefresh,
+      onRefreshComplete: onComplete,
+      debounceMs: 20,
+    });
+
+    controller.requestImmediate();
+    expect(controller.isRefreshing).toBe(true);
+
+    rejectRefresh(new Error("async boom"));
+    await sleep(10);
+
+    // Promise.finally should have run onComplete even on rejection
+    expect(controller.isRefreshing).toBe(false);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+
+    controller.dispose();
+  });
 });

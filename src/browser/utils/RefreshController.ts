@@ -307,8 +307,6 @@ export class RefreshController {
     this.inFlight = true;
     this.pendingTrigger = null;
 
-    const maybePromise = this.onRefresh();
-
     const onComplete = () => {
       this.inFlight = false;
       this._lastRefreshInfo = { timestamp: Date.now(), trigger };
@@ -327,9 +325,18 @@ export class RefreshController {
       }
     };
 
-    if (maybePromise instanceof Promise) {
-      void maybePromise.finally(onComplete);
-    } else {
+    // Wrap in try-catch so a synchronous throw from onRefresh() cannot
+    // permanently lock inFlight=true and silently block all future refreshes.
+    try {
+      const maybePromise = this.onRefresh();
+
+      if (maybePromise instanceof Promise) {
+        void maybePromise.finally(onComplete);
+      } else {
+        onComplete();
+      }
+    } catch (error) {
+      this.debug(`onRefresh threw: ${String(error)}`);
       onComplete();
     }
   }
