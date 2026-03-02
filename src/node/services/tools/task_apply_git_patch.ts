@@ -769,6 +769,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
 
         const conflictPaths = await tryGetConflictPaths({ cwd: config.cwd });
         const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
+        const conflictRecoveryNote =
+          conflictPaths.length > 0
+            ? "git am stopped mid-rebase due to conflicts. Either resolve conflicts and run `git am --continue`, or run `git am --abort` to restore a clean working tree and delegate resolution to a sub-agent."
+            : "git am failed before entering conflict-recovery state. Review the error output above and fix the patch/input before retrying.";
 
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
@@ -782,10 +786,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
               errorOutput.length > 0
                 ? errorOutput
                 : `git am failed (exitCode=${amResult.exitCode})`,
-            note: mergeNotes(
-              patchPathNote,
-              "git am stopped mid-rebase due to conflicts. Either resolve conflicts and run `git am --continue`, or run `git am --abort` to restore a clean working tree and delegate resolution to a sub-agent."
-            ),
+            note: mergeNotes(patchPathNote, conflictRecoveryNote),
           },
           "task_apply_git_patch"
         );

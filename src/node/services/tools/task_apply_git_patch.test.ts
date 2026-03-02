@@ -365,6 +365,59 @@ describe("task_apply_git_patch tool", () => {
     expect(artifact?.appliedAtMs).toBeUndefined();
   }, 20_000);
 
+  it("returns non-conflict guidance when git am fails before conflict state", async () => {
+    initGitRepo(targetRepo);
+
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    const headSha = execSync("git rev-parse HEAD", { cwd: targetRepo, encoding: "utf-8" }).trim();
+
+    const childTaskId = "child-task-non-conflict";
+    const workspaceId = getTestDeps().workspaceId;
+
+    const patchPath = getSubagentGitPatchMboxPath(sessionDir, childTaskId);
+    await fsPromises.mkdir(path.dirname(patchPath), { recursive: true });
+    await fsPromises.writeFile(patchPath, "not-a-valid-patch", "utf-8");
+
+    await upsertSubagentGitPatchArtifact({
+      workspaceId,
+      workspaceSessionDir: sessionDir,
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId: workspaceId,
+        createdAtMs: Date.now(),
+        status: "ready",
+        baseCommitSha: headSha,
+        headCommitSha: headSha,
+        commitCount: 1,
+        mboxPath: patchPath,
+      }),
+    });
+
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: sessionDir,
+    });
+
+    const result = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
+      success: boolean;
+      dryRun?: boolean;
+      conflictPaths?: string[];
+      error?: string;
+      note?: string;
+    };
+
+    expect(result.success).toBe(false);
+    expect(result.dryRun).toBe(false);
+    expect(result.conflictPaths).toEqual([]);
+    expect(result.error).toBeTruthy();
+    expect(result.note).toContain("before entering conflict-recovery state");
+    expect(result.note).not.toContain("git am --continue");
+  }, 20_000);
+
   it("returns structured conflict diagnostics on dry_run failure", async () => {
     initGitRepo(childRepo);
     initGitRepo(targetRepo);
