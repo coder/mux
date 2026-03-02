@@ -181,6 +181,11 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
   const invalidCount = props.invalidSkills?.length ?? 0;
   const loadErrorCount = props.skillLoadErrors?.length ?? 0;
   const errorCount = invalidCount + loadErrorCount;
+  const hasErrors = errorCount > 0;
+  const badgeText = hasErrors ? String(errorCount) : `${loadedCount}/${totalCount}`;
+  const badgeTitle = hasErrors
+    ? `${errorCount} skill issue${errorCount === 1 ? "" : "s"}`
+    : `${loadedCount} of ${totalCount} skills loaded`;
 
   // Don't render if there's nothing to show.
   if (totalCount === 0 && errorCount === 0) {
@@ -238,16 +243,15 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
         <span className="relative flex h-6 w-6 items-center justify-center">
           <SkillIcon className="h-4.5 w-4.5" />
           <span
+            title={badgeTitle}
             className={cn(
               "absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center",
               "rounded-full border px-0.5 text-[9px] font-medium",
-              errorCount > 0
-                ? "border-danger bg-danger text-on-danger"
-                : "border-border bg-sidebar",
-              errorCount === 0 && (loadedCount > 0 ? "text-foreground" : "text-muted")
+              hasErrors ? "border-danger bg-danger text-on-danger" : "border-border bg-sidebar",
+              !hasErrors && (loadedCount > 0 ? "text-foreground" : "text-muted")
             )}
           >
-            {loadedCount}
+            {badgeText}
           </span>
         </span>
       </button>
