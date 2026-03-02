@@ -136,6 +136,7 @@ export const SecretsSection: React.FC = () => {
   const [opPickerIndex, setOpPickerIndex] = useState<number | null>(null);
 
   const [opAccountName, setOpAccountName] = useState("");
+  const [opAvailabilityVersion, setOpAvailabilityVersion] = useState(0);
 
   // Track the last plaintext value per row index so toggling Source back to
   // "Value" restores the user's input instead of clearing it.
@@ -261,7 +262,7 @@ export const SecretsSection: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [api, opAvailabilityVersion]);
 
   useEffect(() => {
     if (!api) {
@@ -291,7 +292,12 @@ export const SecretsSection: React.FC = () => {
   const handleOpAccountNameChange = useCallback(
     (value: string) => {
       setOpAccountName(value);
-      void api?.config.updateOnePasswordAccountName({ onePasswordAccountName: value || null });
+      void api?.config
+        .updateOnePasswordAccountName({ onePasswordAccountName: value || null })
+        .then(() => {
+          // Trigger a fresh availability check after account changes.
+          setOpAvailabilityVersion((version) => version + 1);
+        });
     },
     [api]
   );

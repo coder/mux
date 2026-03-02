@@ -1000,6 +1000,7 @@ export function ProvidersSection() {
         apiKeySet: editValue !== "",
         apiKeyIsOpRef: false,
         apiKeyOpRef: undefined,
+        apiKeyOpLabel: undefined,
       });
     } else if (field === "baseUrl") {
       updateOptimistically(provider, { baseUrl: editValue || undefined });
@@ -1011,6 +1012,9 @@ export function ProvidersSection() {
 
     // Save in background
     void api.providers.setProviderConfig({ provider, keyPath: [field], value: editValue });
+    if (field === "apiKey") {
+      void api.providers.setProviderConfig({ provider, keyPath: ["apiKeyOpLabel"], value: "" });
+    }
   }, [api, editingField, editValue, updateOptimistically]);
 
   const handleClearField = useCallback(
