@@ -8,7 +8,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { ComponentProps } from "react";
 import { CodeExecutionToolCall as CodeExecutionToolCallCard } from "@/browser/features/Tools/CodeExecutionToolCall";
-import type { CodeExecutionResult, NestedToolCall } from "@/browser/features/Tools/Shared/codeExecutionTypes";
+import type {
+  CodeExecutionResult,
+  NestedToolCall,
+} from "@/browser/features/Tools/Shared/codeExecutionTypes";
 import { lightweightMeta } from "./meta.js";
 
 const meta = {
