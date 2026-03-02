@@ -3489,6 +3489,9 @@ export class AgentSession {
       this.activeStreamHadAnyDelta = true;
       this.emitChatEvent(payload);
     });
+    forward("task-created", (payload) => {
+      this.emitChatEvent(payload);
+    });
     forward("tool-call-delta", (payload) => {
       this.activeStreamHadAnyDelta = true;
       this.emitChatEvent(payload);
