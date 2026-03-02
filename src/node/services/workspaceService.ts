@@ -76,6 +76,7 @@ import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/mod
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import type { StreamEndEvent, StreamAbortEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
@@ -4548,9 +4549,34 @@ export class WorkspaceService extends EventEmitter {
         }
 
         const startedAt = Date.now();
+        const timeoutSecs = options?.timeout_secs ?? 120;
         try {
           using proc = execFileAsync(command, ["-C", workspacePath, ...commandArgs]);
-          const { stdout, stderr } = await proc.result;
+          const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>(
+            (resolve, reject) => {
+              const timeoutHandle = setTimeout(() => {
+                proc[Symbol.dispose]();
+                const timeoutError = new Error(
+                  `Command timed out after ${timeoutSecs}s`
+                ) as Error & {
+                  code?: number;
+                };
+                timeoutError.code = EXIT_CODE_TIMEOUT;
+                reject(timeoutError);
+              }, timeoutSecs * 1000);
+
+              void proc.result
+                .then((result) => {
+                  clearTimeout(timeoutHandle);
+                  resolve(result);
+                })
+                .catch((error) => {
+                  clearTimeout(timeoutHandle);
+                  reject(error instanceof Error ? error : new Error(getErrorMessage(error)));
+                });
+            }
+          );
+
           return Ok({
             success: true,
             wall_duration_ms: Date.now() - startedAt,
