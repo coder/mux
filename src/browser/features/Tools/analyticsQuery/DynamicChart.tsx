@@ -104,6 +104,16 @@ function extractPayload(rowLike: unknown): Record<string, unknown> | null {
   return rowLike as Record<string, unknown>;
 }
 
+// Shared tooltip formatter for all chart types — converts raw recharts values to
+// human-readable strings using metric-name heuristics (cost → USD, tokens → locale, etc.).
+function formatTooltipValue(value: unknown, name: string): [string, string] {
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue)) {
+    return [formatMetricValue(name, numericValue), name];
+  }
+  return [String(value), name];
+}
+
 function getDrillDownValue(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
@@ -160,16 +170,7 @@ export function DynamicChart(props: DynamicChartProps): JSX.Element {
       <div className="h-[300px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Tooltip
-              formatter={(value: unknown, name: string) => {
-                const numericValue = Number(value);
-                if (Number.isFinite(numericValue)) {
-                  return [formatMetricValue(name, numericValue), name];
-                }
-                return [String(value), name];
-              }}
-              contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
-            />
+            <Tooltip formatter={formatTooltipValue} contentStyle={CHART_TOOLTIP_CONTENT_STYLE} />
             <Legend wrapperStyle={{ fontSize: "11px" }} />
             <Pie
               data={chartRows}
@@ -211,13 +212,7 @@ export function DynamicChart(props: DynamicChartProps): JSX.Element {
         stroke={CHART_AXIS_STROKE}
       />
       <Tooltip
-        formatter={(value: unknown, name: string) => {
-          const numericValue = Number(value);
-          if (Number.isFinite(numericValue)) {
-            return [formatMetricValue(name, numericValue), name];
-          }
-          return [String(value), name];
-        }}
+        formatter={formatTooltipValue}
         cursor={{ fill: "var(--color-hover)" }}
         contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
       />
