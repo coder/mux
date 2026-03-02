@@ -36,6 +36,22 @@ A simple pattern is to compact and immediately continue:
 
 Mux will run compaction and then automatically send your follow-up message.
 
+## Queue messages while the agent is working
+
+When an agent is mid-stream you can still type and send a follow-up. The message gets queued and delivered automatically — the **dispatch mode** controls _when_:
+
+| Mode                          | Shortcut     | Behavior                                                             |
+| ----------------------------- | ------------ | -------------------------------------------------------------------- |
+| **Send after step** (default) | `Enter`      | Your message is delivered as soon as the current tool call finishes. |
+| **Send after turn**           | `Ctrl+Enter` | Your message is delivered after the agent's entire turn completes.   |
+
+You can also pick the mode from the context menu on the send button.
+
+**When to use each:**
+
+- **After step** is useful when you want to course-correct early — the agent will see your message before it starts the next tool call.
+- **After turn** is useful when you want to let the agent finish its current line of thought uninterrupted, then pivot.
+
 ## Keep code clean
 
 Prompts that often lead to better long-term code:
