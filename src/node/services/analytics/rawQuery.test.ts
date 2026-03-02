@@ -226,6 +226,13 @@ describe("executeRawQuery", () => {
     );
   });
 
+  test("rejects replacement scan in comma-separated FROM source list", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM events, '/etc/passwd'",
+      /string literals cannot be used as table sources/i
+    );
+  });
+
   test("allows FROM/JOIN text inside single-quoted string literals", async () => {
     const { conn, runMock } = createMockConn(() =>
       createMockResult({
