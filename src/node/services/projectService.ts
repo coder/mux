@@ -116,7 +116,7 @@ function resolveProjectParentDir(
 
 // Windows device names are invalid as path segments (CON/PRN/AUX/NUL/COM1.../LPT9)
 // even when used as a directory name.
-const WINDOWS_RESERVED_BASENAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu;
+const WINDOWS_RESERVED_BASENAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?=\.|$)/iu;
 
 // Derive a conservative folder name from user-controlled repo input.
 // This path can flow into shell-adjacent commands (for example when opening
@@ -133,8 +133,10 @@ function sanitizeRepoFolderName(name: string): string {
     return "";
   }
 
-  if (WINDOWS_RESERVED_BASENAME_PATTERN.test(sanitized)) {
-    return `${sanitized}-repo`;
+  const reservedStemMatch = WINDOWS_RESERVED_BASENAME_PATTERN.exec(sanitized);
+  if (reservedStemMatch) {
+    const stemLength = reservedStemMatch[1]?.length ?? 0;
+    return `${sanitized.slice(0, stemLength)}-repo${sanitized.slice(stemLength)}`;
   }
 
   return sanitized;

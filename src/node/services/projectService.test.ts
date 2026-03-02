@@ -546,7 +546,7 @@ exit 1
 
       try {
         const result = await service.clone({
-          repoUrl: "https://example.com/org/con.git",
+          repoUrl: "https://example.com/org/con.txt.git",
           cloneParentDir,
         });
 
@@ -555,7 +555,7 @@ exit 1
 
         const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
         const cloneWorkPath = loggedArgs[4] ?? "";
-        const expectedFolderName = "con-repo";
+        const expectedFolderName = "con-repo.txt";
 
         expect(path.basename(cloneWorkPath)).toMatch(
           new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
