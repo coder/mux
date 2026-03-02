@@ -127,6 +127,18 @@ describe("OnePasswordService", () => {
     expect(await service.resolve(ref)).toBe("secret-value");
   });
 
+  it("resolve() decodes percent-encoded references before SDK resolution", async () => {
+    const service = new OnePasswordService("account-a");
+    const encodedRef = "op://Vault/OpenAI%20Key/password";
+
+    mockClient.secrets.resolve.mockImplementationOnce((ref: string) =>
+      Promise.resolve(`decoded:${ref}`)
+    );
+
+    expect(await service.resolve(encodedRef)).toBe("decoded:op://Vault/OpenAI Key/password");
+    expect(mockClient.secrets.resolve).toHaveBeenCalledWith("op://Vault/OpenAI Key/password");
+  });
+
   it("resolve() returns undefined when client creation fails", async () => {
     const service = new OnePasswordService("account-a");
 
@@ -312,15 +324,21 @@ describe("OnePasswordService", () => {
     );
   });
 
+  it("buildReference() keeps spaces as raw characters", () => {
+    expect(OnePasswordService.buildReference("Mux", "OpenAI mux gateway voice", "password")).toBe(
+      "op://Mux/OpenAI mux gateway voice/password"
+    );
+  });
+
   it("buildReference() includes section when provided", () => {
     expect(OnePasswordService.buildReference("Vault", "Item", "password", "Login")).toBe(
       "op://Vault/Item/Login/password"
     );
   });
 
-  it("buildReference() encodes path delimiters in each segment", () => {
+  it("buildReference() keeps forward slashes raw within segment titles", () => {
     expect(
       OnePasswordService.buildReference("Vault/Prod", "Item/Main", "pass/word", "Login/Primary")
-    ).toBe("op://Vault%2FProd/Item%2FMain/Login%2FPrimary/pass%2Fword");
+    ).toBe("op://Vault/Prod/Item/Main/Login/Primary/pass/word");
   });
 });

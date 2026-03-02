@@ -79,9 +79,19 @@ export class OnePasswordService {
       this.cache.delete(ref);
     }
 
+    // Decode percent-encoded segments for backward compatibility —
+    // earlier versions of buildReference used encodeURIComponent, but
+    // the 1Password SDK only accepts raw characters in op:// references.
+    let decodedRef: string;
+    try {
+      decodedRef = decodeURIComponent(ref);
+    } catch {
+      decodedRef = ref;
+    }
+
     const resolveWithClient = async (): Promise<string | undefined> => {
       const client = await this.getClient();
-      const value = await client.secrets.resolve(ref);
+      const value = await client.secrets.resolve(decodedRef);
       if (typeof value !== "string") {
         log.warn("[OnePasswordService] Resolved secret was not a string", {
           ref,
@@ -177,12 +187,15 @@ export class OnePasswordService {
     fieldTitle: string,
     sectionTitle?: string
   ): string {
-    const encode = (segment: string): string => encodeURIComponent(segment);
+    // The 1Password op:// reference format uses raw characters — spaces
+    // are valid, but forward slashes in segment names are an inherent
+    // limitation of the scheme (/ is the delimiter). Do NOT
+    // encodeURIComponent: the SDK rejects percent-encoded characters.
     const segments = [
-      `${OP_REF_PREFIX}${encode(vaultTitle)}`,
-      encode(itemTitle),
-      ...(sectionTitle ? [encode(sectionTitle)] : []),
-      encode(fieldTitle),
+      `${OP_REF_PREFIX}${vaultTitle}`,
+      itemTitle,
+      ...(sectionTitle ? [sectionTitle] : []),
+      fieldTitle,
     ];
 
     return segments.join("/");
