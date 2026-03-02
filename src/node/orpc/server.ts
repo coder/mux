@@ -1438,7 +1438,20 @@ export async function createOrpcServer({
     });
 
     const headers = extractWsHeaders(req);
-    void orpcWsHandler.upgrade(ws, { context: { ...context, headers } });
+    // Use Object.defineProperties to copy all property descriptors from
+    // the base context as own-properties (required by oRPC's internal
+    // property enumeration) while preserving getters like
+    // onePasswordService that must resolve lazily.
+    const wsContext = Object.defineProperties({} as typeof context, {
+      ...Object.getOwnPropertyDescriptors(context),
+      headers: {
+        value: headers,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      },
+    });
+    void orpcWsHandler.upgrade(ws, { context: wsContext });
   });
 
   // Start listening
