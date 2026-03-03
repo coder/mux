@@ -246,12 +246,6 @@ export function createDevToolsMiddleware(
   assert(workspaceId.trim().length > 0, "createDevToolsMiddleware requires a workspaceId");
   assert(service, "createDevToolsMiddleware requires a DevToolsService");
 
-  // Safety net: finalize any in-progress steps left from earlier middleware instances
-  // (e.g. process crashes or interrupted streams that missed cleanup paths).
-  if (service.enabled) {
-    void service.finalizeStaleSteps(workspaceId);
-  }
-
   const runId = randomUUID();
   let runCreated = false;
   let runCreationPromise: Promise<void> | null = null;

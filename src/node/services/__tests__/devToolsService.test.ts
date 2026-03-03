@@ -57,6 +57,34 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
+function countStaleStepUpdates(logContents: string, stepId: string): number {
+  return logContents.split("\n").reduce((count, line) => {
+    if (!line.trim()) {
+      return count;
+    }
+
+    try {
+      const parsed = JSON.parse(line) as {
+        type?: unknown;
+        stepId?: unknown;
+        update?: { error?: unknown } | null;
+      };
+
+      if (
+        parsed.type === "step-update" &&
+        parsed.stepId === stepId &&
+        parsed.update?.error === "Interrupted (stale)"
+      ) {
+        return count + 1;
+      }
+    } catch {
+      // Ignore malformed test fixture lines while counting stale-step updates.
+    }
+
+    return count;
+  }, 0);
+}
+
 describe("DevToolsService", () => {
   let tempDir: string;
   let sessionsDir: string;
@@ -271,6 +299,42 @@ describe("DevToolsService", () => {
         durationMs: 125,
         output: { finishReason: "stop" },
       });
+    });
+
+    it("finalizes stale in-progress steps once when persisted data is first loaded", async () => {
+      const config = createTestConfig({ sessionsDir, enabled: true });
+      const staleStepId = "step-stale";
+      const run = makeRun("run-1");
+      const staleStep = makeStep({
+        id: staleStepId,
+        runId: "run-1",
+        durationMs: null,
+        error: null,
+      });
+      const logPath = getDevtoolsLogPath(sessionsDir, "ws-1");
+
+      await fs.mkdir(path.dirname(logPath), { recursive: true });
+      await fs.writeFile(
+        logPath,
+        `${JSON.stringify({ type: "run", run })}\n${JSON.stringify({ type: "step", step: staleStep })}\n`,
+        "utf-8"
+      );
+
+      const service = new DevToolsService(config);
+      const runWithSteps = await service.getRunWithSteps("ws-1", "run-1");
+
+      expect(runWithSteps).not.toBeNull();
+      const finalizedStep = runWithSteps?.steps.find((step) => step.id === staleStepId);
+      expect(finalizedStep).toBeDefined();
+      expect(finalizedStep?.error).toBe("Interrupted (stale)");
+      expect(finalizedStep?.durationMs).not.toBeNull();
+
+      const logAfterFirstLoad = await fs.readFile(logPath, "utf-8");
+      expect(countStaleStepUpdates(logAfterFirstLoad, staleStepId)).toBe(1);
+
+      await service.getRuns("ws-1");
+      const logAfterSecondLoad = await fs.readFile(logPath, "utf-8");
+      expect(countStaleStepUpdates(logAfterSecondLoad, staleStepId)).toBe(1);
     });
 
     it("defaults missing raw fields to null when replaying legacy step entries", async () => {

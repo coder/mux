@@ -184,21 +184,7 @@ export class DevToolsService extends EventEmitter {
 
     await this.ensureLoaded(workspaceId);
     const data = this.getOrCreateWorkspaceData(workspaceId);
-
-    const nowMs = Date.now();
-    for (const step of data.steps.values()) {
-      if (step.durationMs != null || step.error != null) {
-        continue;
-      }
-
-      const startedAtMs = new Date(step.startedAt).getTime();
-      const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0;
-
-      await this.updateStep(workspaceId, step.id, {
-        durationMs,
-        error: "Interrupted (stale)",
-      });
-    }
+    await this.finalizeStaleStepsForLoadedWorkspace(workspaceId, data);
   }
 
   async getRuns(workspaceId: string): Promise<DevToolsRunSummary[]> {
@@ -344,6 +330,35 @@ export class DevToolsService extends EventEmitter {
     }
 
     data.loaded = true;
+    await this.finalizeStaleStepsForLoadedWorkspace(workspaceId, data);
+  }
+
+  private async finalizeStaleStepsForLoadedWorkspace(
+    workspaceId: string,
+    data: WorkspaceData
+  ): Promise<void> {
+    assert(
+      data.loaded,
+      "DevToolsService.finalizeStaleStepsForLoadedWorkspace requires loaded workspace data"
+    );
+
+    const staleSteps = Array.from(data.steps.values()).filter(
+      (step) => step.durationMs == null && step.error == null
+    );
+    if (staleSteps.length === 0) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    for (const step of staleSteps) {
+      const startedAtMs = new Date(step.startedAt).getTime();
+      const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0;
+
+      await this.updateStep(workspaceId, step.id, {
+        durationMs,
+        error: "Interrupted (stale)",
+      });
+    }
   }
 
   private buildRunSummary(data: WorkspaceData, runId: string): DevToolsRunSummary {

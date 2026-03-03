@@ -212,6 +212,45 @@ describe("createDevToolsMiddleware", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("does not finalize existing in-progress steps when middleware is created", async () => {
+    const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+
+    await service.createRun("ws-1", {
+      id: "run-1",
+      workspaceId: "ws-1",
+      startedAt: "2025-06-01T00:00:00Z",
+    });
+    await service.createStep("ws-1", {
+      id: "step-1",
+      runId: "run-1",
+      stepNumber: 1,
+      type: "generate",
+      modelId: "test-model",
+      provider: "test-provider",
+      startedAt: "2025-06-01T00:00:00Z",
+      durationMs: null,
+      input: null,
+      output: null,
+      usage: null,
+      error: null,
+      rawRequest: null,
+      requestHeaders: null,
+      responseHeaders: null,
+      rawResponse: null,
+      rawChunks: null,
+    });
+
+    createDevToolsMiddleware("ws-1", service);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const runWithSteps = await service.getRunWithSteps("ws-1", "run-1");
+    expect(runWithSteps).not.toBeNull();
+
+    const step = runWithSteps?.steps[0];
+    expect(step?.durationMs).toBeNull();
+    expect(step?.error).toBeNull();
+  });
+
   describe("wrapGenerate", () => {
     it("records a run + step for successful generate calls", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
