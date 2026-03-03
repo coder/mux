@@ -247,9 +247,36 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
   };
 }
 /**
+ * Returns true when a review note references plan content under .mux/plans.
+ */
+export function isPlanFilePath(filePath: string): boolean {
+  if (!filePath) return false;
+
+  return filePath.includes("/.mux/plans/") || filePath.startsWith(".mux/plans/");
+}
+
+function formatPlanLineRange(lineRange: string): string {
+  const newRangeMatch = /\+(\d+(?:-\d+)?)/.exec(lineRange);
+  if (newRangeMatch?.[1]) {
+    return `L${newRangeMatch[1]}`;
+  }
+
+  const oldRangeMatch = /-(\d+(?:-\d+)?)/.exec(lineRange);
+  if (oldRangeMatch?.[1]) {
+    return `L${oldRangeMatch[1]}`;
+  }
+
+  return lineRange;
+}
+
+/**
  * Format a ReviewNoteData into the message format for the model.
  * Used when preparing reviews for sending to chat.
  */
 export function formatReviewForModel(data: ReviewNoteData): string {
-  return `<review>\nRe ${data.filePath}:${data.lineRange}\n\`\`\`\n${data.selectedCode}\n\`\`\`\n> ${data.userNote.trim()}\n</review>`;
+  const location = isPlanFilePath(data.filePath)
+    ? `Plan:${formatPlanLineRange(data.lineRange)}`
+    : `${data.filePath}:${data.lineRange}`;
+
+  return `<review>\nRe ${location}\n\`\`\`\n${data.selectedCode}\n\`\`\`\n> ${data.userNote.trim()}\n</review>`;
 }
