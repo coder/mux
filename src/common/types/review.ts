@@ -247,12 +247,32 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
   };
 }
 /**
+ * Normalize a plan file path for cross-platform matching.
+ *
+ * Converts Windows separators and strips any absolute/tilde prefix so callers can
+ * compare only the stable ".mux/plans/..." suffix.
+ */
+export function normalizePlanFilePath(filePath: string): string | null {
+  if (!filePath) return null;
+
+  const normalized = filePath.replace(/\\/g, "/");
+  if (normalized.startsWith(".mux/plans/")) {
+    return normalized;
+  }
+
+  const embeddedPlanRootIndex = normalized.indexOf("/.mux/plans/");
+  if (embeddedPlanRootIndex >= 0) {
+    return normalized.slice(embeddedPlanRootIndex + 1);
+  }
+
+  return null;
+}
+
+/**
  * Returns true when a review note references plan content under .mux/plans.
  */
 export function isPlanFilePath(filePath: string): boolean {
-  if (!filePath) return false;
-
-  return filePath.includes("/.mux/plans/") || filePath.startsWith(".mux/plans/");
+  return normalizePlanFilePath(filePath) !== null;
 }
 
 function formatPlanLineRange(lineRange: string): string {

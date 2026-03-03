@@ -140,6 +140,7 @@ void mock.module("./PlanAnnotationView", () => ({
 
 void mock.module("@/common/types/review", () => ({
   isPlanFilePath: () => true,
+  normalizePlanFilePath: (filePath: string) => filePath,
 }));
 
 const TEST_AGENTS: AgentDefinitionDescriptor[] = [

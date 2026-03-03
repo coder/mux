@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { formatReviewForModel, isPlanFilePath, type ReviewNoteData } from "./review";
+import {
+  formatReviewForModel,
+  isPlanFilePath,
+  normalizePlanFilePath,
+  type ReviewNoteData,
+} from "./review";
 
 const baseReviewData: ReviewNoteData = {
   filePath: "src/common/types/review.ts",
@@ -57,10 +62,26 @@ describe("formatReviewForModel", () => {
   });
 });
 
+describe("normalizePlanFilePath", () => {
+  test("normalizes absolute and tilde plan paths to a stable .mux/plans suffix", () => {
+    expect(normalizePlanFilePath("~/.mux/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("/home/user/.mux/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("C:\\Users\\user\\.mux\\plans\\workspace\\plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+  });
+});
+
 describe("isPlanFilePath", () => {
-  test("recognizes standard plan paths", () => {
+  test("recognizes standard and cross-platform plan paths", () => {
     expect(isPlanFilePath("~/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath(".mux/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("C:\\Users\\user\\.mux\\plans\\workspace\\plan.md")).toBeTrue();
+    expect(isPlanFilePath("C:/Users/user/.mux/plans/workspace/plan.md")).toBeTrue();
   });
 
   test("rejects non-plan paths and empty paths", () => {

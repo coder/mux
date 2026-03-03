@@ -49,7 +49,7 @@ import {
 } from "@/browser/utils/workspaceModeAi";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ReviewActionCallbacks } from "../Shared/InlineReviewNote";
-import { isPlanFilePath } from "@/common/types/review";
+import { isPlanFilePath, normalizePlanFilePath } from "@/common/types/review";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   Clipboard,
@@ -328,12 +328,18 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   }
 
   const reviews = useReviews(workspaceId ?? "");
+  const normalizedPlanPath = planPath != null ? normalizePlanFilePath(planPath) : null;
   const planReviews = reviews.reviews.filter((review) => {
     if (!isPlanFilePath(review.data.filePath)) {
       return false;
     }
 
-    return planPath != null ? review.data.filePath === planPath : true;
+    if (normalizedPlanPath == null) {
+      return true;
+    }
+
+    const normalizedReviewPath = normalizePlanFilePath(review.data.filePath);
+    return normalizedReviewPath === normalizedPlanPath;
   });
   const reviewActions: ReviewActionCallbacks = {
     onEditComment: reviews.updateReviewNote,
