@@ -21,23 +21,44 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 
+/**
+ * Strip <style> and <script> blocks from HTML before JSDOM parsing.
+ * JSDOM's CSS parser scans minified CSS character-by-character for line
+ * terminators; pages like Google Cloud's pricing ship MB of newline-free
+ * CSS that pins the CPU for minutes. Readability only needs DOM structure
+ * and visible text, so these blocks are dead weight.
+ */
+function stripHeavyTags(html: string): string {
+  return html
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
+}
+
 /** Parse curl -i output into headers and body */
 function parseResponse(output: string): { headers: string; body: string; statusCode: string } {
-  // Find the last HTTP status line (after redirects) and its headers
-  // curl -i with -L shows all redirect responses, we want the final one
-  const httpMatches = [...output.matchAll(/HTTP\/[\d.]+ (\d{3})[^\r\n]*/g)];
-  const lastStatusMatch = httpMatches.length > 0 ? httpMatches[httpMatches.length - 1] : null;
-  const statusCode = lastStatusMatch ? lastStatusMatch[1] : "";
+  // HTTP headers are always at the start of curl -i output, well within the
+  // first 64 KB even after a long redirect chain. Restrict the header search
+  // to a small prefix so that regex/indexOf never scan through megabytes of
+  // minified CSS/JS body (which caused a CPU-pinning hang on ConsString ropes).
+  const HEADER_SEARCH_LIMIT = 65_536;
 
-  // Headers end with \r\n\r\n (or \n\n for some servers)
-  const headerEndIndex = output.indexOf("\r\n\r\n");
-  const altHeaderEndIndex = output.indexOf("\n\n");
+  // Headers end with \r\n\r\n (or \n\n for some servers).
+  // Search only the prefix to avoid scanning the entire body.
+  const prefix = output.length > HEADER_SEARCH_LIMIT ? output.slice(0, HEADER_SEARCH_LIMIT) : output;
+  const headerEndIndex = prefix.indexOf("\r\n\r\n");
+  const altHeaderEndIndex = prefix.indexOf("\n\n");
   const splitIndex =
     headerEndIndex !== -1
       ? headerEndIndex + 4
       : altHeaderEndIndex !== -1
         ? altHeaderEndIndex + 2
         : 0;
+
+  // Find the last HTTP status line (after redirects) within the header region
+  const headerRegion = splitIndex > 0 ? output.slice(0, splitIndex) : prefix;
+  const httpMatches = [...headerRegion.matchAll(/HTTP\/[\d.]+ (\d{3})[^\r\n]*/g)];
+  const lastStatusMatch = httpMatches.length > 0 ? httpMatches[httpMatches.length - 1] : null;
+  const statusCode = lastStatusMatch ? lastStatusMatch[1] : "";
 
   const headers = splitIndex > 0 ? output.slice(0, splitIndex).toLowerCase() : "";
   const body = splitIndex > 0 ? output.slice(splitIndex) : output;
@@ -60,7 +81,7 @@ function tryExtractContent(
   maxBytes: number
 ): { title: string; content: string } | null {
   try {
-    const dom = new JSDOM(body, { url });
+    const dom = new JSDOM(stripHeavyTags(body), { url });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
     if (!article?.content) return null;
@@ -248,8 +269,10 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        // Parse HTML with JSDOM (runs locally in Mux, not over SSH)
-        const dom = new JSDOM(body, { url });
+        // Parse HTML with JSDOM (runs locally in Mux, not over SSH).
+        // Strip <style>/<script> first — JSDOM's CSS parser chokes on MB of
+        // minified CSS and Readability doesn't need either for extraction.
+        const dom = new JSDOM(stripHeavyTags(body), { url });
 
         // Extract article with Readability
         const reader = new Readability(dom.window.document);
