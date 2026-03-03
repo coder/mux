@@ -7,7 +7,7 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
@@ -16,9 +16,16 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "../Popover/Popover";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
 import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/PositionedMenu";
-import { Trash2, Ellipsis, Loader2, Sparkles } from "lucide-react";
+import {
+  Trash2,
+  Trash,
+  EllipsisVertical,
+  Loader2,
+  Sparkles,
+  PenLine,
+  MessageCircleQuestionMark,
+} from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
-import { Shimmer } from "@/browser/features/AIElements/Shimmer";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
 import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 import {
@@ -85,7 +92,7 @@ export interface DraftWorkspaceListItemProps extends WorkspaceListItemBaseProps 
 
 /** Container styles shared between workspace and draft items */
 const LIST_ITEM_BASE_CLASSES =
-  "py-1.5 pr-2 transition-all duration-150 text-[13px] relative flex gap-2";
+  "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 transition-all duration-150";
 
 /** Calculate left padding based on nesting depth */
 function getItemPaddingLeft(depth?: number): number {
@@ -93,52 +100,76 @@ function getItemPaddingLeft(depth?: number): number {
   return 12 + Math.min(32, safeDepth) * 12;
 }
 
-/** Selection/unread indicator bar (absolute positioned on left edge) */
-function SelectionBar(props: { isSelected: boolean; showUnread?: boolean; isDraft?: boolean }) {
-  const barColorClass = props.isSelected
-    ? "bg-blue-400"
-    : props.showUnread
-      ? "bg-muted-foreground"
-      : "bg-transparent";
+type VisualState = "active" | "idle" | "seen" | "error" | "question";
 
-  const bar = (
+function getVisualState(opts: {
+  awaitingUserQuestion: boolean;
+  isInitializing: boolean;
+  isRemoving: boolean;
+  isArchiving: boolean;
+  isWorking: boolean;
+  isStarting: boolean;
+  isUnread: boolean;
+  hasAgentStatus: boolean;
+  agentStatusMessage?: string;
+}): VisualState {
+  const statusText = opts.agentStatusMessage?.toLowerCase() ?? "";
+  const hasErrorKeyword =
+    statusText.includes("error") ||
+    statusText.includes("failed") ||
+    statusText.includes("failure") ||
+    statusText.includes("crash");
+  const hasQuestionKeyword =
+    statusText.includes("question") || statusText.includes("awaiting") || statusText.includes("ask");
+
+  if (opts.awaitingUserQuestion || hasQuestionKeyword) {
+    return "question";
+  }
+  if (opts.isRemoving || opts.isArchiving || hasErrorKeyword) {
+    return "error";
+  }
+  if (opts.isWorking || opts.isStarting || opts.isInitializing || opts.hasAgentStatus) {
+    return "active";
+  }
+  // Figma distinguishes idle unseen (ringed dot + primary title) from seen (subtle square + secondary title).
+  return opts.isUnread ? "idle" : "seen";
+}
+
+function StatusDot(props: {
+  state: VisualState;
+  isDraft?: boolean;
+}) {
+  const shouldHideDot = !props.isDraft && props.state === "seen";
+  const dot = props.isDraft ? (
+    <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
+  ) : shouldHideDot ? (
+    <span className="block h-3 w-3 opacity-0" />
+  ) : (
     <span
       className={cn(
-        "absolute left-0 top-0 bottom-0 w-[3px] transition-colors duration-150",
-        barColorClass,
-        // Dashed border effect for drafts when selected
-        props.isDraft && props.isSelected && "bg-[length:3px_6px] bg-repeat-y",
-        props.showUnread ? "pointer-events-auto" : "pointer-events-none"
+        "block h-3 w-3",
+        props.state === "active" &&
+          "bg-content-success border-surface-green workspace-status-dot-active",
+        props.state === "idle" && "bg-surface-invert-secondary border-surface-tertiary",
+        props.state === "error" && "bg-content-destructive border-surface-destructive",
+        props.state === "question" && "bg-border-pending border-surface-sky",
+        "rounded-full border-[3.5px]"
       )}
-      style={
-        props.isDraft && props.isSelected
-          ? {
-              background:
-                "repeating-linear-gradient(to bottom, var(--color-blue-400) 0px, var(--color-blue-400) 4px, transparent 4px, transparent 8px)",
-            }
-          : undefined
-      }
-      aria-hidden={!props.showUnread}
     />
   );
 
-  if (props.showUnread) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{bar}</TooltipTrigger>
-        <TooltipContent align="start">Unread messages</TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  return bar;
+  return <div className="relative mt-1 flex h-4 w-4 shrink-0 items-center justify-center">{dot}</div>;
 }
 
 /** Action button wrapper (archive/delete) with consistent sizing and alignment */
-function ActionButtonWrapper(props: { hasSubtitle: boolean; children: React.ReactNode }) {
+function ActionButtonWrapper(props: { children: React.ReactNode }) {
   return (
-    <div className={cn("relative inline-flex h-4 w-4 shrink-0 items-center self-center")}>
-      {/* Keep the hamburger vertically centered even for single-row items. */}
+    <div
+      className={cn(
+        "relative order-last ml-auto mt-1 inline-flex h-4 w-4 shrink-0 items-center self-start"
+      )}
+    >
+      {/* Keep the kebab trigger aligned with the title row. */}
       {props.children}
     </div>
   );
@@ -159,8 +190,8 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
     <div
       className={cn(
         LIST_ITEM_BASE_CLASSES,
-        "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
-        isSelected && "bg-hover"
+        "border-border cursor-pointer border-t border-b border-l border-dashed pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
+        isSelected && "bg-surface-secondary"
       )}
       style={{ paddingLeft }}
       onClick={() => {
@@ -182,9 +213,20 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
       data-project-path={projectPath}
       data-draft-id={draft.draftId}
     >
-      <SelectionBar isSelected={isSelected} isDraft />
+      <StatusDot state="idle" isDraft />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-0 items-center gap-1 text-[14px] leading-6">
+          <PenLine className="text-muted h-3 w-3 shrink-0" />
+          <span className="text-muted min-w-0 truncate text-left italic">{draft.title}</span>
+        </div>
+        {hasPromptPreview && (
+          <span className="text-muted block truncate text-left text-xs leading-4">
+            {draft.promptPreview}
+          </span>
+        )}
+      </div>
 
-      <ActionButtonWrapper hasSubtitle={hasPromptPreview}>
+      <ActionButtonWrapper>
         {/* Desktop: direct-delete button (hidden on touch devices) */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -205,7 +247,7 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
               data-project-path={projectPath}
               data-draft-id={draft.draftId}
             >
-              <Trash2 className="h-3 w-3" />
+              <Trash className="h-3 w-3" />
             </button>
           </TooltipTrigger>
           <TooltipContent align="start">Delete draft</TooltipContent>
@@ -219,7 +261,7 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
           className="w-[150px]"
         >
           <PositionedMenuItem
-            icon={<Trash2 />}
+            icon={<Trash />}
             label="Delete draft"
             onClick={() => {
               ctxMenu.close();
@@ -228,15 +270,6 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
           />
         </PositionedMenu>
       </ActionButtonWrapper>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="text-foreground block truncate text-left text-[13px] italic">
-          {draft.title}
-        </span>
-        {hasPromptPreview && (
-          <span className="text-muted block truncate text-left text-xs">{draft.promptPreview}</span>
-        )}
-      </div>
     </div>
   );
 }
@@ -293,7 +326,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
-  const [isOverflowMenuPlaced, setIsOverflowMenuPlaced] = useState(false);
+  const overflowMenuFrameRef = useRef<number | null>(null);
 
   // Context menu via right-click / long-press. The hook manages position + long-press state.
   // The regular item also has a ⋮ trigger button, so we bridge the hook's isOpen into a
@@ -302,21 +335,28 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const ctxMenu = useContextMenuPosition({ longPress: true, canOpen: canOpenMenu });
   // Hide menu content for one frame while Radix/Floating UI recalculates anchor
   // placement. This avoids first-frame flashes at stale trigger/fallback coords.
-  useLayoutEffect(() => {
-    if (!ctxMenu.isOpen) {
-      setIsOverflowMenuPlaced(false);
-      return;
-    }
+  const setOverflowMenuContentRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (overflowMenuFrameRef.current !== null) {
+        cancelAnimationFrame(overflowMenuFrameRef.current);
+        overflowMenuFrameRef.current = null;
+      }
 
-    setIsOverflowMenuPlaced(false);
-    const frame = requestAnimationFrame(() => {
-      setIsOverflowMenuPlaced(true);
-    });
+      if (!node || !ctxMenu.isOpen) {
+        return;
+      }
 
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-  }, [ctxMenu.isOpen, ctxMenu.position?.x, ctxMenu.position?.y]);
+      node.style.visibility = "hidden";
+      overflowMenuFrameRef.current = requestAnimationFrame(() => {
+        overflowMenuFrameRef.current = null;
+        if (!node.isConnected) {
+          return;
+        }
+        node.style.visibility = "visible";
+      });
+    },
+    [ctxMenu.isOpen, ctxMenu.position?.x, ctxMenu.position?.y]
+  );
 
   useEffect(() => {
     if (isEditing) {
@@ -324,14 +364,19 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     }
   }, [isEditing, ctxMenu]);
 
-  const wasEditingRef = useRef(false);
-  useEffect(() => {
-    if (isEditing && !wasEditingRef.current) {
-      setEditingTitle(displayTitle);
-      setTitleError(null);
-    }
-    wasEditingRef.current = isEditing;
-  }, [isEditing, displayTitle]);
+  const handleEditInputRef = useCallback(
+    (node: HTMLInputElement | null) => {
+      if (!node) {
+        return;
+      }
+
+      const nextTitle = displayTitle;
+      setEditingTitle((currentTitle) => (currentTitle === nextTitle ? currentTitle : nextTitle));
+      setTitleError((currentError) => (currentError === null ? currentError : null));
+      node.focus();
+    },
+    [displayTitle]
+  );
 
   // SHARE_TRANSCRIPT keybind is handled in WorkspaceMenuBar (always mounted),
   // so it works even when the sidebar is collapsed and list items are unmounted.
@@ -380,13 +425,23 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const fallbackModel = useWorkspaceFallbackModel(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+  const visualState = getVisualState({
+    awaitingUserQuestion,
+    isInitializing,
+    isRemoving,
+    isArchiving: isArchiving === true,
+    isWorking,
+    isStarting,
+    isUnread,
+    hasAgentStatus: Boolean(agentStatus),
+    agentStatusMessage: agentStatus?.message,
+  });
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
   // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
 
-  const showUnreadBar = !isInitializing && !isEditing && isUnread && !(isSelected && !isDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -424,10 +479,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           isDragging && "opacity-50",
           isRemoving && "opacity-70",
           // Keep hover styles enabled for initializing workspaces so the row feels interactive.
-          !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
+          !isArchiving && "pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
           isArchiving && "pointer-events-none opacity-70",
           isDisabled ? "cursor-default" : "cursor-pointer",
-          isSelected && !isDisabled && "bg-hover"
+          isSelected && !isDisabled && "bg-surface-secondary"
         )}
         style={{ paddingLeft }}
         onClick={() => {
@@ -472,11 +527,13 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
+        <StatusDot
+          state={visualState}
+        />
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
         {isInitializing ? (
-          <ActionButtonWrapper hasSubtitle={hasStatusText}>
+          <ActionButtonWrapper>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -517,10 +574,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           </ActionButtonWrapper>
         ) : isDisabled ? (
           // Invisible spacer preserves title alignment during archive/remove transitions
-          <div className="h-4 w-4 shrink-0" />
+          <div className="order-last ml-auto h-4 w-4 shrink-0" />
         ) : (
           !isEditing && (
-            <ActionButtonWrapper hasSubtitle={hasStatusText}>
+            <ActionButtonWrapper>
               {/* Overflow menu: opens from ⋮ button (dropdown) or right-click/long-press (positioned).
                   Uses a Popover so it can anchor at either the trigger button or the cursor. */}
               <Popover open={ctxMenu.isOpen} onOpenChange={ctxMenu.onOpenChange}>
@@ -542,25 +599,23 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <button
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
-                      ctxMenu.isOpen ? "opacity-100" : "opacity-0",
+                      ctxMenu.isOpen || isSelected ? "opacity-100" : "opacity-0",
                       "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
                     )}
                     onClick={(e) => e.stopPropagation()}
                     aria-label={`Workspace actions for ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
-                    <Ellipsis className="h-3 w-3" />
+                    <EllipsisVertical className="h-3 w-3" />
                   </button>
                 </PopoverTrigger>
 
                 <PopoverContent
+                  ref={setOverflowMenuContentRef}
                   align={ctxMenu.position ? "start" : "end"}
                   side={ctxMenu.position ? "right" : "bottom"}
                   sideOffset={ctxMenu.position ? 0 : 6}
                   className="w-[250px] !min-w-0 p-1"
-                  style={{
-                    visibility: !ctxMenu.isOpen || isOverflowMenuPlaced ? "visible" : "hidden",
-                  }}
                   onClick={(event: React.MouseEvent<HTMLDivElement>) => {
                     event.stopPropagation();
                   }}
@@ -613,14 +668,13 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           )
         )}
 
-        {/* Split row spacing when there's no secondary line to keep titles centered. */}
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
+        {/* Keep title row anchored so status dot/title align across single+double-line states. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div
             className={cn(
               // Keep the title column shrinkable on narrow/mobile viewports so the
               // right-side git indicator never forces horizontal sidebar scrolling.
-              "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5",
-              !hasSecondaryRow && "py-0.5"
+              "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5"
             )}
           >
             {isEditing ? (
@@ -630,7 +684,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 onChange={(e) => setEditingTitle(e.target.value)}
                 onKeyDown={handleEditKeyDown}
                 onBlur={() => void handleConfirmEdit()}
-                autoFocus
+                ref={handleEditInputRef}
                 onClick={(e) => e.stopPropagation()}
                 aria-label={`Edit title for workspace ${displayTitle}`}
                 data-workspace-id={workspaceId}
@@ -638,9 +692,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             ) : (
               <span
                 className={cn(
-                  "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
+                  "text-foreground block truncate text-left text-[14px] leading-6 transition-colors duration-200",
                   !isDisabled && "cursor-pointer",
-                  isGeneratingTitle && "italic"
+                  isGeneratingTitle && "italic",
+                  visualState === "seen" && "text-secondary"
                 )}
                 onDoubleClick={(e) => {
                   if (isDisabled) return;
@@ -648,16 +703,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   startEditing();
                 }}
               >
-                {/* Keep row selection on single-click and remove hover-triggered chat preview popups. */}
-                <Shimmer
-                  className={cn(
-                    "w-full truncate",
-                    !(isWorking || isInitializing || isGeneratingTitle) && "no-shimmer"
-                  )}
-                  colorClass="var(--color-foreground)"
-                >
-                  {displayTitle}
-                </Shimmer>
+                {displayTitle}
               </span>
             )}
 
@@ -698,6 +744,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <ArchiveIcon className="h-3 w-3 shrink-0" />
                   <span className="min-w-0 truncate">Archiving...</span>
+                </div>
+              ) : awaitingUserQuestion ? (
+                <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4">
+                  <MessageCircleQuestionMark className="h-3 w-3 shrink-0" />
+                  <span className="min-w-0 truncate">Mux has a few questions</span>
                 </div>
               ) : (
                 <WorkspaceStatusIndicator

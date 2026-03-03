@@ -116,6 +116,16 @@
     --color-text-secondary: hsl(0 0% 42%);
     --color-muted-foreground: hsl(0 0% 60%);
     --color-secondary: hsl(0 0% 42%);
+    --color-surface-primary: hsla(240, 10%, 4%, 1);
+    --color-surface-secondary: hsla(240, 6%, 10%, 1);
+    --color-content-destructive: hsla(0, 91%, 71%, 1);
+    --color-surface-destructive: hsla(0, 75%, 15%, 1);
+    --color-surface-invert-secondary: hsla(240, 5%, 65%, 1);
+    --color-surface-tertiary: hsla(240, 4%, 16%, 1);
+    --color-content-success: hsla(142, 76%, 36%, 1);
+    --color-surface-green: hsla(145, 80%, 10%, 1);
+    --color-border-pending: hsla(188, 75%, 80%, 1);
+    --color-surface-sky: hsla(193, 67%, 12%, 1);
 
     /* Code */
     --color-code-bg: hsl(0 6.43% 8.04%);
@@ -405,6 +415,16 @@
   --color-text-secondary: hsl(210 12% 42%);
   --color-muted-foreground: hsl(210 14% 48%);
   --color-secondary: hsl(210 18% 60%);
+  --color-surface-primary: hsla(0, 0%, 100%, 1);
+  --color-surface-secondary: hsla(240, 5%, 96%, 1);
+  --color-content-destructive: hsla(0, 84%, 60%, 1);
+  --color-surface-destructive: hsla(0, 93%, 94%, 1);
+  --color-surface-invert-secondary: hsla(240, 5%, 26%, 1);
+  --color-surface-tertiary: hsla(240, 6%, 90%, 1);
+  --color-content-success: hsla(142, 72%, 29%, 1);
+  --color-surface-green: hsla(141, 79%, 85%, 1);
+  --color-border-pending: hsla(194, 49%, 45%, 1);
+  --color-surface-sky: hsla(191, 67%, 89%, 1);
 
   --color-code-bg: hsl(210 40% 96%);
 
@@ -650,6 +670,16 @@
   --color-text-secondary: #6f6e69;
   --color-muted-foreground: #6f6e69;
   --color-secondary: #6f6e69;
+  --color-surface-primary: #fffcf0;
+  --color-surface-secondary: #f8f5e8;
+  --color-content-destructive: #af3029;
+  --color-surface-destructive: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
+  --color-surface-invert-secondary: #403e3c;
+  --color-surface-tertiary: #f2f0e5;
+  --color-content-success: #66800b;
+  --color-surface-green: color-mix(in srgb, var(--color-success) 20%, var(--color-background) 80%);
+  --color-border-pending: #24837b;
+  --color-surface-sky: color-mix(in srgb, var(--color-info) 16%, var(--color-background) 84%);
 
   --color-code-bg: #f2f0e5;
 
@@ -689,6 +719,17 @@
   --color-token-output: #205ea6;
   --color-token-cached: #6f6e69;
   --color-token-cache-create: #66800b;
+
+  --color-task-mode: #24837b; /* Flexoki cyan-600 */
+  --color-task-mode-light: color-mix(in srgb, var(--color-task-mode), white 35%);
+  --surface-task-gradient: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-task-mode), transparent 94%) 0%,
+    color-mix(in srgb, var(--color-task-mode), transparent 97%) 100%
+  );
+  --surface-task-border: color-mix(in srgb, var(--color-task-mode), transparent 78%);
+  --surface-task-border-strong: color-mix(in srgb, var(--color-task-mode), transparent 68%);
+  --surface-task-divider: color-mix(in srgb, var(--color-task-mode), transparent 86%);
 
   --color-toggle-bg: #f2f0e5;
   --color-toggle-active: #e6e4d9;
@@ -856,6 +897,16 @@
   --color-text-secondary: #575653;
   --color-muted-foreground: #878580;
   --color-secondary: #575653;
+  --color-surface-primary: #100f0f;
+  --color-surface-secondary: #1c1b1a;
+  --color-content-destructive: #d14d41;
+  --color-surface-destructive: color-mix(in srgb, var(--color-danger) 16%, var(--color-background) 84%);
+  --color-surface-invert-secondary: #b7b5ac;
+  --color-surface-tertiary: #282726;
+  --color-content-success: #879a39;
+  --color-surface-green: color-mix(in srgb, var(--color-success) 18%, var(--color-background) 82%);
+  --color-border-pending: #3aa99f;
+  --color-surface-sky: color-mix(in srgb, var(--color-info) 16%, var(--color-background) 84%);
 
   --color-code-bg: #1c1b1a;
 
@@ -895,6 +946,17 @@
   --color-token-output: #4385be;
   --color-token-cached: #575653;
   --color-token-cache-create: #879a39;
+
+  --color-task-mode: #3aa99f; /* Flexoki cyan-400 */
+  --color-task-mode-light: color-mix(in srgb, var(--color-task-mode), white 22%);
+  --surface-task-gradient: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-task-mode), transparent 92%) 0%,
+    color-mix(in srgb, var(--color-task-mode), transparent 95%) 100%
+  );
+  --surface-task-border: color-mix(in srgb, var(--color-task-mode), transparent 70%);
+  --surface-task-border-strong: color-mix(in srgb, var(--color-task-mode), transparent 55%);
+  --surface-task-divider: color-mix(in srgb, var(--color-task-mode), transparent 80%);
 
   --color-toggle-bg: #1c1b1a;
   --color-toggle-active: #282726;
@@ -2090,6 +2152,11 @@ input[type="checkbox"] {
   animation: tutorial-pulse 1.5s ease-in-out infinite;
 }
 
+/* Active workspace status dot pulse (animate-pulse style, slightly stronger) */
+.workspace-status-dot-active {
+  animation: workspace-status-dot-pulse 1.8s cubic-bezier(0.5, 0, 0.6, 1) infinite;
+}
+
 @keyframes tutorial-pulse {
   0%,
   100% {
@@ -2099,6 +2166,16 @@ input[type="checkbox"] {
     box-shadow:
       0 0 0 3px var(--color-accent),
       0 0 12px var(--color-accent);
+  }
+}
+
+@keyframes workspace-status-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
   }
 }
 

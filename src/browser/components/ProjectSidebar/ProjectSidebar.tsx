@@ -120,7 +120,7 @@ const MuxChatHelpButton: React.FC<{
 
 // Keep the project header visible while scrolling through long workspace lists.
 const PROJECT_ITEM_BASE_CLASS =
-  "sticky top-0 z-10 py-2 pl-2 pr-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
+  "sticky top-0 z-10 py-2 pl-2 pr-3 flex items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
 function getProjectItemClassName(opts: {
   isDragging: boolean;
@@ -927,7 +927,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         <SectionDragLayer />
         <div
           className={cn(
-            "font-primary bg-sidebar border-border-light flex flex-1 flex-col overflow-hidden border-r",
+            "font-primary bg-surface-primary border-border-light flex flex-1 flex-col overflow-hidden border-r",
             // In desktop mode when collapsed, hide border (LeftSidebar handles the partial border)
             isDesktopMode() && collapsed && "border-r-0"
           )}
