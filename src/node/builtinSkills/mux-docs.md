@@ -98,6 +98,7 @@ Use this index to find a page's:
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
   - **Integrations**
     - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair Mux workspaces with VS Code and Cursor editors
+    - ACP (Editor Integrations) (`/integrations/acp`) → `references/docs/integrations/acp.mdx` — Connect Mux to Zed, Neovim, and JetBrains via the Agent Client Protocol
     - Mux Governor (`/integrations/mux-governor`) → `references/docs/integrations/mux-governor.mdx` — Our upcoming enterprise platform for Mux.
   - **Reference**
     - Debugging (`/reference/debugging`) → `references/docs/reference/debugging.mdx` — View live backend logs and diagnose issues
