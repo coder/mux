@@ -30,7 +30,11 @@ import {
   useAnalyticsSpendOverTime,
   useAnalyticsSummary,
 } from "@/browser/hooks/useAnalytics";
-import { useWorkspaceRecency, useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
+import {
+  useWorkspaceRecency,
+  useWorkspaceSidebarState,
+  useWorkspaceStoreRaw,
+} from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -258,6 +262,9 @@ function SpendGraph(props: { dateFilters: DateFilters }) {
 
 function MuxChatCard() {
   const { setSelectedWorkspace } = useWorkspaceContext();
+  const workspaceStore = useWorkspaceStoreRaw();
+  const muxChatReady =
+    workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID) !== undefined;
 
   const handleOpenMuxChat = () => {
     // setSelectedWorkspace handles route navigation from workspaceId alone.
@@ -270,8 +277,12 @@ function MuxChatCard() {
   return (
     <button
       type="button"
+      disabled={!muxChatReady}
       onClick={handleOpenMuxChat}
-      className="bg-background-secondary border-border-medium hover:border-foreground/20 flex min-w-0 flex-1 cursor-pointer items-center gap-4 rounded-lg border p-4 text-left transition-colors"
+      className={cn(
+        "bg-background-secondary border-border-medium hover:border-foreground/20 flex min-w-0 flex-1 cursor-pointer items-center gap-4 rounded-lg border p-4 text-left transition-colors",
+        !muxChatReady && "cursor-default opacity-50"
+      )}
     >
       <div className="bg-hover flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
         <CircleHelp className="text-muted h-5 w-5" />
