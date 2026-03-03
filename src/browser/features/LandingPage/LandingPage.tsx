@@ -328,10 +328,7 @@ function ProjectsSection(props: { dateFilters: DateFilters }) {
       <h3 className="text-foreground mb-2 text-sm font-medium">Projects</h3>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
         {projects.map((project) => (
-          <div
-            key={project.projectPath}
-            className="bg-background-secondary border-border-medium rounded-lg border p-3"
-          >
+          <div key={project.projectPath} className={CARD_CLASS}>
             <div className="flex items-center justify-between">
               <span className="text-foreground truncate text-sm font-medium">
                 {project.projectName}
