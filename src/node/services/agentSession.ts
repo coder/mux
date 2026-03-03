@@ -2488,6 +2488,10 @@ export class AgentSession {
 
     const sendOptions: SendMessageOptions = {
       ...params.baseOptions,
+      providerOptions: {
+        ...params.baseOptions.providerOptions,
+        agentInitiated: true,
+      },
       agentId: "compact",
       skipAiSettingsPersistence: true,
       model: compactionModel,

@@ -102,7 +102,10 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
     if (cachedSystem1ModelFailed) return undefined;
 
     // createModel handles gateway routing automatically — pass the raw string.
-    const created = await opts.createModel(system1Ctx.modelString, opts.muxProviderOptions);
+    const created = await opts.createModel(system1Ctx.modelString, {
+      ...opts.muxProviderOptions,
+      agentInitiated: true,
+    });
     if (!created.success) {
       cachedSystem1ModelFailed = true;
       log.debug("[system1] Failed to create System 1 model", {

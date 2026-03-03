@@ -1389,10 +1389,13 @@ export class ProviderModelFactory {
 
           // GitHub Copilot uses X-Initiator to determine premium request billing.
           // "user" = consumes a premium request; "agent" = free (tool/agent work).
-          // We inspect the last message role: only a genuine user message at the
-          // end of the messages array indicates a user-initiated turn. Tool results
-          // (role "tool") and assistant continuations are agent-initiated.
-          headers.set("X-Initiator", classifyCopilotInitiator(bodyText));
+          // If the caller explicitly marked this as agent-initiated (e.g., sub-agent,
+          // compaction, internal utility), skip the heuristic and always use "agent".
+          const initiator =
+            muxProviderOptions?.agentInitiated === true
+              ? "agent"
+              : classifyCopilotInitiator(bodyText);
+          headers.set("X-Initiator", initiator);
           headers.delete("x-api-key");
           return baseFetch(input, { ...init, headers });
         };

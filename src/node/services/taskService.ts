@@ -548,7 +548,7 @@ export class TaskService {
       "resolvePlanAutoHandoffTargetAgentId: modelString must be non-empty"
     );
 
-    const modelResult = await this.aiService.createModel(modelString);
+    const modelResult = await this.aiService.createModel(modelString, { agentInitiated: true });
     if (!modelResult.success) {
       log.warn("Plan-task auto-handoff auto-routing failed to create model; defaulting to exec", {
         workspaceId: args.workspaceId,
@@ -653,6 +653,7 @@ export class TaskService {
           agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
           thinkingLevel: task.taskThinkingLevel,
           toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
+          providerOptions: { agentInitiated: true },
         },
         { synthetic: true }
       );
@@ -699,6 +700,7 @@ export class TaskService {
           agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
           thinkingLevel: task.taskThinkingLevel,
           experiments: task.taskExperiments,
+          providerOptions: { agentInitiated: true },
         },
         { synthetic: true }
       );
@@ -1120,6 +1122,7 @@ export class TaskService {
       agentId,
       thinkingLevel: effectiveThinkingLevel,
       experiments: args.experiments,
+      providerOptions: { agentInitiated: true },
     });
     if (!sendResult.success) {
       const message =
@@ -2436,6 +2439,7 @@ export class TaskService {
             agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
+            providerOptions: { agentInitiated: true },
           },
           { allowQueuedAgentTask: true }
         );
@@ -2459,6 +2463,7 @@ export class TaskService {
             agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
+            providerOptions: { agentInitiated: true },
           },
           { allowQueuedAgentTask: true }
         );
@@ -2675,6 +2680,7 @@ export class TaskService {
           model: resumeOptions.model,
           agentId: resumeOptions.agentId,
           thinkingLevel: resumeOptions.thinkingLevel,
+          providerOptions: { agentInitiated: true },
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
         { skipAutoResumeReset: true, synthetic: true }
@@ -2752,6 +2758,7 @@ export class TaskService {
         agentId: entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
         thinkingLevel: entry.workspace.taskThinkingLevel,
         toolPolicy: [{ regex_match: `^${missingCompletionToolName}$`, action: "require" }],
+        providerOptions: { agentInitiated: true },
       },
       { synthetic: true }
     );
@@ -2927,6 +2934,7 @@ export class TaskService {
             agentId: targetAgentId,
             thinkingLevel: resolvedThinking,
             experiments: args.entry.workspace.taskExperiments,
+            providerOptions: { agentInitiated: true },
           },
           { synthetic: true }
         );
@@ -3229,6 +3237,7 @@ export class TaskService {
           model: resumeOptions.model,
           agentId: resumeOptions.agentId,
           thinkingLevel: resumeOptions.thinkingLevel,
+          providerOptions: { agentInitiated: true },
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
         { skipAutoResumeReset: true, synthetic: true }
