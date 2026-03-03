@@ -52,7 +52,7 @@ function extractFinishReason(reason: unknown): string | undefined {
   return undefined;
 }
 
-function extractTokenCount(value: unknown): number | undefined {
+function extractTokenTotal(value: unknown): number | undefined {
   if (typeof value === "number") {
     return value;
   }
@@ -71,6 +71,49 @@ function extractOptionalTokenCount(
 ): number | undefined {
   const value = record[key];
   return typeof value === "number" ? value : undefined;
+}
+
+function extractInputTokens(value: unknown): DevToolsUsage["inputTokens"] | undefined {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const total = extractTokenTotal(value);
+  if (total === undefined) {
+    return undefined;
+  }
+
+  return {
+    total,
+    noCache: extractOptionalTokenCount(value, "noCache"),
+    cacheRead: extractOptionalTokenCount(value, "cacheRead"),
+    cacheWrite: extractOptionalTokenCount(value, "cacheWrite"),
+  };
+}
+
+function extractOutputTokens(value: unknown): DevToolsUsage["outputTokens"] | undefined {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const total = extractTokenTotal(value);
+  if (total === undefined) {
+    return undefined;
+  }
+
+  return {
+    total,
+    text: extractOptionalTokenCount(value, "text"),
+    reasoning: extractOptionalTokenCount(value, "reasoning"),
+  };
 }
 
 function createEmptyStep(
@@ -158,29 +201,42 @@ export function extractUsage(
   }
 
   const inputTokens =
-    extractTokenCount(usage.inputTokens) ?? extractOptionalTokenCount(usage, "promptTokens");
+    extractInputTokens(usage.inputTokens) ?? extractOptionalTokenCount(usage, "promptTokens");
   const outputTokens =
-    extractTokenCount(usage.outputTokens) ?? extractOptionalTokenCount(usage, "completionTokens");
+    extractOutputTokens(usage.outputTokens) ?? extractOptionalTokenCount(usage, "completionTokens");
   const explicitTotalTokens = extractOptionalTokenCount(usage, "totalTokens");
+  const inputTokenTotal = extractTokenTotal(inputTokens);
+  const outputTokenTotal = extractTokenTotal(outputTokens);
 
-  const hasInputTokens = typeof inputTokens === "number";
-  const hasOutputTokens = typeof outputTokens === "number";
   const totalTokens =
     typeof explicitTotalTokens === "number"
       ? explicitTotalTokens
-      : hasInputTokens || hasOutputTokens
-        ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : inputTokenTotal !== undefined || outputTokenTotal !== undefined
+        ? (inputTokenTotal ?? 0) + (outputTokenTotal ?? 0)
         : undefined;
 
-  if (!hasInputTokens && !hasOutputTokens && typeof totalTokens !== "number") {
+  const raw = Object.prototype.hasOwnProperty.call(usage, "raw") ? usage.raw : undefined;
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    typeof totalTokens !== "number" &&
+    raw === undefined
+  ) {
     return null;
   }
 
-  return {
+  const normalizedUsage: DevToolsUsage = {
     inputTokens,
     outputTokens,
     totalTokens,
   };
+
+  if (raw !== undefined) {
+    normalizedUsage.raw = raw;
+  }
+
+  return normalizedUsage;
 }
 
 export function createDevToolsMiddleware(

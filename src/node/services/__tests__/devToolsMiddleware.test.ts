@@ -11,7 +11,7 @@ import type {
   LanguageModelV3Usage,
 } from "@ai-sdk/provider";
 import { Config } from "@/node/config";
-import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
+import { createDevToolsMiddleware, extractUsage } from "@/node/services/devToolsMiddleware";
 import { DevToolsService } from "@/node/services/devToolsService";
 
 function createTestConfig(opts: { sessionsDir: string; enabled?: boolean }): Config {
@@ -124,6 +124,80 @@ async function collectStream(
   return chunks;
 }
 
+describe("extractUsage", () => {
+  it("preserves object-style token breakdowns", () => {
+    const usage = extractUsage({
+      inputTokens: {
+        total: 8844,
+        noCache: 8844,
+        cacheRead: 0,
+      },
+      outputTokens: {
+        total: 294,
+        text: 26,
+        reasoning: 268,
+      },
+    });
+
+    expect(usage).toEqual({
+      inputTokens: {
+        total: 8844,
+        noCache: 8844,
+        cacheRead: 0,
+        cacheWrite: undefined,
+      },
+      outputTokens: {
+        total: 294,
+        text: 26,
+        reasoning: 268,
+      },
+      totalTokens: 9138,
+    });
+  });
+
+  it("preserves raw provider usage", () => {
+    const raw = {
+      thoughtsTokenCount: 268,
+      promptTokenCount: 8844,
+      candidatesTokenCount: 26,
+      totalTokenCount: 9138,
+    };
+
+    const usage = extractUsage({ raw });
+
+    expect(usage).toEqual({
+      inputTokens: undefined,
+      outputTokens: undefined,
+      totalTokens: undefined,
+      raw,
+    });
+  });
+
+  it("supports legacy numeric token fields", () => {
+    expect(
+      extractUsage({
+        inputTokens: 120,
+        outputTokens: 34,
+      })
+    ).toEqual({
+      inputTokens: 120,
+      outputTokens: 34,
+      totalTokens: 154,
+    });
+
+    expect(
+      extractUsage({
+        promptTokens: 77,
+        completionTokens: 9,
+      })
+    ).toEqual({
+      inputTokens: 77,
+      outputTokens: 9,
+      totalTokens: 86,
+    });
+  });
+});
+
 describe("createDevToolsMiddleware", () => {
   let tempDir: string;
   let sessionsDir: string;
@@ -193,8 +267,17 @@ describe("createDevToolsMiddleware", () => {
         toolCalls: undefined,
       });
       expect(step?.usage).toEqual({
-        inputTokens: 10,
-        outputTokens: 5,
+        inputTokens: {
+          total: 10,
+          noCache: 10,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        outputTokens: {
+          total: 5,
+          text: 5,
+          reasoning: 0,
+        },
         totalTokens: 15,
       });
       expect(step?.rawRequest).toEqual(expectedResult.request?.body);
@@ -341,8 +424,17 @@ describe("createDevToolsMiddleware", () => {
         finishReason: "stop",
       });
       expect(step?.usage).toEqual({
-        inputTokens: 5,
-        outputTokens: 2,
+        inputTokens: {
+          total: 5,
+          noCache: 5,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        outputTokens: {
+          total: 2,
+          text: 2,
+          reasoning: 0,
+        },
         totalTokens: 7,
       });
       expect(step?.rawRequest).toEqual("stream-req");

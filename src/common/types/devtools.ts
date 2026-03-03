@@ -44,9 +44,38 @@ export interface DevToolsStepOutput {
 }
 
 export interface DevToolsUsage {
-  inputTokens?: number;
-  outputTokens?: number;
+  inputTokens?: number | DevToolsInputTokenBreakdown;
+  outputTokens?: number | DevToolsOutputTokenBreakdown;
   totalTokens?: number;
+  /** Raw provider-specific usage object (e.g., from Google/Anthropic) */
+  raw?: unknown;
+}
+
+export interface DevToolsInputTokenBreakdown {
+  total: number;
+  noCache?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+export interface DevToolsOutputTokenBreakdown {
+  total: number;
+  text?: number;
+  reasoning?: number;
+}
+
+export function getTokenTotal(
+  value: number | DevToolsInputTokenBreakdown | DevToolsOutputTokenBreakdown | null | undefined
+): number | undefined {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (value == null) {
+    return undefined;
+  }
+
+  return value.total;
 }
 
 /** Enriched summary returned by getRuns (includes computed fields). */
