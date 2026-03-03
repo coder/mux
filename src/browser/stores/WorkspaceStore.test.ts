@@ -41,15 +41,22 @@ const mockHistoryLoadMore = mock(
     })
 );
 const mockActivityList = mock(() => Promise.resolve<Record<string, WorkspaceActivitySnapshot>>({}));
+
+type WorkspaceActivityEvent =
+  | {
+      type: "activity";
+      workspaceId: string;
+      activity: WorkspaceActivitySnapshot | null;
+    }
+  | {
+      type: "heartbeat";
+    };
+
 // eslint-disable-next-line require-yield
 const mockActivitySubscribe = mock(async function* (
   _input?: void,
   options?: { signal?: AbortSignal }
-): AsyncGenerator<
-  { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
-  void,
-  unknown
-> {
+): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
   await new Promise<void>((resolve) => {
     if (!options?.signal) {
       resolve();
@@ -68,6 +75,9 @@ type TerminalActivityEvent =
       type: "update";
       workspaceId: string;
       activity: { activeCount: number; totalSessions: number };
+    }
+  | {
+      type: "heartbeat";
     };
 
 // eslint-disable-next-line require-yield
@@ -1166,17 +1176,14 @@ describe("WorkspaceStore", () => {
       mockActivitySubscribe.mockImplementation(async function* (
         _input?: void,
         options?: { signal?: AbortSignal }
-      ): AsyncGenerator<
-        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
-        void,
-        unknown
-      > {
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
         await backgroundCompletionReady;
         if (options?.signal?.aborted) {
           return;
         }
 
         yield {
+          type: "activity" as const,
           workspaceId: backgroundWorkspaceId,
           activity: {
             ...backgroundStreamingSnapshot,
@@ -1247,17 +1254,14 @@ describe("WorkspaceStore", () => {
       mockActivitySubscribe.mockImplementation(async function* (
         _input?: void,
         options?: { signal?: AbortSignal }
-      ): AsyncGenerator<
-        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
-        void,
-        unknown
-      > {
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
         await backgroundCompletionReady;
         if (options?.signal?.aborted) {
           return;
         }
 
         yield {
+          type: "activity" as const,
           workspaceId: backgroundWorkspaceId,
           activity: {
             ...backgroundStreamingSnapshot,
@@ -1502,17 +1506,14 @@ describe("WorkspaceStore", () => {
       mockActivitySubscribe.mockImplementation(async function* (
         _input?: void,
         options?: { signal?: AbortSignal }
-      ): AsyncGenerator<
-        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
-        void,
-        unknown
-      > {
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
         await backgroundTransitionReady;
         if (options?.signal?.aborted) {
           return;
         }
 
         yield {
+          type: "activity" as const,
           workspaceId: backgroundWorkspaceId,
           activity: {
             ...backgroundStreamingSnapshot,
@@ -1575,19 +1576,11 @@ describe("WorkspaceStore", () => {
         (
           _input?: void,
           options?: { signal?: AbortSignal }
-        ): AsyncGenerator<
-          { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
-          void,
-          unknown
-        > => {
+        ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> => {
           callOrder.push("subscribe");
 
           // eslint-disable-next-line require-yield
-          return (async function* (): AsyncGenerator<
-            { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
-            void,
-            unknown
-          > {
+          return (async function* (): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
             await waitForAbortSignal(options?.signal);
           })();
         }
@@ -1615,6 +1608,181 @@ describe("WorkspaceStore", () => {
       const sawBothCalls = await waitUntil(() => callOrder.length >= 2);
       expect(sawBothCalls).toBe(true);
       expect(callOrder.slice(0, 2)).toEqual(["subscribe", "list"]);
+    });
+
+    it("ignores heartbeat events from workspace activity subscription", async () => {
+      const workspaceId = "activity-heartbeat-ignore";
+      const snapshotRecency = new Date("2024-01-09T00:00:00.000Z").getTime();
+      const snapshot: WorkspaceActivitySnapshot = {
+        recency: snapshotRecency,
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: "low",
+      };
+
+      let releaseHeartbeat!: () => void;
+      const heartbeatReady = new Promise<void>((resolve) => {
+        releaseHeartbeat = resolve;
+      });
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: snapshot });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await heartbeatReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield { type: "heartbeat" as const };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return false;
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
+      // Let the initial activity.list call seed the cache before the workspace is created.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      createAndAddWorkspace(
+        store,
+        workspaceId,
+        {
+          createdAt: "2020-01-01T00:00:00.000Z",
+        },
+        false
+      );
+
+      const seededSnapshot = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return (
+          state.recencyTimestamp === snapshot.recency &&
+          state.canInterrupt === snapshot.streaming &&
+          state.currentModel === snapshot.lastModel
+        );
+      });
+      expect(seededSnapshot).toBe(true);
+
+      const stateBeforeHeartbeat = store.getWorkspaceState(workspaceId);
+      releaseHeartbeat();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const stateAfterHeartbeat = store.getWorkspaceState(workspaceId);
+      expect(stateAfterHeartbeat).toBe(stateBeforeHeartbeat);
+      expect(stateAfterHeartbeat.recencyTimestamp).toBe(snapshot.recency);
+      expect(stateAfterHeartbeat.canInterrupt).toBe(snapshot.streaming);
+      expect(stateAfterHeartbeat.currentModel).toBe(snapshot.lastModel);
+      expect(stateAfterHeartbeat.currentThinkingLevel).toBe(snapshot.lastThinkingLevel);
+    });
+
+    it("retries workspace activity subscription after a stall", async () => {
+      const workspaceId = "activity-stall-retry";
+      const snapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-10T00:00:00.000Z").getTime(),
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({ [workspaceId]: snapshot });
+      // Clear calls from the store created in beforeEach so this test only tracks its own retries.
+      mockActivitySubscribe.mockClear();
+
+      const subscriptionSignals: AbortSignal[] = [];
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        if (options?.signal) {
+          subscriptionSignals.push(options.signal);
+        }
+
+        if (subscriptionSignals.length === 1) {
+          yield {
+            type: "activity" as const,
+            workspaceId,
+            activity: snapshot,
+          };
+        }
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const waitForCondition = async (
+        condition: () => boolean,
+        maxAttempts = 400,
+        intervalMs = 10
+      ): Promise<boolean> => {
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        }
+        return false;
+      };
+
+      const originalDateNow = Date.now;
+      let now = 0;
+      Date.now = () => now;
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+        store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
+        createAndAddWorkspace(
+          store,
+          workspaceId,
+          {
+            createdAt: "2020-01-01T00:00:00.000Z",
+          },
+          false
+        );
+
+        const sawInitialSubscribe = await waitForCondition(
+          () => mockActivitySubscribe.mock.calls.length >= 1,
+          100,
+          10
+        );
+        expect(sawInitialSubscribe).toBe(true);
+
+        const sawSeededActivity = await waitForCondition(() => {
+          const state = store.getWorkspaceState(workspaceId);
+          return (
+            state.recencyTimestamp === snapshot.recency && state.canInterrupt === snapshot.streaming
+          );
+        });
+        expect(sawSeededActivity).toBe(true);
+
+        // Fast-forward perceived wall-clock so the first 2s watchdog tick treats the stream as stalled.
+        now = 11_000;
+
+        const sawRetry = await waitForCondition(
+          () => mockActivitySubscribe.mock.calls.length >= 2,
+          500,
+          10
+        );
+        expect(sawRetry).toBe(true);
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(subscriptionSignals[0]?.aborted).toBe(true);
+      } finally {
+        Date.now = originalDateNow;
+      }
     });
 
     it("preserves cached activity snapshots when list returns an empty payload", async () => {
@@ -1645,11 +1813,7 @@ describe("WorkspaceStore", () => {
       mockActivitySubscribe.mockImplementation(async function* (
         _input?: void,
         options?: { signal?: AbortSignal }
-      ): AsyncGenerator<
-        { workspaceId: string; activity: WorkspaceActivitySnapshot | null },
-        void,
-        unknown
-      > {
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
         await waitForAbortSignal(options?.signal);
       });
 
@@ -1754,6 +1918,95 @@ describe("WorkspaceStore", () => {
       const sidebarState = store.getWorkspaceSidebarState(workspaceId);
       expect(sidebarState.terminalActiveCount).toBe(2);
       expect(sidebarState.terminalSessionCount).toBe(3);
+    });
+
+    it("retries terminal activity subscription after a stall", async () => {
+      const workspaceId = "terminal-activity-stall-retry";
+      const subscriptionSignals: AbortSignal[] = [];
+
+      const terminalSubscribeMock = mock(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<TerminalActivityEvent, void, unknown> {
+        if (options?.signal) {
+          subscriptionSignals.push(options.signal);
+        }
+
+        if (subscriptionSignals.length === 1) {
+          yield {
+            type: "snapshot",
+            workspaces: {
+              [workspaceId]: { activeCount: 1, totalSessions: 1 },
+            },
+          };
+        }
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const fullClient = {
+        ...mockClient,
+        terminal: {
+          activity: {
+            subscribe: terminalSubscribeMock,
+          },
+        },
+      };
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      createAndAddWorkspace(store, workspaceId);
+
+      const waitForCondition = async (
+        condition: () => boolean,
+        maxAttempts = 400,
+        intervalMs = 10
+      ): Promise<boolean> => {
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (condition()) {
+            return true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        }
+        return false;
+      };
+
+      const originalDateNow = Date.now;
+      let now = 0;
+      Date.now = () => now;
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+        store.setClient(fullClient as any);
+
+        const sawInitialSubscribe = await waitForCondition(
+          () => terminalSubscribeMock.mock.calls.length >= 1,
+          100,
+          10
+        );
+        expect(sawInitialSubscribe).toBe(true);
+
+        const sawSeededTerminalSnapshot = await waitForCondition(() => {
+          const state = store.getWorkspaceSidebarState(workspaceId);
+          return state.terminalActiveCount === 1 && state.terminalSessionCount === 1;
+        });
+        expect(sawSeededTerminalSnapshot).toBe(true);
+
+        // Fast-forward perceived wall-clock so the first 2s watchdog tick treats the stream as stalled.
+        now = 11_000;
+
+        const sawRetry = await waitForCondition(
+          () => terminalSubscribeMock.mock.calls.length >= 2,
+          500,
+          10
+        );
+        expect(sawRetry).toBe(true);
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(subscriptionSignals[0]?.aborted).toBe(true);
+      } finally {
+        Date.now = originalDateNow;
+      }
     });
 
     it("treats missing terminal.activity.subscribe as unsupported capability (no crash/retry)", async () => {
