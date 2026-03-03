@@ -86,11 +86,13 @@ import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 import { getErrorMessage } from "@/common/utils/errors";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { LandingPage } from "@/browser/features/LandingPage/LandingPage";
+import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
 
 function AppInner() {
   // Get workspace state from context
   const {
     workspaceMetadata,
+    loading,
     setWorkspaceMetadata,
     removeWorkspace,
     updateWorkspaceTitle,
@@ -1017,6 +1019,15 @@ function AppInner() {
                   </ErrorBoundary>
                 );
               })()
+            ) : currentWorkspaceId ? (
+              loading ? (
+                <LoadingScreen statusText="Opening workspace..." />
+              ) : (
+                <LandingPage
+                  leftSidebarCollapsed={sidebarCollapsed}
+                  onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                />
+              )
             ) : creationProjectPath ? (
               (() => {
                 const projectPath = creationProjectPath;
