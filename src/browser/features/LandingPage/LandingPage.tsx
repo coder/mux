@@ -265,8 +265,9 @@ function MuxChatCard() {
 
   return (
     <button
+      type="button"
       onClick={handleOpenMuxChat}
-      className="bg-background-secondary border-border-medium hover:border-foreground/20 flex items-center gap-4 rounded-lg border p-4 text-left transition-colors"
+      className="bg-background-secondary border-border-medium hover:border-foreground/20 flex w-full cursor-pointer items-center gap-4 rounded-lg border p-4 text-left transition-colors"
     >
       <div className="bg-hover flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
         <CircleHelp className="text-muted h-5 w-5" />
@@ -383,9 +384,10 @@ function WorkspaceCard(props: { workspaceId: string; title: string; onClick: () 
 
   return (
     <button
+      type="button"
       onClick={props.onClick}
       data-testid={`workspace-card-${props.workspaceId}`}
-      className="bg-background-secondary border-border-medium hover:border-foreground/20 rounded-lg border p-4 text-left transition-colors"
+      className="bg-background-secondary border-border-medium hover:border-foreground/20 w-full cursor-pointer rounded-lg border p-4 text-left transition-colors"
     >
       {/* Row 1: Title + streaming indicator */}
       <div className="flex items-center gap-2">
