@@ -457,7 +457,9 @@ function RequestResponseSection(props: { step: DevToolsStep }) {
   const responseData =
     viewMode === "ai-sdk"
       ? (props.step.output ?? props.step.rawResponse)
-      : (props.step.rawChunks ?? props.step.rawResponse);
+      : Array.isArray(props.step.rawChunks) && props.step.rawChunks.length > 0
+        ? props.step.rawChunks
+        : props.step.rawResponse;
 
   return (
     <div className="border-border-light mt-2 border-t pt-1.5">

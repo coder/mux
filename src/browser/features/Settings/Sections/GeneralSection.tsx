@@ -168,6 +168,7 @@ export function GeneralSection() {
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // toggles can't race and persist a stale value via out-of-order writes.
   const stopCoderWorkspaceOnArchiveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const stopCoderWorkspaceOnArchivePendingUpdateRef = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
@@ -242,9 +243,21 @@ export function GeneralSection() {
         enabled: checked,
       })
     );
-    void api?.config.updateLlmDebugLogs({ enabled: checked }).catch(() => {
-      // Best-effort — no serialized update chain needed for this low-frequency toggle.
-    });
+
+    if (!api?.config?.updateLlmDebugLogs) {
+      return;
+    }
+
+    // Serialize writes so rapid toggles always persist the last user choice.
+    llmDebugLogsUpdateChainRef.current = llmDebugLogsUpdateChainRef.current
+      .catch(() => {
+        // Best-effort only.
+      })
+      .then(() => api.config.updateLlmDebugLogs({ enabled: checked }))
+      .then(() => {})
+      .catch(() => {
+        // Best-effort persistence.
+      });
   };
 
   const { statsTabState, setStatsTabEnabled } = useFeatureFlags();
