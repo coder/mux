@@ -42,10 +42,18 @@ function createInitLogger(): InitLogger {
   };
 }
 
-function createConfig(): Config {
+function createConfig(projectTrustByPath: Record<string, boolean> = {}): Config {
   return {
     srcDir: SRC_BASE_DIR,
     updateWorkspaceMetadata: vi.fn(),
+    loadConfigOrDefault: vi.fn(() => ({
+      projects: new Map(
+        Object.entries(projectTrustByPath).map(([projectPath, trusted]) => [
+          projectPath,
+          { workspaces: [], trusted },
+        ])
+      ),
+    })),
   } as unknown as Config;
 }
 
@@ -206,6 +214,45 @@ describe("orchestrateFork (multi-project)", () => {
     expect(removeContainerMock).not.toHaveBeenCalled();
 
     expect(createRuntimeMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("resolves trust per project when forking multi-project workspaces", async () => {
+    const projectOneRuntime = createProjectRuntimeMocks();
+    const projectTwoRuntime = createProjectRuntimeMocks();
+    mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
+
+    projectOneRuntime.forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-one",
+      sourceBranch: "main",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.forkWorkspace.mockResolvedValue({
+      success: false,
+      error: "fork unavailable",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.createWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-two",
+    });
+
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+      config: createConfig({
+        [PROJECT_ONE_PATH]: true,
+        [PROJECT_TWO_PATH]: false,
+      }),
+    });
+
+    expect(result.success).toBe(true);
+    expect(projectOneRuntime.forkWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ trusted: true })
+    );
+    expect(projectTwoRuntime.forkWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ trusted: false })
+    );
+    expect(projectTwoRuntime.createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ trusted: false })
+    );
   });
 
   it("inherits the parent projects array for child metadata", async () => {

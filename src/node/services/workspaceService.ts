@@ -3673,6 +3673,7 @@ export class WorkspaceService extends EventEmitter {
           config: this.config,
           sourceWorkspaceId,
           sourceRuntimeConfig,
+          parentMetadata: sourceMetadata,
           allowCreateFallback: false,
           abortSignal: initAbortController.signal,
           trusted: projectConfig.trusted ?? false,

@@ -16,6 +16,7 @@ import {
 import type { InitLogger, Runtime, WorkspaceForkResult } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
 interface OrchestrateForkParams {
   /** Runtime for the source workspace (used to call forkWorkspace + optional create fallback) */
@@ -119,19 +120,20 @@ async function resolveTrunkBranch(
 async function rollbackCreatedProjectWorkspaces(
   createdProjectRuntimes: MultiProjectRuntimeEntry[],
   workspaceName: string,
-  abortSignal?: AbortSignal,
-  trusted?: boolean
+  getProjectTrusted: (projectPath: string) => boolean | undefined,
+  abortSignal?: AbortSignal
 ): Promise<string[]> {
   const rollbackErrors: string[] = [];
 
   for (const projectRuntime of [...createdProjectRuntimes].reverse()) {
+    const projectTrusted = getProjectTrusted(projectRuntime.projectPath);
     try {
       const deleteResult = await projectRuntime.runtime.deleteWorkspace(
         projectRuntime.projectPath,
         workspaceName,
         true,
         abortSignal,
-        trusted
+        projectTrusted
       );
 
       if (!deleteResult.success) {
@@ -185,6 +187,10 @@ export async function orchestrateFork(
     const containerSrcBaseDir = getSrcBaseDir(sourceRuntimeConfig) ?? config.srcDir;
     const containerManager = new ContainerManager(containerSrcBaseDir);
 
+    const configSnapshot = config.loadConfigOrDefault();
+    const getProjectTrusted = (projectPath: string): boolean | undefined =>
+      configSnapshot.projects.get(stripTrailingSlashes(projectPath))?.trusted ?? params.trusted;
+
     const sourceProjectRuntimes: MultiProjectRuntimeEntry[] = projects.map((project) => ({
       projectPath: project.projectPath,
       projectName: project.projectName,
@@ -204,13 +210,14 @@ export async function orchestrateFork(
     let forkedFromSource = true;
 
     for (const [runtimeIndex, projectRuntime] of sourceProjectRuntimes.entries()) {
+      const projectTrusted = getProjectTrusted(projectRuntime.projectPath);
       const forkResult = await projectRuntime.runtime.forkWorkspace({
         projectPath: projectRuntime.projectPath,
         sourceWorkspaceName,
         newWorkspaceName,
         initLogger,
         abortSignal,
-        trusted: params.trusted,
+        trusted: projectTrusted,
       });
 
       if (runtimeIndex === 0) {
@@ -244,8 +251,8 @@ export async function orchestrateFork(
           const rollbackErrors = await rollbackCreatedProjectWorkspaces(
             [...createdProjectRuntimes, projectRuntime],
             newWorkspaceName,
-            abortSignal,
-            params.trusted
+            getProjectTrusted,
+            abortSignal
           );
           return Err(
             withRollbackErrors(
@@ -267,8 +274,8 @@ export async function orchestrateFork(
         const rollbackErrors = await rollbackCreatedProjectWorkspaces(
           createdProjectRuntimes,
           newWorkspaceName,
-          abortSignal,
-          params.trusted
+          getProjectTrusted,
+          abortSignal
         );
         return Err(
           withRollbackErrors(
@@ -284,8 +291,8 @@ export async function orchestrateFork(
         const rollbackErrors = await rollbackCreatedProjectWorkspaces(
           createdProjectRuntimes,
           newWorkspaceName,
-          abortSignal,
-          params.trusted
+          getProjectTrusted,
+          abortSignal
         );
         return Err(
           withRollbackErrors(
@@ -304,15 +311,15 @@ export async function orchestrateFork(
         directoryName: newWorkspaceName,
         initLogger,
         abortSignal,
-        trusted: params.trusted,
+        trusted: projectTrusted,
       });
 
       if (!createResult.success || !createResult.workspacePath) {
         const rollbackErrors = await rollbackCreatedProjectWorkspaces(
           createdProjectRuntimes,
           newWorkspaceName,
-          abortSignal,
-          params.trusted
+          getProjectTrusted,
+          abortSignal
         );
         return Err(
           withRollbackErrors(
@@ -341,8 +348,8 @@ export async function orchestrateFork(
       const rollbackErrors = await rollbackCreatedProjectWorkspaces(
         createdProjectRuntimes,
         newWorkspaceName,
-        abortSignal,
-        params.trusted
+        getProjectTrusted,
+        abortSignal
       );
       try {
         await containerManager.removeContainer(newWorkspaceName);
