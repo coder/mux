@@ -364,9 +364,13 @@ function RecentWorkspacesSection() {
 
   // Sort all workspaces by recency, take top 4
   const recentWorkspaces = useMemo(() => {
-    return [...workspaceMetadata.values()]
-      .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))
-      .slice(0, 4);
+    return (
+      [...workspaceMetadata.values()]
+        // "Chat with Mux" already has a dedicated card on the landing page.
+        .filter((ws) => ws.id !== MUX_HELP_CHAT_WORKSPACE_ID)
+        .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))
+        .slice(0, 4)
+    );
   }, [workspaceMetadata, workspaceRecency]);
 
   if (recentWorkspaces.length === 0) return null;
