@@ -737,8 +737,8 @@ function AppInner() {
     navigate,
   ]);
   // Mouse back/forward buttons (buttons 3 and 4)
-  const handleMouseNavigation = useCallback(
-    (e: React.MouseEvent) => {
+  useEffect(() => {
+    const handleMouseNavigation = (e: MouseEvent) => {
       if (e.button === 3) {
         e.preventDefault();
         void navigate(-1);
@@ -746,9 +746,28 @@ function AppInner() {
         e.preventDefault();
         void navigate(1);
       }
-    },
-    [navigate]
-  );
+    };
+
+    // Capture phase fires before Chrome's default back/forward handling
+    window.addEventListener("mousedown", handleMouseNavigation, true);
+    return () => window.removeEventListener("mousedown", handleMouseNavigation, true);
+  }, [navigate]);
+
+  useEffect(() => {
+    // Electron doesn't need this — no browser back/forward behavior
+    if (window.api) return;
+
+    // Push a dummy state so back button has somewhere to go without leaving the app
+    window.history.pushState({ mux: true }, "", window.location.href);
+
+    const handlePopState = () => {
+      // Re-push to stay on the page (browser tried to navigate away)
+      window.history.pushState({ mux: true }, "", window.location.href);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // Layout slot hotkeys (Ctrl/Cmd+Alt+1..9 by default)
   useEffect(() => {
@@ -956,10 +975,7 @@ function AppInner() {
 
   return (
     <>
-      <div
-        className="bg-bg-dark mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]"
-        onMouseUp={handleMouseNavigation}
-      >
+      <div className="bg-bg-dark mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]">
         <LeftSidebar
           collapsed={sidebarCollapsed}
           onToggleCollapsed={handleToggleSidebar}
