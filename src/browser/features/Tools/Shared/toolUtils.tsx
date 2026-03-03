@@ -79,21 +79,6 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
 }
 
 /**
- * Format a value for display (JSON or string)
- */
-export function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return "None";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    // If JSON.stringify fails (e.g., circular reference), return a safe fallback
-    return "[Complex Object - Cannot Stringify]";
-  }
-}
-
-/**
  * Type guard for ToolErrorResult shape: { success: false, error: string }.
  * Use this when you need type narrowing to access error.
  */
