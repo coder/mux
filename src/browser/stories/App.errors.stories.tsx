@@ -483,10 +483,10 @@ export const LargeDiff: AppStory = {
 };
 
 /**
- * Project removal disabled state.
+ * Project removal with workspace confirmation.
  *
- * Verifies that the "Remove project" button is disabled when workspaces exist.
- * The button is aria-disabled and styled as not-allowed, preventing the backend call.
+ * Verifies that clicking the "Remove project" button when workspaces exist
+ * opens the type-to-confirm deletion modal instead of deleting immediately.
  */
 export const ProjectRemovalDisabled: AppStory = {
   render: () => (
@@ -496,10 +496,7 @@ export const ProjectRemovalDisabled: AppStory = {
           createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" }),
           createWorkspace({ id: "ws-2", name: "feature/auth", projectName: "my-app" }),
         ];
-
-        // Expand the project so workspaces are visible
         expandProjects(["/home/user/projects/my-app"]);
-
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
@@ -516,9 +513,7 @@ export const ProjectRemovalDisabled: AppStory = {
       return button;
     });
 
-    // Hover the project row (the element that owns hover:[&_button]:opacity-100)
-    // so action icons become visible. Avoid [data-project-path] here because the
-    // remove button itself also has that attribute.
+    // Hover the project row so action icons become visible.
     const projectRow =
       removeButton.closest<HTMLElement>("[aria-controls]") ??
       canvasElement.querySelector<HTMLElement>(
@@ -527,8 +522,6 @@ export const ProjectRemovalDisabled: AppStory = {
     if (!projectRow) throw new Error("Project row not found");
 
     // Make project action affordances deterministic in this story capture.
-    // Synthetic hover can be flaky for pure CSS :hover opacity transitions,
-    // so force key/remove visibility while still exercising hover behavior.
     const secretsButton = canvasElement.querySelector<HTMLButtonElement>(
       'button[aria-label="Manage secrets for my-app"]'
     );
@@ -539,34 +532,41 @@ export const ProjectRemovalDisabled: AppStory = {
 
     await userEvent.hover(projectRow);
 
-    // Hover the remove trigger after row hover so tooltip content appears.
+    // Hover the remove trigger so tooltip appears.
     await userEvent.hover(removeButton);
 
+    // Tooltip should always say "Remove project" now (no blocker text).
     await waitFor(
       () => {
         const tooltip = document.querySelector('[role="tooltip"]');
         if (!tooltip) throw new Error("Tooltip not visible");
-        if (!tooltip.textContent?.includes("Delete all 2 workspaces first")) {
-          throw new Error("Expected remove-tooltip blocker text");
+        if (!tooltip.textContent?.includes("Remove project")) {
+          throw new Error("Expected 'Remove project' tooltip text");
         }
       },
       { interval: 50 }
     );
 
-    // Verify the button is disabled (aria-disabled="true")
+    // Button should NOT be aria-disabled — it's always enabled now.
+    await waitFor(() => {
+      if (removeButton.getAttribute("aria-disabled") === "true") {
+        throw new Error("Remove button should not be aria-disabled");
+      }
+    });
+
+    // Click the remove button — should open the confirmation modal.
+    await userEvent.click(removeButton);
+
+    // Verify the confirmation modal appears.
     await waitFor(
       () => {
-        if (removeButton.getAttribute("aria-disabled") !== "true") {
-          throw new Error("Remove button should be aria-disabled when workspaces exist");
+        const dialog = document.querySelector('[role="dialog"]');
+        if (!dialog) throw new Error("Confirmation modal not found");
+        if (!dialog.textContent?.includes("my-app")) {
+          throw new Error("Modal should reference the project name");
         }
       },
       { timeout: 2000 }
     );
-
-    await waitFor(() => {
-      if (removeButton.className.includes("!opacity-40")) {
-        throw new Error("Disabled remove button should not force !opacity-40 visibility");
-      }
-    });
   },
 };
