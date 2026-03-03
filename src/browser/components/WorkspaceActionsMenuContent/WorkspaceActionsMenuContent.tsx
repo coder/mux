@@ -40,6 +40,7 @@ interface WorkspaceActionsMenuContentProps {
   onConfigureMcp?: (() => void) | null;
   /** Mobile workspace-header action: open immersive review in full-screen touch mode. */
   onOpenTouchFullscreenReview?: (() => void) | null;
+  onEnterImmersiveReview?: (() => void) | null;
   onForkChat?: ((anchorEl: HTMLElement) => void) | null;
   onShareTranscript?: (() => void) | null;
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
@@ -92,6 +93,19 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             e.stopPropagation();
             props.onCloseMenu();
             props.onOpenTouchFullscreenReview?.();
+          }}
+        />
+      )}
+      {props.onEnterImmersiveReview && !props.isMuxHelpChat && (
+        <WorkspaceActionButton
+          label="Immersive review"
+          shortcut={formatKeybind(KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)}
+          shortcutClassName={props.shortcutClassName}
+          icon={<Maximize2 className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onEnterImmersiveReview?.();
           }}
         />
       )}
