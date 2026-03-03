@@ -109,7 +109,7 @@ export interface StreamMessageOptions {
   acpPromptId?: string;
   /** Tool names that should be delegated back to ACP clients for this request. */
   delegatedToolNames?: string[];
-  recordFileState?: (filePath: string, state: FileState) => Promise<void> | void;
+  recordFileState?: (filePath: string, state: FileState) => Promise<void>;
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   experiments?: SendMessageOptions["experiments"];

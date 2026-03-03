@@ -91,7 +91,7 @@ export interface ToolConfiguration {
   /** Pre-resolved mux-managed resource scope (global ~/.mux vs project root). */
   muxScope?: MuxToolScope;
   /** Callback to record file state for external edit detection (plan files) */
-  recordFileState?: (filePath: string, state: FileState) => Promise<void> | void;
+  recordFileState?: (filePath: string, state: FileState) => Promise<void>;
   /** Callback to notify that provider/config was written (triggers hot-reload). */
   onConfigChanged?: () => void;
   /** Task orchestration for sub-agent tasks */
