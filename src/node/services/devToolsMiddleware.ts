@@ -247,57 +247,23 @@ export function createDevToolsMiddleware(
   assert(workspaceId.trim().length > 0, "createDevToolsMiddleware requires a workspaceId");
   assert(service, "createDevToolsMiddleware requires a DevToolsService");
 
-  const runId = randomUUID();
-  let runCreated = false;
-  let runCreationPromise: Promise<void> | null = null;
-  let stepCounter = 0;
-
-  async function ensureRun(): Promise<void> {
-    if (runCreated) {
-      return;
-    }
-
-    if (runCreationPromise) {
-      await runCreationPromise;
-      return;
-    }
-
-    runCreationPromise = (async () => {
-      try {
-        await service.createRun(workspaceId, {
-          id: runId,
-          workspaceId,
-          startedAt: new Date().toISOString(),
-        });
-        // Only mark as created after successful persistence so transient
-        // failures can be retried on subsequent steps.
-        runCreated = true;
-      } catch (error) {
-        log.warn("DevTools: failed to create run", {
-          workspaceId,
-          runId,
-          error,
-        });
-      }
-    })();
-
-    try {
-      await runCreationPromise;
-    } finally {
-      runCreationPromise = null;
-    }
-  }
-
   async function createStep(
+    runId: string,
     stepType: DevToolsStep["type"],
     params: LanguageModelV3CallOptions,
     model: LanguageModelV3
   ): Promise<{ stepId: string; startedAtMs: number } | null> {
+    assert(runId.trim().length > 0, "createStep requires a non-empty runId");
+
     try {
-      await ensureRun();
+      await service.createRun(workspaceId, {
+        id: runId,
+        workspaceId,
+        startedAt: new Date().toISOString(),
+      });
 
       const stepId = randomUUID();
-      const stepNumber = (stepCounter += 1);
+      const stepNumber = 1;
       const input = extractInput(params);
 
       await service.createStep(
@@ -344,7 +310,10 @@ export function createDevToolsMiddleware(
         return doGenerate();
       }
 
-      const step = await createStep("generate", params, model);
+      // Reused middleware instances can serve multiple independent model calls,
+      // so each top-level invocation needs a fresh run grouping in DevTools.
+      const runId = randomUUID();
+      const step = await createStep(runId, "generate", params, model);
       if (step == null) {
         return doGenerate();
       }
@@ -442,7 +411,10 @@ export function createDevToolsMiddleware(
       }
 
       const userRequestedRawChunks = params.includeRawChunks === true;
-      const step = await createStep("stream", params, model);
+      // Reused middleware instances can serve multiple independent model calls,
+      // so each top-level invocation needs a fresh run grouping in DevTools.
+      const runId = randomUUID();
+      const step = await createStep(runId, "stream", params, model);
       if (step == null) {
         return doStream();
       }
@@ -468,12 +440,26 @@ export function createDevToolsMiddleware(
       let usage: DevToolsUsage | null = null;
       let streamError: string | null = null;
 
-      const buildOutput = (): DevToolsStepOutput => ({
-        textParts,
-        reasoningParts,
-        toolCalls,
-        finishReason,
-      });
+      const buildOutput = (): DevToolsStepOutput => {
+        // Streams can end abruptly (abort/cancel/error) before receiving `*-end`
+        // chunks, so flush in-progress deltas to preserve partial debug output.
+        for (const [id, text] of currentText) {
+          textParts.push({ id, text });
+        }
+        currentText.clear();
+
+        for (const [id, text] of currentReasoning) {
+          reasoningParts.push({ id, text });
+        }
+        currentReasoning.clear();
+
+        return {
+          textParts,
+          reasoningParts,
+          toolCalls,
+          finishReason,
+        };
+      };
 
       const finalizeStep = async (
         update: Pick<
