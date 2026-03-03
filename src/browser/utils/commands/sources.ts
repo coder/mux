@@ -61,6 +61,7 @@ export interface BuildSourcesParams {
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
 
   onStartWorkspaceCreation: (projectPath: string) => void;
+  onStartMultiProjectWorkspaceCreation: () => void;
   onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
@@ -970,6 +971,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             p.onStartWorkspaceCreation(projectPath);
           },
         },
+      },
+      {
+        id: CommandIds.workspaceNewMultiProject(),
+        title: "New Multi-Project Workspace",
+        section: section.projects,
+        keywords: ["multi", "project", "workspace", "create"],
+        run: () => p.onStartMultiProjectWorkspaceCreation(),
       },
       {
         id: CommandIds.workspaceArchiveMergedInProject(),

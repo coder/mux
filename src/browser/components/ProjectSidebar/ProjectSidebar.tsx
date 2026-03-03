@@ -80,6 +80,8 @@ import { SectionDragLayer } from "../SectionDragLayer/SectionDragLayer";
 import { DraggableSection } from "../DraggableSection/DraggableSection";
 import type { SectionConfig } from "@/common/types/project";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isMultiProject } from "@/common/utils/multiProject";
+import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 
 // Re-export WorkspaceSelection for backwards compatibility
@@ -983,6 +985,26 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [projectPathsSignature, projectOrder]
   );
 
+  const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
+  const multiProjectWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
+
+  for (const [projectPath, workspaces] of sortedWorkspacesByProject) {
+    const singleProjectWorkspaces: FrontendWorkspaceMetadata[] = [];
+    for (const workspace of workspaces) {
+      if (isMultiProject(workspace)) {
+        multiProjectWorkspacesById.set(workspace.id, workspace);
+      } else {
+        singleProjectWorkspaces.push(workspace);
+      }
+    }
+    singleProjectWorkspacesByProject.set(projectPath, singleProjectWorkspaces);
+  }
+
+  const multiProjectWorkspaces = Array.from(multiProjectWorkspacesById.values());
+  const isMultiProjectSectionExpanded = expandedProjectsList.includes(
+    MULTI_PROJECT_SIDEBAR_SECTION_ID
+  );
+
   const handleReorder = useCallback(
     (draggedPath: string, targetPath: string) => {
       const next = reorderProjects(projectOrder, userProjects, draggedPath, targetPath);
@@ -1073,7 +1095,64 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 onScroll={handleProjectListScroll}
                 className="flex-1 overflow-x-hidden overflow-y-auto"
               >
-                {sortedProjectPaths.length === 0 ? (
+                {multiProjectWorkspaces.length > 0 && (
+                  <div className="border-hover border-b">
+                    <div className={PROJECT_ITEM_BASE_CLASS}>
+                      <button
+                        onClick={() => toggleProject(MULTI_PROJECT_SIDEBAR_SECTION_ID)}
+                        aria-label={`${isMultiProjectSectionExpanded ? "Collapse" : "Expand"} multi-project workspaces`}
+                        className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                      >
+                        <ChevronRight
+                          size={12}
+                          className="transition-transform duration-200"
+                          style={{
+                            transform: isMultiProjectSectionExpanded
+                              ? "rotate(90deg)"
+                              : "rotate(0deg)",
+                          }}
+                        />
+                      </button>
+                      <div className="flex min-w-0 flex-1 items-center pr-2">
+                        <span className="text-foreground truncate text-sm font-medium">
+                          Multi-Project
+                        </span>
+                        <span className="text-muted ml-2 text-xs">
+                          ({multiProjectWorkspaces.length})
+                        </span>
+                      </div>
+                    </div>
+                    {isMultiProjectSectionExpanded && (
+                      <div className="pt-1 pb-1">
+                        {(() => {
+                          const depthByWorkspaceId =
+                            computeWorkspaceDepthMap(multiProjectWorkspaces);
+                          return multiProjectWorkspaces.map((metadata) => (
+                            <WorkspaceListItem
+                              key={metadata.id}
+                              metadata={metadata}
+                              projectPath={metadata.projectPath}
+                              projectName={metadata.projectName}
+                              isSelected={selectedWorkspace?.workspaceId === metadata.id}
+                              isArchiving={archivingWorkspaceIds.has(metadata.id)}
+                              isRemoving={
+                                removingWorkspaceIds.has(metadata.id) ||
+                                metadata.isRemoving === true
+                              }
+                              onSelectWorkspace={handleSelectWorkspace}
+                              onForkWorkspace={handleForkWorkspace}
+                              onArchiveWorkspace={handleArchiveWorkspace}
+                              onCancelCreation={handleCancelWorkspaceCreation}
+                              depth={depthByWorkspaceId[metadata.id] ?? 0}
+                            />
+                          ));
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {sortedProjectPaths.length === 0 && multiProjectWorkspaces.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>
                     <button
@@ -1236,7 +1315,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
 
                               const allWorkspaces =
-                                sortedWorkspacesByProject.get(projectPath) ?? [];
+                                singleProjectWorkspacesByProject.get(projectPath) ?? [];
 
                               const draftsForProject = workspaceDraftsByProject[projectPath] ?? [];
                               const activeDraftIds = new Set(
