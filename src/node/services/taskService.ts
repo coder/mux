@@ -1106,6 +1106,7 @@ export class TaskService {
           taskModelString,
           taskThinkingLevel: effectiveThinkingLevel,
           taskExperiments: args.experiments,
+          projects: parentMeta.projects,
         });
         return config;
       });
@@ -1141,6 +1142,7 @@ export class TaskService {
       config: this.config,
       sourceWorkspaceId: parentWorkspaceId,
       sourceRuntimeConfig: parentRuntimeConfig,
+      parentMetadata: parentMeta,
       allowCreateFallback: true,
       trusted:
         this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(parentMeta.projectPath))
@@ -1166,6 +1168,7 @@ export class TaskService {
       forkedRuntimeConfig,
       targetRuntime: runtimeForTaskWorkspace,
       forkedFromSource,
+      projects: inheritedProjects,
     } = forkResult.data;
     const taskBaseCommitSha = await tryReadGitHeadCommitSha(runtimeForTaskWorkspace, workspacePath);
 
@@ -1202,6 +1205,7 @@ export class TaskService {
         taskModelString,
         taskThinkingLevel: effectiveThinkingLevel,
         taskExperiments: args.experiments,
+        projects: inheritedProjects,
       });
       return config;
     });
@@ -2441,6 +2445,11 @@ export class TaskService {
         shouldRunInit = true;
         const initLogger = getInitLogger();
 
+        const parentMetadataResult = await this.aiService.getWorkspaceMetadata(parentId);
+        const parentMetadataForFork = parentMetadataResult.success
+          ? parentMetadataResult.data
+          : undefined;
+
         const forkOrchestratorResult = await orchestrateFork({
           sourceRuntime: runtime,
           projectPath: taskEntry.projectPath,
@@ -2450,6 +2459,7 @@ export class TaskService {
           config: this.config,
           sourceWorkspaceId: parentId,
           sourceRuntimeConfig: parentRuntimeConfig,
+          parentMetadata: parentMetadataForFork,
           allowCreateFallback: true,
           preferredTrunkBranch: trunkBranch,
           trusted:
@@ -2485,6 +2495,7 @@ export class TaskService {
           workspacePath: resolvedWorkspacePath,
           trunkBranch: resolvedTrunkBranch,
           forkedFromSource,
+          projects: inheritedProjects,
         } = forkOrchestratorResult.data;
 
         forkedRuntimeConfig = resolvedForkedRuntimeConfig;
@@ -2507,6 +2518,7 @@ export class TaskService {
             ws.path = workspacePath;
             ws.taskTrunkBranch = trunkBranch;
             ws.runtimeConfig = forkedRuntimeConfig;
+            ws.projects = inheritedProjects;
           },
           { allowMissing: true }
         );

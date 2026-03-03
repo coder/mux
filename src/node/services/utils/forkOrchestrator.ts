@@ -1,9 +1,19 @@
+import assert from "node:assert/strict";
+
+import { type RuntimeConfig, getSrcBaseDir } from "@/common/types/runtime";
+import { type ProjectRef, type WorkspaceMetadata } from "@/common/types/workspace";
 import { Err, Ok, type Result } from "@/common/types/result";
-import type { RuntimeConfig } from "@/common/types/runtime";
+import { getErrorMessage } from "@/common/utils/errors";
+import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import type { Config } from "@/node/config";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
-import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
+import { ContainerManager, type ProjectWorkspaceEntry } from "@/node/multiProject/containerManager";
 import { getContainerName } from "@/node/runtime/DockerRuntime";
+import {
+  MultiProjectRuntime,
+  type MultiProjectRuntimeEntry,
+} from "@/node/runtime/multiProjectRuntime";
+import type { InitLogger, Runtime, WorkspaceForkResult } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 
@@ -19,6 +29,12 @@ interface OrchestrateForkParams {
   config: Config;
   sourceWorkspaceId: string;
   sourceRuntimeConfig: RuntimeConfig;
+
+  /**
+   * Parent workspace metadata (when available).
+   * Used to detect multi-project workspaces and inherit child metadata fields.
+   */
+  parentMetadata?: WorkspaceMetadata;
 
   /**
    * If true, fall back to createWorkspace when fork fails (task mode).
@@ -52,6 +68,91 @@ interface OrchestrateForkSuccess {
   sourceRuntimeConfigUpdate?: RuntimeConfig;
   /** Whether source runtime config was updated (caller should emit metadata) */
   sourceRuntimeConfigUpdated: boolean;
+  /** Inherited multi-project refs for child metadata (when parent is multi-project). */
+  projects?: ProjectRef[];
+}
+
+function normalizeForkedRuntimeConfig(
+  forkedRuntimeConfig: RuntimeConfig,
+  projectPath: string,
+  newWorkspaceName: string
+): RuntimeConfig {
+  // Forked workspace metadata must use destination identity, not inherited source state.
+  // Docker containerName is derived from (projectPath, workspaceName); if the fork
+  // inherits source config, the containerName would point at the wrong container.
+  return forkedRuntimeConfig.type === "docker"
+    ? {
+        ...forkedRuntimeConfig,
+        containerName: getContainerName(projectPath, newWorkspaceName),
+      }
+    : forkedRuntimeConfig;
+}
+
+async function resolveTrunkBranch(
+  projectPath: string,
+  sourceWorkspaceName: string,
+  forkResult: WorkspaceForkResult,
+  preferredTrunkBranch?: string
+): Promise<string> {
+  if (forkResult.success && forkResult.sourceBranch) {
+    return forkResult.sourceBranch;
+  }
+
+  if (preferredTrunkBranch?.trim()) {
+    // Caller-supplied fallback (e.g., queued task's persisted trunk branch).
+    // Preferred over local git discovery, which may be unavailable in SSH/Docker.
+    return preferredTrunkBranch.trim();
+  }
+
+  try {
+    const localBranches = await listLocalBranches(projectPath);
+    if (localBranches.includes(sourceWorkspaceName)) {
+      return sourceWorkspaceName;
+    }
+
+    return detectDefaultTrunkBranch(projectPath, localBranches);
+  } catch {
+    return "main";
+  }
+}
+
+async function rollbackCreatedProjectWorkspaces(
+  createdProjectRuntimes: MultiProjectRuntimeEntry[],
+  workspaceName: string,
+  abortSignal?: AbortSignal,
+  trusted?: boolean
+): Promise<string[]> {
+  const rollbackErrors: string[] = [];
+
+  for (const projectRuntime of [...createdProjectRuntimes].reverse()) {
+    try {
+      const deleteResult = await projectRuntime.runtime.deleteWorkspace(
+        projectRuntime.projectPath,
+        workspaceName,
+        true,
+        abortSignal,
+        trusted
+      );
+
+      if (!deleteResult.success) {
+        rollbackErrors.push(
+          `[${projectRuntime.projectName}] ${deleteResult.error ?? "Unknown rollback error"}`
+        );
+      }
+    } catch (error: unknown) {
+      rollbackErrors.push(`[${projectRuntime.projectName}] ${getErrorMessage(error)}`);
+    }
+  }
+
+  return rollbackErrors;
+}
+
+function withRollbackErrors(errorMessage: string, rollbackErrors: string[]): string {
+  if (rollbackErrors.length === 0) {
+    return errorMessage;
+  }
+
+  return `${errorMessage} Rollback errors: ${rollbackErrors.join("; ")}`;
 }
 
 export async function orchestrateFork(
@@ -68,7 +169,215 @@ export async function orchestrateFork(
     sourceRuntimeConfig,
     allowCreateFallback,
     abortSignal,
+    parentMetadata,
   } = params;
+
+  if (parentMetadata && isMultiProject(parentMetadata)) {
+    const projects = getProjects(parentMetadata);
+    assert(projects.length > 1, "Multi-project fork requires at least two projects");
+
+    const containerSrcBaseDir = getSrcBaseDir(sourceRuntimeConfig) ?? config.srcDir;
+    const containerManager = new ContainerManager(containerSrcBaseDir);
+
+    const sourceProjectRuntimes: MultiProjectRuntimeEntry[] = projects.map((project) => ({
+      projectPath: project.projectPath,
+      projectName: project.projectName,
+      runtime: createRuntime(sourceRuntimeConfig, {
+        projectPath: project.projectPath,
+        workspaceName: sourceWorkspaceName,
+      }),
+    }));
+
+    const createdProjectRuntimes: MultiProjectRuntimeEntry[] = [];
+    const projectWorkspaces: ProjectWorkspaceEntry[] = [];
+
+    let normalizedForkedRuntimeConfig: RuntimeConfig = sourceRuntimeConfig;
+    let sourceRuntimeConfigUpdate: RuntimeConfig | undefined;
+    let sourceRuntimeConfigUpdated = false;
+    let trunkBranch: string | undefined;
+    let forkedFromSource = true;
+
+    for (const [runtimeIndex, projectRuntime] of sourceProjectRuntimes.entries()) {
+      const forkResult = await projectRuntime.runtime.forkWorkspace({
+        projectPath: projectRuntime.projectPath,
+        sourceWorkspaceName,
+        newWorkspaceName,
+        initLogger,
+        abortSignal,
+        trusted: params.trusted,
+      });
+
+      if (runtimeIndex === 0) {
+        const runtimeUpdates = await applyForkRuntimeUpdates(
+          config,
+          sourceWorkspaceId,
+          sourceRuntimeConfig,
+          forkResult,
+          { persistSourceRuntimeConfigUpdate: false }
+        );
+        normalizedForkedRuntimeConfig = normalizeForkedRuntimeConfig(
+          runtimeUpdates.forkedRuntimeConfig,
+          projectPath,
+          newWorkspaceName
+        );
+        sourceRuntimeConfigUpdate = runtimeUpdates.sourceRuntimeConfigUpdate;
+        sourceRuntimeConfigUpdated = sourceRuntimeConfigUpdate != null;
+
+        trunkBranch = await resolveTrunkBranch(
+          projectPath,
+          sourceWorkspaceName,
+          forkResult,
+          params.preferredTrunkBranch
+        );
+      }
+
+      assert(trunkBranch, "Multi-project fork requires trunkBranch after primary fork attempt");
+
+      if (forkResult.success) {
+        if (!forkResult.workspacePath) {
+          const rollbackErrors = await rollbackCreatedProjectWorkspaces(
+            [...createdProjectRuntimes, projectRuntime],
+            newWorkspaceName,
+            abortSignal,
+            params.trusted
+          );
+          return Err(
+            withRollbackErrors(
+              `Failed to fork project ${projectRuntime.projectName}: fork succeeded without workspace path`,
+              rollbackErrors
+            )
+          );
+        }
+
+        createdProjectRuntimes.push(projectRuntime);
+        projectWorkspaces.push({
+          projectName: projectRuntime.projectName,
+          workspacePath: forkResult.workspacePath,
+        });
+        continue;
+      }
+
+      if (forkResult.failureIsFatal) {
+        const rollbackErrors = await rollbackCreatedProjectWorkspaces(
+          createdProjectRuntimes,
+          newWorkspaceName,
+          abortSignal,
+          params.trusted
+        );
+        return Err(
+          withRollbackErrors(
+            `Failed to fork project ${projectRuntime.projectName}: ${
+              forkResult.error ?? "Fork failed (fatal)"
+            }`,
+            rollbackErrors
+          )
+        );
+      }
+
+      if (!allowCreateFallback) {
+        const rollbackErrors = await rollbackCreatedProjectWorkspaces(
+          createdProjectRuntimes,
+          newWorkspaceName,
+          abortSignal,
+          params.trusted
+        );
+        return Err(
+          withRollbackErrors(
+            `Failed to fork project ${projectRuntime.projectName}: ${
+              forkResult.error ?? "Failed to fork workspace"
+            }`,
+            rollbackErrors
+          )
+        );
+      }
+
+      const createResult = await projectRuntime.runtime.createWorkspace({
+        projectPath: projectRuntime.projectPath,
+        branchName: newWorkspaceName,
+        trunkBranch,
+        directoryName: newWorkspaceName,
+        initLogger,
+        abortSignal,
+        trusted: params.trusted,
+      });
+
+      if (!createResult.success || !createResult.workspacePath) {
+        const rollbackErrors = await rollbackCreatedProjectWorkspaces(
+          createdProjectRuntimes,
+          newWorkspaceName,
+          abortSignal,
+          params.trusted
+        );
+        return Err(
+          withRollbackErrors(
+            `Failed to create workspace for project ${projectRuntime.projectName}: ${
+              createResult.error ?? "Failed to create workspace"
+            }`,
+            rollbackErrors
+          )
+        );
+      }
+
+      forkedFromSource = false;
+      createdProjectRuntimes.push(projectRuntime);
+      projectWorkspaces.push({
+        projectName: projectRuntime.projectName,
+        workspacePath: createResult.workspacePath,
+      });
+    }
+
+    assert(trunkBranch, "Expected trunkBranch to be resolved for multi-project fork");
+
+    let containerPath: string;
+    try {
+      containerPath = await containerManager.createContainer(newWorkspaceName, projectWorkspaces);
+    } catch (error: unknown) {
+      const rollbackErrors = await rollbackCreatedProjectWorkspaces(
+        createdProjectRuntimes,
+        newWorkspaceName,
+        abortSignal,
+        params.trusted
+      );
+      try {
+        await containerManager.removeContainer(newWorkspaceName);
+      } catch (cleanupError: unknown) {
+        rollbackErrors.push(`[container] ${getErrorMessage(cleanupError)}`);
+      }
+
+      return Err(
+        withRollbackErrors(
+          `Failed to create child workspace container: ${getErrorMessage(error)}`,
+          rollbackErrors
+        )
+      );
+    }
+
+    const targetProjectRuntimes: MultiProjectRuntimeEntry[] = projects.map((project) => ({
+      projectPath: project.projectPath,
+      projectName: project.projectName,
+      runtime: createRuntime(normalizedForkedRuntimeConfig, {
+        projectPath: project.projectPath,
+        workspaceName: newWorkspaceName,
+      }),
+    }));
+
+    const targetRuntime = new MultiProjectRuntime(
+      containerManager,
+      targetProjectRuntimes,
+      newWorkspaceName
+    );
+
+    return Ok({
+      workspacePath: containerPath,
+      trunkBranch,
+      forkedRuntimeConfig: normalizedForkedRuntimeConfig,
+      targetRuntime,
+      forkedFromSource,
+      projects,
+      ...(sourceRuntimeConfigUpdate ? { sourceRuntimeConfigUpdate } : {}),
+      sourceRuntimeConfigUpdated,
+    });
+  }
 
   const forkResult = await sourceRuntime.forkWorkspace({
     projectPath,
@@ -88,16 +397,11 @@ export async function orchestrateFork(
   );
   const sourceRuntimeConfigUpdated = sourceRuntimeConfigUpdate != null;
 
-  // Forked workspace metadata must use destination identity, not inherited source state.
-  // Docker containerName is derived from (projectPath, workspaceName); if the fork
-  // inherits source config, the containerName would point at the wrong container.
-  const normalizedForkedRuntimeConfig: RuntimeConfig =
-    forkedRuntimeConfig.type === "docker"
-      ? {
-          ...forkedRuntimeConfig,
-          containerName: getContainerName(projectPath, newWorkspaceName),
-        }
-      : forkedRuntimeConfig;
+  const normalizedForkedRuntimeConfig = normalizeForkedRuntimeConfig(
+    forkedRuntimeConfig,
+    projectPath,
+    newWorkspaceName
+  );
 
   if (!forkResult.success) {
     if (forkResult.failureIsFatal) {
@@ -109,25 +413,12 @@ export async function orchestrateFork(
     }
   }
 
-  let trunkBranch: string;
-  if (forkResult.success && forkResult.sourceBranch) {
-    trunkBranch = forkResult.sourceBranch;
-  } else if (params.preferredTrunkBranch?.trim()) {
-    // Caller-supplied fallback (e.g., queued task's persisted trunk branch).
-    // Preferred over local git discovery, which may be unavailable in SSH/Docker.
-    trunkBranch = params.preferredTrunkBranch.trim();
-  } else {
-    try {
-      const localBranches = await listLocalBranches(projectPath);
-      if (localBranches.includes(sourceWorkspaceName)) {
-        trunkBranch = sourceWorkspaceName;
-      } else {
-        trunkBranch = await detectDefaultTrunkBranch(projectPath, localBranches);
-      }
-    } catch {
-      trunkBranch = "main";
-    }
-  }
+  const trunkBranch = await resolveTrunkBranch(
+    projectPath,
+    sourceWorkspaceName,
+    forkResult,
+    params.preferredTrunkBranch
+  );
 
   let workspacePath: string;
   let forkedFromSource: boolean;
