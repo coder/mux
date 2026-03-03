@@ -219,6 +219,7 @@ describe("WorkspaceService multi-project lifecycle", () => {
         const storedMultiWorkspaces =
           configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces ?? [];
         expect(storedMultiWorkspaces).toHaveLength(1);
+        expect(configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.projectKind).toBe("system");
         expect(storedMultiWorkspaces[0]?.projects).toEqual([
           { projectPath: projectAPath, projectName: "project-a" },
           { projectPath: projectBPath, projectName: "project-b" },
@@ -552,6 +553,208 @@ describe("WorkspaceService multi-project lifecycle", () => {
         const renamedWorkspace = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces[0];
         expect(renamedWorkspace?.name).toBe(newName);
         expect(renamedWorkspace?.path).toBe(newContainerPath);
+      } finally {
+        createContainerSpy.mockRestore();
+        removeContainerSpy.mockRestore();
+        createRuntimeSpy.mockRestore();
+      }
+    });
+  });
+
+  test("rename() rolls back already-renamed projects when a later project rename fails", async () => {
+    await withTempMuxRoot(async (rootDir) => {
+      const workspaceId = "ws-multi-rename-rollback";
+      const oldName = "feature-old";
+      const newName = "feature-new";
+      const projectAPath = path.join(rootDir, "project-a");
+      const projectBPath = path.join(rootDir, "project-b");
+      const srcDir = path.join(rootDir, "src");
+      const oldContainerPath = path.join(srcDir, "_workspaces", oldName);
+
+      const configState: ProjectsConfig = {
+        projects: new Map([
+          [projectAPath, { workspaces: [], trusted: true }],
+          [projectBPath, { workspaces: [], trusted: true }],
+          [
+            MULTI_PROJECT_CONFIG_KEY,
+            {
+              workspaces: [
+                {
+                  id: workspaceId,
+                  name: oldName,
+                  path: oldContainerPath,
+                  runtimeConfig: { type: "worktree", srcBaseDir: srcDir },
+                  projects: [
+                    { projectPath: projectAPath, projectName: "project-a" },
+                    { projectPath: projectBPath, projectName: "project-b" },
+                  ],
+                },
+              ],
+            },
+          ],
+        ]),
+      };
+
+      const editConfigMock = mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
+        fn(configState);
+        return Promise.resolve();
+      });
+
+      const mockConfig: Partial<Config> = {
+        srcDir,
+        loadConfigOrDefault: mock(() => configState),
+        findWorkspace: mock(() => ({
+          workspacePath: oldContainerPath,
+          projectPath: MULTI_PROJECT_CONFIG_KEY,
+          workspaceName: oldName,
+        })),
+        editConfig: editConfigMock,
+        getAllWorkspaceMetadata: mock(() =>
+          Promise.resolve([
+            {
+              id: workspaceId,
+              name: oldName,
+              projectPath: projectAPath,
+              projectName: "project-a+project-b",
+              projects: [
+                { projectPath: projectAPath, projectName: "project-a" },
+                { projectPath: projectBPath, projectName: "project-b" },
+              ],
+              runtimeConfig: { type: "worktree", srcBaseDir: srcDir },
+              namedWorkspacePath: oldContainerPath,
+            } satisfies FrontendWorkspaceMetadata,
+          ])
+        ),
+        getSessionDir: mock((id: string) => path.join(rootDir, "sessions", id)),
+      };
+
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        getWorkspaceMetadata: mock(() =>
+          Promise.resolve(
+            Ok({
+              id: workspaceId,
+              name: oldName,
+              projectPath: projectAPath,
+              projectName: "project-a+project-b",
+              projects: [
+                { projectPath: projectAPath, projectName: "project-a" },
+                { projectPath: projectBPath, projectName: "project-b" },
+              ],
+              runtimeConfig: { type: "worktree", srcBaseDir: srcDir },
+            })
+          )
+        ),
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService;
+
+      const renameWorkspaceAMock = mock(
+        (
+          _projectPath: string,
+          sourceName: string,
+          targetName: string,
+          _abortSignal?: AbortSignal,
+          _trusted?: boolean
+        ) => {
+          if (sourceName === oldName && targetName === newName) {
+            return Promise.resolve({
+              success: true as const,
+              oldPath: path.join(srcDir, "project-a", oldName),
+              newPath: path.join(srcDir, "project-a", newName),
+            });
+          }
+
+          if (sourceName === newName && targetName === oldName) {
+            return Promise.resolve({
+              success: true as const,
+              oldPath: path.join(srcDir, "project-a", newName),
+              newPath: path.join(srcDir, "project-a", oldName),
+            });
+          }
+
+          return Promise.resolve({
+            success: false as const,
+            error: `Unexpected rename request ${sourceName} -> ${targetName}`,
+          });
+        }
+      );
+      const renameWorkspaceBMock = mock(() =>
+        Promise.resolve({
+          success: false as const,
+          error: "project-b rename failed",
+        })
+      );
+
+      const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+        (_runtimeConfig, options) => {
+          if (options?.projectPath === projectAPath) {
+            return {
+              renameWorkspace: renameWorkspaceAMock,
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          if (options?.projectPath === projectBPath) {
+            return {
+              renameWorkspace: renameWorkspaceBMock,
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
+        }
+      );
+
+      const removeContainerSpy = spyOn(
+        ContainerManager.prototype,
+        "removeContainer"
+      ).mockResolvedValue();
+      const createContainerSpy = spyOn(
+        ContainerManager.prototype,
+        "createContainer"
+      ).mockResolvedValue(path.join(srcDir, "_workspaces", newName));
+
+      try {
+        const workspaceService = new WorkspaceService(
+          mockConfig as Config,
+          historyService,
+          mockAIService,
+          createMockInitStateManager(),
+          mockExtensionMetadataService as ExtensionMetadataService,
+          mockBackgroundProcessManager as BackgroundProcessManager
+        );
+
+        const result = await workspaceService.rename(workspaceId, newName);
+
+        expect(result.success).toBe(false);
+        if (result.success) {
+          return;
+        }
+
+        expect(result.error).toContain("Failed to rename workspace for project project-b");
+        expect(renameWorkspaceAMock).toHaveBeenCalledTimes(2);
+        expect(renameWorkspaceAMock).toHaveBeenNthCalledWith(
+          1,
+          projectAPath,
+          oldName,
+          newName,
+          undefined,
+          true
+        );
+        expect(renameWorkspaceAMock).toHaveBeenNthCalledWith(
+          2,
+          projectAPath,
+          newName,
+          oldName,
+          undefined,
+          true
+        );
+        expect(renameWorkspaceBMock).toHaveBeenCalledTimes(1);
+
+        expect(removeContainerSpy).not.toHaveBeenCalled();
+        expect(createContainerSpy).not.toHaveBeenCalled();
+        expect(editConfigMock).not.toHaveBeenCalled();
+
+        const storedWorkspace = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces[0];
+        expect(storedWorkspace?.name).toBe(oldName);
+        expect(storedWorkspace?.path).toBe(oldContainerPath);
       } finally {
         createContainerSpy.mockRestore();
         removeContainerSpy.mockRestore();

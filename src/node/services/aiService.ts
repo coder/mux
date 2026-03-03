@@ -23,8 +23,11 @@ import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { getSrcBaseDir } from "@/common/types/runtime";
+import { ContainerManager } from "@/node/multiProject/containerManager";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { MuxToolScope } from "@/common/types/toolScope";
@@ -58,7 +61,7 @@ import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/pro
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
-import { getProjects } from "@/common/utils/multiProject";
+import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
@@ -756,10 +759,25 @@ export class AIService extends EventEmitter {
       if (!this.config.findWorkspace(workspaceId)) {
         return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
       }
-      const runtime = createRuntime(metadata.runtimeConfig, {
-        projectPath: metadata.projectPath,
-        workspaceName: metadata.name,
-      });
+
+      const runtime = isMultiProject(metadata)
+        ? new MultiProjectRuntime(
+            new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
+            getProjects(metadata).map((project) => ({
+              projectPath: project.projectPath,
+              projectName: project.projectName,
+              runtime: createRuntime(metadata.runtimeConfig, {
+                projectPath: project.projectPath,
+                workspaceName: metadata.name,
+              }),
+            })),
+            metadata.name
+          )
+        : createRuntime(metadata.runtimeConfig, {
+            projectPath: metadata.projectPath,
+            workspaceName: metadata.name,
+          });
+
       // In-place workspaces (CLI/benchmarks) have projectPath === name
       // Use path directly instead of reconstructing via getWorkspacePath
       const isInPlace = metadata.projectPath === metadata.name;

@@ -2091,7 +2091,10 @@ export class WorkspaceService extends EventEmitter {
       await this.config.editConfig((config) => {
         const multiProjectConfig = config.projects.get(MULTI_PROJECT_CONFIG_KEY) ?? {
           workspaces: [],
+          projectKind: "system",
         };
+        // Ensure legacy _multi entries are hidden from user-facing project lists.
+        multiProjectConfig.projectKind = "system";
         multiProjectConfig.workspaces.push({
           path: containerPath,
           id: workspaceId,
@@ -2577,6 +2580,7 @@ export class WorkspaceService extends EventEmitter {
         const projects = getProjects(oldMetadata);
         const renamedProjectWorkspaces: Array<{
           projectName: string;
+          projectPath: string;
           workspacePath: string;
         }> = [];
 
@@ -2598,6 +2602,40 @@ export class WorkspaceService extends EventEmitter {
           );
 
           if (!renameResult.success) {
+            // Roll back already-renamed project workspaces to avoid leaving mixed workspace names.
+            for (const renamedProject of [...renamedProjectWorkspaces].reverse()) {
+              try {
+                const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
+                  projectPath: renamedProject.projectPath,
+                  workspaceName: newName,
+                });
+                const rollbackTrusted =
+                  configSnapshot.projects.get(stripTrailingSlashes(renamedProject.projectPath))
+                    ?.trusted ?? false;
+                const rollbackResult = await rollbackRuntime.renameWorkspace(
+                  renamedProject.projectPath,
+                  newName,
+                  oldName,
+                  undefined,
+                  rollbackTrusted
+                );
+
+                if (!rollbackResult.success) {
+                  log.error("Failed to rollback multi-project rename", {
+                    workspaceId,
+                    projectName: renamedProject.projectName,
+                    error: rollbackResult.error,
+                  });
+                }
+              } catch (rollbackError: unknown) {
+                log.error("Failed to rollback multi-project rename", {
+                  workspaceId,
+                  projectName: renamedProject.projectName,
+                  error: getErrorMessage(rollbackError),
+                });
+              }
+            }
+
             return Err(
               `Failed to rename workspace for project ${project.projectName}: ${renameResult.error}`
             );
@@ -2605,6 +2643,7 @@ export class WorkspaceService extends EventEmitter {
 
           renamedProjectWorkspaces.push({
             projectName: project.projectName,
+            projectPath: project.projectPath,
             workspacePath: renameResult.newPath,
           });
         }
@@ -2613,7 +2652,13 @@ export class WorkspaceService extends EventEmitter {
           getSrcBaseDir(oldMetadata.runtimeConfig) ?? this.config.srcDir
         );
         await containerManager.removeContainer(oldName);
-        await containerManager.createContainer(newName, renamedProjectWorkspaces);
+        await containerManager.createContainer(
+          newName,
+          renamedProjectWorkspaces.map((workspaceEntry) => ({
+            projectName: workspaceEntry.projectName,
+            workspacePath: workspaceEntry.workspacePath,
+          }))
+        );
 
         oldPath = containerManager.getContainerPath(oldName);
         newPath = containerManager.getContainerPath(newName);
