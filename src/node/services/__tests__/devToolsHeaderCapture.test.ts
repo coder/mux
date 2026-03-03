@@ -47,7 +47,7 @@ describe("devToolsHeaderCapture", () => {
 
     const captured = consumeCapturedRequestHeaders("step-sensitive");
     expect(captured).not.toBeNull();
-    expect(captured!["authorization"]).toBe("[REDACTED]");
+    expect(captured!.authorization).toBe("[REDACTED]");
     expect(captured!["x-api-key"]).toBe("[REDACTED]");
     expect(captured!["api-key"]).toBe("[REDACTED]");
     expect(captured!["x-goog-api-key"]).toBe("[REDACTED]");
