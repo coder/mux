@@ -807,6 +807,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentId: workspace.agentId,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -893,6 +894,7 @@ export class Config {
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
             metadata.agentType ??= workspace.agentType;
+            metadata.agentId ??= workspace.agentId;
             metadata.taskStatus ??= workspace.taskStatus;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
@@ -943,6 +945,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentId: workspace.agentId,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -987,6 +990,7 @@ export class Config {
                 : undefined),
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
+            agentId: workspace.agentId,
             taskStatus: workspace.taskStatus,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
