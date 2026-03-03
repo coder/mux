@@ -1632,7 +1632,7 @@ exit 1
       expect(result.error.type).toBe("project_not_found");
     });
 
-    it("with deleteArchived=true cascade-deletes archived workspaces then removes project", async () => {
+    it("with force=true cascade-deletes archived workspaces then removes project", async () => {
       const archivedWorkspaceDirOne = path.join(tempDir, "archived-workspace-one");
       const archivedWorkspaceDirTwo = path.join(tempDir, "archived-workspace-two");
       await fs.mkdir(archivedWorkspaceDirOne, { recursive: true });
@@ -1667,7 +1667,7 @@ exit 1
       expect(after.projects.has(projectPath)).toBe(false);
     });
 
-    it("with deleteArchived=true resolves metadata IDs for archived workspaces missing config IDs", async () => {
+    it("with force=true resolves metadata IDs for workspaces missing config IDs", async () => {
       const archivedWorkspaceDir = path.join(tempDir, "legacy-archived-workspace");
       await fs.mkdir(archivedWorkspaceDir, { recursive: true });
 
@@ -1707,7 +1707,7 @@ exit 1
       expect(after.projects.has(projectPath)).toBe(false);
     });
 
-    it("with deleteArchived=true still blocks if active workspaces remain", async () => {
+    it("with force=true deletes active and archived workspaces then removes project", async () => {
       const activeWorkspaceDir = path.join(tempDir, "active-workspace");
       const archivedWorkspaceDir = path.join(tempDir, "archived-workspace");
       await fs.mkdir(activeWorkspaceDir, { recursive: true });
@@ -1724,8 +1724,10 @@ exit 1
       });
       await config.saveConfig(cfg);
 
+      const removedWorkspaceIds: string[] = [];
       service.setWorkspaceService({
         remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
           await config.removeWorkspace(workspaceId);
           return Ok(undefined);
         },
@@ -1733,24 +1735,87 @@ exit 1
 
       const result = await service.remove(projectPath, true);
 
-      expect(result.success).toBe(false);
-      if (result.success) throw new Error("Expected failure");
-      expect(result.error.type).toBe("workspace_blockers");
-      if (result.error.type !== "workspace_blockers") {
-        throw new Error("Expected workspace blockers error");
-      }
-      expect(result.error.activeCount).toBe(1);
-      expect(result.error.archivedCount).toBe(0);
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds.sort()).toEqual(["active-workspace-1", "archived-workspace-1"]);
 
       const after = config.loadConfigOrDefault();
-      const project = after.projects.get(projectPath);
-      expect(project).toBeDefined();
-      expect(project?.workspaces).toHaveLength(1);
-      expect(project?.workspaces[0]?.id).toBe("active-workspace-1");
+      expect(after.projects.has(projectPath)).toBe(false);
     });
 
-    it("with deleteArchived=false (default) still returns workspace_blockers when archived exist", async () => {
-      const archivedWorkspaceDir = path.join(tempDir, "default-delete-archived-flag-test");
+    it("force=true cascade-deletes active workspaces then removes project", async () => {
+      const activeWorkspaceDirOne = path.join(tempDir, "active-workspace-one");
+      const activeWorkspaceDirTwo = path.join(tempDir, "active-workspace-two");
+      await fs.mkdir(activeWorkspaceDirOne, { recursive: true });
+      await fs.mkdir(activeWorkspaceDirTwo, { recursive: true });
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          { id: "active-workspace-1", path: activeWorkspaceDirOne },
+          { id: "active-workspace-2", path: activeWorkspaceDirTwo },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds.sort()).toEqual(["active-workspace-1", "active-workspace-2"]);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("force=true cascade-deletes mixed active + archived workspaces then removes project", async () => {
+      const activeWorkspaceDir = path.join(tempDir, "mixed-active-workspace");
+      const archivedWorkspaceDir = path.join(tempDir, "mixed-archived-workspace");
+      await fs.mkdir(activeWorkspaceDir, { recursive: true });
+      await fs.mkdir(archivedWorkspaceDir, { recursive: true });
+
+      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          { id: "mixed-active-workspace-id", path: activeWorkspaceDir },
+          { id: "mixed-archived-workspace-id", path: archivedWorkspaceDir, archivedAt },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds.sort()).toEqual([
+        "mixed-active-workspace-id",
+        "mixed-archived-workspace-id",
+      ]);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("with force=false (default) still returns workspace_blockers when archived exist", async () => {
+      const archivedWorkspaceDir = path.join(tempDir, "default-force-flag-test");
       await fs.mkdir(archivedWorkspaceDir, { recursive: true });
 
       const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();

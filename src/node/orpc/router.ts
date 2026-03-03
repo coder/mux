@@ -2047,7 +2047,7 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)
         .handler(async ({ context, input }) => {
-          return context.projectService.remove(input.projectPath, input.deleteArchived ?? false);
+          return context.projectService.remove(input.projectPath, input.force ?? false);
         }),
       secrets: {
         get: t

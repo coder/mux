@@ -34,7 +34,6 @@ import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { getErrorMessage } from "@/common/utils/errors";
-import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 import type { z } from "zod";
 
@@ -796,10 +795,7 @@ export class ProjectService {
     return Err("Clone did not return a completion event");
   }
 
-  async remove(
-    projectPath: string,
-    deleteArchived = false
-  ): Promise<Result<void, ProjectRemoveError>> {
+  async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
     try {
       let config = this.config.loadConfigOrDefault();
       let projectConfig = config.projects.get(projectPath);
@@ -845,37 +841,35 @@ export class ProjectService {
 
       let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
 
-      if (deleteArchived && counts.archivedCount > 0) {
+      const totalWorkspaces = counts.activeCount + counts.archivedCount;
+      if (force && totalWorkspaces > 0) {
         if (!this.workspaceService) {
           return Err({
             type: "unknown" as const,
-            message: "Failed to remove project: workspace service unavailable for archived cleanup",
+            message: "Failed to remove project: workspace service unavailable for cascade cleanup",
           });
         }
 
-        const archivedWorkspaces = projectConfig.workspaces.filter((workspace) =>
-          isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)
-        );
-        const archivedWorkspaceIdsByPath = new Map<string, string>();
+        const workspaceIdsByPath = new Map<string, string>();
 
-        if (archivedWorkspaces.some((workspace) => !workspace.id)) {
+        if (projectConfig.workspaces.some((workspace) => !workspace.id)) {
           const allWorkspaceMetadata = await this.config.getAllWorkspaceMetadata();
           for (const metadata of allWorkspaceMetadata) {
             if (metadata.projectPath !== projectPath) {
               continue;
             }
-            archivedWorkspaceIdsByPath.set(metadata.namedWorkspacePath, metadata.id);
+            workspaceIdsByPath.set(metadata.namedWorkspacePath, metadata.id);
           }
         }
 
-        for (const workspace of archivedWorkspaces) {
-          // Legacy workspace entries can be archived without an `id`. Resolve through metadata so
+        for (const workspace of projectConfig.workspaces) {
+          // Legacy workspace entries can be missing `id`. Resolve through metadata so
           // WorkspaceService.remove() receives the canonical workspace ID (it cannot remove by path).
-          const workspaceId = workspace.id ?? archivedWorkspaceIdsByPath.get(workspace.path);
+          const workspaceId = workspace.id ?? workspaceIdsByPath.get(workspace.path);
           if (!workspaceId) {
             return Err({
               type: "unknown" as const,
-              message: `Failed to remove project: Failed to resolve archived workspace ID for ${workspace.path}`,
+              message: `Failed to remove project: Failed to resolve workspace ID for ${workspace.path}`,
             });
           }
 
@@ -883,7 +877,7 @@ export class ProjectService {
           if (!removeResult.success) {
             return Err({
               type: "unknown" as const,
-              message: `Failed to remove project: Failed to delete archived workspace ${workspaceId}: ${removeResult.error}`,
+              message: `Failed to remove project: Failed to delete workspace ${workspaceId}: ${removeResult.error}`,
             });
           }
         }
