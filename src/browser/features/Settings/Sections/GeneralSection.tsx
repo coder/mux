@@ -254,7 +254,9 @@ export function GeneralSection() {
         // Best-effort only.
       })
       .then(() => api.config.updateLlmDebugLogs({ enabled: checked }))
-      .then(() => {})
+      .then(() => {
+        // Coerce the chain back to Promise<void>.
+      })
       .catch(() => {
         // Best-effort persistence.
       });
