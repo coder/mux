@@ -1,6 +1,5 @@
 import assert from "node:assert";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
-import { devToolsMiddleware } from "@ai-sdk/devtools";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { wrapLanguageModel, type LanguageModel } from "ai";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -536,8 +535,6 @@ export class ProviderModelFactory {
     this.devToolsService = devToolsService;
   }
 
-
-
   /**
    * Resolve an API key that may be a 1Password op:// reference.
    * Returns the original key for non-op:// values, or the resolved secret for op:// refs.
@@ -576,18 +573,6 @@ export class ProviderModelFactory {
     }
 
     let model: LanguageModel = result.data;
-
-    // AI SDK DevTools is an opt-in developer workflow for richer debugging.
-    // Enable with:
-    //   1. MUX_DEVTOOLS=1 make dev
-    //   2. make devtools
-    //   3. Open http://localhost:4983
-    if (process.env.MUX_DEVTOOLS === "1") {
-      model = wrapLanguageModel({
-        model,
-        middleware: devToolsMiddleware(),
-      });
-    }
 
     const workspaceId = opts?.workspaceId;
     const devToolsService = this.devToolsService;
@@ -1084,9 +1069,7 @@ export class ProviderModelFactory {
 
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
-        const providerFetch = 
-          fetchWithOpenAITruncation as typeof fetch
-        ;
+        const providerFetch = fetchWithOpenAITruncation as typeof fetch;
         const provider = createOpenAI({
           ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
