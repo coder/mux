@@ -82,11 +82,11 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
 
       {expanded && (
         <div className="border-border-light border-t px-2 py-1.5">
-          {loading && displaySteps == null ? (
+          {loading && steps === null ? (
             <div className="flex justify-center py-2">
               <Loader2 className="text-muted h-4 w-4 animate-spin" />
             </div>
-          ) : error && displaySteps == null ? (
+          ) : error && steps === null ? (
             <p className="text-destructive py-1 text-[10px]">{error}</p>
           ) : displaySteps && displaySteps.length > 0 ? (
             <div className="flex flex-col gap-1">
