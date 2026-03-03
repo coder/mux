@@ -3208,11 +3208,10 @@ export const router = (authToken?: string) => {
             }
 
             try {
-              const initialActivityByWorkspace = await service.getActivityList();
-              for (const [workspaceId, activity] of Object.entries(initialActivityByWorkspace)) {
-                queue.push({ type: "activity", workspaceId, activity });
-              }
-
+              // Bootstrap snapshots are the responsibility of workspace.activity.list().
+              // This subscription emits only live activity deltas and heartbeats to
+              // preserve strict event ordering — replaying historical snapshots here
+              // could overwrite fresher live events queued by the listener above.
               yield* queue.iterate();
             } finally {
               signal?.removeEventListener("abort", onAbort);
