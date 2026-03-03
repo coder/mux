@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -21,6 +22,7 @@ import {
   getDisableWorkspaceAgentsKey,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { sortAgentsStable } from "@/browser/utils/agents";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -43,13 +45,19 @@ export interface AgentContextValue {
    */
   disableWorkspaceAgents: boolean;
   setDisableWorkspaceAgents: Dispatch<SetStateAction<boolean>>;
+  /** True when workspace metadata locks agent selection changes. */
+  isAgentSelectionLocked?: boolean;
 }
 
 const AgentContext = createContext<AgentContextValue | undefined>(undefined);
 
 type AgentProviderProps =
   | { value: AgentContextValue; children: ReactNode }
-  | { workspaceId?: string; projectPath?: string; children: ReactNode };
+  | {
+      workspaceId?: string;
+      projectPath?: string;
+      children: ReactNode;
+    };
 
 function getScopeId(workspaceId: string | undefined, projectPath: string | undefined): string {
   return workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
@@ -75,6 +83,8 @@ function AgentProviderWithState(props: {
   children: ReactNode;
 }) {
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceMetadata();
+  const currentMeta = props.workspaceId ? workspaceMetadata.get(props.workspaceId) : undefined;
 
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
   const isProjectScope = !props.workspaceId && Boolean(props.projectPath);
@@ -220,15 +230,28 @@ function AgentProviderWithState(props: {
     }
   }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
+  // Project-scoped providers should inherit the global default agent until a
+  // project-scoped preference is explicitly set.
+  const normalizedAgentId = coerceAgentId(
+    isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
+  );
+  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
+  // Workspace agent is backend-fixed for mux-chat and all child/subagent workspaces.
+  // Derive from existing metadata fields — no extra stored state needed.
+  const isCurrentAgentLocked =
+    props.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID || currentMeta?.parentWorkspaceId != null;
+
   const selectableAgents = useMemo(
     () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),
     [agents]
   );
 
   const cycleToNextAgent = useCallback(() => {
-    const activeAgentId = coerceAgentId(
-      isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
-    );
+    if (isCurrentAgentLocked) {
+      return;
+    }
+
+    const activeAgentId = normalizedAgentId;
 
     // Never cycle into "auto" — it's toggled explicitly via the picker switch.
     // When auto is currently active, the same shortcut should still provide a way
@@ -249,12 +272,14 @@ function AgentProviderWithState(props: {
     if (nextAgent) {
       setAgentId(nextAgent.id);
     }
-  }, [globalDefaultAgentId, isProjectScope, scopedAgentId, selectableAgents, setAgentId]);
+  }, [isCurrentAgentLocked, normalizedAgentId, selectableAgents, setAgentId]);
 
   const toggleAutoAgent = useCallback(() => {
-    const activeAgentId = coerceAgentId(
-      isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
-    );
+    if (isCurrentAgentLocked) {
+      return;
+    }
+
+    const activeAgentId = normalizedAgentId;
     const autoAvailable = selectableAgents.some((agent) => agent.id === "auto");
     if (!autoAvailable) return;
 
@@ -266,13 +291,15 @@ function AgentProviderWithState(props: {
     }
 
     setAgentId("auto");
-  }, [globalDefaultAgentId, isProjectScope, scopedAgentId, selectableAgents, setAgentId]);
+  }, [isCurrentAgentLocked, normalizedAgentId, selectableAgents, setAgentId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.TOGGLE_AGENT)) {
         e.preventDefault();
-        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+        if (!isCurrentAgentLocked) {
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+        }
         return;
       }
 
@@ -291,7 +318,7 @@ function AgentProviderWithState(props: {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleToNextAgent, toggleAutoAgent]);
+  }, [cycleToNextAgent, isCurrentAgentLocked, toggleAutoAgent]);
 
   useEffect(() => {
     const handleRefreshRequested = () => {
@@ -302,13 +329,6 @@ function AgentProviderWithState(props: {
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handleRefreshRequested);
   }, [refresh]);
-
-  // Project-scoped providers should inherit the global default agent until a
-  // project-scoped preference is explicitly set.
-  const normalizedAgentId = coerceAgentId(
-    isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
-  );
-  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
 
   const agentContextValue = useMemo(
     () => ({
@@ -322,6 +342,7 @@ function AgentProviderWithState(props: {
       refreshing,
       disableWorkspaceAgents,
       setDisableWorkspaceAgents,
+      isAgentSelectionLocked: isCurrentAgentLocked,
     }),
     [
       normalizedAgentId,
@@ -334,6 +355,7 @@ function AgentProviderWithState(props: {
       refreshing,
       disableWorkspaceAgents,
       setDisableWorkspaceAgents,
+      isCurrentAgentLocked,
     ]
   );
 

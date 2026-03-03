@@ -906,6 +906,7 @@ export class Config {
             metadata.unarchivedAt ??= workspace.unarchivedAt;
             // Preserve section assignment from config
             metadata.sectionId ??= workspace.sectionId;
+
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
               configModified = true;
@@ -999,6 +1000,7 @@ export class Config {
             taskTrunkBranch: workspace.taskTrunkBranch,
             sectionId: workspace.sectionId,
           };
+
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }
       }

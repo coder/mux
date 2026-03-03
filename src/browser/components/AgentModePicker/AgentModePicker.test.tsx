@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
-import { AgentProvider } from "@/browser/contexts/AgentContext";
+import { AgentProvider, type AgentContextValue } from "@/browser/contexts/AgentContext";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "../AgentModePicker/AgentModePicker";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
@@ -63,6 +63,7 @@ const noop = () => {
 };
 const defaultContextProps = {
   currentAgent: undefined,
+  isAgentSelectionLocked: false,
   disableWorkspaceAgents: false,
   setDisableWorkspaceAgents: noop,
 };
@@ -110,22 +111,24 @@ describe("AgentModePicker", () => {
     expect(getByText("Explore")).toBeTruthy();
   });
 
-  test("shows a non-selectable active agent in the dropdown trigger", async () => {
+  test("locks the picker when workspace agent selection is locked", () => {
     function Harness() {
-      const [agentId, setAgentId] = React.useState("explore");
+      const [agentId, setAgentId] = React.useState("exec");
+      const contextValue: AgentContextValue & { isAgentSelectionLocked?: boolean } = {
+        agentId,
+        setAgentId,
+        agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
+        loaded: true,
+        loadFailed: false,
+        refresh: () => Promise.resolve(),
+        refreshing: false,
+        ...defaultContextProps,
+        currentAgent: BUILT_INS[0],
+        isAgentSelectionLocked: true,
+      };
+
       return (
-        <AgentProvider
-          value={{
-            agentId,
-            setAgentId,
-            agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
-            loaded: true,
-            loadFailed: false,
-            refresh: () => Promise.resolve(),
-            refreshing: false,
-            ...defaultContextProps,
-          }}
-        >
+        <AgentProvider value={contextValue}>
           <TooltipProvider>
             <div>
               <div data-testid="agentId">{agentId}</div>
@@ -136,21 +139,54 @@ describe("AgentModePicker", () => {
       );
     }
 
-    const { getAllByText, getByLabelText, getAllByTestId } = render(<Harness />);
+    const { getByLabelText, queryAllByTestId } = render(<Harness />);
 
-    // The trigger button should show the current agent name "Explore"
-    const triggerButton = getByLabelText("Select agent");
+    const triggerButton = getByLabelText("Select agent") as HTMLButtonElement;
+    expect(triggerButton.textContent).toContain("Exec");
+    expect(triggerButton.disabled).toBe(true);
+
+    fireEvent.click(triggerButton);
+    expect(queryAllByTestId("agent-option").length).toBe(0);
+  });
+
+  test("uiSelectable false without lock flag does not disable the picker", async () => {
+    function Harness() {
+      const [agentId, setAgentId] = React.useState("explore");
+      const contextValue: AgentContextValue & { isAgentSelectionLocked?: boolean } = {
+        agentId,
+        setAgentId,
+        agents: [...BUILT_INS, HIDDEN_AGENT, CUSTOM_AGENT],
+        loaded: true,
+        loadFailed: false,
+        refresh: () => Promise.resolve(),
+        refreshing: false,
+        ...defaultContextProps,
+        currentAgent: HIDDEN_AGENT,
+      };
+
+      return (
+        <AgentProvider value={contextValue}>
+          <TooltipProvider>
+            <div>
+              <div data-testid="agentId">{agentId}</div>
+              <AgentModePicker />
+            </div>
+          </TooltipProvider>
+        </AgentProvider>
+      );
+    }
+
+    const { getByLabelText, queryAllByTestId } = render(<Harness />);
+
+    const triggerButton = getByLabelText("Select agent") as HTMLButtonElement;
     expect(triggerButton.textContent).toContain("Explore");
+    expect(triggerButton.disabled).toBe(false);
 
-    // Open dropdown
     fireEvent.click(triggerButton);
 
     await waitFor(() => {
-      expect(getAllByTestId("agent-option").length).toBeGreaterThan(0);
+      expect(queryAllByTestId("agent-option").length).toBeGreaterThan(0);
     });
-
-    // Explore should not appear as a selectable option in the dropdown (only in trigger).
-    expect(getAllByText("Explore").length).toBe(1);
   });
 
   test("selects a custom agent from the dropdown", async () => {

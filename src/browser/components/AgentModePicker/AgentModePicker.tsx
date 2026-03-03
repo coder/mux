@@ -90,7 +90,14 @@ function resolveAgentOptions(agents: AgentDefinitionDescriptor[]): AgentOption[]
 }
 
 export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
-  const { agentId, setAgentId, agents, loaded } = useAgent();
+  const {
+    agentId,
+    setAgentId,
+    agents,
+    loaded,
+    currentAgent,
+    isAgentSelectionLocked = false,
+  } = useAgent();
 
   const onComplete = props.onComplete;
 
@@ -101,7 +108,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const dropdownItemRefs = useRef<Array<HTMLDivElement | null>>([]);
 
-  const normalizedAgentId = useMemo(() => normalizeAgentId(agentId), [agentId]);
+  const normalizedAgentId = normalizeAgentId(agentId);
 
   const options = useMemo(() => resolveAgentOptions(agents), [agents]);
 
@@ -116,38 +123,41 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   // to pick a different agent from the dropdown.
   const isAuto = normalizedAgentId === "auto" && autoAvailable;
 
-  const activeOption = useMemo(() => {
-    if (!normalizedAgentId) {
-      return null;
-    }
+  const activeDescriptor =
+    currentAgent?.id === normalizedAgentId
+      ? currentAgent
+      : agents.find((entry) => entry.id === normalizedAgentId);
+  const isAgentLocked = isAgentSelectionLocked;
 
-    const descriptor = agents.find((entry) => entry.id === normalizedAgentId);
-    if (!descriptor) {
-      // Unknown agent (not in discovery) — show a fallback option
-      return {
-        id: normalizedAgentId,
-        name: formatAgentIdLabel(normalizedAgentId),
-        uiColor: undefined,
-        scope: "project" as const,
-        subagentRunnable: false,
-      } satisfies AgentOption;
-    }
-
-    return {
-      id: descriptor.id,
-      name: descriptor.name,
-      uiColor: descriptor.uiColor,
-      description: descriptor.description,
-      scope: descriptor.scope,
-      base: descriptor.base,
-      tools: descriptor.tools,
-      aiDefaults: descriptor.aiDefaults,
-      subagentRunnable: descriptor.subagentRunnable,
-    } satisfies AgentOption;
-  }, [agents, normalizedAgentId]);
+  const activeOption = !normalizedAgentId
+    ? null
+    : !activeDescriptor
+      ? ({
+          // Unknown agent (not in discovery) — show a fallback option
+          id: normalizedAgentId,
+          name: formatAgentIdLabel(normalizedAgentId),
+          uiColor: undefined,
+          scope: "project" as const,
+          subagentRunnable: false,
+        } satisfies AgentOption)
+      : ({
+          id: activeDescriptor.id,
+          name: activeDescriptor.name,
+          uiColor: activeDescriptor.uiColor,
+          description: activeDescriptor.description,
+          scope: activeDescriptor.scope,
+          base: activeDescriptor.base,
+          tools: activeDescriptor.tools,
+          aiDefaults: activeDescriptor.aiDefaults,
+          subagentRunnable: activeDescriptor.subagentRunnable,
+        } satisfies AgentOption);
 
   const openPicker = useCallback(
     (opts?: { highlightAgentId?: string }) => {
+      if (isAgentLocked) {
+        return;
+      }
+
       setIsPickerOpen(true);
 
       // Pre-select the current agent (or specified) in the list.
@@ -160,7 +170,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         dropdownRef.current?.focus();
       });
     },
-    [normalizedAgentId, selectableOptions]
+    [isAgentLocked, normalizedAgentId, selectableOptions]
   );
 
   const closePicker = useCallback(() => {
@@ -222,6 +232,10 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   const handleSelectAgent = useCallback(
     (nextAgentId: string) => {
+      if (isAgentLocked) {
+        return;
+      }
+
       const normalized = normalizeAgentId(nextAgentId);
       if (!normalized) {
         return;
@@ -230,7 +244,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       setAgentId(normalized);
       closePicker();
     },
-    [closePicker, setAgentId]
+    [closePicker, isAgentLocked, setAgentId]
   );
 
   // Global Cmd/Ctrl+1-9 shortcuts when dropdown is open.
@@ -318,7 +332,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           <Button
             type="button"
             aria-label="Select agent"
-            aria-expanded={isPickerOpen}
+            aria-expanded={isAgentLocked ? false : isPickerOpen}
+            disabled={isAgentLocked}
             size="xs"
             variant="ghost"
             onClick={() => {
@@ -339,12 +354,14 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
               style={activeOption?.uiColor ? { color: activeOption.uiColor } : undefined}
             />
             <span className="max-w-[clamp(4.5rem,30vw,130px)] truncate">{activeDisplayName}</span>
-            <ChevronDown
-              className={cn(
-                "text-muted h-3 w-3 transition-transform duration-150",
-                isPickerOpen && "rotate-180"
-              )}
-            />
+            {!isAgentLocked && (
+              <ChevronDown
+                className={cn(
+                  "text-muted h-3 w-3 transition-transform duration-150",
+                  isPickerOpen && "rotate-180"
+                )}
+              />
+            )}
           </Button>
         </TooltipTrigger>
         <TooltipContent align="start" className="max-w-80 whitespace-normal">
@@ -364,7 +381,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         </TooltipContent>
       </Tooltip>
 
-      {isPickerOpen && (
+      {isPickerOpen && !isAgentLocked && (
         <div
           ref={dropdownRef}
           tabIndex={-1}

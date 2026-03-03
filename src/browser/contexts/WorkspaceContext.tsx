@@ -861,17 +861,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const loadWorkspaceMetadata = useCallback(async () => {
     if (!api) return false; // Return false to indicate metadata wasn't loaded
+
     try {
       const metadataList = await api.workspace.list();
+
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
         // Skip archived workspaces - they should not be tracked by the app
         if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) continue;
+
         ensureCreatedAt(metadata);
         // Use stable workspace ID as key (not path, which can change)
         seedWorkspaceLocalStorageFromBackend(metadata);
         metadataMap.set(metadata.id, metadata);
       }
+
       setWorkspaceMetadata(metadataMap);
       return true; // Return true to indicate metadata was loaded
     } catch (error) {

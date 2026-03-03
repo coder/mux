@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { GLOBAL_SCOPE_ID, getAgentIdKey, getProjectScopeId } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 
@@ -20,6 +22,15 @@ void mock.module("@/browser/contexts/API", () => ({
     error: null,
     authenticate: () => undefined,
     retry: () => undefined,
+  }),
+}));
+
+let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string }>();
+
+void mock.module("@/browser/contexts/WorkspaceContext", () => ({
+  useWorkspaceMetadata: () => ({
+    workspaceMetadata: mockWorkspaceMetadata,
+    loading: false,
   }),
 }));
 
@@ -52,6 +63,15 @@ const PLAN_AGENT: AgentDefinitionDescriptor = {
   subagentRunnable: false,
 };
 
+const LOCKED_AGENT: AgentDefinitionDescriptor = {
+  id: "mux",
+  scope: "built-in",
+  name: "Mux",
+  uiSelectable: false,
+  uiRoutable: true,
+  subagentRunnable: false,
+};
+
 interface HarnessProps {
   onChange: (value: AgentContextValue) => void;
 }
@@ -73,6 +93,7 @@ describe("AgentContext", () => {
 
   beforeEach(() => {
     mockAgentDefinitions = [];
+    mockWorkspaceMetadata = new Map();
 
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
@@ -189,6 +210,118 @@ describe("AgentContext", () => {
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("exec");
     });
+  });
+
+  test("shortcut actions do not override a locked workspace agent", async () => {
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    window.localStorage.setItem(getAgentIdKey(MUX_HELP_CHAT_WORKSPACE_ID), JSON.stringify("exec"));
+
+    let contextValue: AgentContextValue | undefined;
+    let openPickerEvents = 0;
+    const handleOpenPicker = () => {
+      openPickerEvents += 1;
+    };
+    window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpenPicker as EventListener);
+
+    try {
+      render(
+        <AgentProvider workspaceId={MUX_HELP_CHAT_WORKSPACE_ID} projectPath={projectPath}>
+          <Harness onChange={(value) => (contextValue = value)} />
+        </AgentProvider>
+      );
+
+      await waitFor(() => {
+        expect(contextValue?.agentId).toBe("exec");
+      });
+
+      window.api = { platform: "darwin", versions: {} };
+
+      // Open picker shortcut should no-op for locked workspaces.
+      fireEvent.keyDown(window, {
+        key: "A",
+        ctrlKey: true,
+        metaKey: true,
+        shiftKey: true,
+      });
+
+      // Cycle + toggle-auto should no-op as well.
+      fireEvent.keyDown(window, {
+        key: ".",
+        ctrlKey: true,
+        metaKey: true,
+      });
+      fireEvent.keyDown(window, {
+        key: ">",
+        code: "Period",
+        ctrlKey: true,
+        metaKey: true,
+        shiftKey: true,
+      });
+
+      await waitFor(() => {
+        expect(contextValue?.agentId).toBe("exec");
+      });
+      expect(openPickerEvents).toBe(0);
+    } finally {
+      window.removeEventListener(
+        CUSTOM_EVENTS.OPEN_AGENT_PICKER,
+        handleOpenPicker as EventListener
+      );
+    }
+  });
+
+  test("non-selectable agent in mutable workspace does not block shortcut actions", async () => {
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [LOCKED_AGENT, AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    window.localStorage.setItem(
+      getAgentIdKey(getProjectScopeId(projectPath)),
+      JSON.stringify("mux")
+    );
+
+    let contextValue: AgentContextValue | undefined;
+    let openPickerEvents = 0;
+    const handleOpenPicker = () => {
+      openPickerEvents += 1;
+    };
+    window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpenPicker as EventListener);
+
+    try {
+      render(
+        <AgentProvider projectPath={projectPath}>
+          <Harness onChange={(value) => (contextValue = value)} />
+        </AgentProvider>
+      );
+
+      await waitFor(() => {
+        expect(contextValue?.agentId).toBe("mux");
+      });
+
+      window.api = { platform: "darwin", versions: {} };
+
+      fireEvent.keyDown(window, {
+        key: "A",
+        ctrlKey: true,
+        metaKey: true,
+        shiftKey: true,
+      });
+
+      fireEvent.keyDown(window, {
+        key: ".",
+        ctrlKey: true,
+        metaKey: true,
+      });
+
+      await waitFor(() => {
+        expect(contextValue?.agentId).toBe("exec");
+      });
+      expect(openPickerEvents).toBe(1);
+    } finally {
+      window.removeEventListener(
+        CUSTOM_EVENTS.OPEN_AGENT_PICKER,
+        handleOpenPicker as EventListener
+      );
+    }
   });
 
   test("toggle auto shortcut switches between manual and auto", async () => {
