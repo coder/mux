@@ -1038,6 +1038,7 @@ describe("TaskService", () => {
       agentId: "explore",
       thinkingLevel: "xhigh",
       experiments: undefined,
+      providerOptions: { agentInitiated: true },
     });
 
     const postCfg = config.loadConfigOrDefault();
@@ -1103,6 +1104,7 @@ describe("TaskService", () => {
         agentId: "explore",
         thinkingLevel: "xhigh",
         experiments: undefined,
+        providerOptions: { agentInitiated: true },
       }
     );
 
@@ -1171,6 +1173,7 @@ describe("TaskService", () => {
         agentId: "explore",
         thinkingLevel: "off",
         experiments: undefined,
+        providerOptions: { agentInitiated: true },
       }
     );
 
@@ -1248,6 +1251,7 @@ describe("TaskService", () => {
       agentId: "custom",
       thinkingLevel: "xhigh",
       experiments: undefined,
+      providerOptions: { agentInitiated: true },
     });
 
     const postCfg = config.loadConfigOrDefault();
@@ -1324,6 +1328,7 @@ describe("TaskService", () => {
       agentId: "custom",
       thinkingLevel: "xhigh",
       experiments: undefined,
+      providerOptions: { agentInitiated: true },
     });
   }, 20_000);
   test("auto-resumes a parent workspace until background tasks finish", async () => {
