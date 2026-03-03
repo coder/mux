@@ -801,7 +801,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
       return prev;
     });
-  }, [initialActiveTab, llmDebugLogsEnabled, setLayoutRaw]);
+  }, [initialActiveTab, layoutRaw, llmDebugLogsEnabled, setLayoutRaw]);
   // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
   React.useEffect(() => {
     if (!isRightSidebarLayoutState(layoutRaw)) {
