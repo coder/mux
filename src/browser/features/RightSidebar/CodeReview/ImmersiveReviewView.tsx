@@ -1693,7 +1693,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           )}
         </div>
 
-        {overlayData && !isTouchExperience && (
+        {overlayData && !isTouchExperience && !isActiveFileContentLoading && (
           <ImmersiveMinimap
             content={overlayData.content}
             scrollContainerRef={scrollContainerRef}
