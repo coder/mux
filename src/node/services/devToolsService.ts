@@ -16,7 +16,7 @@ interface WorkspaceData {
   runs: Map<string, DevToolsRun>;
   steps: Map<string, DevToolsStep>;
   loaded: boolean;
-  /** Incremented on each clear(); appendToFile checks this to skip stale writes. */
+  /** Incremented on each clear() for defense-in-depth against stale state. */
   clearGeneration: number;
 }
 
@@ -85,6 +85,7 @@ function applyStepBackwardCompatibilityDefaults(step: DevToolsStep): DevToolsSte
 export class DevToolsService extends EventEmitter {
   private readonly workspaces = new Map<string, WorkspaceData>();
   private readonly loadingPromises = new Map<string, Promise<void>>();
+  private readonly writeQueues = new Map<string, Promise<void>>();
 
   constructor(private readonly config: Config) {
     super();
@@ -265,9 +266,12 @@ export class DevToolsService extends EventEmitter {
     data.clearGeneration += 1;
     data.loaded = true;
 
-    const filePath = this.getSessionFilePath(workspaceId);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, "", "utf-8");
+    // Enqueue truncation so clear() cannot race with pending appends.
+    await this.enqueueWrite(workspaceId, async () => {
+      const filePath = this.getSessionFilePath(workspaceId);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, "", "utf-8");
+    });
 
     this.emitWorkspaceEvent(workspaceId, { type: "cleared" });
   }
@@ -463,19 +467,38 @@ export class DevToolsService extends EventEmitter {
     };
   }
 
+  /**
+   * Serialize all disk writes per workspace so clear() and appendToFile()
+   * can never complete out of order.
+   */
+  private enqueueWrite(workspaceId: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.writeQueues.get(workspaceId) ?? Promise.resolve();
+    // Always chain regardless of prior failure so the queue never stalls.
+    const next = prev.then(fn, () => fn());
+    this.writeQueues.set(workspaceId, next);
+    return next;
+  }
+
   private async appendToFile(workspaceId: string, entry: DevToolsLogEntry): Promise<void> {
-    const data = this.workspaces.get(workspaceId);
-    const generationBefore = data?.clearGeneration ?? 0;
+    return this.enqueueWrite(workspaceId, async () => {
+      // Defense-in-depth: skip stale writes after clear() by requiring current entities.
+      const data = this.workspaces.get(workspaceId);
+      if (!data) {
+        return;
+      }
+      if (entry.type === "run" && !data.runs.has(entry.run.id)) {
+        return;
+      }
+      if (entry.type === "step" && !data.steps.has(entry.step.id)) {
+        return;
+      }
+      if (entry.type === "step-update" && !data.steps.has(entry.stepId)) {
+        return;
+      }
 
-    const filePath = this.getSessionFilePath(workspaceId);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-
-    // If clear() ran between the caller's in-memory update and this disk write,
-    // the file was truncated and our data is stale. Skip the write.
-    if ((this.workspaces.get(workspaceId)?.clearGeneration ?? 0) !== generationBefore) {
-      return;
-    }
-
-    await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf-8");
+      const filePath = this.getSessionFilePath(workspaceId);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf-8");
+    });
   }
 }
