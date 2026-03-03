@@ -69,7 +69,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
 
   const handleEdit = () => {
-    if (onEdit && !isLocalCommandOutput && !isSynthetic) {
+    // Allow users to take ownership of AUTO (synthetic) prompts by editing them.
+    if (onEdit && !isLocalCommandOutput) {
       onEdit(buildEditingStateFromDisplayed(message));
     }
   };
@@ -111,7 +112,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
           },
         ]
       : []),
-    ...(onEdit && !isLocalCommandOutput && !isSynthetic
+    ...(onEdit && !isLocalCommandOutput
       ? [
           {
             label: "Edit",
