@@ -754,8 +754,9 @@ function AppInner() {
   }, [navigate]);
 
   useEffect(() => {
-    // Electron doesn't need this — no browser back/forward behavior
-    if (window.api) return;
+    // Only needed in standalone PWA mode — normal browser tabs should have standard back/forward behavior
+    const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
+    if (window.api || !isStandalone) return;
 
     // Push a dummy state so back button has somewhere to go without leaving the app
     window.history.pushState({ mux: true }, "", window.location.href);
