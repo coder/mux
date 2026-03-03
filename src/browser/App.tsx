@@ -1,7 +1,7 @@
 import { Menu } from "lucide-react";
 import { useEffect, useCallback, useRef } from "react";
 import { useRouter } from "./contexts/RouterContext";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -182,6 +182,9 @@ function AppInner() {
 
   // History navigation (back/forward)
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationRef = useRef(location);
+  locationRef.current = location;
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects: userProjects,
@@ -762,8 +765,10 @@ function AppInner() {
     window.history.pushState({ mux: true }, "", window.location.href);
 
     const handlePopState = () => {
-      // Re-push to stay on the page (browser tried to navigate away)
-      window.history.pushState({ mux: true }, "", window.location.href);
+      // Re-push the correct URL from MemoryRouter, not the popped browser URL
+      const { pathname, search, hash } = locationRef.current;
+      const correctUrl = `${window.location.origin}${pathname}${search}${hash}`;
+      window.history.pushState({ mux: true }, "", correctUrl);
     };
 
     window.addEventListener("popstate", handlePopState);
