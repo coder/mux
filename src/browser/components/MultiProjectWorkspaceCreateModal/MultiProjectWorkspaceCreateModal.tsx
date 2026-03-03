@@ -122,7 +122,7 @@ export function MultiProjectWorkspaceCreateModal(props: MultiProjectWorkspaceCre
                       <span className="text-foreground block truncate text-sm font-medium">
                         {project.projectName}
                       </span>
-                      <span className="text-muted block truncate text-xs font-mono">
+                      <span className="text-muted block truncate font-mono text-xs">
                         {project.projectPath}
                       </span>
                     </span>

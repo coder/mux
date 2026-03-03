@@ -8,7 +8,7 @@ export interface ProjectWorkspaceEntry {
 }
 
 export class ContainerManager {
-  constructor(private srcBaseDir: string) {}
+  constructor(private readonly srcBaseDir: string) {}
 
   private get containerBase(): string {
     return path.join(this.srcBaseDir, "_workspaces");

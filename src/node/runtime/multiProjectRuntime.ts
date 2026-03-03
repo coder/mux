@@ -47,7 +47,7 @@ export class MultiProjectRuntime implements Runtime {
   ) {
     assert(projectRuntimes.length > 0, "MultiProjectRuntime requires at least one project runtime");
 
-    this.primaryRuntime = projectRuntimes[0]!.runtime;
+    this.primaryRuntime = projectRuntimes[0].runtime;
     this.containerPath = containerManager.getContainerPath(workspaceName);
     this.createFlags = this.primaryRuntime.createFlags;
 

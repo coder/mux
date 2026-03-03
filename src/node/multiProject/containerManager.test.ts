@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -59,30 +60,33 @@ describe("ContainerManager", () => {
 
     await manager.removeContainer("shared-workspace");
 
-    await expect(fs.access(containerPath)).rejects.toThrow();
-    await expect(
-      fs.readFile(path.join(projectWorkspace.workspacePath, "marker.txt"), "utf8")
-    ).resolves.toBe("alpha marker");
+    await assert.rejects(fs.access(containerPath));
+    const markerContent = await fs.readFile(
+      path.join(projectWorkspace.workspacePath, "marker.txt"),
+      "utf8"
+    );
+    expect(markerContent).toBe("alpha marker");
   });
 
   it("removeContainer is idempotent", async () => {
     await manager.removeContainer("shared-workspace");
-    await expect(manager.removeContainer("shared-workspace")).resolves.toBeUndefined();
+    await assert.doesNotReject(manager.removeContainer("shared-workspace"));
   });
 
   it("createContainer rejects duplicate project names", async () => {
     const alphaWorkspace = await createWorkspaceDir("alpha", "alpha marker");
     const duplicateWorkspace = await createWorkspaceDir("alpha-2", "alpha duplicate marker");
 
-    await expect(
+    await assert.rejects(
       manager.createContainer("shared-workspace", [
         alphaWorkspace,
         {
           projectName: alphaWorkspace.projectName,
           workspacePath: duplicateWorkspace.workspacePath,
         },
-      ])
-    ).rejects.toThrow("Duplicate project names in multi-project workspace");
+      ]),
+      /Duplicate project names in multi-project workspace/
+    );
   });
 
   it("getContainerPath returns deterministic path under _workspaces", () => {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import assert from "node:assert/strict";
 import * as fsPromises from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -92,24 +93,25 @@ describe("WorkspaceService multi-project lifecycle", () => {
         getAllWorkspaceMetadata: mock(() => {
           const workspaces = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces ?? [];
           return Promise.resolve(
-            workspaces.map(
-              (workspace) =>
-                ({
-                  id: workspace.id ?? "",
-                  name: workspace.name ?? "",
-                  title: workspace.title,
-                  projectPath: workspace.projects?.[0]?.projectPath ?? "",
-                  projectName:
-                    workspace.projects?.map((project) => project.projectName).join("+") ?? "",
-                  projects: workspace.projects,
-                  createdAt: workspace.createdAt,
-                  runtimeConfig: workspace.runtimeConfig ?? {
-                    type: "worktree",
-                    srcBaseDir: srcDir,
-                  },
-                  namedWorkspacePath: workspace.path,
-                }) as FrontendWorkspaceMetadata
-            )
+            workspaces.map((workspace) => {
+              const metadata: FrontendWorkspaceMetadata = {
+                id: workspace.id ?? "",
+                name: workspace.name ?? "",
+                title: workspace.title,
+                projectPath: workspace.projects?.[0]?.projectPath ?? "",
+                projectName:
+                  workspace.projects?.map((project) => project.projectName).join("+") ?? "",
+                projects: workspace.projects,
+                createdAt: workspace.createdAt,
+                runtimeConfig: workspace.runtimeConfig ?? {
+                  type: "worktree",
+                  srcBaseDir: srcDir,
+                },
+                namedWorkspacePath: workspace.path,
+              };
+
+              return metadata;
+            })
           );
         }),
         getSessionDir: mock((workspace: string) => path.join(rootDir, "sessions", workspace)),
@@ -253,13 +255,14 @@ describe("WorkspaceService multi-project lifecycle", () => {
         mockBackgroundProcessManager as BackgroundProcessManager
       );
 
-      await expect(
+      await assert.rejects(
         workspaceService.createMultiProject(
           [{ projectPath: path.join(rootDir, "project-a"), projectName: "project-a" }],
           "feature",
           "main"
-        )
-      ).rejects.toThrow("createMultiProject requires at least two projects");
+        ),
+        /createMultiProject requires at least two projects/
+      );
     });
   });
 

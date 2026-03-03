@@ -79,7 +79,7 @@ async function runOrchestrateFork(params: {
   config?: Config;
 }): Promise<Awaited<ReturnType<typeof orchestrateFork>>> {
   return orchestrateFork({
-    sourceRuntime: {} as Runtime,
+    sourceRuntime: createProjectRuntimeMocks().runtime,
     projectPath: PROJECT_ONE_PATH,
     sourceWorkspaceName: SOURCE_WORKSPACE_NAME,
     newWorkspaceName: NEW_WORKSPACE_NAME,
@@ -253,7 +253,7 @@ describe("orchestrateFork (multi-project)", () => {
     } satisfies WorkspaceForkResult);
 
     const result = await orchestrateFork({
-      sourceRuntime: {} as Runtime,
+      sourceRuntime: createProjectRuntimeMocks().runtime,
       projectPath: PROJECT_ONE_PATH,
       sourceWorkspaceName: SOURCE_WORKSPACE_NAME,
       newWorkspaceName: NEW_WORKSPACE_NAME,
