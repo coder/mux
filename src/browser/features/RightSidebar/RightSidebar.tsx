@@ -661,11 +661,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // API for reading config and managing terminal sessions.
   const { api } = useAPI();
-  const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState(false);
+  const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
 
   React.useEffect(() => {
     if (!api) {
-      setLlmDebugLogsEnabled(false);
+      setLlmDebugLogsEnabled(null);
       return;
     }
 
@@ -779,6 +779,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // If LLM debug logs are enabled, ensure the Debug tab exists in the layout.
   // If disabled, ensure it doesn't linger in persisted layouts.
   React.useEffect(() => {
+    // Skip layout mutations until the config has been loaded. Using null
+    // as the initial state prevents pruning debug tabs from persisted layouts
+    // before we know the real setting.
+    if (llmDebugLogsEnabled == null) {
+      return;
+    }
+
     setLayoutRaw((prevRaw) => {
       const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
       const hasDebug = collectAllTabs(prev.root).includes("debug");
