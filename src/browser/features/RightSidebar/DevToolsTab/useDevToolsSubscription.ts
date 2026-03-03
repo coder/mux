@@ -43,9 +43,20 @@ export function useDevToolsSubscription(workspaceId: string) {
             setRuns(event.runs);
             setStepsByRun(new Map());
             break;
-          case "run-created":
-            setRuns((previousRuns) => [event.run, ...previousRuns]);
+          case "run-created": {
+            setRuns((previousRuns) => {
+              // De-duplicate if the run is already in state (e.g., from initial snapshot).
+              const existingRunIndex = previousRuns.findIndex((run) => run.id === event.run.id);
+              if (existingRunIndex >= 0) {
+                const updatedRuns = [...previousRuns];
+                updatedRuns[existingRunIndex] = event.run;
+                return updatedRuns;
+              }
+
+              return [event.run, ...previousRuns];
+            });
             break;
+          }
           case "run-updated":
             setRuns((previousRuns) =>
               previousRuns.map((run) => (run.id === event.run.id ? event.run : run))

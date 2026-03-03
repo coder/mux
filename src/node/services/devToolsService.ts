@@ -135,10 +135,6 @@ export class DevToolsService extends EventEmitter {
     stepId: string,
     update: Partial<DevToolsStep>
   ): Promise<void> {
-    if (!this.enabled) {
-      return;
-    }
-
     assert(workspaceId.trim().length > 0, "DevToolsService.updateStep requires a workspaceId");
     assert(stepId.trim().length > 0, "DevToolsService.updateStep requires stepId");
 
