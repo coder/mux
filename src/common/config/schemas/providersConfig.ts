@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ModelParametersByModelSchema } from "./modelParameters";
 import { ProviderModelEntrySchema } from "./providerModelEntry";
 
 export const CacheTtlSchema = z.enum(["5m", "1h"]);
@@ -15,6 +16,7 @@ export const BaseProviderConfigSchema = z
     headers: z.record(z.string(), z.string()).optional(),
     enabled: z.boolean().optional(),
     models: z.array(ProviderModelEntrySchema).optional(),
+    modelParameters: ModelParametersByModelSchema.optional(),
   })
   .passthrough();
 

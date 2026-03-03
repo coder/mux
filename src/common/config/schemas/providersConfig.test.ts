@@ -42,4 +42,82 @@ describe("ProvidersConfigSchema", () => {
 
     expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
   });
+
+  describe("modelParameters", () => {
+    it("accepts valid per-model and wildcard overrides", () => {
+      const valid = {
+        openai: {
+          modelParameters: {
+            "gpt-5": { max_output_tokens: 1024, temperature: 0.4 },
+            "*": { top_p: 0.9 },
+          },
+        },
+      };
+
+      expect(ProvidersConfigSchema.safeParse(valid).success).toBe(true);
+    });
+
+    it("rejects negative max_output_tokens", () => {
+      const invalid = {
+        openai: {
+          modelParameters: {
+            "gpt-5": { max_output_tokens: -1 },
+          },
+        },
+      };
+
+      expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    it("rejects temperature values above 2", () => {
+      const invalid = {
+        openai: {
+          modelParameters: {
+            "gpt-5": { temperature: 3 },
+          },
+        },
+      };
+
+      expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    it("rejects top_p values above 1", () => {
+      const invalid = {
+        openai: {
+          modelParameters: {
+            "gpt-5": { top_p: 1.5 },
+          },
+        },
+      };
+
+      expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    it("passes through unknown override keys", () => {
+      const valid = {
+        openai: {
+          modelParameters: {
+            "gpt-5": { transforms: ["middle-out"] },
+          },
+        },
+      };
+
+      const parsed = ProvidersConfigSchema.safeParse(valid);
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.openai?.modelParameters?.["gpt-5"]).toEqual({
+          transforms: ["middle-out"],
+        });
+      }
+    });
+
+    it("allows provider configs without modelParameters", () => {
+      const valid = {
+        openai: { apiKey: "sk-openai-123" },
+      };
+
+      expect(ProvidersConfigSchema.safeParse(valid).success).toBe(true);
+    });
+  });
 });

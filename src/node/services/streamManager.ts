@@ -56,6 +56,7 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats, getModelStatsResolved } from "@/common/utils/tokens/modelStats";
+import type { ResolvedCallSettingsOverrides } from "@/common/config/schemas/modelParameters";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shellQuote } from "@/common/utils/shell";
@@ -105,6 +106,7 @@ interface StreamRequestConfig {
   /** Per-request HTTP headers (e.g., anthropic-beta for 1M context). */
   headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
+  streamCallSettings?: Omit<ResolvedCallSettingsOverrides, "maxOutputTokens">;
   hasQueuedMessage?: () => boolean;
   toolPolicy?: ToolPolicy;
   // Belt-and-suspenders for top-level agents: force the model to call the
@@ -1057,6 +1059,7 @@ export class StreamManager extends EventEmitter {
     tools?: Record<string, Tool>,
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
+    callSettingsOverrides?: ResolvedCallSettingsOverrides,
     toolPolicy?: ToolPolicy,
     forceToolChoice?: boolean,
     hasQueuedMessage?: () => boolean,
@@ -1092,11 +1095,15 @@ export class StreamManager extends EventEmitter {
     // a custom model's provider may not support the mapped model's output cap.
     // If no metadata exists, omit the parameter to let the provider use its
     // default (Anthropic requires this but has low defaults).
+    const { maxOutputTokens: configMaxOutputTokens, ...streamCallSettings } =
+      callSettingsOverrides ?? {};
+
     const runtimeModelStats = getModelStats(modelString);
     // Fall back to resolved stats for custom aliases (e.g., provider alias mappedToModel).
     const resolvedModelStats =
       runtimeModelStats ?? getModelStatsResolved(modelString, this.getProvidersConfig());
-    const effectiveMaxOutputTokens = maxOutputTokens ?? resolvedModelStats?.max_output_tokens;
+    const effectiveMaxOutputTokens =
+      maxOutputTokens ?? configMaxOutputTokens ?? resolvedModelStats?.max_output_tokens;
 
     let toolChoice: StreamRequestConfig["toolChoice"] | undefined;
     if (forceToolChoice && toolPolicy && finalTools) {
@@ -1150,6 +1157,8 @@ export class StreamManager extends EventEmitter {
       providerOptions: finalProviderOptions,
       headers,
       maxOutputTokens: effectiveMaxOutputTokens,
+      streamCallSettings:
+        Object.keys(streamCallSettings).length > 0 ? streamCallSettings : undefined,
       hasQueuedMessage,
       toolPolicy,
       toolChoice,
@@ -1242,6 +1251,7 @@ export class StreamManager extends EventEmitter {
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
       headers: request.headers, // Per-request HTTP headers (e.g., anthropic-beta for 1M context)
       maxOutputTokens: request.maxOutputTokens,
+      ...(request.streamCallSettings ?? {}),
     });
   }
 
@@ -1266,6 +1276,7 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     forceToolChoice?: boolean,
+    callSettingsOverrides?: ResolvedCallSettingsOverrides,
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
@@ -1284,6 +1295,7 @@ export class StreamManager extends EventEmitter {
       tools,
       providerOptions,
       maxOutputTokens,
+      callSettingsOverrides,
       toolPolicy,
       forceToolChoice,
       hasQueuedMessage,
@@ -2678,7 +2690,8 @@ export class StreamManager extends EventEmitter {
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
-    forceToolChoice?: boolean
+    forceToolChoice?: boolean,
+    callSettingsOverrides?: ResolvedCallSettingsOverrides
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2752,6 +2765,7 @@ export class StreamManager extends EventEmitter {
           maxOutputTokens,
           toolPolicy,
           forceToolChoice,
+          callSettingsOverrides,
           hasQueuedMessage,
           workspaceName,
           thinkingLevel,

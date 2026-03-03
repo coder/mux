@@ -52,6 +52,7 @@ import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpSer
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/providerOptions";
+import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
@@ -115,6 +116,36 @@ function safeClone<T>(value: T): T {
   return typeof structuredClone === "function"
     ? structuredClone(value)
     : (JSON.parse(JSON.stringify(value)) as T);
+}
+
+/** Plain-object guard for recursive provider option merging. */
+function isProviderPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value == null || Array.isArray(value)) {
+    return false;
+  }
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Recursively merge user-provided provider extras under Mux-built provider options.
+ * Mux values win on leaf conflicts; both sides' non-conflicting nested fields are preserved.
+ */
+function mergeProviderExtrasUnderMux(
+  providerExtras: Record<string, unknown>,
+  muxProviderNamespace: Record<string, unknown>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...providerExtras };
+
+  for (const [key, muxValue] of Object.entries(muxProviderNamespace)) {
+    const extraValue = merged[key];
+    merged[key] =
+      isProviderPlainObject(extraValue) && isProviderPlainObject(muxValue)
+        ? mergeProviderExtrasUnderMux(extraValue, muxValue)
+        : muxValue;
+  }
+
+  return merged;
 }
 
 interface ToolExecutionContext {
@@ -1039,6 +1070,38 @@ export class AIService extends EventEmitter {
         this.providerService.getConfig()
       );
 
+      // --- Model parameter overrides from providers.jsonc ---
+      const providersConfig = this.config.loadProvidersConfig();
+      const resolvedOverrides = resolveModelParameterOverrides(
+        providersConfig,
+        canonicalProviderName,
+        canonicalModelString,
+        effectiveModelString
+      );
+
+      // Merge provider extras (user knobs) UNDER Mux-built options (safety-critical).
+      // Recursive merge within the provider namespace preserves non-conflicting nested
+      // subfields (e.g., user reasoning.max_tokens alongside Mux reasoning.enabled).
+      // Mux-built values win on leaf conflicts for safety of thinking/reasoning/cache.
+      const muxProviderNamespace = (providerOptions as Record<string, unknown>)?.[
+        canonicalProviderName
+      ];
+      const mergedProviderOptions = resolvedOverrides.providerExtras
+        ? {
+            ...providerOptions,
+            [canonicalProviderName]: isProviderPlainObject(muxProviderNamespace)
+              ? mergeProviderExtrasUnderMux(resolvedOverrides.providerExtras, muxProviderNamespace)
+              : resolvedOverrides.providerExtras,
+          }
+        : providerOptions;
+
+      if (Object.keys(resolvedOverrides.standard).length > 0 || resolvedOverrides.providerExtras) {
+        log.debug(
+          `Resolved model parameter overrides for ${canonicalModelString}`,
+          resolvedOverrides
+        );
+      }
+
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
         log.info(
@@ -1054,7 +1117,7 @@ export class AIService extends EventEmitter {
                   { description: t.description, inputSchema: t.inputSchema },
                 ])
               ),
-              providerOptions,
+              providerOptions: mergedProviderOptions,
               thinkingLevel: effectiveThinkingLevel,
               maxOutputTokens,
               mode: effectiveMode,
@@ -1065,6 +1128,16 @@ export class AIService extends EventEmitter {
             2
           )}`
         );
+
+        if (resolvedOverrides.standard && Object.keys(resolvedOverrides.standard).length > 0) {
+          log.debug("Model parameter overrides (standard):", resolvedOverrides.standard);
+        }
+        if (resolvedOverrides.providerExtras) {
+          log.debug(
+            "Model parameter overrides (provider extras):",
+            resolvedOverrides.providerExtras
+          );
+        }
       }
 
       if (combinedAbortSignal.aborted) {
@@ -1141,7 +1214,7 @@ export class AIService extends EventEmitter {
           ...(acpPromptId != null ? { acpPromptId } : {}),
           ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },
-        providerOptions,
+        mergedProviderOptions,
         maxOutputTokens,
         effectiveToolPolicy,
         streamToken, // Pass the pre-generated stream token
@@ -1150,7 +1223,8 @@ export class AIService extends EventEmitter {
         effectiveThinkingLevel,
         requestHeaders,
         effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
-        forceToolChoice
+        forceToolChoice,
+        resolvedOverrides.standard
       );
 
       if (!streamResult.success) {

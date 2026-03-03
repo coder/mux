@@ -1,10 +1,12 @@
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
+import * as aiSdk from "ai";
 import { APICallError, RetryError, type ModelMessage } from "ai";
+import * as modelStatsModule from "@/common/utils/tokens/modelStats";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -374,6 +376,7 @@ describe("StreamManager - stopWhen configuration", () => {
       { switch_agent: {} },
       undefined,
       undefined,
+      undefined,
       [{ regex_match: "switch_agent", action: "require" }],
       true,
       () => false,
@@ -435,6 +438,176 @@ describe("StreamManager - stopWhen configuration", () => {
         steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
       })
     ).toBe(false);
+  });
+});
+
+describe("StreamManager - call settings overrides", () => {
+  interface StreamRequestConfigForTests {
+    model: unknown;
+    messages: ModelMessage[];
+    system?: string;
+    tools?: Record<string, unknown>;
+    providerOptions?: Record<string, unknown>;
+    headers?: Record<string, string | undefined>;
+    maxOutputTokens?: number;
+    streamCallSettings?: Record<string, unknown>;
+  }
+
+  type BuildStreamRequestConfig = (...args: unknown[]) => StreamRequestConfigForTests;
+  type CreateStreamResult = (
+    request: StreamRequestConfigForTests,
+    abortController: AbortController
+  ) => unknown;
+
+  const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+  const modelString = KNOWN_MODELS.SONNET.id;
+  const messages: ModelMessage[] = [{ role: "user", content: "hello" }];
+
+  function getRequestHelpers(streamManager: StreamManager): {
+    buildRequestConfig: BuildStreamRequestConfig;
+    createStreamResult: CreateStreamResult;
+  } {
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | BuildStreamRequestConfig
+      | undefined;
+    const createStreamResultMethod = Reflect.get(streamManager, "createStreamResult") as
+      | CreateStreamResult
+      | undefined;
+
+    expect(typeof buildRequestConfig).toBe("function");
+    expect(typeof createStreamResultMethod).toBe("function");
+
+    if (!buildRequestConfig || !createStreamResultMethod) {
+      throw new Error("Expected StreamManager private helpers to exist");
+    }
+
+    return {
+      buildRequestConfig,
+      createStreamResult: (request, abortController) =>
+        createStreamResultMethod.call(streamManager, request, abortController),
+    };
+  }
+
+  function buildRequest(
+    buildRequestConfig: BuildStreamRequestConfig,
+    options: {
+      maxOutputTokens?: number;
+      callSettingsOverrides?: {
+        maxOutputTokens?: number;
+        temperature?: number;
+        topP?: number;
+      };
+    }
+  ): StreamRequestConfigForTests {
+    return buildRequestConfig(
+      model,
+      modelString,
+      messages,
+      "system",
+      undefined,
+      undefined,
+      options.maxOutputTokens,
+      options.callSettingsOverrides,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined
+    );
+  }
+
+  function setupStreamTextSpy() {
+    return spyOn(aiSdk, "streamText").mockReturnValue({
+      fullStream: (async function* asyncGenerator() {
+        yield* [] as unknown[];
+        await Promise.resolve();
+      })(),
+      usage: Promise.resolve(undefined),
+      providerMetadata: Promise.resolve(undefined),
+      totalUsage: Promise.resolve(undefined),
+      steps: Promise.resolve([]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test("uses config maxOutputTokens override when explicit maxOutputTokens is missing", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    spyOn(modelStatsModule, "getModelStats").mockReturnValue({
+      max_input_tokens: 200000,
+      max_output_tokens: 8192,
+      input_cost_per_token: 0,
+      output_cost_per_token: 0,
+    });
+
+    const request = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: { maxOutputTokens: 4096 },
+    });
+
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledWith(expect.objectContaining({ maxOutputTokens: 4096 }));
+  });
+
+  test("uses explicit maxOutputTokens over config maxOutputTokens override", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    spyOn(modelStatsModule, "getModelStats").mockReturnValue({
+      max_input_tokens: 200000,
+      max_output_tokens: 8192,
+      input_cost_per_token: 0,
+      output_cost_per_token: 0,
+    });
+
+    const request = buildRequest(buildRequestConfig, {
+      maxOutputTokens: 1024,
+      callSettingsOverrides: { maxOutputTokens: 4096 },
+    });
+
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledWith(expect.objectContaining({ maxOutputTokens: 1024 }));
+  });
+
+  test("forwards stream call settings to streamText", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    const request = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: { temperature: 0.5, topP: 0.9 },
+    });
+
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        temperature: 0.5,
+        topP: 0.9,
+      })
+    );
+  });
+
+  test("does not store streamCallSettings when overrides are empty", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig } = getRequestHelpers(streamManager);
+
+    const requestWithUndefined = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: undefined,
+    });
+    const requestWithEmpty = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: {},
+    });
+
+    expect(requestWithUndefined.streamCallSettings).toBeUndefined();
+    expect(requestWithEmpty.streamCallSettings).toBeUndefined();
   });
 });
 
