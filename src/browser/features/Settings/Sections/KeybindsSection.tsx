@@ -77,6 +77,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   REVIEW_QUICK_DISLIKE: "Quick dislike (immersive)",
   REVIEW_COMMENT: "Add comment (immersive)",
   REVIEW_FOCUS_NOTES: "Focus notes sidebar (immersive)",
+  TOGGLE_PLAN_ANNOTATE: "Toggle plan annotate mode",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
 };
@@ -110,6 +111,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "FOCUS_CHAT",
       "FOCUS_INPUT_I",
       "FOCUS_INPUT_A",
+      "TOGGLE_PLAN_ANNOTATE",
       "CANCEL",
       "INTERRUPT_STREAM_NORMAL",
       "INTERRUPT_STREAM_VIM",

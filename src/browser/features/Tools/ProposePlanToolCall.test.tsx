@@ -105,6 +105,43 @@ void mock.module("@/browser/contexts/TelemetryEnabledContext", () => ({
   useLinkSharingEnabled: () => true,
 }));
 
+void mock.module("@/browser/hooks/useReviews", () => ({
+  useReviews: () => ({
+    reviews: [],
+    pendingCount: 0,
+    attachedCount: 0,
+    checkedCount: 0,
+    attachedReviews: [],
+    addReview: (data: unknown) => ({
+      id: "test-review",
+      data,
+      status: "attached" as const,
+      createdAt: Date.now(),
+    }),
+    attachReview: () => undefined,
+    detachReview: () => undefined,
+    attachAllPending: () => undefined,
+    detachAllAttached: () => undefined,
+    checkReview: () => undefined,
+    uncheckReview: () => undefined,
+    removeReview: () => undefined,
+    updateReviewNote: () => undefined,
+    clearChecked: () => undefined,
+    clearAll: () => undefined,
+    getReview: () => undefined,
+  }),
+}));
+
+void mock.module("./PlanAnnotationView", () => ({
+  PlanAnnotationView: (props: { planContent: string }) => (
+    <div data-testid="plan-annotation-view">{props.planContent}</div>
+  ),
+}));
+
+void mock.module("@/common/types/review", () => ({
+  isPlanFilePath: () => true,
+}));
+
 const TEST_AGENTS: AgentDefinitionDescriptor[] = [
   {
     id: "exec",
@@ -240,6 +277,77 @@ describe("ProposePlanToolCall", () => {
     expect(startHereCalls[0]?.content).toContain("*Plan file preserved at:*");
     expect(startHereCalls[0]?.content).toContain("Note: This chat already contains the full plan");
     expect(startHereCalls[0]?.content).toContain(planPath);
+  });
+
+  test("shows Annotate button for latest completed plan with workspaceId", () => {
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        result={{
+          success: true,
+          planPath,
+          planContent: "# My Plan\n\nDo the thing.",
+        }}
+        workspaceId="ws-123"
+        isLatest={true}
+      />
+    );
+
+    expect(view.getByRole("button", { name: "Annotate" })).toBeDefined();
+  });
+
+  test("hides Annotate button for non-latest plans", () => {
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        result={{
+          success: true,
+          planPath,
+          planContent: "# My Plan\n\nDo the thing.",
+        }}
+        workspaceId="ws-123"
+        isLatest={false}
+      />
+    );
+
+    expect(view.queryByRole("button", { name: "Annotate" })).toBeNull();
+  });
+
+  test("annotate mode and raw mode are mutually exclusive", () => {
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        result={{
+          success: true,
+          planPath,
+          planContent: "# My Plan\n\nDo the thing.",
+        }}
+        workspaceId="ws-123"
+        isLatest={true}
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Annotate" }));
+    expect(view.getByRole("button", { name: "Exit Annotate" })).toBeDefined();
+    expect(view.getByTestId("plan-annotation-view")).toBeDefined();
+
+    fireEvent.click(view.getByRole("button", { name: "Show Text" }));
+    expect(view.queryByTestId("plan-annotation-view")).toBeNull();
+    expect(view.container.querySelector("pre")).not.toBeNull();
+
+    fireEvent.click(view.getByRole("button", { name: "Annotate" }));
+    expect(view.getByRole("button", { name: "Exit Annotate" })).toBeDefined();
+    expect(view.getByTestId("plan-annotation-view")).toBeDefined();
+    expect(view.container.querySelector("pre")).toBeNull();
   });
 
   test("switches to exec and sends a message when clicking Implement", async () => {

@@ -15,11 +15,13 @@ import {
 } from "./Shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
+import { PlanAnnotationView } from "./PlanAnnotationView";
 import { Button } from "@/browser/components/Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
+import { useReviews } from "@/browser/hooks/useReviews";
 import { createMuxMessage } from "@/common/types/message";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { cn } from "@/common/lib/utils";
@@ -46,6 +48,8 @@ import {
   type WorkspaceAISettingsCache,
 } from "@/browser/utils/workspaceModeAi";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import type { ReviewActionCallbacks } from "../Shared/InlineReviewNote";
+import { isPlanFilePath } from "@/common/types/review";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   Clipboard,
@@ -53,6 +57,8 @@ import {
   ClipboardList,
   FileText,
   ListStart,
+  MessageSquareOff,
+  MessageSquarePlus,
   Pencil,
   Play,
   Sparkles,
@@ -151,6 +157,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   } = props;
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
+  const [annotateMode, setAnnotateMode] = useState(false);
   const [isStartingOrchestrator, setIsStartingOrchestrator] = useState(false);
   const [isImplementing, setIsImplementing] = useState(false);
   const [isContinuingInAuto, setIsContinuingInAuto] = useState(false);
@@ -319,6 +326,23 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     planContent = "";
     planTitle = "Plan";
   }
+
+  const reviews = useReviews(workspaceId ?? "");
+  const planReviews = reviews.reviews.filter((review) => {
+    if (!isPlanFilePath(review.data.filePath)) {
+      return false;
+    }
+
+    return planPath != null ? review.data.filePath === planPath : true;
+  });
+  const reviewActions: ReviewActionCallbacks = {
+    onEditComment: reviews.updateReviewNote,
+    onComplete: reviews.checkReview,
+    onDetach: reviews.detachReview,
+    onDelete: reviews.removeReview,
+    onAttach: reviews.attachReview,
+    onUncheck: reviews.uncheckReview,
+  };
 
   // Format: Title as H1 + plan content for "Start Here" functionality.
   // Note: we intentionally preserve the plan file on disk when starting here so it can be
@@ -699,10 +723,35 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     });
   }
 
+  const showAnnotateButton = Boolean(
+    (isLatest || isEphemeralPreview) && planContent && workspaceId
+  );
+  if (showAnnotateButton) {
+    actionButtons.push({
+      label: annotateMode ? "Exit Annotate" : "Annotate",
+      onClick: () => {
+        const next = !annotateMode;
+        setAnnotateMode(next);
+        if (next) {
+          setShowRaw(false);
+        }
+      },
+      active: annotateMode,
+      icon: annotateMode ? <MessageSquareOff /> : <MessageSquarePlus />,
+      tooltip: `${annotateMode ? "Exit" : "Enter"} annotation mode (${formatKeybind(KEYBINDS.TOGGLE_PLAN_ANNOTATE)})`,
+    });
+  }
+
   // Show raw toggle
   actionButtons.push({
     label: showRaw ? "Show Markdown" : "Show Text",
-    onClick: () => setShowRaw(!showRaw),
+    onClick: () => {
+      const next = !showRaw;
+      setShowRaw(next);
+      if (next) {
+        setAnnotateMode(false);
+      }
+    },
     active: showRaw,
     icon: <FileText />,
   });
@@ -719,11 +768,21 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
   // Shared plan UI content (used in both tool call and ephemeral preview modes)
   const planUI = (
-    <div className="plan-surface rounded-md p-3 shadow-md">
+    <div
+      className={cn(
+        "plan-surface rounded-md p-3 shadow-md",
+        annotateMode && "ring-accent/30 ring-1"
+      )}
+    >
       {/* Header: title only */}
       <div className="plan-divider mb-3 flex items-center gap-2 border-b pb-2">
         <ClipboardList aria-hidden="true" className="h-4 w-4" />
         <div className="text-plan-mode font-mono text-[13px] font-semibold">{planTitle}</div>
+        {annotateMode && (
+          <div className="bg-accent/10 text-accent rounded px-1.5 py-0.5 font-mono text-[10px] font-medium">
+            Annotating
+          </div>
+        )}
         {isEphemeralPreview && (
           <div className="text-muted font-mono text-[10px] italic">preview only</div>
         )}
@@ -732,6 +791,14 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       {/* Content */}
       {errorMessage ? (
         <div className="text-error rounded-sm p-2 font-mono text-xs">{errorMessage}</div>
+      ) : annotateMode ? (
+        <PlanAnnotationView
+          planContent={planContent}
+          planPath={planPath}
+          onReviewNote={reviews.addReview}
+          reviews={planReviews}
+          reviewActions={reviewActions}
+        />
       ) : showRaw ? (
         <div className="relative">
           <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">

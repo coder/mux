@@ -494,6 +494,9 @@ export const KEYBINDS = {
   /** Toggle focus between diff and notes sidebar in immersive review */
   REVIEW_FOCUS_NOTES: { key: "Tab" },
 
+  /** Toggle plan annotation mode in propose_plan */
+  TOGGLE_PLAN_ANNOTATE: { key: "a", shift: true },
+
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;
 
