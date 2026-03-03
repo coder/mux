@@ -271,7 +271,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           <>
             <span
               className={cn(
-                "ml-2 text-[10px] whitespace-nowrap [@container(max-width:500px)]:hidden",
+                "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
                 isPending ? "text-pending" : "text-text-secondary"
               )}
             >

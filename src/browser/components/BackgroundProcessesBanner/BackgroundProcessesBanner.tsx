@@ -121,7 +121,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
                       <div className="text-muted font-mono text-[10px]">pid {proc.pid}</div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <span className="text-muted text-[10px]">
+                      <span className="text-muted text-[10px] tabular-nums">
                         {formatDuration(Date.now() - proc.startTime)}
                       </span>
                       <Tooltip>

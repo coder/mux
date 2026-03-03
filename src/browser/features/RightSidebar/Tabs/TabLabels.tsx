@@ -50,7 +50,7 @@ export const CostsTabLabel: React.FC<CostsTabLabelProps> = ({ workspaceId }) => 
     <>
       Costs
       {sessionCost !== null && (
-        <span className="text-muted text-[10px]">
+        <span className="text-muted text-[10px] tabular-nums">
           ${sessionCost < 0.01 ? "<0.01" : sessionCost.toFixed(2)}
         </span>
       )}
@@ -101,7 +101,9 @@ export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => 
     <>
       Stats
       {sessionDuration !== null && (
-        <span className="text-muted text-[10px]">{formatTabDuration(sessionDuration)}</span>
+        <span className="text-muted text-[10px] tabular-nums">
+          {formatTabDuration(sessionDuration)}
+        </span>
       )}
     </>
   );
