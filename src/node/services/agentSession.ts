@@ -3026,6 +3026,9 @@ export class AgentSession {
       compactionRequestId: context.id,
     });
 
+    // Capture attribution before finalizeCompactionRetry() clears active stream state.
+    const retryAgentInitiated = this.activeStreamContext?.agentInitiated;
+
     await this.finalizeCompactionRetry(data.messageId);
 
     const retryOptions = is1MCapable
@@ -3039,7 +3042,7 @@ export class AgentSession {
         retryOptions,
         isGptClass ? "auto" : undefined,
         undefined,
-        this.activeStreamContext?.agentInitiated
+        retryAgentInitiated
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
