@@ -19,7 +19,12 @@ import { PlanAnnotationView } from "./PlanAnnotationView";
 import { Button } from "@/browser/components/Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import {
+  formatKeybind,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { createMuxMessage } from "@/common/types/message";
@@ -329,18 +334,17 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
   const reviews = useReviews(workspaceId ?? "");
   const normalizedPlanPath = planPath != null ? normalizePlanFilePath(planPath) : null;
-  const planReviews = reviews.reviews.filter((review) => {
-    if (!isPlanFilePath(review.data.filePath)) {
-      return false;
-    }
+  const planReviews =
+    normalizedPlanPath == null
+      ? []
+      : reviews.reviews.filter((review) => {
+          if (!isPlanFilePath(review.data.filePath)) {
+            return false;
+          }
 
-    if (normalizedPlanPath == null) {
-      return true;
-    }
-
-    const normalizedReviewPath = normalizePlanFilePath(review.data.filePath);
-    return normalizedReviewPath === normalizedPlanPath;
-  });
+          const normalizedReviewPath = normalizePlanFilePath(review.data.filePath);
+          return normalizedReviewPath === normalizedPlanPath;
+        });
   const reviewActions: ReviewActionCallbacks = {
     onEditComment: reviews.updateReviewNote,
     onComplete: reviews.checkReview,
@@ -356,6 +360,50 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const planContentTrimmed = planContent.trim();
   const hasPlanContentInChat =
     planContentTrimmed.length > 0 && !planContentTrimmed.startsWith("*Plan saved to ");
+
+  const isEphemeralPreviewMode = isEphemeralPreview ?? false;
+  const canAnnotate = Boolean(
+    ((isLatest ?? false) || isEphemeralPreviewMode) &&
+    hasPlanContentInChat &&
+    workspaceId &&
+    planPath &&
+    isPlanFilePath(planPath)
+  );
+  const isPlanVisible = isEphemeralPreviewMode || expanded;
+
+  useEffect(() => {
+    if (canAnnotate) return;
+
+    setAnnotateMode(false);
+  }, [canAnnotate]);
+
+  useEffect(() => {
+    if (!canAnnotate || !isPlanVisible) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isEditableElement(event.target)) {
+        return;
+      }
+
+      if (!matchesKeybind(event, KEYBINDS.TOGGLE_PLAN_ANNOTATE)) {
+        return;
+      }
+
+      event.preventDefault();
+      setAnnotateMode((currentAnnotateMode) => {
+        const nextAnnotateMode = !currentAnnotateMode;
+        if (nextAnnotateMode) {
+          setShowRaw(false);
+        }
+        return nextAnnotateMode;
+      });
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [canAnnotate, isPlanVisible]);
 
   // When using "Start Here" (replace chat history), the plan is already included in the
   // conversation *only* when the Propose Plan tool result includes full plan text.
@@ -729,18 +777,17 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     });
   }
 
-  const showAnnotateButton = Boolean(
-    ((isLatest ?? false) || isEphemeralPreview) && planContent && workspaceId
-  );
-  if (showAnnotateButton) {
+  if (canAnnotate) {
     actionButtons.push({
       label: annotateMode ? "Exit Annotate" : "Annotate",
       onClick: () => {
-        const next = !annotateMode;
-        setAnnotateMode(next);
-        if (next) {
-          setShowRaw(false);
-        }
+        setAnnotateMode((currentAnnotateMode) => {
+          const nextAnnotateMode = !currentAnnotateMode;
+          if (nextAnnotateMode) {
+            setShowRaw(false);
+          }
+          return nextAnnotateMode;
+        });
       },
       active: annotateMode,
       icon: annotateMode ? <MessageSquareOff /> : <MessageSquarePlus />,
@@ -797,7 +844,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       {/* Content */}
       {errorMessage ? (
         <div className="text-error rounded-sm p-2 font-mono text-xs">{errorMessage}</div>
-      ) : annotateMode ? (
+      ) : annotateMode && canAnnotate ? (
         <PlanAnnotationView
           planContent={planContent}
           planPath={planPath}
