@@ -35,7 +35,11 @@ import {
 } from "./terminal";
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
-import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
+import {
+  FrontendWorkspaceMetadataSchema,
+  ProjectRefSchema,
+  WorkspaceActivitySnapshotSchema,
+} from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
   AgentSkillDescriptorSchema,
@@ -868,6 +872,16 @@ export const workspace = {
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),
       z.object({ success: z.literal(false), error: z.string() }),
     ]),
+  },
+  createMultiProject: {
+    input: z.object({
+      projects: z.array(ProjectRefSchema),
+      branchName: z.string(),
+      trunkBranch: z.string().optional(),
+      title: z.string().optional(),
+      runtimeConfig: RuntimeConfigSchema.optional(),
+    }),
+    output: FrontendWorkspaceMetadataSchema,
   },
   remove: {
     input: z.object({

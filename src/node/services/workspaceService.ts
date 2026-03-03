@@ -34,6 +34,7 @@ import {
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -47,6 +48,8 @@ import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
+import { ContainerManager } from "@/node/multiProject/containerManager";
+
 import type { PostCompactionExclusions } from "@/common/types/attachment";
 import type {
   SendMessageOptions,
@@ -59,6 +62,7 @@ import type { z } from "zod";
 import type { SendMessageError } from "@/common/types/errors";
 import type {
   FrontendWorkspaceMetadata,
+  ProjectRef,
   WorkspaceActivitySnapshot,
   WorkspaceMetadata,
 } from "@/common/types/workspace";
@@ -1903,6 +1907,219 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async createMultiProject(
+    projects: ProjectRef[],
+    branchName: string,
+    trunkBranch: string | undefined,
+    title?: string,
+    runtimeConfig?: RuntimeConfig
+  ): Promise<Result<FrontendWorkspaceMetadata>> {
+    assert(projects.length > 1, "createMultiProject requires at least two projects");
+
+    let initLogger: ReturnType<WorkspaceService["createInitLogger"]> | null = null;
+
+    try {
+      const validation = validateWorkspaceName(branchName);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid workspace name");
+      }
+
+      const normalizedProjects = projects.map((project) => ({
+        projectPath: stripTrailingSlashes(project.projectPath),
+        projectName: project.projectName,
+      }));
+      const primaryProject = normalizedProjects[0];
+      assert(primaryProject, "createMultiProject requires a primary project");
+
+      for (const project of normalizedProjects) {
+        if (project.projectPath === getMuxHelpChatProjectPath(this.config.rootDir)) {
+          return Err("Cannot create workspaces in the Chat with Mux system project");
+        }
+      }
+
+      const configSnapshot = this.config.loadConfigOrDefault();
+      for (const project of normalizedProjects) {
+        const projectConfig = configSnapshot.projects.get(
+          stripTrailingSlashes(project.projectPath)
+        );
+        if (!projectConfig?.trusted) {
+          return Err(
+            `Project ${project.projectName} must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page.`
+          );
+        }
+      }
+
+      const workspaceId = this.config.generateStableId();
+
+      let finalRuntimeConfig: RuntimeConfig = runtimeConfig ?? {
+        type: "worktree",
+        srcBaseDir: this.config.srcDir,
+      };
+
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isRuntimeAllowed(finalRuntimeConfig)) {
+          return Err("Selected runtime is not allowed by policy");
+        }
+      }
+
+      const isLocalRuntime = finalRuntimeConfig.type === "local";
+      const normalizedTrunkBranch = trunkBranch?.trim() ?? "";
+      if (!isLocalRuntime && normalizedTrunkBranch.length === 0) {
+        return Err("Trunk branch is required for worktree and SSH runtimes");
+      }
+
+      let containerSrcBaseDir = getSrcBaseDir(finalRuntimeConfig) ?? this.config.srcDir;
+      const runtimeSrcBaseDir = getSrcBaseDir(finalRuntimeConfig);
+      if (runtimeSrcBaseDir) {
+        const primaryRuntime = createRuntime(finalRuntimeConfig, {
+          projectPath: primaryProject.projectPath,
+        });
+
+        if (!primaryRuntime.createFlags?.deferredRuntimeAccess) {
+          const resolvedSrcBaseDir = await primaryRuntime.resolvePath(runtimeSrcBaseDir);
+          containerSrcBaseDir = resolvedSrcBaseDir;
+          if (resolvedSrcBaseDir !== runtimeSrcBaseDir && hasSrcBaseDir(finalRuntimeConfig)) {
+            finalRuntimeConfig = {
+              ...finalRuntimeConfig,
+              srcBaseDir: resolvedSrcBaseDir,
+            };
+          }
+        }
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+      this.initStateManager.startInit(workspaceId, primaryProject.projectPath);
+      const initAbortController = new AbortController();
+      this.initAbortControllers.set(workspaceId, initAbortController);
+      initLogger = this.createInitLogger(workspaceId);
+
+      const projectRuntimeEntries = normalizedProjects.map((project) => ({
+        project,
+        runtime: createRuntime(finalRuntimeConfig, {
+          projectPath: project.projectPath,
+          workspaceName: branchName,
+        }),
+      }));
+
+      const createdWorkspaces: Array<{
+        project: ProjectRef;
+        runtime: ReturnType<typeof createRuntime>;
+        workspacePath: string;
+      }> = [];
+
+      const rollbackCreatedWorkspaces = async (): Promise<void> => {
+        for (const createdWorkspace of [...createdWorkspaces].reverse()) {
+          const trusted =
+            configSnapshot.projects.get(stripTrailingSlashes(createdWorkspace.project.projectPath))
+              ?.trusted ?? false;
+          try {
+            await createdWorkspace.runtime.deleteWorkspace(
+              createdWorkspace.project.projectPath,
+              branchName,
+              true,
+              initAbortController.signal,
+              trusted
+            );
+          } catch (error: unknown) {
+            log.error("Failed to roll back multi-project workspace creation", {
+              workspaceId,
+              projectPath: createdWorkspace.project.projectPath,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+      };
+
+      for (const projectRuntimeEntry of projectRuntimeEntries) {
+        const trusted =
+          configSnapshot.projects.get(stripTrailingSlashes(projectRuntimeEntry.project.projectPath))
+            ?.trusted ?? false;
+
+        const createResult = await projectRuntimeEntry.runtime.createWorkspace({
+          projectPath: projectRuntimeEntry.project.projectPath,
+          branchName,
+          trunkBranch: normalizedTrunkBranch,
+          directoryName: branchName,
+          initLogger,
+          abortSignal: initAbortController.signal,
+          trusted,
+        });
+
+        if (!createResult.success || !createResult.workspacePath) {
+          await rollbackCreatedWorkspaces();
+          initLogger.logComplete(-1);
+          return Err(
+            createResult.error ??
+              `Failed to create workspace for project ${projectRuntimeEntry.project.projectName}`
+          );
+        }
+
+        createdWorkspaces.push({
+          project: projectRuntimeEntry.project,
+          runtime: projectRuntimeEntry.runtime,
+          workspacePath: createResult.workspacePath,
+        });
+      }
+
+      const containerManager = new ContainerManager(containerSrcBaseDir);
+      let containerPath: string;
+      try {
+        containerPath = await containerManager.createContainer(
+          branchName,
+          createdWorkspaces.map((workspace) => ({
+            projectName: workspace.project.projectName,
+            workspacePath: workspace.workspacePath,
+          }))
+        );
+      } catch (error) {
+        await rollbackCreatedWorkspaces();
+        try {
+          await containerManager.removeContainer(branchName);
+        } catch (cleanupError: unknown) {
+          log.error("Failed to clean up multi-project container after create failure", {
+            workspaceId,
+            branchName,
+            error: getErrorMessage(cleanupError),
+          });
+        }
+        initLogger.logComplete(-1);
+        return Err(`Failed to create multi-project container: ${getErrorMessage(error)}`);
+      }
+
+      const createdAt = new Date().toISOString();
+      await this.config.editConfig((config) => {
+        const multiProjectConfig = config.projects.get("_multi") ?? { workspaces: [] };
+        multiProjectConfig.workspaces.push({
+          path: containerPath,
+          id: workspaceId,
+          name: branchName,
+          title,
+          createdAt,
+          runtimeConfig: finalRuntimeConfig,
+          projects: normalizedProjects,
+        });
+        config.projects.set("_multi", multiProjectConfig);
+        return config;
+      });
+
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const completeMetadata = allMetadata.find((metadata) => metadata.id === workspaceId);
+      if (!completeMetadata) {
+        initLogger.logComplete(-1);
+        return Err("Failed to retrieve workspace metadata");
+      }
+
+      initLogger.logComplete(0);
+      const enrichedMetadata = this.enrichFrontendMetadata(completeMetadata);
+      session.emitMetadata(enrichedMetadata);
+      return Ok(enrichedMetadata);
+    } catch (error) {
+      initLogger?.logComplete(-1);
+      const message = getErrorMessage(error);
+      return Err(`Failed to create multi-project workspace: ${message}`);
+    }
+  }
+
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
     if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
       return Err("Cannot remove the Chat with Mux system workspace");
@@ -2002,37 +2219,92 @@ export class WorkspaceService extends EventEmitter {
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
       if (metadataResult.success) {
         const metadata = metadataResult.data;
-        const projectPath = metadata.projectPath;
+        const configSnapshot = this.config.loadConfigOrDefault();
 
-        const runtime = createRuntime(metadata.runtimeConfig, {
-          projectPath,
-          workspaceName: metadata.name,
-        });
+        if (isMultiProject(metadata)) {
+          const projects = getProjects(metadata);
+          const deleteErrors: string[] = [];
 
-        // Delete workspace from runtime first - if this fails with force=false, we abort
-        // and keep workspace in config so user can retry. This prevents orphaned directories.
-        const trusted =
-          this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath))
-            ?.trusted ?? false;
-        const deleteResult = await runtime.deleteWorkspace(
-          projectPath,
-          metadata.name, // use branch name
-          force,
-          undefined, // abortSignal
-          trusted
-        );
+          for (const project of projects) {
+            try {
+              const runtime = createRuntime(metadata.runtimeConfig, {
+                projectPath: project.projectPath,
+                workspaceName: metadata.name,
+              });
 
-        if (!deleteResult.success) {
-          // If force is true, we continue to remove from config even if fs removal failed
-          if (!force) {
-            return Err(deleteResult.error ?? "Failed to delete workspace from disk");
+              const trusted =
+                configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ??
+                false;
+              const deleteResult = await runtime.deleteWorkspace(
+                project.projectPath,
+                metadata.name,
+                force,
+                undefined,
+                trusted
+              );
+
+              if (!deleteResult.success) {
+                deleteErrors.push(
+                  `[${project.projectName}] ${
+                    deleteResult.error ?? "Failed to delete workspace from disk"
+                  }`
+                );
+              }
+            } catch (error: unknown) {
+              deleteErrors.push(`[${project.projectName}] ${getErrorMessage(error)}`);
+            }
           }
-          log.error(
-            `Failed to delete workspace from disk, but force=true. Removing from config. Error: ${deleteResult.error}`
-          );
-        }
 
-        // Note: Coder workspace deletion is handled by CoderSSHRuntime.deleteWorkspace()
+          const containerManager = new ContainerManager(
+            getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir
+          );
+          try {
+            await containerManager.removeContainer(metadata.name);
+          } catch (error: unknown) {
+            deleteErrors.push(`[container] ${getErrorMessage(error)}`);
+          }
+
+          if (deleteErrors.length > 0) {
+            if (!force) {
+              return Err(
+                `Failed to delete multi-project workspace from disk: ${deleteErrors.join("; ")}`
+              );
+            }
+            log.error(
+              `Failed to fully delete multi-project workspace from disk, but force=true. Removing from config. Errors: ${deleteErrors.join("; ")}`
+            );
+          }
+        } else {
+          const projectPath = metadata.projectPath;
+          const runtime = createRuntime(metadata.runtimeConfig, {
+            projectPath,
+            workspaceName: metadata.name,
+          });
+
+          // Delete workspace from runtime first - if this fails with force=false, we abort
+          // and keep workspace in config so user can retry. This prevents orphaned directories.
+          const trusted =
+            configSnapshot.projects.get(stripTrailingSlashes(projectPath))?.trusted ?? false;
+          const deleteResult = await runtime.deleteWorkspace(
+            projectPath,
+            metadata.name, // use branch name
+            force,
+            undefined, // abortSignal
+            trusted
+          );
+
+          if (!deleteResult.success) {
+            // If force is true, we continue to remove from config even if fs removal failed
+            if (!force) {
+              return Err(deleteResult.error ?? "Failed to delete workspace from disk");
+            }
+            log.error(
+              `Failed to delete workspace from disk, but force=true. Removing from config. Error: ${deleteResult.error}`
+            );
+          }
+
+          // Note: Coder workspace deletion is handled by CoderSSHRuntime.deleteWorkspace()
+        }
 
         parentWorkspaceId = metadata.parentWorkspaceId ?? null;
         childTaskModelString = metadata.taskModelString;
@@ -2291,32 +2563,91 @@ export class WorkspaceService extends EventEmitter {
       if (!workspace) {
         return Err("Failed to find workspace in config");
       }
-      const { projectPath } = workspace;
+      const { projectPath: configProjectPath } = workspace;
+      const configSnapshot = this.config.loadConfigOrDefault();
 
-      const runtime = createRuntime(oldMetadata.runtimeConfig, {
-        projectPath,
-        workspaceName: oldName,
-      });
+      let oldPath: string;
+      let newPath: string;
+      let runtimeForPlanFile: ReturnType<typeof createRuntime>;
 
-      const trusted =
-        this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath))
-          ?.trusted ?? false;
-      const renameResult = await runtime.renameWorkspace(
-        projectPath,
-        oldName,
-        newName,
-        undefined, // abortSignal
-        trusted
-      );
+      if (isMultiProject(oldMetadata)) {
+        const projects = getProjects(oldMetadata);
+        const renamedProjectWorkspaces: Array<{
+          projectName: string;
+          workspacePath: string;
+        }> = [];
 
-      if (!renameResult.success) {
-        return Err(renameResult.error);
+        for (const project of projects) {
+          const runtime = createRuntime(oldMetadata.runtimeConfig, {
+            projectPath: project.projectPath,
+            workspaceName: oldName,
+          });
+
+          const trusted =
+            configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ??
+            false;
+          const renameResult = await runtime.renameWorkspace(
+            project.projectPath,
+            oldName,
+            newName,
+            undefined,
+            trusted
+          );
+
+          if (!renameResult.success) {
+            return Err(
+              `Failed to rename workspace for project ${project.projectName}: ${renameResult.error}`
+            );
+          }
+
+          renamedProjectWorkspaces.push({
+            projectName: project.projectName,
+            workspacePath: renameResult.newPath,
+          });
+        }
+
+        const containerManager = new ContainerManager(
+          getSrcBaseDir(oldMetadata.runtimeConfig) ?? this.config.srcDir
+        );
+        await containerManager.removeContainer(oldName);
+        await containerManager.createContainer(newName, renamedProjectWorkspaces);
+
+        oldPath = containerManager.getContainerPath(oldName);
+        newPath = containerManager.getContainerPath(newName);
+
+        const primaryProject = projects[0];
+        assert(primaryProject, "Multi-project workspace requires a primary project");
+        runtimeForPlanFile = createRuntime(oldMetadata.runtimeConfig, {
+          projectPath: primaryProject.projectPath,
+          workspaceName: newName,
+        });
+      } else {
+        const runtime = createRuntime(oldMetadata.runtimeConfig, {
+          projectPath: configProjectPath,
+          workspaceName: oldName,
+        });
+
+        const trusted =
+          configSnapshot.projects.get(stripTrailingSlashes(configProjectPath))?.trusted ?? false;
+        const renameResult = await runtime.renameWorkspace(
+          configProjectPath,
+          oldName,
+          newName,
+          undefined, // abortSignal
+          trusted
+        );
+
+        if (!renameResult.success) {
+          return Err(renameResult.error);
+        }
+
+        oldPath = renameResult.oldPath;
+        newPath = renameResult.newPath;
+        runtimeForPlanFile = runtime;
       }
 
-      const { oldPath, newPath } = renameResult;
-
       await this.config.editConfig((config) => {
-        const projectConfig = config.projects.get(projectPath);
+        const projectConfig = config.projects.get(configProjectPath);
         if (projectConfig) {
           const workspaceEntry =
             projectConfig.workspaces.find((w) => w.id === workspaceId) ??
@@ -2330,7 +2661,7 @@ export class WorkspaceService extends EventEmitter {
       });
 
       // Rename plan file if it exists (uses workspace name, not ID)
-      await movePlanFile(runtime, oldName, newName, oldMetadata.projectName);
+      await movePlanFile(runtimeForPlanFile, oldName, newName, oldMetadata.projectName);
 
       const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadataUpdated.find((m) => m.id === workspaceId);
