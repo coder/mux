@@ -51,7 +51,7 @@ interface AnalyticsNamespace {
     input: ProviderCacheHitRatioInput
   ) => Promise<ProviderCacheHitRatioItem[]>;
   getDelegationSummary: (input: DelegationSummaryInput) => Promise<DelegationSummary>;
-  executeRawQuery: (input: {
+  executeRawQuery?: (input: {
     sql: string;
   }) => Promise<z.infer<typeof analytics.executeRawQuery.output>>;
 }
@@ -77,8 +77,7 @@ function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
     typeof maybeNamespace.getTimingDistribution !== "function" ||
     typeof maybeNamespace.getAgentCostBreakdown !== "function" ||
     typeof maybeNamespace.getCacheHitRatioByProvider !== "function" ||
-    typeof maybeNamespace.getDelegationSummary !== "function" ||
-    typeof maybeNamespace.executeRawQuery !== "function"
+    typeof maybeNamespace.getDelegationSummary !== "function"
   ) {
     return null;
   }
@@ -728,7 +727,7 @@ export function useAnalyticsRawQuery() {
     }
 
     const namespace = getAnalyticsNamespace(api);
-    if (!namespace) {
+    if (!namespace || typeof namespace.executeRawQuery !== "function") {
       setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
       return;
     }

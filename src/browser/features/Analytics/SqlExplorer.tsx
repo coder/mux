@@ -70,9 +70,16 @@ export function SqlExplorer() {
   }, [data]);
 
   const handleRun = () => {
-    if (sql.trim()) {
-      void executeQuery(sql);
+    if (loading) {
+      return;
     }
+
+    const normalizedSql = sql.trim();
+    if (!normalizedSql) {
+      return;
+    }
+
+    void executeQuery(normalizedSql);
   };
 
   return (
@@ -123,7 +130,10 @@ export function SqlExplorer() {
             placeholder="SELECT * FROM events LIMIT 10;"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                handleRun();
+                e.preventDefault();
+                if (!loading && sql.trim()) {
+                  handleRun();
+                }
               }
             }}
           />
