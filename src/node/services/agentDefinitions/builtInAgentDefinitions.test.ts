@@ -70,6 +70,17 @@ describe("built-in agent definitions", () => {
     expect(orchestrator?.frontmatter.subagent?.runnable).toBe(false);
   });
 
+  test("explore agent allows skill tools", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const explore = byId.get("explore");
+    expect(explore).toBeTruthy();
+    const removed = explore?.frontmatter.tools?.remove ?? [];
+    expect(removed).not.toContain("agent_skill_read");
+    expect(removed).not.toContain("agent_skill_read_file");
+  });
+
   test("task_apply_git_patch is restricted to exec/orchestrator", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

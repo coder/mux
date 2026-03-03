@@ -734,14 +734,12 @@ subagent:
     - When you have a final answer, call agent_report exactly once.
     - Do not call agent_report until you have completed the assigned task.
 tools:
-  # Remove editing and task tools from exec base (read-only agent)
+  # Remove editing and task tools from exec base (read-only agent; skill tools are kept)
   remove:
     - file_edit_.*
     - task
     - task_apply_git_patch
     - task_.*
-    - agent_skill_read
-    - agent_skill_read_file
 ---
 
 You are in Explore mode (read-only).
