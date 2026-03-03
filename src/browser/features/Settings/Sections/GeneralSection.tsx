@@ -17,8 +17,10 @@ import {
   DEFAULT_EDITOR_CONFIG,
   TERMINAL_FONT_CONFIG_KEY,
   DEFAULT_TERMINAL_FONT_CONFIG,
+  LAUNCH_BEHAVIOR_KEY,
   type EditorConfig,
   type EditorType,
+  type LaunchBehavior,
   type TerminalFontConfig,
 } from "@/common/constants/storage";
 import {
@@ -123,12 +125,22 @@ const EDITOR_OPTIONS: Array<{ value: EditorType; label: string }> = [
   { value: "custom", label: "Custom" },
 ];
 
+const LAUNCH_BEHAVIOR_OPTIONS = [
+  { value: "dashboard", label: "Dashboard" },
+  { value: "new-chat", label: "New chat on recent project" },
+  { value: "last-workspace", label: "Last visited workspace" },
+] as const;
+
 // Browser mode: window.api is not set (only exists in Electron via preload)
 const isBrowserMode = typeof window !== "undefined" && !window.api;
 
 export function GeneralSection() {
   const { theme, setTheme } = useTheme();
   const { api } = useAPI();
+  const [launchBehavior, setLaunchBehavior] = usePersistedState<LaunchBehavior>(
+    LAUNCH_BEHAVIOR_KEY,
+    "dashboard"
+  );
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
     TERMINAL_FONT_CONFIG_KEY,
     DEFAULT_TERMINAL_FONT_CONFIG
@@ -340,6 +352,28 @@ export function GeneralSection() {
               </SelectTrigger>
               <SelectContent>
                 {THEME_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Launch behavior</div>
+              <div className="text-muted text-xs">What to show when Mux starts</div>
+            </div>
+            <Select
+              value={launchBehavior}
+              onValueChange={(value) => setLaunchBehavior(value as LaunchBehavior)}
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LAUNCH_BEHAVIOR_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>

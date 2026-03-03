@@ -66,6 +66,14 @@ export const LAST_CUSTOM_MODEL_PROVIDER_KEY = "lastCustomModelProvider";
 export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
 
 /**
+ * User preference for what to show on app launch (global).
+ * Values: "dashboard" | "new-chat" | "last-workspace"
+ */
+export const LAUNCH_BEHAVIOR_KEY = "launchBehavior";
+
+export type LaunchBehavior = "dashboard" | "new-chat" | "last-workspace";
+
+/**
  * Get the localStorage key for expanded projects in sidebar (global)
  * Format: "expandedProjects"
  */

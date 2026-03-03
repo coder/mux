@@ -9,7 +9,11 @@ import {
 } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import {
+  LAUNCH_BEHAVIOR_KEY,
+  SELECTED_WORKSPACE_KEY,
+  type LaunchBehavior,
+} from "@/common/constants/storage";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 
@@ -77,8 +81,18 @@ function getInitialRoute(): string {
     }
   }
 
-  // Start at home — the landing page is the default startup view.
-  // Users pick a workspace from the landing page or sidebar.
+  const launchBehavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
+  if (launchBehavior === "last-workspace") {
+    const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
+      SELECTED_WORKSPACE_KEY,
+      null
+    );
+    if (savedWorkspace?.workspaceId) {
+      return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
+    }
+  }
+
+  // "dashboard" and "new-chat" both start at /
   return "/";
 }
 

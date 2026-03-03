@@ -37,9 +37,11 @@ import {
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
   HIDDEN_MODELS_KEY,
+  LAUNCH_BEHAVIOR_KEY,
   RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+  type LaunchBehavior,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
@@ -793,6 +795,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const hasUserNavigatedHomeRef = useRef(false);
   const hasProcessedInitialLocationRef = useRef(false);
 
+  const hasAutoCreatedRef = useRef(false);
+
   useEffect(() => {
     // Skip initial mount so cold startup at "/" can still honor launch-project.
     if (!hasProcessedInitialLocationRef.current) {
@@ -1459,6 +1463,43 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     },
     [navigateToProject, setWorkspaceDraftsByProjectState]
   );
+
+  useEffect(() => {
+    if (loading || hasAutoCreatedRef.current) return;
+    if (selectedWorkspace) return;
+
+    // Preserve explicit Home navigation intent.
+    if (hasUserNavigatedHomeRef.current) return;
+
+    // Don't auto-create while the user is on global routes.
+    if (currentSettingsSection || isAnalyticsOpen) return;
+
+    // Skip if user is in the middle of creating a workspace.
+    if (pendingNewWorkspaceProject) return;
+
+    const behavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
+    if (behavior !== "new-chat") return;
+
+    hasAutoCreatedRef.current = true;
+
+    const workspaceRecency = workspaceStore.getWorkspaceRecency();
+    const recentWorkspace = [...workspaceMetadata.values()]
+      .filter((workspace) => workspace.projectPath)
+      .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
+
+    if (!recentWorkspace) return;
+
+    createWorkspaceDraft(recentWorkspace.projectPath);
+  }, [
+    loading,
+    selectedWorkspace,
+    currentSettingsSection,
+    isAnalyticsOpen,
+    pendingNewWorkspaceProject,
+    workspaceMetadata,
+    workspaceStore,
+    createWorkspaceDraft,
+  ]);
 
   const openWorkspaceDraft = useCallback(
     (projectPath: string, draftId: string, sectionId?: string | null) => {
