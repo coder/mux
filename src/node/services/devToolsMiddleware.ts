@@ -269,14 +269,15 @@ export function createDevToolsMiddleware(
           workspaceId,
           startedAt: new Date().toISOString(),
         });
+        // Only mark as created after successful persistence so transient
+        // failures can be retried on subsequent steps.
+        runCreated = true;
       } catch (error) {
         log.warn("DevTools: failed to create run", {
           workspaceId,
           runId,
           error,
         });
-      } finally {
-        runCreated = true;
       }
     })();
 

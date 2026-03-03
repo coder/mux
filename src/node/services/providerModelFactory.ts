@@ -334,13 +334,16 @@ function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1]
   ): Promise<Response> => {
+    // Build merged headers: start from the Request (if any), then overlay init.headers.
+    const merged = new Headers(input instanceof Request ? input.headers : undefined);
     if (init?.headers) {
-      const headers = new Headers(init.headers);
-      captureAndStripDevToolsHeader(headers);
-      return customFetch(input, { ...init, headers });
+      for (const [key, value] of new Headers(init.headers).entries()) {
+        merged.set(key, value);
+      }
     }
 
-    return customFetch(input, init);
+    captureAndStripDevToolsHeader(merged);
+    return customFetch(input, { ...init, headers: merged });
   };
 
   return Object.assign(wrappedFetch, customFetch) as typeof fetch;
