@@ -25,12 +25,16 @@ const selectableDiffRendererMock = mock((props: MockSelectableDiffRendererProps)
   </div>
 ));
 
+// Other test files mock "./PlanAnnotationView" for integration scenarios. Reset module mocks
+// here so this suite always imports the real component under test in CI and locally.
+mock.restore();
+
 void mock.module("@/browser/features/Shared/DiffRenderer", () => ({
   SelectableDiffRenderer: (props: MockSelectableDiffRendererProps) =>
     selectableDiffRendererMock(props),
 }));
 
-import { PlanAnnotationView } from "./PlanAnnotationView";
+import { PlanAnnotationView } from "@/browser/features/Tools/PlanAnnotationView";
 
 function getLastSelectableRendererProps(): MockSelectableDiffRendererProps {
   const calls = selectableDiffRendererMock.mock.calls;
