@@ -140,6 +140,10 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     );
   }, [workspaceId]);
 
+  const handleEnterImmersiveReview = useCallback(() => {
+    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_REVIEW_IMMERSIVE, { workspaceId }));
+  }, [workspaceId]);
+
   const handleOpenInEditor = useCallback(async () => {
     setEditorError(null);
     const result = await openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
@@ -533,6 +537,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               onOpenTouchFullscreenReview={
                 isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
               }
+              onEnterImmersiveReview={handleEnterImmersiveReview}
               onForkChat={(anchorEl) => {
                 void handleForkChat(anchorEl);
               }}

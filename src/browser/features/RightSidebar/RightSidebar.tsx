@@ -791,6 +791,24 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       );
   }, [selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive, workspaceId]);
 
+  React.useEffect(() => {
+    const handleOpenReviewImmersive = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
+      if (detail?.workspaceId !== workspaceId) {
+        return;
+      }
+
+      setIsTouchReviewImmersive(false);
+      setCollapsed(false);
+      selectOrOpenReviewTab();
+      setIsReviewImmersive(true);
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.OPEN_REVIEW_IMMERSIVE, handleOpenReviewImmersive);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.OPEN_REVIEW_IMMERSIVE, handleOpenReviewImmersive);
+  }, [selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive, workspaceId]);
+
   // Keyboard shortcuts for tab switching by position (Cmd/Ctrl+1-9)
   // Auto-expands sidebar if collapsed
   React.useEffect(() => {
