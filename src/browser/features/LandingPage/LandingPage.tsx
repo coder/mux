@@ -123,8 +123,10 @@ function GatewayCreditsCard() {
 
   // Data-fetching on mount — acceptable per react-effects skill guidance.
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (gateway.isConfigured) {
+      void refresh();
+    }
+  }, [gateway.isConfigured, refresh]);
 
   if (!gateway.isConfigured) return null;
 
