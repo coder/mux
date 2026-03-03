@@ -1,4 +1,3 @@
-import { Menu } from "lucide-react";
 import { useEffect, useCallback, useRef, useState } from "react";
 import { useRouter } from "./contexts/RouterContext";
 import { useLocation, useNavigate } from "react-router-dom";
