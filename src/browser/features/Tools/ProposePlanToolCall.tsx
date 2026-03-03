@@ -724,7 +724,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   }
 
   const showAnnotateButton = Boolean(
-    (isLatest || isEphemeralPreview) && planContent && workspaceId
+    ((isLatest ?? false) || isEphemeralPreview) && planContent && workspaceId
   );
   if (showAnnotateButton) {
     actionButtons.push({

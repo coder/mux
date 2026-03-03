@@ -1503,7 +1503,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             <div className="flex flex-[0_0_auto] flex-col p-3">
               {planOrphanReviews.length > 0 && (
                 <div className="border-border-light mb-2 border-b pb-2">
-                  <div className="text-muted mb-1 px-2 text-[10px] font-medium uppercase tracking-wider">
+                  <div className="text-muted mb-1 px-2 text-[10px] font-medium tracking-wider uppercase">
                     Plan annotations
                   </div>
                   <div className="flex flex-col gap-1">

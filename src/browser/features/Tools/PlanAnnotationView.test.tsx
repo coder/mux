@@ -35,7 +35,7 @@ import { PlanAnnotationView } from "./PlanAnnotationView";
 function getLastSelectableRendererProps(): MockSelectableDiffRendererProps {
   const calls = selectableDiffRendererMock.mock.calls;
   expect(calls.length).toBeGreaterThan(0);
-  return calls[calls.length - 1]?.[0] as MockSelectableDiffRendererProps;
+  return calls[calls.length - 1]?.[0];
 }
 
 describe("PlanAnnotationView", () => {
