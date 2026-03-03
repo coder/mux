@@ -14,6 +14,26 @@ export const DEVTOOLS_STEP_ID_HEADER = "x-mux-devtools-step-id";
 /** Captured request headers keyed by step ID. */
 const capturedRequestHeaders = new Map<string, Record<string, string>>();
 
+/**
+ * Header names (lowercased) whose values must be redacted before persistence.
+ * Matches common auth/credential headers across AI providers.
+ */
+const SENSITIVE_HEADER_NAMES = new Set(["authorization", "x-api-key", "api-key", "x-goog-api-key"]);
+
+/** Prefix-match for bearer/token patterns that may appear under custom names. */
+function isSensitiveHeaderName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SENSITIVE_HEADER_NAMES.has(lower) || lower.includes("secret") || lower.includes("token");
+}
+
+function redactHeaders(headers: Record<string, string>): Record<string, string> {
+  const redacted: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    redacted[key] = isSensitiveHeaderName(key) ? "[REDACTED]" : value;
+  }
+  return redacted;
+}
+
 /** Called by the middleware to retrieve (and clean up) captured headers for a step. */
 export function consumeCapturedRequestHeaders(stepId: string): Record<string, string> | null {
   assert(stepId.trim().length > 0, "consumeCapturedRequestHeaders requires a stepId");
@@ -41,6 +61,6 @@ export function captureAndStripDevToolsHeader(headers: Headers): void {
 
   const stepId = rawStepId.trim();
   if (stepId.length > 0) {
-    capturedRequestHeaders.set(stepId, Object.fromEntries(headers.entries()));
+    capturedRequestHeaders.set(stepId, redactHeaders(Object.fromEntries(headers.entries())));
   }
 }
