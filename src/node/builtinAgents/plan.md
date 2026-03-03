@@ -19,6 +19,7 @@ tools:
     - agent_skill_delete
     - mux_config_read
     - mux_config_write
+    - analytics_query
   require:
     - propose_plan
   # Note: file_edit_* tools ARE available but restricted to plan file only at runtime

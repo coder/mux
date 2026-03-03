@@ -20,6 +20,7 @@ import { Button } from "@/browser/components/Button/Button";
 import { cn } from "@/common/lib/utils";
 import { AgentCostChart } from "./AgentCostChart";
 import { DelegationChart } from "./DelegationChart";
+import { SqlExplorer } from "./SqlExplorer";
 import { ProviderCacheHitChart } from "./ProviderCacheHitChart";
 import { ModelBreakdown } from "./ModelBreakdown";
 import { SpendChart } from "./SpendChart";
@@ -304,6 +305,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             loading={delegationSummary.loading}
             error={delegationSummary.error}
           />
+          <SqlExplorer />
         </div>
       </div>
     </div>

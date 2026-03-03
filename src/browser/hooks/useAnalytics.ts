@@ -51,6 +51,9 @@ interface AnalyticsNamespace {
     input: ProviderCacheHitRatioInput
   ) => Promise<ProviderCacheHitRatioItem[]>;
   getDelegationSummary: (input: DelegationSummaryInput) => Promise<DelegationSummary>;
+  executeRawQuery: (input: {
+    sql: string;
+  }) => Promise<z.infer<typeof analytics.executeRawQuery.output>>;
 }
 
 const ANALYTICS_UNAVAILABLE_MESSAGE = "Analytics backend is not available in this build.";
@@ -74,7 +77,8 @@ function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
     typeof maybeNamespace.getTimingDistribution !== "function" ||
     typeof maybeNamespace.getAgentCostBreakdown !== "function" ||
     typeof maybeNamespace.getCacheHitRatioByProvider !== "function" ||
-    typeof maybeNamespace.getDelegationSummary !== "function"
+    typeof maybeNamespace.getDelegationSummary !== "function" ||
+    typeof maybeNamespace.executeRawQuery !== "function"
   ) {
     return null;
   }
@@ -705,4 +709,42 @@ export function useAnalyticsDelegationSummary(
   }, [api, projectPath, fromMs, toMs]);
 
   return state;
+}
+
+export type RawQueryResult = z.infer<typeof analytics.executeRawQuery.output>;
+
+export function useAnalyticsRawQuery() {
+  const { api } = useAPI();
+  const [state, setState] = useState<AsyncState<RawQueryResult>>({
+    data: null,
+    loading: false,
+    error: null,
+  });
+
+  const executeQuery = async (sql: string) => {
+    if (!api) {
+      setState({ data: null, loading: false, error: "API client not initialized" });
+      return;
+    }
+
+    const namespace = getAnalyticsNamespace(api);
+    if (!namespace) {
+      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
+      return;
+    }
+
+    setState((prev) => ({ ...prev, loading: true, error: null }));
+    try {
+      const result = await namespace.executeRawQuery({ sql });
+      setState({ data: result, loading: false, error: null });
+    } catch (err) {
+      setState({ data: null, loading: false, error: getErrorMessage(err) });
+    }
+  };
+
+  const clearResults = () => {
+    setState({ data: null, loading: false, error: null });
+  };
+
+  return { ...state, executeQuery, clearResults };
 }

@@ -22,6 +22,7 @@ tools:
     - todo_write
     - status_set
     - notify
+    - analytics_query
 ---
 
 You are the **Mux system assistant**.

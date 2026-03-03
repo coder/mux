@@ -357,7 +357,7 @@ export async function getToolsForModel(
     todo_read: createTodoReadTool(config),
     status_set: createStatusSetTool(config),
     notify: createNotifyTool(config),
-    ...(config.analyticsService && workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
+    ...(workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
       ? {
           analytics_query: createAnalyticsQueryTool(config),
         }

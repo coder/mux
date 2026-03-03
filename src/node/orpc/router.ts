@@ -4249,6 +4249,13 @@ export const router = (authToken?: string) => {
             input.to ?? null
           );
         }),
+      executeRawQuery: t
+        .input(schemas.analytics.executeRawQuery.input)
+        .output(schemas.analytics.executeRawQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.executeRawQuery(input.sql);
+        }),
+
       rebuildDatabase: t
         .input(schemas.analytics.rebuildDatabase.input)
         .output(schemas.analytics.rebuildDatabase.output)

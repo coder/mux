@@ -81,6 +81,23 @@ describe("built-in agent definitions", () => {
     expect(removed).not.toContain("agent_skill_read_file");
   });
 
+  test("analytics_query is restricted to the mux (Chat With Mux) agent", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const mux = byId.get("mux");
+    expect(mux).toBeTruthy();
+    expect(mux?.frontmatter.tools?.add ?? []).toContain("analytics_query");
+
+    const exec = byId.get("exec");
+    expect(exec).toBeTruthy();
+    expect(exec?.frontmatter.tools?.remove ?? []).toContain("analytics_query");
+
+    const plan = byId.get("plan");
+    expect(plan).toBeTruthy();
+    expect(plan?.frontmatter.tools?.remove ?? []).toContain("analytics_query");
+  });
+
   test("task_apply_git_patch is restricted to exec/orchestrator", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

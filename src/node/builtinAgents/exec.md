@@ -40,6 +40,7 @@ tools:
     - agent_skill_delete
     - mux_config_read
     - mux_config_write
+    - analytics_query
 ---
 
 You are in Exec mode.
