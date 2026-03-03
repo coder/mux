@@ -786,6 +786,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // any async creation callbacks decide whether to auto-navigate.
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   selectedWorkspaceRef.current = selectedWorkspace;
+  // Sticky in-memory flag to preserve explicit Home navigation intent.
+  // Prevents server launch-project auto-selection from bouncing users away from /.
+  const hasUserNavigatedHomeRef = useRef(false);
 
   // setSelectedWorkspace navigates to the workspace URL (or clears if null)
   const setSelectedWorkspace = useCallback(
@@ -799,10 +802,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       selectedWorkspaceRef.current = newValue;
 
       if (newValue) {
+        hasUserNavigatedHomeRef.current = false;
         navigateToWorkspace(newValue.workspaceId);
         // Persist to localStorage for next session
         updatePersistedState(SELECTED_WORKSPACE_KEY, newValue);
       } else {
+        hasUserNavigatedHomeRef.current = true;
         navigateToHome();
         updatePersistedState(SELECTED_WORKSPACE_KEY, null);
       }
@@ -878,6 +883,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
     // Skip if we already have a selected workspace (from localStorage or URL hash)
     if (selectedWorkspace) return;
+
+    // If the user explicitly went Home, preserve that intent instead of
+    // immediately re-selecting a launch-project workspace.
+    if (hasUserNavigatedHomeRef.current) return;
 
     // Skip if user is on the settings or analytics page — navigating to
     // /settings/:section or /analytics clears the workspace from the URL,
