@@ -514,6 +514,53 @@ describe("Config", () => {
       expect(savedRaw.projects).toEqual([["/user/proj", expect.any(Object)]]);
     });
 
+    it("system object defaults are stripped key-by-key on save", async () => {
+      writeSystemConfig({
+        featureFlagOverrides: { flagA: "on", flagB: "off" },
+        projects: [],
+      });
+      writeUserConfig({
+        projects: [],
+        featureFlagOverrides: { flagB: "off", flagC: "on" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // Merged should have all three flags.
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on", flagB: "off", flagC: "on" });
+
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      // Only user-specific flag should be saved; system defaults stripped.
+      expect(savedRaw.featureFlagOverrides).toEqual({ flagC: "on" });
+    });
+
+    it("legacy subagentAiDefaults preserved when system provides agentAiDefaults", () => {
+      writeSystemConfig({
+        agentAiDefaults: {
+          plan: { modelString: "openai:gpt-4o" },
+        },
+        projects: [],
+      });
+      writeUserConfig({
+        subagentAiDefaults: {
+          explore: { modelString: "openai:gpt-4o-mini", enabled: true },
+        },
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Both system agentAiDefaults and user legacy subagentAiDefaults should be present.
+      // Legacy normalization only carries model/thinking fields.
+      expect(loaded.agentAiDefaults).toMatchObject({
+        plan: { modelString: "openai:gpt-4o" },
+        explore: { modelString: "openai:gpt-4o-mini" },
+      });
+    });
+
     it("user-modified system defaults are persisted on save", async () => {
       writeSystemConfig({
         defaultModel: "openai:gpt-4o",

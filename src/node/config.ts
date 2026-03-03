@@ -386,12 +386,37 @@ export class Config {
     const system = systemConfig as Record<string, unknown>;
     for (const key of Object.keys(data)) {
       if (key === "projects" || key === "taskSettings") continue;
+      const dataVal = data[key];
       const sysVal = system[key];
       if (sysVal === undefined) continue;
-      // If the saved value matches the system default, remove it so the
-      // system config remains the source of truth for that setting.
-      if (JSON.stringify(data[key]) === JSON.stringify(sysVal)) {
-        delete data[key];
+
+      if (
+        dataVal != null &&
+        typeof dataVal === "object" &&
+        !Array.isArray(dataVal) &&
+        typeof sysVal === "object" &&
+        !Array.isArray(sysVal)
+      ) {
+        // Strip individual matching keys from object-valued settings.
+        const dataObj = dataVal as Record<string, unknown>;
+        const sysObj = sysVal as Record<string, unknown>;
+        for (const subKey of Object.keys(dataObj)) {
+          if (
+            subKey in sysObj &&
+            JSON.stringify(dataObj[subKey]) === JSON.stringify(sysObj[subKey])
+          ) {
+            delete dataObj[subKey];
+          }
+        }
+        // If object is now empty, remove it entirely.
+        if (Object.keys(dataObj).length === 0) {
+          delete data[key];
+        }
+      } else {
+        // Scalars + arrays: strip if exact match.
+        if (JSON.stringify(dataVal) === JSON.stringify(sysVal)) {
+          delete data[key];
+        }
       }
     }
   }
@@ -457,7 +482,10 @@ export class Config {
 
         const agentAiDefaults =
           parsed.agentAiDefaults !== undefined
-            ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
+            ? normalizeAgentAiDefaults({
+                ...legacySubagentAiDefaults,
+                ...parsed.agentAiDefaults,
+              })
             : normalizeAgentAiDefaults(legacySubagentAiDefaults);
 
         const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
