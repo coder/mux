@@ -18,12 +18,24 @@ const capturedRequestHeaders = new Map<string, Record<string, string>>();
  * Header names (lowercased) whose values must be redacted before persistence.
  * Matches common auth/credential headers across AI providers.
  */
-const SENSITIVE_HEADER_NAMES = new Set(["authorization", "x-api-key", "api-key", "x-goog-api-key"]);
+const SENSITIVE_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "x-api-key",
+  "api-key",
+  "x-goog-api-key",
+]);
 
 /** Prefix-match for bearer/token patterns that may appear under custom names. */
 function isSensitiveHeaderName(name: string): boolean {
   const lower = name.toLowerCase();
-  return SENSITIVE_HEADER_NAMES.has(lower) || lower.includes("secret") || lower.includes("token");
+  return (
+    SENSITIVE_HEADER_NAMES.has(lower) ||
+    lower.includes("secret") ||
+    lower.includes("token") ||
+    lower.includes("cookie")
+  );
 }
 
 function redactHeaders(headers: Record<string, string>): Record<string, string> {

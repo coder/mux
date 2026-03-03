@@ -59,7 +59,7 @@ ESBUILD_TOKENIZER_WORKER_FLAGS := --bundle --platform=node --target=node22 --for
 # Include formatting rules
 include fmt.mk
 
-.PHONY: all build dev devtools start clean help
+.PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static build-docker-runtime verify-docker-runtime-artifacts
 .PHONY: lint lint-fix typecheck typecheck-react-native mobile-web mobile-cors-proxy mobile-sandbox static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
@@ -198,17 +198,6 @@ dev-desktop-sandbox: ## Start an isolated Electron dev instance (fresh MUX_ROOT 
 	@bun scripts/dev-desktop-sandbox.ts $(DEV_DESKTOP_SANDBOX_ARGS)
 dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + free ports)
 	@bun scripts/dev-server-sandbox.ts $(DEV_SERVER_SANDBOX_ARGS)
-
-# To enable AI SDK DevTools:
-#   1. Start Mux with: MUX_DEVTOOLS=1 make dev
-#   2. In another terminal: make devtools
-#   3. Open http://localhost:4983
-#
-# Workaround for https://github.com/vercel/ai/issues/11401:
-# avoid `npx @ai-sdk/devtools` and run the CLI script directly.
-devtools: node_modules/.installed ## Launch AI SDK DevTools viewer (requires MUX_DEVTOOLS=1)
-	@echo "Opening AI SDK DevTools at http://localhost:4983"
-	@node node_modules/@ai-sdk/devtools/bin/cli.js
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
 	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .
