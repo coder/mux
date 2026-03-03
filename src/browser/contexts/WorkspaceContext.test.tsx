@@ -154,14 +154,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId: childId,
-          projectPath: "/alpha",
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-agent",
-        }),
-      },
+      locationPath: `/workspace/${childId}`,
     });
 
     const ctx = await setup();
@@ -215,14 +208,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId,
-          projectPath,
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-main",
-        }),
-      },
+      locationPath: `/workspace/${workspaceId}`,
     });
 
     const ctx = await setup();
@@ -294,14 +280,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId: archivedId,
-          projectPath: "/alpha",
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-main",
-        }),
-      },
+      locationPath: `/workspace/${archivedId}`,
     });
 
     const ctx = await setup();
@@ -387,14 +366,7 @@ describe("WorkspaceContext", () => {
         list: () => Promise.resolve([]),
       },
       // Parent is selected, not the child
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId: parentId,
-          projectPath: "/alpha",
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-main",
-        }),
-      },
+      locationPath: `/workspace/${parentId}`,
     });
 
     const ctx = await setup();
@@ -604,14 +576,7 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(initialWorkspaces),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-remove",
-          projectPath: "/remove",
-          projectName: "remove",
-          namedWorkspacePath: "/remove-main",
-        }),
-      },
+      locationPath: "/workspace/ws-remove",
     });
 
     const ctx = await setup();
@@ -791,14 +756,7 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
-        }),
-      },
+      locationPath: "/workspace/ws-existing",
     });
 
     const ctx = await setup();
@@ -844,7 +802,7 @@ describe("WorkspaceContext", () => {
     );
   });
 
-  test("selectedWorkspace restores from localStorage on mount", async () => {
+  test("selectedWorkspace starts null on landing page (no localStorage restore)", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -858,6 +816,7 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
+      // Seed localStorage — should be ignored since app starts at landing page
       localStorage: {
         selectedWorkspace: JSON.stringify({
           workspaceId: "ws-restore",
@@ -870,7 +829,9 @@ describe("WorkspaceContext", () => {
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-restore"));
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    // With the new landing page default, localStorage is not used to restore selection
+    expect(ctx().selectedWorkspace).toBeNull();
   });
 
   test("resolves system project route IDs for pending workspace creation", async () => {
@@ -950,14 +911,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
-        }),
-      },
+      locationPath: "/workspace/ws-existing",
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
