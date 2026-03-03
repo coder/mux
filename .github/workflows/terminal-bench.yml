@@ -305,7 +305,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          # actions/upload-artifact@v4 requires artifact names to be unique per workflow run.
+          # actions/upload-artifact@v7 requires artifact names to be unique per workflow run.
           # Nightly workflows can run multiple jobs with the same model (e.g. Harbor smoke tests),
           # so include dataset + task selection in the artifact name.
           sanitize() { printf "%s" "$1" | tr ' :/@' '-' | tr -cd 'A-Za-z0-9._-'; }
@@ -360,7 +360,7 @@ jobs:
 
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: |

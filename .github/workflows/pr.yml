@@ -320,7 +320,7 @@ jobs:
           # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
           TARBALL=$(ls mux-*.tgz | head -1)
           PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: failure()
         with:
           name: smoke-server-logs
@@ -376,12 +376,12 @@ jobs:
       - uses: ./.github/actions/setup-mux
       - run: bun run build
       - run: make dist-linux
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-linux
           path: release/*.AppImage
           retention-days: 30
           if-no-files-found: error
+          archive: false
 
   build-macos:
     name: Build / macOS
@@ -405,19 +405,19 @@ jobs:
           AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
       - run: make dist-mac
       - name: Upload x64 artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-macos-x64
           path: release/*-x64.dmg
           retention-days: 30
           if-no-files-found: error
+          archive: false
       - name: Upload arm64 artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-macos-arm64
           path: release/*-arm64.dmg
           retention-days: 30
           if-no-files-found: error
+          archive: false
 
   build-windows:
     name: Build / Windows
@@ -464,7 +464,7 @@ jobs:
           EV_KEY: ${{ vars.EV_KEY }}
           EV_TSA_URL: ${{ vars.EV_TSA_URL }}
           GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: build-windows
           path: release/*.exe
@@ -483,12 +483,12 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/build-vscode-extension
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-vscode
           path: vscode/mux-*.vsix
           retention-days: 30
           if-no-files-found: error
+          archive: false
 
   codex-comments:
     name: Codex Comments
