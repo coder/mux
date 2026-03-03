@@ -27,6 +27,7 @@ import {
   createRuntime,
   IncompatibleRuntimeError,
   runBackgroundInit,
+  runFullInit,
 } from "@/node/runtime/runtimeFactory";
 import {
   createRuntimeForWorkspace,
@@ -2115,9 +2116,95 @@ export class WorkspaceService extends EventEmitter {
         return Err("Failed to retrieve workspace metadata");
       }
 
-      initLogger.logComplete(0);
       const enrichedMetadata = this.enrichFrontendMetadata(completeMetadata);
       session.emitMetadata(enrichedMetadata);
+
+      // Background init: run postCreateSetup (if present) then initWorkspace for each project runtime.
+      // Multi-project creation should mirror create(): return metadata immediately, but only mark init
+      // complete after initialization work has run.
+      if (!this.removingWorkspaces.has(workspaceId) && !initAbortController.signal.aborted) {
+        void (async () => {
+          let initFailed = false;
+
+          for (const createdWorkspace of createdWorkspaces) {
+            if (this.removingWorkspaces.has(workspaceId) || initAbortController.signal.aborted) {
+              break;
+            }
+
+            const trusted =
+              configSnapshot.projects.get(
+                stripTrailingSlashes(createdWorkspace.project.projectPath)
+              )?.trusted ?? false;
+
+            const projectInitLogger = {
+              ...initLogger,
+              // Each runtime's init path reports completion. Suppress per-project completion so
+              // multi-project workspaces only transition out of initializing after all runtimes finish.
+              logComplete: (_exitCode: number) => undefined,
+            };
+
+            try {
+              const secrets = await secretsToRecord(
+                this.config.getEffectiveSecrets(createdWorkspace.project.projectPath),
+                this.opResolver
+              );
+
+              const initResult = await runFullInit(createdWorkspace.runtime, {
+                projectPath: createdWorkspace.project.projectPath,
+                branchName,
+                trunkBranch: normalizedTrunkBranch,
+                workspacePath: createdWorkspace.workspacePath,
+                initLogger: projectInitLogger,
+                env: secrets,
+                abortSignal: initAbortController.signal,
+                trusted,
+              });
+
+              if (!initResult.success) {
+                initFailed = true;
+                log.error("Multi-project workspace init failed", {
+                  workspaceId,
+                  projectPath: createdWorkspace.project.projectPath,
+                  error: initResult.error ?? "Unknown initialization failure",
+                });
+              }
+            } catch (error: unknown) {
+              initFailed = true;
+              const message = getErrorMessage(error);
+              log.error("Multi-project workspace init failed", {
+                workspaceId,
+                projectPath: createdWorkspace.project.projectPath,
+                error: message,
+              });
+              initLogger.logStderr(
+                `Initialization failed for ${createdWorkspace.project.projectName}: ${message}`
+              );
+            }
+          }
+
+          if (this.removingWorkspaces.has(workspaceId) || initAbortController.signal.aborted) {
+            initAbortController.abort();
+            this.initAbortControllers.delete(workspaceId);
+
+            // Background init will never fully complete, so init-end won’t fire.
+            // Clear init state + re-emit metadata so the sidebar doesn’t stay stuck on isInitializing.
+            this.initStateManager.clearInMemoryState(workspaceId);
+            session.emitMetadata(enrichedMetadata);
+            return;
+          }
+
+          initLogger.logComplete(initFailed ? -1 : 0);
+        })();
+      } else {
+        initAbortController.abort();
+        this.initAbortControllers.delete(workspaceId);
+
+        // Background init will never run, so init-end won’t fire.
+        // Clear init state + re-emit metadata so the sidebar doesn’t stay stuck on isInitializing.
+        this.initStateManager.clearInMemoryState(workspaceId);
+        session.emitMetadata(enrichedMetadata);
+      }
+
       return Ok(enrichedMetadata);
     } catch (error) {
       initLogger?.logComplete(-1);
@@ -2584,6 +2671,42 @@ export class WorkspaceService extends EventEmitter {
           workspacePath: string;
         }> = [];
 
+        const rollbackRenamedProjects = async (): Promise<void> => {
+          // Roll back already-renamed project workspaces to avoid leaving mixed workspace names.
+          for (const renamedProject of [...renamedProjectWorkspaces].reverse()) {
+            try {
+              const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
+                projectPath: renamedProject.projectPath,
+                workspaceName: newName,
+              });
+              const rollbackTrusted =
+                configSnapshot.projects.get(stripTrailingSlashes(renamedProject.projectPath))
+                  ?.trusted ?? false;
+              const rollbackResult = await rollbackRuntime.renameWorkspace(
+                renamedProject.projectPath,
+                newName,
+                oldName,
+                undefined,
+                rollbackTrusted
+              );
+
+              if (!rollbackResult.success) {
+                log.error("Failed to rollback multi-project rename", {
+                  workspaceId,
+                  projectName: renamedProject.projectName,
+                  error: rollbackResult.error,
+                });
+              }
+            } catch (rollbackError: unknown) {
+              log.error("Failed to rollback multi-project rename", {
+                workspaceId,
+                projectName: renamedProject.projectName,
+                error: getErrorMessage(rollbackError),
+              });
+            }
+          }
+        };
+
         for (const project of projects) {
           const runtime = createRuntime(oldMetadata.runtimeConfig, {
             projectPath: project.projectPath,
@@ -2602,40 +2725,7 @@ export class WorkspaceService extends EventEmitter {
           );
 
           if (!renameResult.success) {
-            // Roll back already-renamed project workspaces to avoid leaving mixed workspace names.
-            for (const renamedProject of [...renamedProjectWorkspaces].reverse()) {
-              try {
-                const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
-                  projectPath: renamedProject.projectPath,
-                  workspaceName: newName,
-                });
-                const rollbackTrusted =
-                  configSnapshot.projects.get(stripTrailingSlashes(renamedProject.projectPath))
-                    ?.trusted ?? false;
-                const rollbackResult = await rollbackRuntime.renameWorkspace(
-                  renamedProject.projectPath,
-                  newName,
-                  oldName,
-                  undefined,
-                  rollbackTrusted
-                );
-
-                if (!rollbackResult.success) {
-                  log.error("Failed to rollback multi-project rename", {
-                    workspaceId,
-                    projectName: renamedProject.projectName,
-                    error: rollbackResult.error,
-                  });
-                }
-              } catch (rollbackError: unknown) {
-                log.error("Failed to rollback multi-project rename", {
-                  workspaceId,
-                  projectName: renamedProject.projectName,
-                  error: getErrorMessage(rollbackError),
-                });
-              }
-            }
-
+            await rollbackRenamedProjects();
             return Err(
               `Failed to rename workspace for project ${project.projectName}: ${renameResult.error}`
             );
@@ -2651,14 +2741,20 @@ export class WorkspaceService extends EventEmitter {
         const containerManager = new ContainerManager(
           getSrcBaseDir(oldMetadata.runtimeConfig) ?? this.config.srcDir
         );
-        await containerManager.removeContainer(oldName);
-        await containerManager.createContainer(
-          newName,
-          renamedProjectWorkspaces.map((workspaceEntry) => ({
-            projectName: workspaceEntry.projectName,
-            workspacePath: workspaceEntry.workspacePath,
-          }))
-        );
+
+        try {
+          await containerManager.removeContainer(oldName);
+          await containerManager.createContainer(
+            newName,
+            renamedProjectWorkspaces.map((workspaceEntry) => ({
+              projectName: workspaceEntry.projectName,
+              workspacePath: workspaceEntry.workspacePath,
+            }))
+          );
+        } catch (containerError: unknown) {
+          await rollbackRenamedProjects();
+          return Err(`Failed to recreate container: ${getErrorMessage(containerError)}`);
+        }
 
         oldPath = containerManager.getContainerPath(oldName);
         newPath = containerManager.getContainerPath(newName);
