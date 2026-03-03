@@ -64,6 +64,14 @@ interface StoryAnalyticsNamespace {
     from?: Date | null;
     to?: Date | null;
   }) => Promise<DelegationSummary>;
+  executeRawQuery: (input: { sql: string }) => Promise<{
+    columns: Array<{ name: string; type: string }>;
+    rows: Array<Record<string, unknown>>;
+    truncated: boolean;
+    rowCount: number;
+    rowCountExact: boolean;
+    durationMs: number;
+  }>;
   rebuildDatabase: (_input: Record<string, never>) => Promise<{
     success: boolean;
     workspacesIngested: number;
@@ -898,6 +906,27 @@ function setupAnalyticsStory(): APIClient {
       );
 
       return Promise.resolve(summary);
+    },
+    executeRawQuery: (input) => {
+      assert(
+        typeof input.sql === "string",
+        "Analytics raw-query story mock expects SQL text input"
+      );
+
+      return Promise.resolve({
+        columns: [
+          { name: "model", type: "VARCHAR" },
+          { name: "total_cost", type: "DOUBLE" },
+        ],
+        rows: [
+          { model: "openai:gpt-5-mini", total_cost: 72.1 },
+          { model: "anthropic:claude-sonnet-4-20250514", total_cost: 51.3 },
+        ],
+        truncated: false,
+        rowCount: 2,
+        rowCountExact: true,
+        durationMs: 12,
+      });
     },
     rebuildDatabase: () =>
       Promise.resolve({
