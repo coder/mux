@@ -88,7 +88,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
           if (config.recordFileState) {
             try {
               const newStat = await config.runtime.stat(resolvedPath, abortSignal);
-              config.recordFileState(resolvedPath, {
+              await config.recordFileState(resolvedPath, {
                 content,
                 timestamp: newStat.modifiedTime.getTime(),
               });

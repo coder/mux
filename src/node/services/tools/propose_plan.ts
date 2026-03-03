@@ -62,7 +62,7 @@ export const createProposePlanTool: ToolFactory = (config) => {
       if (config.recordFileState) {
         try {
           const fileStat = await config.runtime.stat(planPath);
-          config.recordFileState(planPath, {
+          await config.recordFileState(planPath, {
             content: planContent,
             timestamp: fileStat.modifiedTime.getTime(),
           });

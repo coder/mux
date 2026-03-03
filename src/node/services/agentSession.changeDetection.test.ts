@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, writeFile, rm, utimes, stat } from "fs/promises";
+import { mkdtemp, writeFile, rm, utimes, stat, mkdir, symlink, realpath } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { FileChangeTracker } from "@/node/services/utils/fileChangeTracker";
@@ -40,7 +40,7 @@ describe("AgentSession change detection", () => {
       const mtime = await getMtime(testFile);
 
       // Record initial state
-      tracker.record(testFile, { content, timestamp: mtime });
+      await tracker.record(testFile, { content, timestamp: mtime });
 
       // Check for changes - should be empty since file is unchanged
       const attachments = await tracker.getChangedAttachments();
@@ -56,7 +56,7 @@ describe("AgentSession change detection", () => {
       const originalMtime = await getMtime(testFile);
 
       // Record initial state
-      tracker.record(testFile, { content: originalContent, timestamp: originalMtime });
+      await tracker.record(testFile, { content: originalContent, timestamp: originalMtime });
 
       // Simulate external edit (wait briefly to ensure mtime changes)
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -86,7 +86,7 @@ describe("AgentSession change detection", () => {
       await writeFile(testFile, originalContent);
       const originalMtime = await getMtime(testFile);
 
-      tracker.record(testFile, { content: originalContent, timestamp: originalMtime });
+      await tracker.record(testFile, { content: originalContent, timestamp: originalMtime });
 
       // Modify file
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -113,7 +113,7 @@ describe("AgentSession change detection", () => {
       await writeFile(testFile, content);
       const mtime = await getMtime(testFile);
 
-      tracker.record(testFile, { content, timestamp: mtime });
+      await tracker.record(testFile, { content, timestamp: mtime });
 
       // Delete the file
       await rm(testFile);
@@ -137,9 +137,9 @@ describe("AgentSession change detection", () => {
       const mtime2 = await getMtime(file2);
       const mtime3 = await getMtime(file3);
 
-      tracker.record(file1, { content: "Original 1", timestamp: mtime1 });
-      tracker.record(file2, { content: "Original 2", timestamp: mtime2 });
-      tracker.record(file3, { content: "Original 3", timestamp: mtime3 });
+      await tracker.record(file1, { content: "Original 1", timestamp: mtime1 });
+      await tracker.record(file2, { content: "Original 2", timestamp: mtime2 });
+      await tracker.record(file3, { content: "Original 3", timestamp: mtime3 });
 
       // Modify only files 1 and 2
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -166,7 +166,7 @@ describe("AgentSession change detection", () => {
       await writeFile(testFile, content);
       const originalMtime = await getMtime(testFile);
 
-      tracker.record(testFile, { content, timestamp: originalMtime });
+      await tracker.record(testFile, { content, timestamp: originalMtime });
 
       // Update only mtime (like 'touch' command) without changing content
       const newMtime = Date.now() + 1000;
@@ -185,7 +185,7 @@ describe("AgentSession change detection", () => {
       await writeFile(testFile, originalContent);
       const originalMtime = await getMtime(testFile);
 
-      tracker.record(testFile, { content: originalContent, timestamp: originalMtime });
+      await tracker.record(testFile, { content: originalContent, timestamp: originalMtime });
 
       // Modify middle line
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -205,7 +205,69 @@ describe("AgentSession change detection", () => {
       expect(diff).toContain("+modified line 3");
     });
 
-    it("should expose count and paths getters", () => {
+    it("should detect changes when tracked through symlink path and modified through real path", async () => {
+      const tracker = new FileChangeTracker();
+      const realWorkspaceDir = join(tmpDir, "workspace-real");
+      const linkedWorkspaceDir = join(tmpDir, "workspace-link");
+      await mkdir(realWorkspaceDir);
+      await symlink(realWorkspaceDir, linkedWorkspaceDir, "dir");
+
+      const realFile = join(realWorkspaceDir, "plan.md");
+      const symlinkFile = join(linkedWorkspaceDir, "plan.md");
+      const originalContent = "original content";
+
+      await writeFile(realFile, originalContent);
+      const originalMtime = await getMtime(realFile);
+      await tracker.record(symlinkFile, { content: originalContent, timestamp: originalMtime });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const modifiedContent = "modified content";
+      await writeFile(realFile, modifiedContent);
+      const newMtime = Date.now() + 1000;
+      await utimes(realFile, newMtime / 1000, newMtime / 1000);
+
+      const attachments = await tracker.getChangedAttachments();
+      const canonicalFilePath = await realpath(symlinkFile);
+
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0].filename).toBe(canonicalFilePath);
+      expect(attachments[0].snippet).toContain(modifiedContent);
+    });
+
+    it("should treat symlink and real paths as the same tracked file", async () => {
+      const tracker = new FileChangeTracker();
+      const realWorkspaceDir = join(tmpDir, "workspace-real");
+      const linkedWorkspaceDir = join(tmpDir, "workspace-link");
+      await mkdir(realWorkspaceDir);
+      await symlink(realWorkspaceDir, linkedWorkspaceDir, "dir");
+
+      const realFile = join(realWorkspaceDir, "plan.md");
+      const symlinkFile = join(linkedWorkspaceDir, "plan.md");
+      const originalContent = "original content";
+
+      await writeFile(realFile, originalContent);
+      const originalMtime = await getMtime(realFile);
+
+      await tracker.record(realFile, { content: originalContent, timestamp: originalMtime });
+      await tracker.record(symlinkFile, { content: originalContent, timestamp: originalMtime });
+
+      const canonicalFilePath = await realpath(symlinkFile);
+      expect(tracker.count).toBe(1);
+      expect(tracker.paths).toEqual([canonicalFilePath]);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const modifiedContent = "updated once";
+      await writeFile(realFile, modifiedContent);
+      const newMtime = Date.now() + 1000;
+      await utimes(realFile, newMtime / 1000, newMtime / 1000);
+
+      const attachments = await tracker.getChangedAttachments();
+      expect(attachments).toHaveLength(1);
+      expect(attachments[0].filename).toBe(canonicalFilePath);
+      expect(attachments[0].snippet).toContain(modifiedContent);
+    });
+
+    it("should expose count and paths getters", async () => {
       const tracker = new FileChangeTracker();
       const file1 = join(tmpDir, "file1.md");
       const file2 = join(tmpDir, "file2.md");
@@ -213,11 +275,11 @@ describe("AgentSession change detection", () => {
       expect(tracker.count).toBe(0);
       expect(tracker.paths).toEqual([]);
 
-      tracker.record(file1, { content: "content1", timestamp: Date.now() });
+      await tracker.record(file1, { content: "content1", timestamp: Date.now() });
       expect(tracker.count).toBe(1);
       expect(tracker.paths).toContain(file1);
 
-      tracker.record(file2, { content: "content2", timestamp: Date.now() });
+      await tracker.record(file2, { content: "content2", timestamp: Date.now() });
       expect(tracker.count).toBe(2);
       expect(tracker.paths).toContain(file1);
       expect(tracker.paths).toContain(file2);

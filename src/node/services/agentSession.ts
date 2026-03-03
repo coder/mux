@@ -4529,8 +4529,8 @@ export class AgentSession {
    * Record file state for change detection.
    * Called by tools (e.g., propose_plan) after reading/writing files.
    */
-  recordFileState(filePath: string, state: FileState): void {
-    this.fileChangeTracker.record(filePath, state);
+  async recordFileState(filePath: string, state: FileState): Promise<void> {
+    await this.fileChangeTracker.record(filePath, state);
   }
 
   /** Get the count of tracked files for UI display. */
@@ -4692,7 +4692,7 @@ export class AgentSession {
         mention.modifiedTimeMs !== undefined &&
         mention.resolvedPath
       ) {
-        this.recordFileState(mention.resolvedPath, {
+        await this.recordFileState(mention.resolvedPath, {
           content: mention.content,
           timestamp: mention.modifiedTimeMs,
         });
