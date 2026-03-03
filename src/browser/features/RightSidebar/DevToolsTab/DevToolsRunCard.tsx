@@ -20,13 +20,13 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const displaySteps = props.liveSteps ?? steps;
+  const displaySteps = mergeDisplaySteps(steps, props.liveSteps);
 
   const handleToggle = () => {
     const nextExpanded = !expanded;
     setExpanded(nextExpanded);
 
-    if (!nextExpanded || props.liveSteps != null || steps !== null || !api) {
+    if (!nextExpanded || steps !== null || !api) {
       return;
     }
 
@@ -101,4 +101,35 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
       )}
     </div>
   );
+}
+
+function mergeDisplaySteps(
+  fetchedSteps: DevToolsStep[] | null,
+  liveSteps: DevToolsStep[] | undefined
+): DevToolsStep[] | null {
+  // Live events can arrive after the initial snapshot, so they may only represent
+  // the currently changing subset of steps. Preserve fetched history and overlay
+  // live updates by step ID.
+  if (fetchedSteps == null && liveSteps == null) {
+    return null;
+  }
+
+  if (fetchedSteps == null) {
+    return sortSteps(liveSteps ?? []);
+  }
+
+  if (liveSteps == null || liveSteps.length === 0) {
+    return sortSteps(fetchedSteps);
+  }
+
+  const stepsById = new Map(fetchedSteps.map((step) => [step.id, step] as const));
+  for (const liveStep of liveSteps) {
+    stepsById.set(liveStep.id, liveStep);
+  }
+
+  return sortSteps([...stepsById.values()]);
+}
+
+function sortSteps(steps: DevToolsStep[]): DevToolsStep[] {
+  return [...steps].sort((left, right) => left.stepNumber - right.stepNumber);
 }
