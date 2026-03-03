@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { useLocation } from "react-router-dom";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
@@ -544,6 +545,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     pendingSectionId,
     pendingDraftId,
   } = useRouter();
+  const location = useLocation();
 
   const workspaceStore = useWorkspaceStoreRaw();
 
@@ -789,6 +791,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Sticky in-memory flag to preserve explicit Home navigation intent.
   // Prevents server launch-project auto-selection from bouncing users away from /.
   const hasUserNavigatedHomeRef = useRef(false);
+  const hasProcessedInitialLocationRef = useRef(false);
+
+  useEffect(() => {
+    // Skip initial mount so cold startup at "/" can still honor launch-project.
+    if (!hasProcessedInitialLocationRef.current) {
+      hasProcessedInitialLocationRef.current = true;
+      return;
+    }
+
+    // Browser history can land on / without going through setSelectedWorkspace(null).
+    // Mark that as explicit Home intent so launch-project doesn't bounce the user away.
+    if (location.pathname === "/") {
+      hasUserNavigatedHomeRef.current = true;
+    }
+  }, [location.pathname]);
 
   // setSelectedWorkspace navigates to the workspace URL (or clears if null)
   const setSelectedWorkspace = useCallback(
