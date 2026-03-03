@@ -251,6 +251,8 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
  *
  * Converts Windows separators and strips any absolute/tilde prefix so callers can
  * compare only the stable ".mux/plans/..." suffix.
+ *
+ * Supports both local (`~/.mux/plans/...`) and Docker (`/var/mux/plans/...`) roots.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
   if (!filePath) return null;
@@ -260,9 +262,12 @@ export function normalizePlanFilePath(filePath: string): string | null {
     return normalized;
   }
 
-  const embeddedPlanRootIndex = normalized.indexOf("/.mux/plans/");
-  if (embeddedPlanRootIndex >= 0) {
-    return normalized.slice(embeddedPlanRootIndex + 1);
+  const planRoots = ["/.mux/plans/", "/var/mux/plans/"] as const;
+  for (const planRoot of planRoots) {
+    const embeddedPlanRootIndex = normalized.indexOf(planRoot);
+    if (embeddedPlanRootIndex >= 0) {
+      return `.mux/plans/${normalized.slice(embeddedPlanRootIndex + planRoot.length)}`;
+    }
   }
 
   return null;
