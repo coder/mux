@@ -1684,10 +1684,24 @@ export const config = {
   },
 };
 
+const DevToolsInputTokenBreakdownSchema = z.object({
+  total: z.number(),
+  noCache: z.number().optional(),
+  cacheRead: z.number().optional(),
+  cacheWrite: z.number().optional(),
+});
+
+const DevToolsOutputTokenBreakdownSchema = z.object({
+  total: z.number(),
+  text: z.number().optional(),
+  reasoning: z.number().optional(),
+});
+
 const DevToolsUsageSchema = z.object({
-  inputTokens: z.number().optional(),
-  outputTokens: z.number().optional(),
+  inputTokens: z.union([z.number(), DevToolsInputTokenBreakdownSchema]).optional(),
+  outputTokens: z.union([z.number(), DevToolsOutputTokenBreakdownSchema]).optional(),
   totalTokens: z.number().optional(),
+  raw: z.unknown().optional(),
 });
 
 const DevToolsStepInputSchema = z.object({
