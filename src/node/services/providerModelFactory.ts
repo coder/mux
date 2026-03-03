@@ -535,9 +535,10 @@ export class ProviderModelFactory {
    */
   async createModel(
     modelString: string,
-    muxProviderOptions?: MuxProviderOptions
+    muxProviderOptions?: MuxProviderOptions,
+    opts?: { agentInitiated?: boolean }
   ): Promise<Result<LanguageModel, SendMessageError>> {
-    const result = await this._createModelCore(modelString, muxProviderOptions);
+    const result = await this._createModelCore(modelString, muxProviderOptions, opts);
     if (!result.success || process.env.MUX_DEVTOOLS !== "1") {
       return result;
     }
@@ -564,7 +565,8 @@ export class ProviderModelFactory {
 
   private async _createModelCore(
     modelString: string,
-    muxProviderOptions?: MuxProviderOptions
+    muxProviderOptions?: MuxProviderOptions,
+    opts?: { agentInitiated?: boolean }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     try {
       // Gateway routing is resolved here so every caller gets correct behavior
@@ -1392,9 +1394,7 @@ export class ProviderModelFactory {
           // If the caller explicitly marked this as agent-initiated (e.g., sub-agent,
           // compaction, internal utility), skip the heuristic and always use "agent".
           const initiator =
-            muxProviderOptions?.agentInitiated === true
-              ? "agent"
-              : classifyCopilotInitiator(bodyText);
+            opts?.agentInitiated === true ? "agent" : classifyCopilotInitiator(bodyText);
           headers.set("X-Initiator", initiator);
           headers.delete("x-api-key");
           return baseFetch(input, { ...init, headers });
@@ -1472,7 +1472,8 @@ export class ProviderModelFactory {
   async resolveAndCreateModel(
     modelString: string,
     thinkingLevel: ThinkingLevel,
-    muxProviderOptions?: MuxProviderOptions
+    muxProviderOptions?: MuxProviderOptions,
+    opts?: { agentInitiated?: boolean }
   ): Promise<
     Result<
       {
@@ -1511,7 +1512,7 @@ export class ProviderModelFactory {
     );
 
     const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
-    const modelResult = await this.createModel(effectiveModelString, muxProviderOptions);
+    const modelResult = await this.createModel(effectiveModelString, muxProviderOptions, opts);
     if (!modelResult.success) {
       return Err(modelResult.error);
     }

@@ -50,7 +50,6 @@ export const MuxProviderOptionsSchema = z.object({
       }),
     })
     .optional(),
-  agentInitiated: z.boolean().optional(),
   google: z.record(z.string(), z.unknown()).optional(),
   ollama: z.record(z.string(), z.unknown()).optional(),
   openrouter: z.record(z.string(), z.unknown()).optional(),

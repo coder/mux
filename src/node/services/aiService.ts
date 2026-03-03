@@ -87,6 +87,8 @@ export interface StreamMessageOptions {
   additionalSystemInstructions?: string;
   maxOutputTokens?: number;
   muxProviderOptions?: MuxProviderOptions;
+  /** Internal-only flag for Copilot billing attribution; never sourced from IPC schemas. */
+  agentInitiated?: boolean;
   agentId?: string;
   /** ACP prompt correlation id used to match stream events to a specific request. */
   acpPromptId?: string;
@@ -365,9 +367,10 @@ export class AIService extends EventEmitter {
    */
   async createModel(
     modelString: string,
-    muxProviderOptions?: MuxProviderOptions
+    muxProviderOptions?: MuxProviderOptions,
+    opts?: { agentInitiated?: boolean }
   ): Promise<Result<LanguageModel, SendMessageError>> {
-    return this.providerModelFactory.createModel(modelString, muxProviderOptions);
+    return this.providerModelFactory.createModel(modelString, muxProviderOptions, opts);
   }
 
   private wrapToolsForDelegation(
@@ -472,6 +475,7 @@ export class AIService extends EventEmitter {
       additionalSystemInstructions,
       maxOutputTokens,
       muxProviderOptions,
+      agentInitiated,
       agentId,
       acpPromptId,
       delegatedToolNames,
@@ -544,7 +548,8 @@ export class AIService extends EventEmitter {
       const modelResult = await this.providerModelFactory.resolveAndCreateModel(
         modelString,
         effectiveThinkingLevel,
-        effectiveMuxProviderOptions
+        effectiveMuxProviderOptions,
+        { agentInitiated }
       );
       if (!modelResult.success) {
         return Err(modelResult.error);
@@ -1093,7 +1098,7 @@ export class AIService extends EventEmitter {
               runtimeTempDir,
               runtime,
               agentDiscoveryPath,
-              createModel: (ms, o) => this.createModel(ms, o),
+              createModel: (ms, o, createOptions) => this.createModel(ms, o, createOptions),
               emitBashOutput: (ev) => this.emit("bash-output", ev),
               sessionUsageService: this.sessionUsageService,
             })

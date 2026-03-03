@@ -66,6 +66,7 @@ type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
  */
 interface QueuedMessageInternalOptions {
   synthetic?: boolean;
+  agentInitiated?: boolean;
 }
 
 export class MessageQueue {
@@ -77,6 +78,7 @@ export class MessageQueue {
   private queueDispatchMode: QueueDispatchMode = "tool-end";
   private queuedEntryCount = 0;
   private queuedSyntheticCount = 0;
+  private queuedAgentInitiatedCount = 0;
 
   /**
    * Check if the queue currently contains a compaction request.
@@ -202,6 +204,9 @@ export class MessageQueue {
     if (internal?.synthetic === true) {
       this.queuedSyntheticCount += 1;
     }
+    if (internal?.agentInitiated === true) {
+      this.queuedAgentInitiatedCount += 1;
+    }
 
     return true;
   }
@@ -279,7 +284,15 @@ export class MessageQueue {
 
     const allQueuedEntriesAreSynthetic =
       this.queuedEntryCount > 0 && this.queuedSyntheticCount === this.queuedEntryCount;
-    const internal = allQueuedEntriesAreSynthetic ? { synthetic: true } : undefined;
+    const allQueuedEntriesAreAgentInitiated =
+      this.queuedEntryCount > 0 && this.queuedAgentInitiatedCount === this.queuedEntryCount;
+    const internal =
+      allQueuedEntriesAreSynthetic || allQueuedEntriesAreAgentInitiated
+        ? {
+            ...(allQueuedEntriesAreSynthetic ? { synthetic: true } : {}),
+            ...(allQueuedEntriesAreAgentInitiated ? { agentInitiated: true } : {}),
+          }
+        : undefined;
 
     return { message: joinedMessages, options, internal };
   }
@@ -296,6 +309,7 @@ export class MessageQueue {
     this.queueDispatchMode = "tool-end";
     this.queuedEntryCount = 0;
     this.queuedSyntheticCount = 0;
+    this.queuedAgentInitiatedCount = 0;
   }
 
   /**

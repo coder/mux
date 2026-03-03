@@ -548,7 +548,9 @@ export class TaskService {
       "resolvePlanAutoHandoffTargetAgentId: modelString must be non-empty"
     );
 
-    const modelResult = await this.aiService.createModel(modelString, { agentInitiated: true });
+    const modelResult = await this.aiService.createModel(modelString, undefined, {
+      agentInitiated: true,
+    });
     if (!modelResult.success) {
       log.warn("Plan-task auto-handoff auto-routing failed to create model; defaulting to exec", {
         workspaceId: args.workspaceId,
@@ -653,9 +655,8 @@ export class TaskService {
           agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
           thinkingLevel: task.taskThinkingLevel,
           toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
-          providerOptions: { agentInitiated: true },
         },
-        { synthetic: true }
+        { synthetic: true, agentInitiated: true }
       );
       if (!sendResult.success) {
         log.error("Failed to resume awaiting_report task on startup", {
@@ -700,9 +701,8 @@ export class TaskService {
           agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
           thinkingLevel: task.taskThinkingLevel,
           experiments: task.taskExperiments,
-          providerOptions: { agentInitiated: true },
         },
-        { synthetic: true }
+        { synthetic: true, agentInitiated: true }
       );
     }
 
@@ -1117,13 +1117,17 @@ export class TaskService {
     );
 
     // Start immediately (counts towards parallel limit).
-    const sendResult = await this.workspaceService.sendMessage(taskId, prompt, {
-      model: taskModelString,
-      agentId,
-      thinkingLevel: effectiveThinkingLevel,
-      experiments: args.experiments,
-      providerOptions: { agentInitiated: true },
-    });
+    const sendResult = await this.workspaceService.sendMessage(
+      taskId,
+      prompt,
+      {
+        model: taskModelString,
+        agentId,
+        thinkingLevel: effectiveThinkingLevel,
+        experiments: args.experiments,
+      },
+      { agentInitiated: true }
+    );
     if (!sendResult.success) {
       const message =
         typeof sendResult.error === "string"
@@ -2439,9 +2443,8 @@ export class TaskService {
             agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
-            providerOptions: { agentInitiated: true },
           },
-          { allowQueuedAgentTask: true }
+          { allowQueuedAgentTask: true, agentInitiated: true }
         );
         if (!sendResult.success) {
           log.error("Failed to start queued task via sendMessage", {
@@ -2463,9 +2466,8 @@ export class TaskService {
             agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
-            providerOptions: { agentInitiated: true },
           },
-          { allowQueuedAgentTask: true }
+          { allowQueuedAgentTask: true, agentInitiated: true }
         );
 
         if (!resumeResult.success) {
@@ -2680,10 +2682,9 @@ export class TaskService {
           model: resumeOptions.model,
           agentId: resumeOptions.agentId,
           thinkingLevel: resumeOptions.thinkingLevel,
-          providerOptions: { agentInitiated: true },
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-        { skipAutoResumeReset: true, synthetic: true }
+        { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
       );
       if (!sendResult.success) {
         log.error("Failed to resume parent with active background tasks", {
@@ -2758,9 +2759,8 @@ export class TaskService {
         agentId: entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
         thinkingLevel: entry.workspace.taskThinkingLevel,
         toolPolicy: [{ regex_match: `^${missingCompletionToolName}$`, action: "require" }],
-        providerOptions: { agentInitiated: true },
       },
-      { synthetic: true }
+      { synthetic: true, agentInitiated: true }
     );
   }
 
@@ -2934,9 +2934,8 @@ export class TaskService {
             agentId: targetAgentId,
             thinkingLevel: resolvedThinking,
             experiments: args.entry.workspace.taskExperiments,
-            providerOptions: { agentInitiated: true },
           },
-          { synthetic: true }
+          { synthetic: true, agentInitiated: true }
         );
         if (!sendKickoffResult.success) {
           // Keep status as "running" so the restart handler in initialize() can
@@ -3237,10 +3236,9 @@ export class TaskService {
           model: resumeOptions.model,
           agentId: resumeOptions.agentId,
           thinkingLevel: resumeOptions.thinkingLevel,
-          providerOptions: { agentInitiated: true },
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-        { skipAutoResumeReset: true, synthetic: true }
+        { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
       );
       if (!sendResult.success) {
         log.error("Failed to auto-resume parent after agent_report", {

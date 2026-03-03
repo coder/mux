@@ -197,7 +197,9 @@ export async function generateWorkspaceIdentity(
   for (let i = 0; i < maxAttempts; i++) {
     const modelString = candidates[i];
 
-    const modelResult = await aiService.createModel(modelString, { agentInitiated: true });
+    const modelResult = await aiService.createModel(modelString, undefined, {
+      agentInitiated: true,
+    });
     if (!modelResult.success) {
       lastError = mapModelCreationError(modelResult.error, modelString);
       log.debug(`Name generation: skipping ${modelString} (${modelResult.error.type})`);

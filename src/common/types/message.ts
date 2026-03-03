@@ -78,13 +78,19 @@ export type StartupRetrySendOptions = Pick<
   | "providerOptions"
   | "experiments"
   | "disableWorkspaceAgents"
->;
+> & {
+  /** Internal-only Copilot billing override for startup auto-retry. */
+  agentInitiated?: boolean;
+};
 
 /**
  * Snapshot retry-relevant send options so startup recovery can resume interrupted
  * turns with the same request configuration (model/provider options/system hints).
  */
-export function pickStartupRetrySendOptions(options: SendMessageOptions): StartupRetrySendOptions {
+export function pickStartupRetrySendOptions(
+  options: SendMessageOptions,
+  agentInitiated?: boolean
+): StartupRetrySendOptions {
   return {
     model: options.model,
     agentId: options.agentId,
@@ -97,6 +103,7 @@ export function pickStartupRetrySendOptions(options: SendMessageOptions): Startu
     providerOptions: options.providerOptions,
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
+    ...(agentInitiated === true ? { agentInitiated: true } : {}),
   };
 }
 

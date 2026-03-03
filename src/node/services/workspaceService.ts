@@ -3249,6 +3249,8 @@ export class WorkspaceService extends EventEmitter {
       allowQueuedAgentTask?: boolean;
       skipAutoResumeReset?: boolean;
       synthetic?: boolean;
+      /** Force Copilot billing classification to "agent" for internal sends. */
+      agentInitiated?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
       requireIdle?: boolean;
     }
@@ -3408,6 +3410,7 @@ export class WorkspaceService extends EventEmitter {
         // (not incoming options) because MessageQueue makes tool-end sticky.
         const effectiveQueueDispatchMode = session.queueMessage(message, normalizedOptions, {
           synthetic: internal?.synthetic,
+          agentInitiated: internal?.agentInitiated,
         });
 
         if (effectiveQueueDispatchMode === "tool-end") {
@@ -3436,6 +3439,7 @@ export class WorkspaceService extends EventEmitter {
 
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
+        agentInitiated: internal?.agentInitiated,
       });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
@@ -3493,7 +3497,7 @@ export class WorkspaceService extends EventEmitter {
   async resumeStream(
     workspaceId: string,
     options: SendMessageOptions,
-    internal?: { allowQueuedAgentTask?: boolean }
+    internal?: { allowQueuedAgentTask?: boolean; agentInitiated?: boolean }
   ): Promise<Result<{ started: boolean }, SendMessageError>> {
     let resumedInterruptedTask = false;
     try {
@@ -3577,7 +3581,9 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
-      const result = await session.resumeStream(normalizedOptions);
+      const result = await session.resumeStream(normalizedOptions, {
+        agentInitiated: internal?.agentInitiated,
+      });
       if (!result.success) {
         log.error("resumeStream handler: session returned error", {
           workspaceId,

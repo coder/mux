@@ -289,6 +289,7 @@ export class AgentSession {
 
   private readonly retryManager: RetryManager;
   private lastAutoRetryOptions?: SendMessageOptions;
+  private lastAutoRetryAgentInitiated?: boolean;
   /** Startup recovery should run once per session to avoid duplicate retry timers on reconnect. */
   private startupRecoveryScheduled = false;
   private startupRecoveryPromise: Promise<void> | null = null;
@@ -368,6 +369,7 @@ export class AgentSession {
   private activeStreamContext?: {
     modelString: string;
     options?: SendMessageOptions;
+    agentInitiated?: boolean;
     openaiTruncationModeOverride?: "auto" | "disabled";
     providersConfig: ProvidersConfigMap | null;
   };
@@ -572,7 +574,9 @@ export class AgentSession {
       return;
     }
 
-    const result = await this.resumeStream(options);
+    const result = await this.resumeStream(options, {
+      agentInitiated: this.lastAutoRetryAgentInitiated,
+    });
     if (result.success) {
       if (!result.data.started) {
         // resumeStream can defer when a turn is still PREPARING/COMPLETING.
@@ -1199,7 +1203,14 @@ export class AgentSession {
       return "deferred";
     }
 
+    const startupRetryAgentInitiated =
+      this.lastAutoRetryAgentInitiated ??
+      (startupRetryUserMessage?.metadata?.retrySendOptions?.agentInitiated === true
+        ? true
+        : undefined);
+
     this.lastAutoRetryOptions = retryOptions;
+    this.lastAutoRetryAgentInitiated = startupRetryAgentInitiated;
     await this.handleStreamFailureForAutoRetry({
       type: "unknown",
       message: "startup_interrupted_stream",
@@ -1720,7 +1731,7 @@ export class AgentSession {
   async sendMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    internal?: { synthetic?: boolean }
+    internal?: { synthetic?: boolean; agentInitiated?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
@@ -1912,6 +1923,10 @@ export class AgentSession {
 
     options = this.normalizeGatewaySendOptions(options);
 
+    // Internal callers can force Copilot billing attribution for non-user turns
+    // (task orchestration, compaction, auto-resume, etc.).
+    let agentInitiated = internal?.agentInitiated === true;
+
     // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
     // honor the opt-in even before muxGatewayModels has synchronized.
     let modelForStream = rawModelString.startsWith("mux-gateway:") ? rawModelString : options.model;
@@ -1985,7 +2000,7 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
-        retrySendOptions: pickStartupRetrySendOptions(optionsForStream),
+        retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated),
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
         ...(acpPromptId != null ? { acpPromptId } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
@@ -2068,7 +2083,10 @@ export class AgentSession {
             timestamp: Date.now(),
             toolPolicy: autoCompactionRequest.sendOptions.toolPolicy,
             disableWorkspaceAgents: optionsForStream.disableWorkspaceAgents,
-            retrySendOptions: pickStartupRetrySendOptions(autoCompactionRequest.sendOptions),
+            retrySendOptions: pickStartupRetrySendOptions(
+              autoCompactionRequest.sendOptions,
+              autoCompactionRequest.agentInitiated
+            ),
             muxMetadata: autoCompactionRequest.metadata,
             synthetic: true,
             uiVisible: true,
@@ -2095,6 +2113,7 @@ export class AgentSession {
           ...autoCompactionRequest.sendOptions,
           muxMetadata: autoCompactionRequest.metadata,
         };
+        agentInitiated = autoCompactionRequest.agentInitiated;
       }
     }
 
@@ -2198,7 +2217,13 @@ export class AgentSession {
 
       // Must await here so errors propagate back to sendMessage() callers.
       // Turn-phase transitions for success are driven by stream events.
-      const result = await this.streamWithHistory(modelForStream, optionsForStream);
+      const result = await this.streamWithHistory(
+        modelForStream,
+        optionsForStream,
+        undefined,
+        undefined,
+        agentInitiated
+      );
       return result;
     } finally {
       // Only transition to IDLE on failure; success transitions are driven by stream events.
@@ -2209,7 +2234,8 @@ export class AgentSession {
   }
 
   async resumeStream(
-    options: SendMessageOptions
+    options: SendMessageOptions,
+    internal?: { agentInitiated?: boolean }
   ): Promise<Result<{ started: boolean }, SendMessageError>> {
     this.assertNotDisposed("resumeStream");
 
@@ -2240,7 +2266,13 @@ export class AgentSession {
     try {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned.
-      const result = await this.streamWithHistory(modelForStream, optionsForStream);
+      const result = await this.streamWithHistory(
+        modelForStream,
+        optionsForStream,
+        undefined,
+        undefined,
+        internal?.agentInitiated
+      );
       if (!result.success) {
         return result;
       }
@@ -2479,6 +2511,7 @@ export class AgentSession {
     messageText: string;
     metadata: MuxMessageMetadata;
     sendOptions: SendMessageOptions;
+    agentInitiated: boolean;
   } {
     const compactionModel = this.getPreferredCompactionModel() ?? params.baseOptions.model;
     assert(
@@ -2488,10 +2521,6 @@ export class AgentSession {
 
     const sendOptions: SendMessageOptions = {
       ...params.baseOptions,
-      providerOptions: {
-        ...params.baseOptions.providerOptions,
-        agentInitiated: true,
-      },
       agentId: "compact",
       skipAiSettingsPersistence: true,
       model: compactionModel,
@@ -2528,6 +2557,7 @@ export class AgentSession {
       messageText,
       metadata,
       sendOptions,
+      agentInitiated: true,
     };
   }
 
@@ -2666,7 +2696,8 @@ export class AgentSession {
     modelString: string,
     options?: SendMessageOptions,
     openaiTruncationModeOverride?: "auto" | "disabled",
-    disablePostCompactionAttachments?: boolean
+    disablePostCompactionAttachments?: boolean,
+    agentInitiated?: boolean
   ): Promise<Result<void, SendMessageError>> {
     if (this.disposed) {
       return Ok(undefined);
@@ -2681,10 +2712,12 @@ export class AgentSession {
     this.activeStreamFailureHandled = false;
     this.activeStreamHadPostCompactionInjection = false;
     this.lastAutoRetryOptions = options;
+    this.lastAutoRetryAgentInitiated = agentInitiated === true ? true : undefined;
     const providersConfigForCompaction = this.getProvidersConfigForCompaction();
     this.activeStreamContext = {
       modelString,
       options,
+      agentInitiated,
       openaiTruncationModeOverride,
       providersConfig: providersConfigForCompaction,
     };
@@ -2775,6 +2808,7 @@ export class AgentSession {
       additionalSystemInstructions: options?.additionalSystemInstructions,
       maxOutputTokens: options?.maxOutputTokens,
       muxProviderOptions: options?.providerOptions,
+      agentInitiated,
       agentId: options?.agentId,
       acpPromptId,
       delegatedToolNames,
@@ -3003,7 +3037,9 @@ export class AgentSession {
       retryResult = await this.streamWithHistory(
         context.modelString,
         retryOptions,
-        isGptClass ? "auto" : undefined
+        isGptClass ? "auto" : undefined,
+        undefined,
+        this.activeStreamContext?.agentInitiated
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3085,7 +3121,8 @@ export class AgentSession {
         context.modelString,
         context.options,
         context.openaiTruncationModeOverride,
-        true
+        true,
+        context.agentInitiated
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3378,7 +3415,9 @@ export class AgentSession {
       retryResult = await this.streamWithHistory(
         context.modelString,
         retryOptions,
-        context.openaiTruncationModeOverride
+        context.openaiTruncationModeOverride,
+        undefined,
+        context.agentInitiated
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3851,7 +3890,7 @@ export class AgentSession {
   queueMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    internal?: { synthetic?: boolean }
+    internal?: { synthetic?: boolean; agentInitiated?: boolean }
   ): "tool-end" | "turn-end" | null {
     this.assertNotDisposed("queueMessage");
     const didEnqueue = this.messageQueue.add(message, options, internal);
