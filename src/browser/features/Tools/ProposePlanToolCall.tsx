@@ -362,8 +362,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     planContentTrimmed.length > 0 && !planContentTrimmed.startsWith("*Plan saved to ");
 
   const isEphemeralPreviewMode = isEphemeralPreview ?? false;
+  const hasCompletedToolCall = status === "completed" && !isProposePlanError(result);
   const canAnnotate = Boolean(
-    ((isLatest ?? false) || isEphemeralPreviewMode) &&
+    (isEphemeralPreviewMode || ((isLatest ?? false) && hasCompletedToolCall)) &&
     hasPlanContentInChat &&
     workspaceId &&
     planPath &&

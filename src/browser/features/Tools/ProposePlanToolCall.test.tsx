@@ -10,6 +10,7 @@ import {
   AGENT_AI_DEFAULTS_KEY,
   getAgentIdKey,
   getModelKey,
+  getPlanContentKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
@@ -312,6 +313,63 @@ describe("ProposePlanToolCall", () => {
         }}
         workspaceId="ws-123"
         isLatest={false}
+      />
+    );
+
+    expect(view.queryByRole("button", { name: "Annotate" })).toBeNull();
+  });
+
+  test("hides Annotate button while latest plan call is still executing", async () => {
+    const workspaceId = "ws-123";
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+    let getPlanContentCalls = 0;
+
+    mockApi = {
+      config: {
+        getConfig: () =>
+          Promise.resolve({
+            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+            agentAiDefaults: {},
+            subagentAiDefaults: {},
+          }),
+      },
+      workspace: {
+        getPlanContent: () => {
+          getPlanContentCalls += 1;
+          return Promise.resolve({
+            success: true,
+            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
+          });
+        },
+        replaceChatHistory: (_args) => Promise.resolve({ success: true, data: undefined }),
+        sendMessage: (_args) => Promise.resolve({ success: true, data: undefined }),
+      },
+    };
+
+    const view = renderToolCall(
+      <ProposePlanToolCall args={{}} status="executing" workspaceId={workspaceId} isLatest={true} />
+    );
+
+    await waitFor(() => expect(getPlanContentCalls).toBe(1));
+    expect(view.queryByRole("button", { name: "Annotate" })).toBeNull();
+  });
+
+  test("hides Annotate button when completed propose_plan result is an error", () => {
+    const workspaceId = "ws-123";
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    updatePersistedState(getPlanContentKey(workspaceId), {
+      content: "# Cached Plan\n\nDo the thing.",
+      path: planPath,
+    });
+
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        result={{ success: false, error: "failed to generate plan" }}
+        workspaceId={workspaceId}
+        isLatest={true}
       />
     );
 
