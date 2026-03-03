@@ -228,14 +228,14 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
   };
 }
 
-const ON_CHAT_RETRY_BASE_MS = 250;
-const ON_CHAT_RETRY_MAX_MS = 5000;
+const SUBSCRIPTION_RETRY_BASE_MS = 250;
+const SUBSCRIPTION_RETRY_MAX_MS = 5000;
 
 // Stall detection: server sends heartbeats every 5s, so if we don't receive any events
 // (including heartbeats) for 10s, the connection is likely dead. This handles half-open
 // WebSocket paths (e.g., some WSL localhost forwarding setups).
-const ON_CHAT_STALL_TIMEOUT_MS = 10_000;
-const ON_CHAT_STALL_CHECK_INTERVAL_MS = 2_000;
+const SUBSCRIPTION_STALL_TIMEOUT_MS = 10_000;
+const SUBSCRIPTION_STALL_CHECK_INTERVAL_MS = 2_000;
 
 interface ValidationIssue {
   path?: Array<string | number>;
@@ -306,8 +306,8 @@ function areAgentStatusesEqual(
   return a.emoji === b.emoji && a.message === b.message && (a.url ?? null) === (b.url ?? null);
 }
 
-function calculateOnChatBackoffMs(attempt: number): number {
-  return Math.min(ON_CHAT_RETRY_BASE_MS * 2 ** attempt, ON_CHAT_RETRY_MAX_MS);
+function calculateSubscriptionBackoffMs(attempt: number): number {
+  return Math.min(SUBSCRIPTION_RETRY_BASE_MS * 2 ** attempt, SUBSCRIPTION_RETRY_MAX_MS);
 }
 
 function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
@@ -2614,7 +2614,7 @@ export class WorkspaceStore {
         }
 
         if (!signal.aborted && !attemptController.signal.aborted) {
-          const delayMs = calculateOnChatBackoffMs(attempt);
+          const delayMs = calculateSubscriptionBackoffMs(attempt);
           attempt++;
 
           await this.sleepWithAbort(delayMs, signal);
@@ -2708,7 +2708,7 @@ export class WorkspaceStore {
         clientChangeSignal.removeEventListener("abort", onClientChange);
       }
 
-      const delayMs = calculateOnChatBackoffMs(attempt);
+      const delayMs = calculateSubscriptionBackoffMs(attempt);
       attempt++;
 
       await this.sleepWithAbort(delayMs, signal);
@@ -2740,7 +2740,7 @@ export class WorkspaceStore {
         const timeout = setTimeout(() => {
           cleanup();
           resolve();
-        }, ON_CHAT_RETRY_BASE_MS);
+        }, SUBSCRIPTION_RETRY_BASE_MS);
 
         const cleanup = () => {
           clearTimeout(timeout);
@@ -2978,13 +2978,13 @@ export class WorkspaceStore {
           if (attemptController.signal.aborted) return;
 
           const elapsedMs = Date.now() - lastChatEventAt;
-          if (elapsedMs < ON_CHAT_STALL_TIMEOUT_MS) return;
+          if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
 
           console.warn(
             `[WorkspaceStore] onChat appears stalled for ${workspaceId} (no events for ${elapsedMs}ms); retrying...`
           );
           attemptController.abort();
-        }, ON_CHAT_STALL_CHECK_INTERVAL_MS);
+        }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
 
         for await (const data of iterator) {
           if (signal.aborted) {
@@ -3095,7 +3095,7 @@ export class WorkspaceStore {
         });
       }
 
-      const delayMs = calculateOnChatBackoffMs(attempt);
+      const delayMs = calculateSubscriptionBackoffMs(attempt);
       attempt++;
 
       await this.sleepWithAbort(delayMs, signal);
