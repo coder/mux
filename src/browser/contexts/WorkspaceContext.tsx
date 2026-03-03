@@ -796,6 +796,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const hasProcessedInitialLocationRef = useRef(false);
 
   const hasAutoCreatedRef = useRef(false);
+  const hasCheckedStaleRouteRef = useRef(false);
 
   useEffect(() => {
     // Skip initial mount so cold startup at "/" can still honor launch-project.
@@ -966,13 +967,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     setSelectedWorkspace,
   ]);
 
-  // Self-heal stale workspace routes after startup metadata loads.
-  // If the URL points at a deleted workspace ID, clear selection and persisted state.
+  // Self-heal: if the initial route targets a workspace that no longer exists
+  // in metadata (e.g., deleted since last session), clear the stale route and
+  // persisted selection so the user isn't stuck in a restore loop.
   useEffect(() => {
     if (loading) return;
+    if (hasCheckedStaleRouteRef.current) return;
+    hasCheckedStaleRouteRef.current = true;
+
     if (!currentWorkspaceId) return;
     if (workspaceMetadata.has(currentWorkspaceId)) return;
 
+    // Workspace ID from initial route doesn't exist — clear stale state.
     setSelectedWorkspace(null);
   }, [loading, currentWorkspaceId, workspaceMetadata, setSelectedWorkspace]);
 
