@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
-import { Menu } from "lucide-react";
+import { CircleHelp, Menu, Plus } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { cn } from "@/common/lib/utils";
 import { Button } from "@/browser/components/Button/Button";
@@ -16,14 +17,44 @@ import {
   useMuxGatewayAccountStatus,
   formatMuxGatewayBalance,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
-import { useAnalyticsSummary } from "@/browser/hooks/useAnalytics";
-import { formatUsd, formatCompactNumber } from "@/browser/features/Analytics/analyticsUtils";
-import { useWorkspaceRecency, useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
+import {
+  ANALYTICS_CHART_COLORS,
+  CHART_AXIS_STROKE,
+  CHART_AXIS_TICK,
+  CHART_TOOLTIP_CONTENT_STYLE,
+  formatUsd,
+  formatCompactNumber,
+} from "@/browser/features/Analytics/analyticsUtils";
+import {
+  useAnalyticsSpendByProject,
+  useAnalyticsSpendOverTime,
+  useAnalyticsSummary,
+} from "@/browser/hooks/useAnalytics";
+import {
+  useWorkspaceRecency,
+  useWorkspaceSidebarState,
+  useWorkspaceStoreRaw,
+} from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 // ─── Card styling constant (Analytics dashboard aesthetic) ───────────────
 const CARD_CLASS = "bg-background-secondary border-border-medium rounded-lg border p-3";
+
+interface DateFilters {
+  from: Date;
+  to: Date | null;
+}
+
+function useDateWindow7d(): DateFilters {
+  return useMemo(() => {
+    const from = new Date();
+    from.setUTCDate(from.getUTCDate() - 6);
+    from.setUTCHours(0, 0, 0, 0);
+    return { from, to: null as Date | null };
+  }, []);
+}
 
 interface LandingPageProps {
   leftSidebarCollapsed: boolean;
@@ -36,6 +67,8 @@ interface LandingPageProps {
  * session stats, and recent workspaces at a glance.
  */
 export function LandingPage(props: LandingPageProps) {
+  const dateFilters = useDateWindow7d();
+
   return (
     <div className="bg-dark flex flex-1 flex-col overflow-hidden">
       <LandingTitlebar
@@ -45,7 +78,10 @@ export function LandingPage(props: LandingPageProps) {
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
           <GatewayCreditsCard />
-          <SessionStatsRow />
+          <SessionStatsRow dateFilters={dateFilters} />
+          <SpendGraph dateFilters={dateFilters} />
+          <MuxChatCard />
+          <ProjectsSection dateFilters={dateFilters} />
           <RecentWorkspacesSection />
         </div>
       </div>
@@ -111,18 +147,9 @@ function GatewayCreditsCard() {
 }
 
 // ─── Session stats row ───────────────────────────────────────────────────
-function SessionStatsRow() {
+function SessionStatsRow(props: { dateFilters: DateFilters }) {
   const { navigateToAnalytics } = useRouter();
-
-  // 7-day window: from 6 days ago (start of day) through now
-  const dateFilters = useMemo(() => {
-    const from = new Date();
-    from.setUTCDate(from.getUTCDate() - 6);
-    from.setUTCHours(0, 0, 0, 0);
-    return { from, to: null as Date | null };
-  }, []);
-
-  const summary = useAnalyticsSummary(null, dateFilters);
+  const summary = useAnalyticsSummary(null, props.dateFilters);
 
   const stats = [
     { label: "Total Spend", value: formatUsd(summary.data?.totalSpendUsd ?? 0) },
@@ -149,6 +176,168 @@ function SessionStatsRow() {
             <div className="text-muted text-xs">{stat.label}</div>
             <div className="text-foreground mt-1 font-mono text-lg font-semibold">
               {summary.loading ? <Skeleton variant="shimmer" className="h-5 w-16" /> : stat.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SpendGraph(props: { dateFilters: DateFilters }) {
+  const { navigateToAnalytics } = useRouter();
+  const spendOverTime = useAnalyticsSpendOverTime({
+    projectPath: null,
+    granularity: "day",
+    from: props.dateFilters.from,
+    to: props.dateFilters.to,
+  });
+
+  const byBucket = new Map<string, number>();
+  for (const item of spendOverTime.data ?? []) {
+    byBucket.set(item.bucket, (byBucket.get(item.bucket) ?? 0) + item.costUsd);
+  }
+
+  const chartData = Array.from(byBucket.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([bucket, costUsd]) => ({
+      bucket,
+      label: new Date(bucket).toLocaleDateString("en-US", { weekday: "short" }),
+      costUsd,
+    }));
+
+  if (spendOverTime.loading) {
+    return (
+      <div className={CARD_CLASS}>
+        <h3 className="text-foreground mb-2 text-sm font-medium">Spend (7d)</h3>
+        <Skeleton variant="shimmer" className="h-[200px] w-full" />
+      </div>
+    );
+  }
+
+  if (chartData.length === 0) return null;
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-foreground text-sm font-medium">Spend (7d)</h3>
+        <button onClick={navigateToAnalytics} className="text-muted hover:text-foreground text-xs">
+          View all →
+        </button>
+      </div>
+      <div className={CARD_CLASS}>
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} vertical={false} />
+            <XAxis dataKey="label" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+            <YAxis
+              tick={CHART_AXIS_TICK}
+              axisLine={false}
+              tickLine={false}
+              tickFormatter={(value: number) => formatUsd(Number(value))}
+              width={60}
+            />
+            <Tooltip
+              formatter={(value: number) => [formatUsd(Number(value)), "Spend"]}
+              contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
+              labelStyle={{ color: "var(--color-foreground)" }}
+              cursor={{ fill: "var(--color-hover)" }}
+            />
+            <Bar dataKey="costUsd" fill={ANALYTICS_CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function MuxChatCard() {
+  const { setSelectedWorkspace } = useWorkspaceContext();
+  const workspaceStore = useWorkspaceStoreRaw();
+
+  const handleOpenMuxChat = () => {
+    const metadata = workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID);
+    setSelectedWorkspace(
+      metadata
+        ? toWorkspaceSelection(metadata)
+        : {
+            workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+            projectPath: "",
+            projectName: "Mux",
+            namedWorkspacePath: "",
+          }
+    );
+  };
+
+  return (
+    <button
+      onClick={handleOpenMuxChat}
+      className="bg-background-secondary border-border-medium hover:border-foreground/20 flex items-center gap-4 rounded-lg border p-4 text-left transition-colors"
+    >
+      <div className="bg-hover flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
+        <CircleHelp className="text-muted h-5 w-5" />
+      </div>
+      <div>
+        <h3 className="text-foreground text-sm font-medium">Chat with Mux</h3>
+        <p className="text-muted mt-0.5 text-xs">
+          Ask questions, get help with your code, or explore ideas — without a project workspace.
+        </p>
+      </div>
+    </button>
+  );
+}
+
+function ProjectsSection(props: { dateFilters: DateFilters }) {
+  const { createWorkspaceDraft } = useWorkspaceContext();
+  const spendByProject = useAnalyticsSpendByProject(props.dateFilters);
+
+  const projects = [...(spendByProject.data ?? [])]
+    .sort((a, b) => b.costUsd - a.costUsd)
+    .slice(0, 6);
+
+  if (spendByProject.loading) {
+    return (
+      <div>
+        <h3 className="text-foreground mb-2 text-sm font-medium">Projects</h3>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }, (_, index) => (
+            <div key={index} className={CARD_CLASS}>
+              <Skeleton variant="shimmer" className="h-4 w-24" />
+              <Skeleton variant="shimmer" className="mt-2 h-3 w-16" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (projects.length === 0) return null;
+
+  return (
+    <div data-testid="projects-section">
+      <h3 className="text-foreground mb-2 text-sm font-medium">Projects</h3>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+        {projects.map((project) => (
+          <div
+            key={project.projectPath}
+            className="bg-background-secondary border-border-medium rounded-lg border p-3"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-foreground truncate text-sm font-medium">
+                {project.projectName}
+              </span>
+              <button
+                onClick={() => createWorkspaceDraft(project.projectPath)}
+                className="text-muted hover:text-foreground hover:bg-hover flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs transition-colors"
+                aria-label={`New chat in ${project.projectName}`}
+              >
+                <Plus className="h-3 w-3" />
+                <span>New</span>
+              </button>
+            </div>
+            <div className="text-muted mt-1 flex items-center gap-3 text-xs">
+              <span>{formatUsd(project.costUsd)}</span>
+              <span>{formatCompactNumber(project.tokenCount)} tokens</span>
             </div>
           </div>
         ))}
