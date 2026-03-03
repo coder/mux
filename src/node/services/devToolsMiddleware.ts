@@ -16,7 +16,11 @@ import type {
 } from "@/common/types/devtools";
 import assert from "@/common/utils/assert";
 import { log } from "@/node/services/log";
-import { DEVTOOLS_STEP_ID_HEADER, consumeCapturedRequestHeaders } from "./devToolsHeaderCapture";
+import {
+  DEVTOOLS_STEP_ID_HEADER,
+  consumeCapturedRequestHeaders,
+  redactHeaders,
+} from "./devToolsHeaderCapture";
 import type { DevToolsService } from "./devToolsService";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -410,7 +414,7 @@ export function createDevToolsMiddleware(
           requestHeaders: capturedRequestHeaders,
           responseHeaders:
             result.response?.headers != null
-              ? Object.fromEntries(Object.entries(result.response.headers))
+              ? redactHeaders(Object.fromEntries(Object.entries(result.response.headers)))
               : null,
           rawResponse: result.response?.body ?? null,
           rawChunks: null,
@@ -569,7 +573,7 @@ export function createDevToolsMiddleware(
       rawRequest = rest.request?.body ?? null;
       responseHeaders =
         rest.response?.headers != null
-          ? Object.fromEntries(Object.entries(rest.response.headers))
+          ? redactHeaders(Object.fromEntries(Object.entries(rest.response.headers)))
           : null;
       const reader = stream.getReader();
 
