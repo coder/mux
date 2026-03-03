@@ -742,7 +742,7 @@ describe("createDevToolsMiddleware", () => {
       expect(step?.error).toBeNull();
     });
 
-    it("multiple steps in one middleware instance share the same runId", async () => {
+    it("each wrapGenerate call creates its own run", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const middleware = createDevToolsMiddleware("ws-1", service);
       const wrapGenerate = getWrapGenerate(middleware);
@@ -762,18 +762,16 @@ describe("createDevToolsMiddleware", () => {
       });
 
       const runs = await service.getRuns("ws-1");
-      expect(runs).toHaveLength(1);
-      expect(runs[0]?.stepCount).toBe(2);
+      expect(runs).toHaveLength(2);
+      expect(runs[0]?.stepCount).toBe(1);
+      expect(runs[1]?.stepCount).toBe(1);
 
-      const runWithSteps = await service.getRunWithSteps("ws-1", runs[0].id);
-      expect(runWithSteps).not.toBeNull();
-      expect(runWithSteps?.steps).toHaveLength(2);
-
-      const firstStep = runWithSteps?.steps[0];
-      const secondStep = runWithSteps?.steps[1];
-      expect(firstStep?.runId).toBe(secondStep?.runId);
-      expect(firstStep?.stepNumber).toBe(1);
-      expect(secondStep?.stepNumber).toBe(2);
+      // Each run has its own step with stepNumber 1
+      const run1Steps = await service.getRunWithSteps("ws-1", runs[0].id);
+      const run2Steps = await service.getRunWithSteps("ws-1", runs[1].id);
+      expect(run1Steps?.steps).toHaveLength(1);
+      expect(run2Steps?.steps).toHaveLength(1);
+      expect(run1Steps?.steps[0]?.runId).not.toBe(run2Steps?.steps[0]?.runId);
     });
   });
 });
