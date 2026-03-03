@@ -316,7 +316,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                             onChange={setViewMode}
                           />
                         </div>
-                        <span className="text-muted flex items-center gap-1 text-xs">
+                        <span className="text-muted flex items-center gap-1 text-xs tabular-nums">
                           {formatCostWithDollar(totalCost)}
                           {displayUsage?.hasUnknownCosts && (
                             <Tooltip>
@@ -414,10 +414,10 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                                 {component.name}
                               </div>
                             </td>
-                            <td className="text-foreground py-1 pr-2 [&:last-child]:pr-0 [&:last-child]:text-right">
+                            <td className="text-foreground py-1 pr-2 tabular-nums [&:last-child]:pr-0 [&:last-child]:text-right">
                               {formatTokens(component.tokens)}
                             </td>
-                            <td className="text-foreground py-1 pr-2 [&:last-child]:pr-0 [&:last-child]:text-right">
+                            <td className="text-foreground py-1 pr-2 tabular-nums [&:last-child]:pr-0 [&:last-child]:text-right">
                               {isNegligible ? (
                                 <span className="text-dim italic">{costDisplay}</span>
                               ) : (

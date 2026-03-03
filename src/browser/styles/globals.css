@@ -2044,6 +2044,17 @@ pre code {
   }
 }
 
+/* Semantic numeric typography — use on incrementing counters (costs, timers, token counts).
+   counter-nums: tabular figures only.  counter-nums-mono: tabular + monospace. */
+@utility counter-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility counter-nums-mono {
+  font-family: var(--font-monospace);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Font utility classes */
 .font-primary {
   font-family: var(--font-primary);

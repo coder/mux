@@ -289,7 +289,9 @@ export function StatsTab(props: StatsTabProps) {
                   {isClearing ? "Clearing..." : "Clear stats"}
                 </button>
               )}
-              <span className="text-muted text-xs">{formatDuration(totalDuration, "precise")}</span>
+              <span className="text-muted text-xs tabular-nums">
+                {formatDuration(totalDuration, "precise")}
+              </span>
             </div>
           </div>
 
@@ -330,7 +332,9 @@ export function StatsTab(props: StatsTabProps) {
           )}
 
           {avgTPS !== null && avgTPS > 0 && (
-            <div className="text-muted-light text-xs">Avg. TPS: {avgTPS.toFixed(0)} tok/s</div>
+            <div className="text-muted-light text-xs tabular-nums">
+              Avg. TPS: {avgTPS.toFixed(0)} tok/s
+            </div>
           )}
 
           {/* Progress bar */}
@@ -368,14 +372,14 @@ export function StatsTab(props: StatsTabProps) {
                   {component.waiting ? (
                     <span className="text-muted text-xs">waiting…</span>
                   ) : component.duration !== null ? (
-                    <span className="text-muted text-xs">
+                    <span className="text-muted text-xs tabular-nums">
                       {formatDuration(component.duration, "precise")}
                     </span>
                   ) : (
                     <span className="text-muted text-xs">—</span>
                   )}
                   {component.percentage !== undefined && component.percentage > 0 && (
-                    <span className="text-muted text-[10px]">
+                    <span className="text-muted text-[10px] tabular-nums">
                       {component.percentage.toFixed(0)}%
                     </span>
                   )}
@@ -421,11 +425,11 @@ export function StatsTab(props: StatsTabProps) {
                     <span className="text-secondary truncate text-xs" title={label}>
                       {label}
                     </span>
-                    <span className="text-muted shrink-0 text-xs">
+                    <span className="text-muted shrink-0 text-xs tabular-nums">
                       {formatDuration(entry.totalDurationMs, "precise")}
                     </span>
                   </div>
-                  <div className="text-muted-light mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px]">
+                  <div className="text-muted-light mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] tabular-nums">
                     <span>{entry.responseCount} req</span>
                     {avgTtft !== null && (
                       <>

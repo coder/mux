@@ -40,7 +40,7 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
             Context Usage
           </span>
         )}
-        <span className="text-muted text-xs">
+        <span className="text-muted text-xs tabular-nums">
           {totalDisplay}
           {maxDisplay}
           {percentageDisplay}
