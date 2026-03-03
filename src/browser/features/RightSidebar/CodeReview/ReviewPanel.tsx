@@ -27,7 +27,7 @@ import { AlertTriangle, Lightbulb, Loader2 } from "lucide-react";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
-import type { ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
+import { InlineReviewNote, type ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
 import { ReviewControls } from "./ReviewControls";
 import { ImmersiveReviewView } from "./ImmersiveReviewView";
 import { FileTree } from "./FileTree";
@@ -52,6 +52,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { parseNumstat, buildFileTree, extractNewPath } from "@/common/utils/git/numstatParser";
 import { parseNameStatus } from "@/common/utils/git/nameStatusParser";
+import { isPlanFilePath } from "@/common/types/review";
 import type {
   DiffHunk,
   ReviewFilters as ReviewFiltersType,
@@ -540,6 +541,35 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [diffState]
   );
 
+  const orphanReviews = useMemo(() => {
+    const diffFilePaths = new Set<string>();
+    for (const hunk of hunks) {
+      diffFilePaths.add(hunk.filePath);
+      if (hunk.oldPath) {
+        diffFilePaths.add(hunk.oldPath);
+      }
+    }
+
+    const plan: typeof reviews = [];
+    const nonPlan: typeof reviews = [];
+
+    for (const review of reviews) {
+      const filePath = review.data?.filePath;
+      if (!filePath || diffFilePaths.has(filePath)) {
+        continue;
+      }
+
+      if (isPlanFilePath(filePath)) {
+        plan.push(review);
+      } else {
+        nonPlan.push(review);
+      }
+    }
+
+    return { plan, nonPlan };
+  }, [hunks, reviews]);
+
+  const planOrphanReviews = orphanReviews.plan;
   const [filters, setFilters] = useState<ReviewFiltersType>({
     showReadHunks: showReadHunks,
     diffBase: diffBase,
@@ -1471,6 +1501,24 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
             {/* Hunks below the file tree */}
             <div className="flex flex-[0_0_auto] flex-col p-3">
+              {planOrphanReviews.length > 0 && (
+                <div className="border-border-light mb-2 border-b pb-2">
+                  <div className="text-muted mb-1 px-2 text-[10px] font-medium uppercase tracking-wider">
+                    Plan annotations
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {planOrphanReviews.map((review) => (
+                      <InlineReviewNote
+                        key={review.id}
+                        review={review}
+                        showFilePath={false}
+                        actions={reviewActions}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {hunks.length === 0 ? (
                 <div className="text-muted flex flex-col items-center justify-start gap-3 px-6 pt-12 pb-6 text-center">
                   <div className="text-foreground text-base font-medium">No changes found</div>
