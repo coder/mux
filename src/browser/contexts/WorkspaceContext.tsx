@@ -981,6 +981,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // mux-chat registers asynchronously after initial load — don't treat it as stale.
     if (currentWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) return;
 
+    // If metadata is empty, a transient backend failure may have caused
+    // workspace.list to return nothing — don't clear a potentially valid route.
+    if (workspaceMetadata.size === 0) return;
+
     // Workspace ID from initial route doesn't exist — clear stale state.
     setSelectedWorkspace(null);
   }, [loading, currentWorkspaceId, workspaceMetadata, setSelectedWorkspace]);

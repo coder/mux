@@ -407,6 +407,9 @@ function WorkspaceCard(props: { workspaceId: string; title: string; onClick: () 
       tabIndex={0}
       onClick={props.onClick}
       onKeyDown={(e) => {
+        // Only handle key events on the card itself, not on nested interactive
+        // elements like the PR badge link (which handles its own keyboard nav).
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           props.onClick();
