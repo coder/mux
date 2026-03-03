@@ -187,6 +187,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
                 ) : (
                   <Maximize2 aria-hidden="true" className="h-3 w-3" />
                 )}
+                <span>{isImmersive ? "Exit" : "Review"}</span>
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom">

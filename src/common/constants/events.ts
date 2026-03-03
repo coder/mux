@@ -94,6 +94,12 @@ export const CUSTOM_EVENTS = {
   OPEN_TOUCH_REVIEW_IMMERSIVE: "mux:openTouchReviewImmersive",
 
   /**
+   * Event to enter immersive code review (keyboard-first, non-touch) for a workspace.
+   * Detail: { workspaceId: string }
+   */
+  OPEN_REVIEW_IMMERSIVE: "mux:openReviewImmersive",
+
+  /**
    * Event to open the debug LLM request modal
    * No detail
    */
@@ -147,6 +153,9 @@ export interface CustomEventPayloads {
     title?: string;
   };
   [CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE]: {
+    workspaceId: string;
+  };
+  [CUSTOM_EVENTS.OPEN_REVIEW_IMMERSIVE]: {
     workspaceId: string;
   };
   [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
