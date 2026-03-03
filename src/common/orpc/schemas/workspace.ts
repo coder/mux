@@ -3,6 +3,11 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
+export const ProjectRefSchema = z.object({
+  projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
+  projectName: z.string().meta({ description: "Display name (basename of projectPath)" }),
+});
+
 export const WorkspaceMetadataSchema = z.object({
   id: z.string().meta({
     description:
@@ -77,6 +82,15 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  projects: z
+    .array(ProjectRefSchema)
+    .optional()
+    .meta({
+      description:
+        "For multi-project workspaces: list of included projects. " +
+        "When >1 entry, this is a multi-project workspace. " +
+        "projectPath/projectName reflect the primary project for backcompat.",
+    }),
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
   }),

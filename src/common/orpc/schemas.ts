@@ -22,6 +22,7 @@ export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
   FrontendWorkspaceMetadataSchema,
   GitStatusSchema,
+  ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceMetadataSchema,
 } from "./schemas/workspace";

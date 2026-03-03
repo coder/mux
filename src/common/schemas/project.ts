@@ -1,5 +1,6 @@
 import { RuntimeConfigSchema } from "@/common/orpc/schemas/runtime";
 import { WorkspaceMCPOverridesSchema } from "@/common/orpc/schemas/mcp";
+import { ProjectRefSchema } from "@/common/orpc/schemas/workspace";
 import {
   WorkspaceAISettingsByAgentSchema,
   WorkspaceAISettingsSchema,
@@ -117,6 +118,7 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  projects: z.array(ProjectRefSchema).optional(),
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
   }),

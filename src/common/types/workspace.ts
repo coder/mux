@@ -23,11 +23,14 @@ import type { z } from "zod";
 import type {
   FrontendWorkspaceMetadataSchema,
   GitStatusSchema,
+  ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceMetadataSchema,
 } from "../orpc/schemas";
 
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>;
+
+export type ProjectRef = z.infer<typeof ProjectRefSchema>;
 
 /**
  * Git status for a workspace (ahead/behind relative to origin's primary branch)
