@@ -848,7 +848,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       ) : annotateMode && canAnnotate ? (
         <PlanAnnotationView
           planContent={planContent}
-          planPath={planPath}
+          planPath={normalizedPlanPath ?? planPath}
           onReviewNote={reviews.addReview}
           reviews={planReviews}
           reviewActions={reviewActions}
