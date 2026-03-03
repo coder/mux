@@ -465,6 +465,7 @@ export function createDevToolsMiddleware(
 
       let finishReason: string | undefined;
       let usage: DevToolsUsage | null = null;
+      let streamError: string | null = null;
 
       const buildOutput = (): DevToolsStepOutput => ({
         textParts,
@@ -615,6 +616,8 @@ export function createDevToolsMiddleware(
           }
           case "error": {
             finishReason ??= "error";
+            // Capture the error payload so the step is marked as failed in DevTools.
+            streamError = extractErrorMessage(chunk.error);
             break;
           }
           default:
@@ -633,7 +636,7 @@ export function createDevToolsMiddleware(
                 await finalizeStep({
                   output: buildOutput(),
                   usage,
-                  error: null,
+                  error: streamError,
                   rawRequest,
                   requestHeaders: capturedRequestHeaders,
                   responseHeaders,

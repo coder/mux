@@ -234,6 +234,13 @@ export class DevToolsService extends EventEmitter {
   async clear(workspaceId: string): Promise<void> {
     assert(workspaceId.trim().length > 0, "DevToolsService.clear requires a workspaceId");
 
+    // Wait for any in-flight load to finish before clearing, otherwise the
+    // pending loadFromDisk can repopulate stale data after the clear.
+    const pendingLoad = this.loadingPromises.get(workspaceId);
+    if (pendingLoad) {
+      await pendingLoad;
+    }
+
     const data = this.getOrCreateWorkspaceData(workspaceId);
     data.runs.clear();
     data.steps.clear();
