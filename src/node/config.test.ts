@@ -474,6 +474,69 @@ describe("Config", () => {
       expect(fs.readFileSync(systemConfigPath, "utf-8")).toBe(originalSystemConfig);
     });
 
+    it("system defaults are not materialized into user config on save", async () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        featureFlagOverrides: { flagA: "on" },
+        projects: [],
+      });
+      writeUserConfig({
+        projects: [["/user/proj", { workspaces: [] }]],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // Verify merge worked
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on" });
+
+      // Save — should NOT write system defaults to user config
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8"));
+      expect(savedRaw.defaultModel).toBeUndefined();
+      expect(savedRaw.featureFlagOverrides).toBeUndefined();
+      // User project should still be there
+      expect(savedRaw.projects).toEqual([["/user/proj", expect.any(Object)]]);
+    });
+
+    it("user-modified system defaults are persisted on save", async () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [],
+      });
+      writeUserConfig({
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // User overrides the system default
+      loaded.defaultModel = "anthropic:claude-sonnet-4-20250514";
+
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8"));
+      expect(savedRaw.defaultModel).toBe("anthropic:claude-sonnet-4-20250514");
+    });
+
+    it("malformed project tuples in system config are filtered", () => {
+      writeSystemConfig({
+        projects: [
+          42,
+          null,
+          ["/valid/proj", { workspaces: [] }],
+          "not-a-tuple",
+        ] as unknown as Array<[string, unknown]>,
+      });
+      writeUserConfig({
+        projects: [["/user/proj", { workspaces: [] }]],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.size).toBe(2);
+      expect(loaded.projects.has("/valid/proj")).toBe(true);
+      expect(loaded.projects.has("/user/proj")).toBe(true);
+    });
+
     it("MUX_SYSTEM_CONFIG env var overrides system config path", () => {
       const customSystemConfigPath = path.join(tempDir, "custom.system.json");
       fs.writeFileSync(

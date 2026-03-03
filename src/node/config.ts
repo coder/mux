@@ -338,14 +338,47 @@ export class Config {
     if (Array.isArray(system.projects) || Array.isArray(user.projects)) {
       const systemProjects = Array.isArray(system.projects) ? system.projects : [];
       const userProjects = Array.isArray(user.projects) ? user.projects : [];
-      const projectMap = new Map<string, ProjectConfig>(systemProjects);
-      for (const [projectPath, projectConfig] of userProjects) {
-        projectMap.set(projectPath, projectConfig);
+      const projectMap = new Map<string, ProjectConfig>();
+
+      for (const entry of systemProjects) {
+        if (Array.isArray(entry) && entry.length >= 2 && typeof entry[0] === "string") {
+          projectMap.set(entry[0], entry[1]);
+        }
       }
+
+      for (const entry of userProjects) {
+        if (Array.isArray(entry) && entry.length >= 2 && typeof entry[0] === "string") {
+          projectMap.set(entry[0], entry[1]);
+        }
+      }
+
       merged.projects = Array.from(projectMap.entries());
     }
 
     return merged;
+  }
+
+  /**
+   * Remove fields from save data that match system config defaults,
+   * preventing materialization of admin-managed baselines into user config.
+   * Projects and taskSettings are excluded — projects go through normalization
+   * that changes their shape, and taskSettings always has a default value.
+   */
+  private stripSystemDefaults(
+    data: Record<string, unknown>,
+    systemConfig: Partial<AppConfigOnDisk>
+  ): void {
+    const system = systemConfig as Record<string, unknown>;
+    for (const key of Object.keys(data)) {
+      if (key === "projects" || key === "taskSettings") continue;
+      const sysVal = system[key];
+      if (sysVal === undefined) continue;
+      // If the saved value matches the system default, remove it so the
+      // system config remains the source of truth for that setting.
+      if (JSON.stringify(data[key]) === JSON.stringify(sysVal)) {
+        delete data[key];
+      }
+    }
   }
 
   loadConfigOrDefault(): ProjectsConfig {
@@ -599,6 +632,13 @@ export class Config {
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
       if (onePasswordAccountName) {
         data.onePasswordAccountName = onePasswordAccountName;
+      }
+
+      // Prevent materialization of system config defaults into user config.
+      // Only persist values that differ from the admin-managed baseline.
+      const systemConfig = this.loadSystemConfig();
+      if (systemConfig) {
+        this.stripSystemDefaults(data as Record<string, unknown>, systemConfig);
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
