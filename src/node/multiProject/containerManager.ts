@@ -30,6 +30,20 @@ export class ContainerManager {
       `Duplicate project names in multi-project workspace: ${names.join(", ")}`
     );
 
+    for (const projectWorkspace of projectWorkspaces) {
+      const projectName = projectWorkspace.projectName;
+      // Check both basename implementations so separators are rejected on every platform.
+      const normalizedPosixName = path.posix.basename(projectName);
+      const normalizedWindowsName = path.win32.basename(projectName);
+      assert(
+        normalizedPosixName === projectName &&
+          normalizedWindowsName === projectName &&
+          !projectName.includes("..") &&
+          projectName.length > 0,
+        `Invalid project name "${projectName}": must be a simple name without path separators`
+      );
+    }
+
     const containerPath = this.getContainerPath(workspaceName);
     await fs.mkdir(containerPath, { recursive: true });
 

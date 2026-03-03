@@ -291,6 +291,71 @@ describe("WorkspaceService multi-project lifecycle", () => {
     });
   });
 
+  test("createMultiProject rejects runtimes that are not local/worktree", async () => {
+    await withTempMuxRoot(async (rootDir) => {
+      const projectAPath = path.join(rootDir, "project-a");
+      const projectBPath = path.join(rootDir, "project-b");
+
+      const mockConfig: Partial<Config> = {
+        rootDir,
+        srcDir: path.join(rootDir, "src"),
+        generateStableId: mock(() => "ws-unsupported-runtime"),
+        loadConfigOrDefault: mock(() => ({
+          projects: new Map([
+            [projectAPath, { workspaces: [], trusted: true }],
+            [projectBPath, { workspaces: [], trusted: true }],
+          ]),
+        })),
+        getSessionDir: mock((workspace: string) => path.join(rootDir, "sessions", workspace)),
+      };
+
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService;
+
+      const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime");
+
+      try {
+        const workspaceService = new WorkspaceService(
+          mockConfig as Config,
+          historyService,
+          mockAIService,
+          createMockInitStateManager(),
+          mockExtensionMetadataService as ExtensionMetadataService,
+          mockBackgroundProcessManager as BackgroundProcessManager
+        );
+
+        const result = await workspaceService.createMultiProject(
+          [
+            { projectPath: projectAPath, projectName: "project-a" },
+            { projectPath: projectBPath, projectName: "project-b" },
+          ],
+          "feature-unsupported-runtime",
+          "main",
+          "Unsupported runtime",
+          {
+            type: "docker",
+            image: "ubuntu:22.04",
+          }
+        );
+
+        expect(result.success).toBe(false);
+        if (result.success) {
+          return;
+        }
+
+        expect(result.error).toContain(
+          "Multi-project workspaces currently require local or worktree runtime, got: docker"
+        );
+        expect(createRuntimeSpy).not.toHaveBeenCalled();
+      } finally {
+        createRuntimeSpy.mockRestore();
+      }
+    });
+  });
+
   test("remove() deletes all project workspaces and the shared container for multi-project workspaces", async () => {
     await withTempMuxRoot(async (rootDir) => {
       const workspaceId = "ws-multi-remove";

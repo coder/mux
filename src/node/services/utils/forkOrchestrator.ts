@@ -176,6 +176,12 @@ export async function orchestrateFork(
     const projects = getProjects(parentMetadata);
     assert(projects.length > 1, "Multi-project fork requires at least two projects");
 
+    const runtimeType = sourceRuntimeConfig.type;
+    assert(
+      runtimeType === "local" || runtimeType === "worktree",
+      `Multi-project workspaces currently require local or worktree runtime, got: ${runtimeType}`
+    );
+
     const containerSrcBaseDir = getSrcBaseDir(sourceRuntimeConfig) ?? config.srcDir;
     const containerManager = new ContainerManager(containerSrcBaseDir);
 

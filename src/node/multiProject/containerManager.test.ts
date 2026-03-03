@@ -89,6 +89,22 @@ describe("ContainerManager", () => {
     );
   });
 
+  it("createContainer rejects project names that can escape the container", async () => {
+    const workspace = await createWorkspaceDir("alpha", "alpha marker");
+
+    for (const invalidProjectName of ["../escape", "nested/name", "nested\\name", "", ".."]) {
+      await assert.rejects(
+        manager.createContainer("shared-workspace", [
+          {
+            projectName: invalidProjectName,
+            workspacePath: workspace.workspacePath,
+          },
+        ]),
+        /Invalid project name/
+      );
+    }
+  });
+
   it("getContainerPath returns deterministic path under _workspaces", () => {
     expect(manager.getContainerPath("shared-workspace")).toBe(
       path.join(srcBaseDir, "_workspaces", "shared-workspace")

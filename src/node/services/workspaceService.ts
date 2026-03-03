@@ -1964,10 +1964,16 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      const runtimeType = finalRuntimeConfig.type;
+      assert(
+        runtimeType === "local" || runtimeType === "worktree",
+        `Multi-project workspaces currently require local or worktree runtime, got: ${runtimeType}`
+      );
+
       const isLocalRuntime = finalRuntimeConfig.type === "local";
       const normalizedTrunkBranch = trunkBranch?.trim() ?? "";
       if (!isLocalRuntime && normalizedTrunkBranch.length === 0) {
-        return Err("Trunk branch is required for worktree and SSH runtimes");
+        return Err("Trunk branch is required for worktree runtime");
       }
 
       let containerSrcBaseDir = getSrcBaseDir(finalRuntimeConfig) ?? this.config.srcDir;
