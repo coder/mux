@@ -2753,6 +2753,50 @@ export class WorkspaceService extends EventEmitter {
           );
         } catch (containerError: unknown) {
           await rollbackRenamedProjects();
+
+          // Recreate old container with original paths after rollback.
+          try {
+            const primaryProject = projects[0];
+            assert(primaryProject, "Multi-project workspace requires a primary project");
+            const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
+              projectPath: primaryProject.projectPath,
+              workspaceName: oldName,
+            });
+            const originalWorkspaces = projects.map((project) => {
+              if (typeof rollbackRuntime.getWorkspacePath === "function") {
+                return {
+                  projectName: project.projectName,
+                  workspacePath: rollbackRuntime.getWorkspacePath(project.projectPath, oldName),
+                };
+              }
+
+              const renamedWorkspaceEntry = renamedProjectWorkspaces.find(
+                (workspaceEntry) => workspaceEntry.projectPath === project.projectPath
+              );
+              assert(
+                renamedWorkspaceEntry,
+                "Expected renamed workspace entry while recreating old container after rollback"
+              );
+
+              return {
+                projectName: project.projectName,
+                workspacePath: path.join(
+                  path.dirname(renamedWorkspaceEntry.workspacePath),
+                  oldName
+                ),
+              };
+            });
+            const oldContainerPath = containerManager.getContainerPath(oldName);
+            await fsPromises.mkdir(oldContainerPath, { recursive: true });
+            for (const workspaceEntry of originalWorkspaces) {
+              const linkPath = path.join(oldContainerPath, workspaceEntry.projectName);
+              await fsPromises.access(workspaceEntry.workspacePath);
+              await fsPromises.symlink(workspaceEntry.workspacePath, linkPath);
+            }
+          } catch (recreateErr: unknown) {
+            log.error("Failed to recreate old container after rename failure", recreateErr);
+          }
+
           return Err(`Failed to recreate container: ${getErrorMessage(containerError)}`);
         }
 
