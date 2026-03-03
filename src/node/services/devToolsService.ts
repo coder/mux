@@ -16,6 +16,8 @@ interface WorkspaceData {
   runs: Map<string, DevToolsRun>;
   steps: Map<string, DevToolsStep>;
   loaded: boolean;
+  /** Incremented on each clear(); appendToFile checks this to skip stale writes. */
+  clearGeneration: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,6 +122,22 @@ export class DevToolsService extends EventEmitter {
 
     await this.ensureLoaded(workspaceId);
     const data = this.getOrCreateWorkspaceData(workspaceId);
+
+    // Self-healing: if the run was cleared during an active stream,
+    // recreate it so steps aren't orphaned.
+    if (!data.runs.has(step.runId)) {
+      const autoRun: DevToolsRun = {
+        id: step.runId,
+        workspaceId,
+        startedAt: step.startedAt,
+      };
+      data.runs.set(autoRun.id, autoRun);
+      await this.appendToFile(workspaceId, { type: "run", run: autoRun });
+      this.emitWorkspaceEvent(workspaceId, {
+        type: "run-created",
+        run: this.buildRunSummary(data, autoRun.id),
+      });
+    }
 
     data.steps.set(step.id, step);
     await this.appendToFile(workspaceId, { type: "step", step });
@@ -244,6 +262,7 @@ export class DevToolsService extends EventEmitter {
     const data = this.getOrCreateWorkspaceData(workspaceId);
     data.runs.clear();
     data.steps.clear();
+    data.clearGeneration += 1;
     data.loaded = true;
 
     const filePath = this.getSessionFilePath(workspaceId);
@@ -271,6 +290,7 @@ export class DevToolsService extends EventEmitter {
       runs: new Map<string, DevToolsRun>(),
       steps: new Map<string, DevToolsStep>(),
       loaded: false,
+      clearGeneration: 0,
     };
     this.workspaces.set(workspaceId, data);
     return data;
@@ -444,8 +464,18 @@ export class DevToolsService extends EventEmitter {
   }
 
   private async appendToFile(workspaceId: string, entry: DevToolsLogEntry): Promise<void> {
+    const data = this.workspaces.get(workspaceId);
+    const generationBefore = data?.clearGeneration ?? 0;
+
     const filePath = this.getSessionFilePath(workspaceId);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
+
+    // If clear() ran between the caller's in-memory update and this disk write,
+    // the file was truncated and our data is stale. Skip the write.
+    if ((this.workspaces.get(workspaceId)?.clearGeneration ?? 0) !== generationBefore) {
+      return;
+    }
+
     await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf-8");
   }
 }
