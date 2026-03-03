@@ -362,13 +362,39 @@ function RecentWorkspacesSection() {
   const { setSelectedWorkspace } = useWorkspaceContext();
   const workspaceRecency = useWorkspaceRecency();
 
-  // Sort all workspaces by recency, take top 4
+  // Sort all workspaces by recency, take top 4.
+  // IMPORTANT: include deterministic tie-breakers so Storybook/Chromatic snapshots
+  // cannot flip card order when recency values are equal.
   const recentWorkspaces = useMemo(() => {
     return (
       [...workspaceMetadata.values()]
         // "Chat with Mux" already has a dedicated card on the landing page.
         .filter((ws) => ws.id !== MUX_HELP_CHAT_WORKSPACE_ID)
-        .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))
+        .sort((a, b) => {
+          const aRecency = workspaceRecency[a.id] ?? 0;
+          const bRecency = workspaceRecency[b.id] ?? 0;
+          if (aRecency !== bRecency) {
+            return bRecency - aRecency;
+          }
+
+          const aCreatedAtRaw = Date.parse(a.createdAt ?? "");
+          const bCreatedAtRaw = Date.parse(b.createdAt ?? "");
+          const aCreatedAt = Number.isFinite(aCreatedAtRaw) ? aCreatedAtRaw : 0;
+          const bCreatedAt = Number.isFinite(bCreatedAtRaw) ? bCreatedAtRaw : 0;
+          if (aCreatedAt !== bCreatedAt) {
+            return bCreatedAt - aCreatedAt;
+          }
+
+          if (a.name !== b.name) {
+            return a.name < b.name ? -1 : 1;
+          }
+
+          if (a.id !== b.id) {
+            return a.id < b.id ? -1 : 1;
+          }
+
+          return 0;
+        })
         .slice(0, 4)
     );
   }, [workspaceMetadata, workspaceRecency]);
