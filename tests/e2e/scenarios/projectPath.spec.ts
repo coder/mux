@@ -57,16 +57,11 @@ test.describe("Project Path Handling", () => {
 
     // Reload the page to pick up the new config
     await page.reload();
-    await page.waitForLoadState("domcontentloaded");
-
-    // Boot now lands on "/" first when there's no saved workspace in localStorage.
-    // Wait for React hydration before asserting sidebar roles to avoid a race on CI.
-    await page.waitForSelector(
-      '[data-testid="session-stats-row"], [role="navigation"][aria-label="Projects"]',
-      {
-        timeout: 30_000,
-      }
-    );
+    await page.waitForLoadState("load");
+    // Give Electron + React time to fully hydrate on slow CI (Linux/Xvfb).
+    // domcontentloaded is insufficient because React mounts asynchronously
+    // after the bundle script executes.
+    await page.waitForLoadState("networkidle");
 
     // Find the project in the sidebar - it should show the project name, not empty
     const navigation = page.getByRole("navigation", { name: "Projects" });
