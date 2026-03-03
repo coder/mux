@@ -2547,6 +2547,19 @@ export class WorkspaceStore {
         const onClientChange = () => attemptController.abort();
         clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
 
+        let lastEventAt = Date.now();
+        const stallInterval = setInterval(() => {
+          if (attemptController.signal.aborted) return;
+
+          const elapsedMs = Date.now() - lastEventAt;
+          if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
+
+          console.warn(
+            `[WorkspaceStore] terminal activity subscription stalled (no events for ${elapsedMs}ms); retrying...`
+          );
+          attemptController.abort();
+        }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
+
         try {
           const iterator = await subscribe(undefined, {
             signal: attemptController.signal,
@@ -2557,8 +2570,14 @@ export class WorkspaceStore {
               return;
             }
 
+            lastEventAt = Date.now();
+
             // Connection is alive again - don't carry old backoff into the next failure.
             attempt = 0;
+
+            if (event.type === "heartbeat") {
+              continue;
+            }
 
             queueMicrotask(() => {
               if (signal.aborted || attemptController.signal.aborted) {
@@ -2611,6 +2630,7 @@ export class WorkspaceStore {
         } finally {
           signal.removeEventListener("abort", onAbort);
           clientChangeSignal.removeEventListener("abort", onClientChange);
+          clearInterval(stallInterval);
         }
 
         if (!signal.aborted && !attemptController.signal.aborted) {
@@ -2642,6 +2662,19 @@ export class WorkspaceStore {
       const onClientChange = () => attemptController.abort();
       clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
 
+      let lastEventAt = Date.now();
+      const stallInterval = setInterval(() => {
+        if (attemptController.signal.aborted) return;
+
+        const elapsedMs = Date.now() - lastEventAt;
+        if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
+
+        console.warn(
+          `[WorkspaceStore] activity subscription stalled (no events for ${elapsedMs}ms); retrying...`
+        );
+        attemptController.abort();
+      }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
+
       try {
         // Open the live delta stream first so no state transition can be lost
         // between the list snapshot fetch and subscribe registration.
@@ -2672,8 +2705,14 @@ export class WorkspaceStore {
             return;
           }
 
+          lastEventAt = Date.now();
+
           // Connection is alive again - don't carry old backoff into the next failure.
           attempt = 0;
+
+          if (event.type === "heartbeat") {
+            continue;
+          }
 
           queueMicrotask(() => {
             if (signal.aborted || attemptController.signal.aborted) {
@@ -2706,6 +2745,7 @@ export class WorkspaceStore {
       } finally {
         signal.removeEventListener("abort", onAbort);
         clientChangeSignal.removeEventListener("abort", onClientChange);
+        clearInterval(stallInterval);
       }
 
       const delayMs = calculateSubscriptionBackoffMs(attempt);
