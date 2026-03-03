@@ -1520,7 +1520,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       const workspaceRecency = workspaceStore.getWorkspaceRecency();
       const recentWorkspace = [...workspaceMetadata.values()]
-        .filter((workspace) => workspace.projectPath)
+        .filter((workspace) => workspace.projectPath && workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID)
         .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
 
       if (!recentWorkspace) return;
