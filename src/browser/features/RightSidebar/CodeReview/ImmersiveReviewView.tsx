@@ -1525,9 +1525,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
 
-  const shouldShowFileTransitionSplash =
-    currentFileHunks.length > 0 && (isActiveFileContentLoading || isActiveFileRevealPending);
-
   return (
     <div
       ref={containerRef}
@@ -1657,33 +1654,41 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             </div>
           ) : (
             <div className="bg-dark relative overflow-hidden">
-              {shouldShowFileTransitionSplash && (
-                <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
+              {isActiveFileContentLoading ? (
+                <div className="text-muted flex items-center justify-center py-12 text-sm">
                   <span className="animate-pulse">Loading file...</span>
                 </div>
+              ) : (
+                <>
+                  {isActiveFileRevealPending && (
+                    <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
+                      <span className="animate-pulse">Loading file...</span>
+                    </div>
+                  )}
+                  <div className={cn(isActiveFileRevealPending && "invisible")}>
+                    <SelectableDiffRenderer
+                      content={overlayData.content}
+                      filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                      inlineReviews={
+                        activeFilePath ? props.reviewsByFilePath.get(activeFilePath) : undefined
+                      }
+                      oldStart={1}
+                      newStart={1}
+                      fontSize="11px"
+                      maxHeight="none"
+                      className="rounded-none border-0 [&>div]:overflow-x-visible"
+                      onReviewNote={handleReviewNoteSubmit}
+                      onComposerCancel={handleInlineComposerCancel}
+                      reviewActions={diffReviewActions}
+                      enableHighlighting={shouldEnableHighlighting}
+                      selectedLineRange={selectedLineRange}
+                      onLineIndexSelect={handleLineIndexSelect}
+                      externalSelectionRequest={externalComposerSelectionRequest}
+                      externalEditRequest={inlineReviewEditRequest}
+                    />
+                  </div>
+                </>
               )}
-              <div className={cn(shouldShowFileTransitionSplash && "invisible")}>
-                <SelectableDiffRenderer
-                  content={overlayData.content}
-                  filePath={activeFilePath ?? currentFileHunks[0].filePath}
-                  inlineReviews={
-                    activeFilePath ? props.reviewsByFilePath.get(activeFilePath) : undefined
-                  }
-                  oldStart={1}
-                  newStart={1}
-                  fontSize="11px"
-                  maxHeight="none"
-                  className="rounded-none border-0 [&>div]:overflow-x-visible"
-                  onReviewNote={handleReviewNoteSubmit}
-                  onComposerCancel={handleInlineComposerCancel}
-                  reviewActions={diffReviewActions}
-                  enableHighlighting={shouldEnableHighlighting}
-                  selectedLineRange={selectedLineRange}
-                  onLineIndexSelect={handleLineIndexSelect}
-                  externalSelectionRequest={externalComposerSelectionRequest}
-                  externalEditRequest={inlineReviewEditRequest}
-                />
-              </div>
             </div>
           )}
         </div>
