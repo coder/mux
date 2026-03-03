@@ -58,6 +58,7 @@ import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/pro
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+import { getProjects } from "@/common/utils/multiProject";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
@@ -1000,6 +1001,7 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
+          projects: getProjects(metadata),
           secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv: getMuxEnv(
             metadata.projectPath,

@@ -1,4 +1,5 @@
 import { tool } from "ai";
+import assert from "node:assert/strict";
 // NOTE: We avoid readline; consume Web Streams directly to prevent race conditions
 import * as path from "path";
 import {
@@ -14,6 +15,7 @@ import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 
 import type { BashOutputEvent } from "@/common/types/stream";
+import type { ProjectRef } from "@/common/types/workspace";
 import type { BashToolResult } from "@/common/types/tools";
 import { resolveBashDisplayName } from "@/common/utils/tools/bashDisplayName";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -831,6 +833,38 @@ fi
 `;
 }
 
+export function buildBashToolDescription(cwd: string, projects: ProjectRef[]): string {
+  assert(cwd.length > 0, "buildBashToolDescription: cwd must be non-empty");
+  const baseDesc = TOOL_DEFINITIONS.bash.description;
+
+  for (const project of projects) {
+    assert(
+      project.projectName.length > 0,
+      "buildBashToolDescription: projectName must be non-empty"
+    );
+    assert(
+      project.projectPath.length > 0,
+      "buildBashToolDescription: projectPath must be non-empty"
+    );
+  }
+
+  if (projects.length > 1) {
+    const projectList = projects
+      .map((project) => `  - ${project.projectName}/ → ${project.projectPath}`)
+      .join("\n");
+
+    return (
+      `${baseDesc}\n` +
+      `Runs in ${cwd} — a multi-project workspace containing:\n` +
+      `${projectList}\n` +
+      "Each subdirectory is an independent git repo. " +
+      "Use cd or path prefixes to work in a specific project."
+    );
+  }
+
+  return `${baseDesc}\nRuns in ${cwd} - no cd needed`;
+}
+
 /**
  * Bash execution tool factory for AI assistant
  * Creates a bash tool that can execute commands with a configurable timeout
@@ -849,7 +883,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
   const maxLineBytes = overflowPolicy === "truncate" ? Infinity : BASH_MAX_LINE_BYTES;
 
   return tool({
-    description: TOOL_DEFINITIONS.bash.description + "\nRuns in " + config.cwd + " - no cd needed",
+    description: buildBashToolDescription(config.cwd, config.projects ?? []),
     inputSchema: TOOL_DEFINITIONS.bash.schema,
     execute: async (
       { script, timeout_secs, run_in_background, display_name },

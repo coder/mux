@@ -1,9 +1,11 @@
 import { describe, it, expect } from "bun:test";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { createBashTool } from "./bash";
+import { buildBashToolDescription, createBashTool } from "./bash";
 import type { BashOutputEvent } from "@/common/types/stream";
+import type { ProjectRef } from "@/common/types/workspace";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
+import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import * as path from "path";
 import * as fs from "fs";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
@@ -42,6 +44,44 @@ function createTestBashTool() {
     },
   };
 }
+
+describe("buildBashToolDescription", () => {
+  const cwd = "/workspace/root";
+  const multiProjectRefs: ProjectRef[] = [
+    { projectName: "frontend", projectPath: "/workspace/root/frontend" },
+    { projectName: "backend", projectPath: "/workspace/root/backend" },
+  ];
+
+  it("returns standard description for single-project workspaces", () => {
+    const noProjectsDescription = buildBashToolDescription(cwd, []);
+    const oneProjectDescription = buildBashToolDescription(cwd, [multiProjectRefs[0]]);
+
+    expect(noProjectsDescription).toContain(TOOL_DEFINITIONS.bash.description);
+    expect(noProjectsDescription).toContain(`Runs in ${cwd} - no cd needed`);
+    expect(noProjectsDescription).not.toContain("independent git repo");
+
+    expect(oneProjectDescription).toContain(TOOL_DEFINITIONS.bash.description);
+    expect(oneProjectDescription).toContain(`Runs in ${cwd} - no cd needed`);
+    expect(oneProjectDescription).not.toContain("independent git repo");
+  });
+
+  it("includes project listing for multi-project workspaces", () => {
+    const description = buildBashToolDescription(cwd, multiProjectRefs);
+
+    expect(description).toContain(`Runs in ${cwd} — a multi-project workspace containing:`);
+    expect(description).toContain("  - frontend/ → /workspace/root/frontend");
+    expect(description).toContain("  - backend/ → /workspace/root/backend");
+    expect(description).toContain("independent git repo");
+  });
+
+  it("includes project paths for multi-project workspaces", () => {
+    const description = buildBashToolDescription(cwd, multiProjectRefs);
+
+    for (const projectRef of multiProjectRefs) {
+      expect(description).toContain(projectRef.projectPath);
+    }
+  });
+});
 
 describe("bash tool", () => {
   it("should execute a simple command successfully", async () => {

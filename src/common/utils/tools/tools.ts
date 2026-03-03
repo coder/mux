@@ -51,6 +51,7 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { ProjectRef } from "@/common/types/workspace";
 
 /**
  * Configuration for tools that need runtime context
@@ -60,6 +61,8 @@ export interface ToolConfiguration {
   cwd: string;
   /** Runtime environment for executing commands and file operations */
   runtime: Runtime;
+  /** Project roots in this workspace (single- or multi-project context for tool descriptions) */
+  projects?: ProjectRef[];
   /** Environment secrets to inject (optional) */
   secrets?: Record<string, string>;
   /** MUX_ environment variables (MUX_PROJECT_PATH, MUX_RUNTIME) - set from init hook env */
