@@ -44,7 +44,8 @@ function parseResponse(output: string): { headers: string; body: string; statusC
 
   // Headers end with \r\n\r\n (or \n\n for some servers).
   // Search only the prefix to avoid scanning the entire body.
-  const prefix = output.length > HEADER_SEARCH_LIMIT ? output.slice(0, HEADER_SEARCH_LIMIT) : output;
+  const prefix =
+    output.length > HEADER_SEARCH_LIMIT ? output.slice(0, HEADER_SEARCH_LIMIT) : output;
   const headerEndIndex = prefix.indexOf("\r\n\r\n");
   const altHeaderEndIndex = prefix.indexOf("\n\n");
   const splitIndex =
