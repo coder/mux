@@ -38,7 +38,7 @@ import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
-import { listLocalBranches } from "@/node/git";
+import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
@@ -1971,8 +1971,8 @@ export class WorkspaceService extends EventEmitter {
       );
 
       const isLocalRuntime = finalRuntimeConfig.type === "local";
-      const normalizedTrunkBranch = trunkBranch?.trim() ?? "";
-      if (!isLocalRuntime && normalizedTrunkBranch.length === 0) {
+      const normalizedPreferredTrunkBranch = trunkBranch?.trim();
+      if (!isLocalRuntime && normalizedPreferredTrunkBranch === "") {
         return Err("Trunk branch is required for worktree runtime");
       }
 
@@ -2001,6 +2001,40 @@ export class WorkspaceService extends EventEmitter {
       this.initAbortControllers.set(workspaceId, initAbortController);
       initLogger = this.createInitLogger(workspaceId);
 
+      const resolveProjectTrunkBranch = async (projectPath: string): Promise<string> => {
+        if (isLocalRuntime) {
+          return normalizedPreferredTrunkBranch ?? "";
+        }
+
+        if (!normalizedPreferredTrunkBranch) {
+          const localBranches = await listLocalBranches(projectPath);
+          return detectDefaultTrunkBranch(projectPath, localBranches);
+        }
+
+        try {
+          const localBranches = await listLocalBranches(projectPath);
+          if (localBranches.includes(normalizedPreferredTrunkBranch)) {
+            return normalizedPreferredTrunkBranch;
+          }
+
+          const detectedTrunkBranch = await detectDefaultTrunkBranch(projectPath, localBranches);
+          log.debug("Requested multi-project trunk branch missing; using detected branch", {
+            projectPath,
+            requestedTrunkBranch: normalizedPreferredTrunkBranch,
+            detectedTrunkBranch,
+          });
+          return detectedTrunkBranch;
+        } catch (error: unknown) {
+          // When branch discovery is unavailable, preserve the caller-provided branch.
+          // This mirrors single-project create() behavior for non-local runtimes.
+          log.debug("Failed to detect per-project trunk branch; using requested branch", {
+            projectPath,
+            requestedTrunkBranch: normalizedPreferredTrunkBranch,
+            error: getErrorMessage(error),
+          });
+          return normalizedPreferredTrunkBranch;
+        }
+      };
       const projectRuntimeEntries = normalizedProjects.map((project) => ({
         project,
         runtime: createRuntime(finalRuntimeConfig, {
@@ -2013,6 +2047,7 @@ export class WorkspaceService extends EventEmitter {
         project: ProjectRef;
         runtime: ReturnType<typeof createRuntime>;
         workspacePath: string;
+        trunkBranch: string;
       }> = [];
 
       const rollbackCreatedWorkspaces = async (): Promise<void> => {
@@ -2043,10 +2078,28 @@ export class WorkspaceService extends EventEmitter {
           configSnapshot.projects.get(stripTrailingSlashes(projectRuntimeEntry.project.projectPath))
             ?.trusted ?? false;
 
+        let projectTrunkBranch: string;
+        try {
+          projectTrunkBranch = await resolveProjectTrunkBranch(
+            projectRuntimeEntry.project.projectPath
+          );
+        } catch (error: unknown) {
+          await rollbackCreatedWorkspaces();
+          initLogger.logComplete(-1);
+          return Err(
+            `Failed to resolve trunk branch for project ${projectRuntimeEntry.project.projectName}: ${getErrorMessage(error)}`
+          );
+        }
+
+        assert(
+          isLocalRuntime || projectTrunkBranch.length > 0,
+          `Expected non-empty trunk branch for project ${projectRuntimeEntry.project.projectPath}`
+        );
+
         const createResult = await projectRuntimeEntry.runtime.createWorkspace({
           projectPath: projectRuntimeEntry.project.projectPath,
           branchName,
-          trunkBranch: normalizedTrunkBranch,
+          trunkBranch: projectTrunkBranch,
           directoryName: branchName,
           initLogger,
           abortSignal: initAbortController.signal,
@@ -2066,6 +2119,7 @@ export class WorkspaceService extends EventEmitter {
           project: projectRuntimeEntry.project,
           runtime: projectRuntimeEntry.runtime,
           workspacePath: createResult.workspacePath,
+          trunkBranch: projectTrunkBranch,
         });
       }
 
@@ -2158,7 +2212,7 @@ export class WorkspaceService extends EventEmitter {
               const initResult = await runFullInit(createdWorkspace.runtime, {
                 projectPath: createdWorkspace.project.projectPath,
                 branchName,
-                trunkBranch: normalizedTrunkBranch,
+                trunkBranch: createdWorkspace.trunkBranch,
                 workspacePath: createdWorkspace.workspacePath,
                 initLogger: projectInitLogger,
                 env: secrets,

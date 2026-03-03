@@ -117,6 +117,31 @@ async function resolveTrunkBranch(
   }
 }
 
+async function resolveMultiProjectFallbackTrunkBranch(
+  projectPath: string,
+  sourceWorkspaceName: string,
+  forkResult: WorkspaceForkResult,
+  preferredTrunkBranch?: string
+): Promise<string> {
+  if (forkResult.success && forkResult.sourceBranch) {
+    return forkResult.sourceBranch;
+  }
+
+  try {
+    const localBranches = await listLocalBranches(projectPath);
+    if (localBranches.includes(sourceWorkspaceName)) {
+      return sourceWorkspaceName;
+    }
+
+    return detectDefaultTrunkBranch(projectPath, localBranches);
+  } catch {
+    if (preferredTrunkBranch?.trim()) {
+      return preferredTrunkBranch.trim();
+    }
+    return "main";
+  }
+}
+
 async function rollbackCreatedProjectWorkspaces(
   createdProjectRuntimes: MultiProjectRuntimeEntry[],
   workspaceName: string,
@@ -304,10 +329,26 @@ export async function orchestrateFork(
         );
       }
 
+      const projectTrunkBranch = await resolveMultiProjectFallbackTrunkBranch(
+        projectRuntime.projectPath,
+        sourceWorkspaceName,
+        forkResult,
+        params.preferredTrunkBranch
+      );
+      assert(
+        projectTrunkBranch.length > 0,
+        `Expected non-empty fallback trunk branch for project ${projectRuntime.projectPath}`
+      );
+
+      if (runtimeIndex === 0) {
+        // Keep the returned trunk branch aligned with the branch used for primary fallback create.
+        trunkBranch = projectTrunkBranch;
+      }
+
       const createResult = await projectRuntime.runtime.createWorkspace({
         projectPath: projectRuntime.projectPath,
         branchName: newWorkspaceName,
-        trunkBranch,
+        trunkBranch: projectTrunkBranch,
         directoryName: newWorkspaceName,
         initLogger,
         abortSignal,

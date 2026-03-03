@@ -6,6 +6,7 @@ import { ContainerManager } from "@/node/multiProject/containerManager";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import type { InitLogger, Runtime, WorkspaceForkResult } from "@/node/runtime/Runtime";
 import * as runtimeFactoryModule from "@/node/runtime/runtimeFactory";
+import * as gitModule from "@/node/git";
 import * as runtimeUpdatesModule from "@/node/services/utils/forkRuntimeUpdates";
 import { orchestrateFork } from "./forkOrchestrator";
 
@@ -107,6 +108,11 @@ let createRuntimeMock!: ReturnType<typeof spyOn<typeof runtimeFactoryModule, "cr
 let createContainerMock!: ReturnType<typeof spyOn<ContainerManager, "createContainer">>;
 let removeContainerMock!: ReturnType<typeof spyOn<ContainerManager, "removeContainer">>;
 
+let listLocalBranchesMock!: ReturnType<typeof spyOn<typeof gitModule, "listLocalBranches">>;
+let detectDefaultTrunkBranchMock!: ReturnType<
+  typeof spyOn<typeof gitModule, "detectDefaultTrunkBranch">
+>;
+
 function mockProjectRuntimes(
   projectOneRuntime: ProjectRuntimeMocks,
   projectTwoRuntime: ProjectRuntimeMocks
@@ -165,6 +171,12 @@ describe("orchestrateFork (multi-project)", () => {
       CONTAINER_PATH
     );
     removeContainerMock = spyOn(ContainerManager.prototype, "removeContainer").mockResolvedValue();
+    listLocalBranchesMock = spyOn(gitModule, "listLocalBranches").mockRejectedValue(
+      new Error("git unavailable in test")
+    );
+    detectDefaultTrunkBranchMock = spyOn(gitModule, "detectDefaultTrunkBranch").mockResolvedValue(
+      "main"
+    );
   });
 
   it("creates child worktrees for each project and a child container", async () => {
@@ -255,6 +267,60 @@ describe("orchestrateFork (multi-project)", () => {
     );
   });
 
+  it("resolves fallback create trunk branch per project", async () => {
+    const projectOneRuntime = createProjectRuntimeMocks();
+    const projectTwoRuntime = createProjectRuntimeMocks();
+    mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
+
+    projectOneRuntime.forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-one",
+      sourceBranch: "main",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.forkWorkspace.mockResolvedValue({
+      success: false,
+      error: "fork unavailable",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.createWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-two",
+    });
+
+    listLocalBranchesMock.mockImplementation((projectPath) => {
+      if (projectPath === PROJECT_TWO_PATH) {
+        return Promise.resolve(["master", "feature-two"]);
+      }
+      if (projectPath === PROJECT_ONE_PATH) {
+        return Promise.resolve(["main", "feature-one"]);
+      }
+      throw new Error(`Unexpected project path for listLocalBranches: ${projectPath}`);
+    });
+    detectDefaultTrunkBranchMock.mockImplementation((projectPath, branches) => {
+      if (projectPath === PROJECT_TWO_PATH) {
+        return Promise.resolve("master");
+      }
+      return Promise.resolve(branches?.[0] ?? "main");
+    });
+
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
+
+    expect(projectTwoRuntime.createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: PROJECT_TWO_PATH,
+        trunkBranch: "master",
+      })
+    );
+    expect(detectDefaultTrunkBranchMock).toHaveBeenCalledWith(PROJECT_TWO_PATH, [
+      "master",
+      "feature-two",
+    ]);
+    expect(result.data.trunkBranch).toBe("main");
+  });
   it("inherits the parent projects array for child metadata", async () => {
     const projectOneRuntime = createProjectRuntimeMocks();
     const projectTwoRuntime = createProjectRuntimeMocks();

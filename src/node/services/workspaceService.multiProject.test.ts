@@ -8,6 +8,7 @@ import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { Config } from "@/node/config";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as gitModule from "@/node/git";
 import type { AIService } from "@/node/services/aiService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
@@ -255,6 +256,176 @@ describe("WorkspaceService multi-project lifecycle", () => {
     });
   });
 
+  test("createMultiProject resolves trunk branch per project when requested branch is missing", async () => {
+    await withTempMuxRoot(async (rootDir) => {
+      const workspaceId = "ws-multi-project-trunk-resolution";
+      const branchName = "feature-per-project-trunk";
+      const projectAPath = path.join(rootDir, "project-a");
+      const projectBPath = path.join(rootDir, "project-b");
+      const srcDir = path.join(rootDir, "src");
+      const containerPath = path.join(srcDir, "_workspaces", branchName);
+
+      const configState: ProjectsConfig = {
+        projects: new Map([
+          [projectAPath, { workspaces: [], trusted: true }],
+          [projectBPath, { workspaces: [], trusted: true }],
+        ]),
+      };
+
+      const mockConfig: Partial<Config> = {
+        rootDir,
+        srcDir,
+        generateStableId: mock(() => workspaceId),
+        loadConfigOrDefault: mock(() => configState),
+        editConfig: mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
+          fn(configState);
+          return Promise.resolve();
+        }),
+        getAllWorkspaceMetadata: mock(() => {
+          const workspaces = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces ?? [];
+          return Promise.resolve(
+            workspaces.map((workspace) => ({
+              id: workspace.id ?? "",
+              name: workspace.name ?? "",
+              title: workspace.title,
+              projectPath: workspace.projects?.[0]?.projectPath ?? "",
+              projectName:
+                workspace.projects?.map((project) => project.projectName).join("+") ?? "",
+              projects: workspace.projects,
+              createdAt: workspace.createdAt,
+              runtimeConfig: workspace.runtimeConfig ?? {
+                type: "worktree",
+                srcBaseDir: srcDir,
+              },
+              namedWorkspacePath: workspace.path,
+            }))
+          );
+        }),
+        getEffectiveSecrets: mock(() => []),
+        getSessionDir: mock((workspace: string) => path.join(rootDir, "sessions", workspace)),
+        findWorkspace: mock(() => null),
+      };
+
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService;
+
+      const createWorkspaceAMock = mock(() =>
+        Promise.resolve({
+          success: true as const,
+          workspacePath: path.join(srcDir, "project-a", branchName),
+        })
+      );
+      const createWorkspaceBMock = mock(() =>
+        Promise.resolve({
+          success: true as const,
+          workspacePath: path.join(srcDir, "project-b", branchName),
+        })
+      );
+      const initWorkspaceAMock = mock(() => Promise.resolve({ success: true as const }));
+      const initWorkspaceBMock = mock(() => Promise.resolve({ success: true as const }));
+      const deleteWorkspaceMock = mock(() =>
+        Promise.resolve({ success: true as const, deletedPath: "/tmp/deleted" })
+      );
+
+      const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+        (_runtimeConfig, options) => {
+          if (options?.projectPath === projectAPath) {
+            return {
+              createWorkspace: createWorkspaceAMock,
+              initWorkspace: initWorkspaceAMock,
+              deleteWorkspace: deleteWorkspaceMock,
+              resolvePath: mock(() => Promise.resolve(srcDir)),
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          if (options?.projectPath === projectBPath) {
+            return {
+              createWorkspace: createWorkspaceBMock,
+              initWorkspace: initWorkspaceBMock,
+              deleteWorkspace: deleteWorkspaceMock,
+              resolvePath: mock(() => Promise.resolve(srcDir)),
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
+        }
+      );
+
+      const listLocalBranchesSpy = spyOn(gitModule, "listLocalBranches").mockImplementation(
+        (projectPath) => {
+          if (projectPath === projectAPath) {
+            return Promise.resolve(["main", "feature-a"]);
+          }
+          if (projectPath === projectBPath) {
+            return Promise.resolve(["master", "feature-b"]);
+          }
+          throw new Error(`Unexpected project path for listLocalBranches: ${projectPath}`);
+        }
+      );
+
+      const detectDefaultTrunkBranchSpy = spyOn(
+        gitModule,
+        "detectDefaultTrunkBranch"
+      ).mockImplementation((_projectPath, branches) => {
+        assert(branches, "Expected branches to be provided for trunk detection");
+        return Promise.resolve(branches.includes("master") ? "master" : "main");
+      });
+
+      const createContainerSpy = spyOn(
+        ContainerManager.prototype,
+        "createContainer"
+      ).mockResolvedValue(containerPath);
+
+      try {
+        const workspaceService = new WorkspaceService(
+          mockConfig as Config,
+          historyService,
+          mockAIService,
+          createMockInitStateManager(),
+          mockExtensionMetadataService as ExtensionMetadataService,
+          mockBackgroundProcessManager as BackgroundProcessManager
+        );
+
+        const result = await workspaceService.createMultiProject(
+          [
+            { projectPath: projectAPath, projectName: "project-a" },
+            { projectPath: projectBPath, projectName: "project-b" },
+          ],
+          branchName,
+          "main"
+        );
+
+        expect(result.success).toBe(true);
+
+        expect(createWorkspaceAMock).toHaveBeenCalledWith(
+          expect.objectContaining({ projectPath: projectAPath, trunkBranch: "main" })
+        );
+        expect(createWorkspaceBMock).toHaveBeenCalledWith(
+          expect.objectContaining({ projectPath: projectBPath, trunkBranch: "master" })
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(initWorkspaceAMock).toHaveBeenCalledWith(
+          expect.objectContaining({ projectPath: projectAPath, trunkBranch: "main" })
+        );
+        expect(initWorkspaceBMock).toHaveBeenCalledWith(
+          expect.objectContaining({ projectPath: projectBPath, trunkBranch: "master" })
+        );
+
+        expect(detectDefaultTrunkBranchSpy).toHaveBeenCalledWith(projectBPath, [
+          "master",
+          "feature-b",
+        ]);
+      } finally {
+        createContainerSpy.mockRestore();
+        detectDefaultTrunkBranchSpy.mockRestore();
+        listLocalBranchesSpy.mockRestore();
+        createRuntimeSpy.mockRestore();
+      }
+    });
+  });
   test("createMultiProject rejects fewer than two projects", async () => {
     await withTempMuxRoot(async (rootDir) => {
       const mockConfig: Partial<Config> = {
