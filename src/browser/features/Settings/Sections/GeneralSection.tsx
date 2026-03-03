@@ -234,6 +234,8 @@ export function GeneralSection() {
   );
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
+    // Invalidate any in-flight initial load so it doesn't overwrite the user's selection.
+    stopCoderWorkspaceOnArchiveLoadNonceRef.current++;
     setLlmDebugLogs(checked);
     window.dispatchEvent(
       createCustomEvent(CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED, {

@@ -662,6 +662,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // API for reading config and managing terminal sessions.
   const { api } = useAPI();
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
+  const debugLogsLocalOverrideRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!api) {
@@ -669,12 +670,20 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return;
     }
 
+    // Reset local override so a fresh config fetch can set the initial value.
+    debugLogsLocalOverrideRef.current = false;
     let cancelled = false;
 
     void api.config
       .getConfig()
       .then((cfg) => {
         if (cancelled) {
+          return;
+        }
+
+        // If the user toggled debug logs while this config fetch was in flight,
+        // the event listener has already set the authoritative value.
+        if (debugLogsLocalOverrideRef.current) {
           return;
         }
 
@@ -696,6 +705,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   React.useEffect(() => {
     const handleLlmDebugLogsChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ enabled: boolean }>).detail;
+      debugLogsLocalOverrideRef.current = true;
       setLlmDebugLogsEnabled(detail?.enabled === true);
     };
 
