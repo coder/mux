@@ -656,7 +656,7 @@ describe("createDevToolsMiddleware", () => {
       expect(step?.error).toBe("Request aborted");
       expect(step?.durationMs).not.toBeNull();
       expect(step?.output).toEqual({
-        textParts: [],
+        textParts: [{ id: "t1", text: "" }],
         reasoningParts: [],
         toolCalls: [],
         finishReason: undefined,
