@@ -86,6 +86,7 @@ function createProjectRuntimeMocks(): ProjectRuntimeMocks {
 async function runOrchestrateFork(params: {
   parentMetadata: WorkspaceMetadata;
   config?: Config;
+  trusted?: boolean;
 }): Promise<Awaited<ReturnType<typeof orchestrateFork>>> {
   return orchestrateFork({
     sourceRuntime: createProjectRuntimeMocks().runtime,
@@ -98,6 +99,7 @@ async function runOrchestrateFork(params: {
     sourceRuntimeConfig: SOURCE_RUNTIME_CONFIG,
     parentMetadata: params.parentMetadata,
     allowCreateFallback: true,
+    trusted: params.trusted,
   });
 }
 
@@ -267,6 +269,45 @@ describe("orchestrateFork (multi-project)", () => {
     );
   });
 
+  it("defaults unknown project trust to false during multi-project fork", async () => {
+    const projectOneRuntime = createProjectRuntimeMocks();
+    const projectTwoRuntime = createProjectRuntimeMocks();
+    mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
+
+    projectOneRuntime.forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-one",
+      sourceBranch: "main",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.forkWorkspace.mockResolvedValue({
+      success: false,
+      error: "fork unavailable",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.createWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-two",
+    });
+
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+      config: createConfig({
+        [PROJECT_ONE_PATH]: true,
+      }),
+      trusted: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(projectOneRuntime.forkWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ trusted: true })
+    );
+    expect(projectTwoRuntime.forkWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ trusted: false })
+    );
+    expect(projectTwoRuntime.createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ trusted: false })
+    );
+  });
+
   it("resolves fallback create trunk branch per project", async () => {
     const projectOneRuntime = createProjectRuntimeMocks();
     const projectTwoRuntime = createProjectRuntimeMocks();
@@ -388,7 +429,7 @@ describe("orchestrateFork (multi-project)", () => {
       NEW_WORKSPACE_NAME,
       true,
       undefined,
-      undefined
+      false
     );
     expect(projectTwoRuntime.deleteWorkspace).not.toHaveBeenCalled();
     expect(createContainerMock).not.toHaveBeenCalled();

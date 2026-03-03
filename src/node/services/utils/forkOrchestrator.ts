@@ -213,8 +213,8 @@ export async function orchestrateFork(
     const containerManager = new ContainerManager(containerSrcBaseDir);
 
     const configSnapshot = config.loadConfigOrDefault();
-    const getProjectTrusted = (projectPath: string): boolean | undefined =>
-      configSnapshot.projects.get(stripTrailingSlashes(projectPath))?.trusted ?? params.trusted;
+    const getProjectTrusted = (projectPath: string): boolean =>
+      configSnapshot.projects.get(stripTrailingSlashes(projectPath))?.trusted ?? false;
 
     const sourceProjectRuntimes: MultiProjectRuntimeEntry[] = projects.map((project) => ({
       projectPath: project.projectPath,

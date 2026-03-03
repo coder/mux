@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { RuntimeStatusEvent } from "./Runtime";
+import type { Runtime, RuntimeStatusEvent } from "./Runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { WorktreeRuntime } from "./WorktreeRuntime";
@@ -103,6 +103,136 @@ describe("MultiProjectRuntime", () => {
     expect(result).toEqual({ ready: true });
     expect(events.filter((event) => event.phase === "checking")).toHaveLength(2);
     expect(events.filter((event) => event.phase === "ready")).toHaveLength(2);
+  });
+
+  it("initWorkspace delegates initialization to every project runtime", async () => {
+    const logStepMock = vi.fn();
+    const logStdoutMock = vi.fn();
+    const logStderrMock = vi.fn();
+    const logCompleteMock = vi.fn();
+    const initLogger = {
+      logStep: logStepMock,
+      logStdout: logStdoutMock,
+      logStderr: logStderrMock,
+      logComplete: logCompleteMock,
+    };
+
+    const projectOneGetWorkspacePathMock = vi.fn(() => "/tmp/project-one-workspace");
+    const projectOneInitWorkspaceMock = vi.fn().mockResolvedValue({ success: true });
+    const projectOneRuntime = {
+      getWorkspacePath: projectOneGetWorkspacePathMock,
+      initWorkspace: projectOneInitWorkspaceMock,
+    } as unknown as Runtime;
+
+    const projectTwoGetWorkspacePathMock = vi.fn(() => "/tmp/project-two-workspace");
+    const projectTwoInitWorkspaceMock = vi.fn().mockResolvedValue({ success: true });
+    const projectTwoRuntime = {
+      getWorkspacePath: projectTwoGetWorkspacePathMock,
+      initWorkspace: projectTwoInitWorkspaceMock,
+    } as unknown as Runtime;
+
+    const multiRuntime = new MultiProjectRuntime(
+      containerManager,
+      [
+        {
+          projectPath: projectAPath,
+          projectName: "project-a",
+          runtime: projectOneRuntime,
+        },
+        {
+          projectPath: projectBPath,
+          projectName: "project-b",
+          runtime: projectTwoRuntime,
+        },
+      ],
+      workspaceName
+    );
+
+    const result = await multiRuntime.initWorkspace({
+      projectPath: projectAPath,
+      branchName: workspaceName,
+      trunkBranch: "main",
+      workspacePath: containerManager.getContainerPath(workspaceName),
+      initLogger,
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(projectOneGetWorkspacePathMock).toHaveBeenCalledWith(projectAPath, workspaceName);
+    expect(projectTwoGetWorkspacePathMock).toHaveBeenCalledWith(projectBPath, workspaceName);
+    expect(projectOneInitWorkspaceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: projectAPath,
+        workspacePath: "/tmp/project-one-workspace",
+      })
+    );
+    expect(projectTwoInitWorkspaceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: projectBPath,
+        workspacePath: "/tmp/project-two-workspace",
+      })
+    );
+    expect(logCompleteMock).toHaveBeenCalledTimes(1);
+    expect(logCompleteMock).toHaveBeenCalledWith(0);
+  });
+
+  it("initWorkspace returns the first failure after all project init hooks run", async () => {
+    const logStepMock = vi.fn();
+    const logStdoutMock = vi.fn();
+    const logStderrMock = vi.fn();
+    const logCompleteMock = vi.fn();
+    const initLogger = {
+      logStep: logStepMock,
+      logStdout: logStdoutMock,
+      logStderr: logStderrMock,
+      logComplete: logCompleteMock,
+    };
+
+    const firstFailure = { success: false, error: "project one init failed" };
+
+    const projectOneGetWorkspacePathMock = vi.fn(() => "/tmp/project-one-workspace");
+    const projectOneInitWorkspaceMock = vi.fn().mockResolvedValue(firstFailure);
+    const projectOneRuntime = {
+      getWorkspacePath: projectOneGetWorkspacePathMock,
+      initWorkspace: projectOneInitWorkspaceMock,
+    } as unknown as Runtime;
+
+    const projectTwoGetWorkspacePathMock = vi.fn(() => "/tmp/project-two-workspace");
+    const projectTwoInitWorkspaceMock = vi.fn().mockResolvedValue({ success: true });
+    const projectTwoRuntime = {
+      getWorkspacePath: projectTwoGetWorkspacePathMock,
+      initWorkspace: projectTwoInitWorkspaceMock,
+    } as unknown as Runtime;
+
+    const multiRuntime = new MultiProjectRuntime(
+      containerManager,
+      [
+        {
+          projectPath: projectAPath,
+          projectName: "project-a",
+          runtime: projectOneRuntime,
+        },
+        {
+          projectPath: projectBPath,
+          projectName: "project-b",
+          runtime: projectTwoRuntime,
+        },
+      ],
+      workspaceName
+    );
+
+    const result = await multiRuntime.initWorkspace({
+      projectPath: projectAPath,
+      branchName: workspaceName,
+      trunkBranch: "main",
+      workspacePath: containerManager.getContainerPath(workspaceName),
+      initLogger,
+    });
+
+    expect(result).toEqual(firstFailure);
+    expect(projectOneInitWorkspaceMock).toHaveBeenCalledTimes(1);
+    expect(projectTwoInitWorkspaceMock).toHaveBeenCalledTimes(1);
+    expect(logCompleteMock).toHaveBeenCalledTimes(1);
+    expect(logCompleteMock).toHaveBeenCalledWith(-1);
   });
 
   it("getWorkspacePath returns the shared container path", () => {

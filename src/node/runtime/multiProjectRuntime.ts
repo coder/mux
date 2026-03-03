@@ -149,8 +149,40 @@ export class MultiProjectRuntime implements Runtime {
     };
   }
 
-  initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    return this.primaryRuntime.initWorkspace(params);
+  async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
+    const projectInitLogger = {
+      ...params.initLogger,
+      // Individual runtimes report completion; suppress per-project completion so the
+      // multi-project workspace transitions out of initializing only after all runtimes finish.
+      logComplete: (_exitCode: number) => undefined,
+    };
+
+    const initResults: WorkspaceInitResult[] = [];
+
+    for (const projectRuntime of this.projectRuntimes) {
+      const projectWorkspacePath = projectRuntime.runtime.getWorkspacePath(
+        projectRuntime.projectPath,
+        params.branchName
+      );
+
+      const initResult = await projectRuntime.runtime.initWorkspace({
+        ...params,
+        projectPath: projectRuntime.projectPath,
+        workspacePath: projectWorkspacePath,
+        initLogger: projectInitLogger,
+      });
+
+      initResults.push(initResult);
+    }
+
+    const firstFailure = initResults.find((result) => !result.success);
+    if (firstFailure) {
+      params.initLogger.logComplete(-1);
+      return firstFailure;
+    }
+
+    params.initLogger.logComplete(0);
+    return { success: true };
   }
 
   async deleteWorkspace(
