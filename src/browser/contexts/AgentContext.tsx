@@ -232,14 +232,19 @@ function AgentProviderWithState(props: {
 
   // Project-scoped providers should inherit the global default agent until a
   // project-scoped preference is explicitly set.
-  const normalizedAgentId = coerceAgentId(
-    isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId
-  );
-  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
   // Workspace agent is backend-fixed for mux-chat and all child/subagent workspaces.
   // Derive from existing metadata fields — no extra stored state needed.
   const isCurrentAgentLocked =
     props.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID || currentMeta?.parentWorkspaceId != null;
+
+  // For locked workspaces, use the backend-assigned agent — persisted localStorage
+  // may contain a stale selection from before locking, and the picker is disabled
+  // so there's no in-UI recovery path.
+  const normalizedAgentId =
+    isCurrentAgentLocked && currentMeta?.agentId
+      ? currentMeta.agentId
+      : coerceAgentId(isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId);
+  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
 
   const selectableAgents = useMemo(
     () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),

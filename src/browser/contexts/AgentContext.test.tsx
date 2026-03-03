@@ -25,7 +25,7 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
-let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string }>();
+let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string; agentId?: string }>();
 
 void mock.module("@/browser/contexts/WorkspaceContext", () => ({
   useWorkspaceMetadata: () => ({
@@ -215,6 +215,7 @@ describe("AgentContext", () => {
   test("shortcut actions do not override a locked workspace agent", async () => {
     const projectPath = "/tmp/project";
     mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    mockWorkspaceMetadata.set(MUX_HELP_CHAT_WORKSPACE_ID, { agentId: "mux" });
     window.localStorage.setItem(getAgentIdKey(MUX_HELP_CHAT_WORKSPACE_ID), JSON.stringify("exec"));
 
     let contextValue: AgentContextValue | undefined;
@@ -232,7 +233,8 @@ describe("AgentContext", () => {
       );
 
       await waitFor(() => {
-        expect(contextValue?.agentId).toBe("exec");
+        // Backend-assigned agent overrides stale localStorage in locked workspaces.
+        expect(contextValue?.agentId).toBe("mux");
       });
 
       window.api = { platform: "darwin", versions: {} };
@@ -260,7 +262,7 @@ describe("AgentContext", () => {
       });
 
       await waitFor(() => {
-        expect(contextValue?.agentId).toBe("exec");
+        expect(contextValue?.agentId).toBe("mux");
       });
       expect(openPickerEvents).toBe(0);
     } finally {

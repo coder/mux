@@ -129,6 +129,10 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       : agents.find((entry) => entry.id === normalizedAgentId);
   const isAgentLocked = isAgentSelectionLocked;
 
+  // Derived "effectively open" — hides picker immediately when lock activates,
+  // preventing stale event handlers from a hidden-but-open picker.
+  const isPickerVisible = isPickerOpen && !isAgentLocked;
+
   const activeOption = !normalizedAgentId
     ? null
     : !activeDescriptor
@@ -205,7 +209,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   // Close picker when clicking outside.
   useEffect(() => {
-    if (!isPickerOpen) {
+    if (!isPickerVisible) {
       return;
     }
 
@@ -218,7 +222,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [closePicker, isPickerOpen]);
+  }, [closePicker, isPickerVisible]);
 
   // Scroll highlighted item into view.
   useEffect(() => {
@@ -249,7 +253,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   // Global Cmd/Ctrl+1-9 shortcuts when dropdown is open.
   useEffect(() => {
-    if (!isPickerOpen) return;
+    if (!isPickerVisible) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       const index = matchNumberedKeybind(e);
@@ -270,7 +274,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     // Use capture phase to intercept before other handlers
     window.addEventListener("keydown", handleGlobalKeyDown, true);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown, true);
-  }, [isPickerOpen, selectableOptions, handleSelectAgent]);
+  }, [isPickerVisible, selectableOptions, handleSelectAgent]);
 
   const handleDropdownKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -332,7 +336,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           <Button
             type="button"
             aria-label="Select agent"
-            aria-expanded={isAgentLocked ? false : isPickerOpen}
+            aria-expanded={isPickerVisible}
             disabled={isAgentLocked}
             size="xs"
             variant="ghost"
@@ -381,7 +385,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         </TooltipContent>
       </Tooltip>
 
-      {isPickerOpen && !isAgentLocked && (
+      {isPickerVisible && (
         <div
           ref={dropdownRef}
           tabIndex={-1}
