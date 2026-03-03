@@ -36,6 +36,7 @@ import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers"
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import { withQueueHeartbeat } from "@/common/utils/withQueueHeartbeat";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   isLayoutPresetsConfigEmpty,
@@ -3030,12 +3031,14 @@ export const router = (authToken?: string) => {
             session.setLegacyAutoRetryEnabledHint(input.legacyAutoRetryEnabled);
           }
 
-          const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
+          const queue = withQueueHeartbeat(createAsyncMessageQueue<WorkspaceChatMessage>(), {
+            type: "heartbeat" as const,
+          });
 
           const onAbort = () => {
             // Ensure we tear down the async generator even if the client stops iterating without
-            // calling iterator.return(). This prevents orphaned heartbeat intervals.
-            end();
+            // calling iterator.return(). This prevents orphaned heartbeat timers.
+            queue.end();
           };
 
           if (signal) {
@@ -3054,7 +3057,7 @@ export const router = (authToken?: string) => {
           // Live stream deltas can overlap with replayed deltas on reconnect. Buffer live stream
           // events during replay and flush after `caught-up`, skipping any deltas already delivered
           // by replay.
-          const replayRelay = createReplayBufferedStreamMessageRelay(push);
+          const replayRelay = createReplayBufferedStreamMessageRelay(queue.push);
 
           const unsubscribe = session.onChatEvent(({ message }) => {
             replayRelay.handleSessionMessage(message);
@@ -3062,7 +3065,7 @@ export const router = (authToken?: string) => {
 
           // 2. Replay history (sends caught-up at the end)
           await session.replayHistory(({ message }) => {
-            push(message);
+            queue.push(message);
           }, input.mode);
 
           replayRelay.finishReplay();
@@ -3071,19 +3074,11 @@ export const router = (authToken?: string) => {
           // crash-stranded compaction follow-ups and then evaluate auto-retry.
           session.scheduleStartupRecovery();
 
-          // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
-          // Client uses this to detect stalled connections vs. intentionally idle streams.
-          const HEARTBEAT_INTERVAL_MS = 5_000;
-          const heartbeatInterval = setInterval(() => {
-            push({ type: "heartbeat" });
-          }, HEARTBEAT_INTERVAL_MS);
-
           try {
-            yield* iterate();
+            yield* queue.iterate();
           } finally {
-            clearInterval(heartbeatInterval);
             signal?.removeEventListener("abort", onAbort);
-            end();
+            queue.end();
             unsubscribe();
           }
         }),
@@ -3174,41 +3169,34 @@ export const router = (authToken?: string) => {
           .handler(async function* ({ context, signal }) {
             const service = context.workspaceService;
 
-            interface ActivityEvent {
+            type ActivityEvent = {
+              type: "activity";
               workspaceId: string;
               activity: WorkspaceActivitySnapshot | null;
-            }
-
-            let resolveNext: ((value: ActivityEvent | null) => void) | null = null;
-            const queue: ActivityEvent[] = [];
-            let ended = false;
-
-            const push = (event: ActivityEvent) => {
-              if (ended) return;
-              if (resolveNext) {
-                const resolve = resolveNext;
-                resolveNext = null;
-                resolve(event);
-              } else {
-                queue.push(event);
-              }
             };
 
-            const onActivity = (event: ActivityEvent) => {
-              push(event);
+            const queue = withQueueHeartbeat(
+              createAsyncEventQueue<ActivityEvent | { type: "heartbeat" }>(),
+              {
+                type: "heartbeat" as const,
+              }
+            );
+
+            const onActivity = (event: {
+              workspaceId: string;
+              activity: WorkspaceActivitySnapshot | null;
+            }) => {
+              queue.push({
+                type: "activity" as const,
+                workspaceId: event.workspaceId,
+                activity: event.activity,
+              });
             };
 
             service.on("activity", onActivity);
 
             const onAbort = () => {
-              if (ended) return;
-              ended = true;
-
-              if (resolveNext) {
-                const resolve = resolveNext;
-                resolveNext = null;
-                resolve(null);
-              }
+              queue.end();
             };
 
             if (signal) {
@@ -3220,25 +3208,15 @@ export const router = (authToken?: string) => {
             }
 
             try {
-              while (!ended) {
-                if (queue.length > 0) {
-                  yield queue.shift()!;
-                  continue;
-                }
-
-                const event = await new Promise<ActivityEvent | null>((resolve) => {
-                  resolveNext = resolve;
-                });
-
-                if (event === null || ended) {
-                  break;
-                }
-
-                yield event;
+              const initialActivityByWorkspace = await service.getActivityList();
+              for (const [workspaceId, activity] of Object.entries(initialActivityByWorkspace)) {
+                queue.push({ type: "activity", workspaceId, activity });
               }
+
+              yield* queue.iterate();
             } finally {
-              ended = true;
               signal?.removeEventListener("abort", onAbort);
+              queue.end();
               service.off("activity", onActivity);
             }
           }),
@@ -3943,11 +3921,17 @@ export const router = (authToken?: string) => {
               return;
             }
 
-            const queue = createAsyncEventQueue<{
-              type: "update";
-              workspaceId: string;
-              activity: { activeCount: number; totalSessions: number };
-            }>();
+            const queue = withQueueHeartbeat(
+              createAsyncEventQueue<
+                | {
+                    type: "update";
+                    workspaceId: string;
+                    activity: { activeCount: number; totalSessions: number };
+                  }
+                | { type: "heartbeat" }
+              >(),
+              { type: "heartbeat" as const }
+            );
 
             const unsubscribe = context.terminalService.onActivityChange((workspaceId: string) => {
               queue.push({
