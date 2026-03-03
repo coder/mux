@@ -82,6 +82,7 @@ function applyStepBackwardCompatibilityDefaults(step: DevToolsStep): DevToolsSte
 
 export class DevToolsService extends EventEmitter {
   private readonly workspaces = new Map<string, WorkspaceData>();
+  private readonly loadingPromises = new Map<string, Promise<void>>();
 
   constructor(private readonly config: Config) {
     super();
@@ -173,10 +174,9 @@ export class DevToolsService extends EventEmitter {
   }
 
   async finalizeStaleSteps(workspaceId: string): Promise<void> {
-    if (!this.enabled) {
-      return;
-    }
-
+    // Stale cleanup runs regardless of the current enabled state: steps that were
+    // started while logging was ON should be properly finalized even if the user
+    // later disables debug logging.
     assert(
       workspaceId.trim().length > 0,
       "DevToolsService.finalizeStaleSteps requires a workspaceId"
@@ -275,6 +275,27 @@ export class DevToolsService extends EventEmitter {
       return;
     }
 
+    // Serialize concurrent loads for the same workspace: if another call is already
+    // loading this workspace, await its promise instead of starting a second load.
+    // This prevents duplicate disk reads and — critically — prevents stale-step
+    // finalization from running while a concurrent request has a legitimate
+    // in-progress step.
+    const existingPromise = this.loadingPromises.get(workspaceId);
+    if (existingPromise) {
+      await existingPromise;
+      return;
+    }
+
+    const loadPromise = this.loadFromDisk(workspaceId, data);
+    this.loadingPromises.set(workspaceId, loadPromise);
+    try {
+      await loadPromise;
+    } finally {
+      this.loadingPromises.delete(workspaceId);
+    }
+  }
+
+  private async loadFromDisk(workspaceId: string, data: WorkspaceData): Promise<void> {
     const filePath = this.getSessionFilePath(workspaceId);
     let raw = "";
 

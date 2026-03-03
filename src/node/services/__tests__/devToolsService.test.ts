@@ -110,6 +110,35 @@ describe("DevToolsService", () => {
       expect(await service.getRuns("ws-1")).toEqual([]);
       expect(await pathExists(getDevtoolsLogPath(sessionsDir, "ws-1"))).toBe(false);
     });
+
+    it("finalizeStaleSteps still finalizes persisted stale data when logging is disabled", async () => {
+      const config = createTestConfig({ sessionsDir, enabled: false });
+      const run = makeRun("run-1");
+      const staleStep = makeStep({
+        id: "step-stale",
+        runId: "run-1",
+        durationMs: null,
+        error: null,
+      });
+      const logPath = getDevtoolsLogPath(sessionsDir, "ws-1");
+
+      await fs.mkdir(path.dirname(logPath), { recursive: true });
+      await fs.writeFile(
+        logPath,
+        `${JSON.stringify({ type: "run", run })}\n${JSON.stringify({ type: "step", step: staleStep })}\n`,
+        "utf-8"
+      );
+
+      const service = new DevToolsService(config);
+      await service.finalizeStaleSteps("ws-1");
+
+      const logAfterFirstFinalize = await fs.readFile(logPath, "utf-8");
+      expect(countStaleStepUpdates(logAfterFirstFinalize, staleStep.id)).toBe(1);
+
+      await service.finalizeStaleSteps("ws-1");
+      const logAfterSecondFinalize = await fs.readFile(logPath, "utf-8");
+      expect(countStaleStepUpdates(logAfterSecondFinalize, staleStep.id)).toBe(1);
+    });
   });
 
   describe("when enabled", () => {
@@ -335,6 +364,75 @@ describe("DevToolsService", () => {
       await service.getRuns("ws-1");
       const logAfterSecondLoad = await fs.readFile(logPath, "utf-8");
       expect(countStaleStepUpdates(logAfterSecondLoad, staleStepId)).toBe(1);
+    });
+
+    it("serializes concurrent workspace loads so createStep does not stale-finalize sibling requests", async () => {
+      const config = createTestConfig({ sessionsDir, enabled: true });
+      const run = makeRun("run-1");
+      const logPath = getDevtoolsLogPath(sessionsDir, "ws-1");
+
+      await fs.mkdir(path.dirname(logPath), { recursive: true });
+      await fs.writeFile(logPath, `${JSON.stringify({ type: "run", run })}\n`, "utf-8");
+
+      const service = new DevToolsService(config);
+
+      const originalReadFile = fs.readFile;
+      let logReadCount = 0;
+      let releaseReadGate!: () => void;
+      const readGate = new Promise<void>((resolve) => {
+        releaseReadGate = resolve;
+      });
+
+      let firstReadStartedResolve!: () => void;
+      const firstReadStarted = new Promise<void>((resolve) => {
+        firstReadStartedResolve = resolve;
+      });
+
+      const mockedReadFile = (async (...args: Parameters<typeof fs.readFile>) => {
+        const [filePath] = args;
+        if (filePath === logPath) {
+          logReadCount += 1;
+          firstReadStartedResolve();
+          await readGate;
+        }
+        return originalReadFile(...args);
+      }) as typeof fs.readFile;
+
+      const readFileSpy = spyOn(fs, "readFile").mockImplementation(mockedReadFile);
+
+      try {
+        const firstCreateStep = service.createStep(
+          "ws-1",
+          makeStep({ id: "step-1", runId: "run-1", durationMs: null })
+        );
+        await firstReadStarted;
+
+        const secondCreateStep = service.createStep(
+          "ws-1",
+          makeStep({ id: "step-2", runId: "run-1", durationMs: null, stepNumber: 2 })
+        );
+
+        await Promise.resolve();
+        expect(logReadCount).toBe(1);
+
+        releaseReadGate();
+        await Promise.all([firstCreateStep, secondCreateStep]);
+      } finally {
+        readFileSpy.mockRestore();
+      }
+
+      const runWithSteps = await service.getRunWithSteps("ws-1", "run-1");
+      expect(runWithSteps).not.toBeNull();
+      const step1 = runWithSteps?.steps.find((step) => step.id === "step-1");
+      const step2 = runWithSteps?.steps.find((step) => step.id === "step-2");
+      expect(step1?.error).toBeNull();
+      expect(step2?.error).toBeNull();
+      expect(step1?.durationMs).toBeNull();
+      expect(step2?.durationMs).toBeNull();
+
+      const logAfterCreates = await fs.readFile(logPath, "utf-8");
+      expect(countStaleStepUpdates(logAfterCreates, "step-1")).toBe(0);
+      expect(countStaleStepUpdates(logAfterCreates, "step-2")).toBe(0);
     });
 
     it("defaults missing raw fields to null when replaying legacy step entries", async () => {
