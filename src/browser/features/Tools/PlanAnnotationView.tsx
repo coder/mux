@@ -24,7 +24,7 @@ export const PlanAnnotationView: React.FC<PlanAnnotationViewProps> = (props) => 
   const selectableContent = toSelectableContent(props.planContent);
 
   return (
-    <div className="max-h-[70vh] overflow-auto rounded">
+    <div className="max-h-[70vh] overflow-auto rounded" data-testid="plan-annotation-view">
       <SelectableDiffRenderer
         content={selectableContent}
         filePath={props.planPath ?? "plan.md"}

@@ -132,10 +132,8 @@ void mock.module("@/browser/hooks/useReviews", () => ({
   }),
 }));
 
-void mock.module("./PlanAnnotationView", () => ({
-  PlanAnnotationView: (props: { planContent: string }) => (
-    <div data-testid="plan-annotation-view">{props.planContent}</div>
-  ),
+void mock.module("@/browser/features/Shared/DiffRenderer", () => ({
+  SelectableDiffRenderer: () => <div data-testid="selectable-diff-renderer" />,
 }));
 
 void mock.module("@/common/types/review", () => ({
