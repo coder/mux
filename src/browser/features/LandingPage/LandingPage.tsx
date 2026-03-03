@@ -30,11 +30,7 @@ import {
   useAnalyticsSpendOverTime,
   useAnalyticsSummary,
 } from "@/browser/hooks/useAnalytics";
-import {
-  useWorkspaceRecency,
-  useWorkspaceSidebarState,
-  useWorkspaceStoreRaw,
-} from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceRecency, useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -256,20 +252,13 @@ function SpendGraph(props: { dateFilters: DateFilters }) {
 
 function MuxChatCard() {
   const { setSelectedWorkspace } = useWorkspaceContext();
-  const workspaceStore = useWorkspaceStoreRaw();
 
   const handleOpenMuxChat = () => {
-    const metadata = workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID);
-    setSelectedWorkspace(
-      metadata
-        ? toWorkspaceSelection(metadata)
-        : {
-            workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
-            projectPath: "",
-            projectName: "Mux",
-            namedWorkspacePath: "",
-          }
-    );
+    // setSelectedWorkspace handles route navigation from workspaceId alone.
+    // Metadata-driven fields are resolved by WorkspaceContext once loaded.
+    setSelectedWorkspace({
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+    } as ReturnType<typeof toWorkspaceSelection>);
   };
 
   return (
