@@ -384,7 +384,13 @@ export class Config {
   loadConfigOrDefault(): ProjectsConfig {
     try {
       const systemParsed = this.loadSystemConfig();
-      const userParsed = this.loadUserConfig();
+      let userParsed: Partial<AppConfigOnDisk> | undefined;
+      try {
+        userParsed = this.loadUserConfig();
+      } catch (userError) {
+        // Preserve system defaults when user config is malformed.
+        log.error("Error loading user config (falling back to system config):", userError);
+      }
 
       // Merge precedence: system baseline + user overrides. Env var overrides are
       // applied by per-setting getters above this layer.

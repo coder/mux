@@ -387,6 +387,19 @@ describe("Config", () => {
       expect(loaded.projects.get("/sys/project")).toEqual({ workspaces: [] });
     });
 
+    it("preserves system config when user config is malformed", () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [["/sys/project", { workspaces: [] }]],
+      });
+      fs.writeFileSync(path.join(tempDir, "config.json"), "{ this is not valid json");
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+      expect(loaded.projects.get("/sys/project")).toEqual({ workspaces: [] });
+    });
+
     it("user config overrides system config key-by-key", () => {
       writeSystemConfig({
         defaultModel: "openai:gpt-4o",
