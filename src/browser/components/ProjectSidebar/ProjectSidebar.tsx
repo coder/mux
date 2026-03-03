@@ -923,6 +923,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace]);
 
+  // Chat-with-Mux workspace registration is async at startup. Avoid mounting
+  // mux-chat header widgets until metadata exists so their hooks don't assert.
+  const muxChatWorkspaceExists =
+    workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID) !== undefined;
+
   return (
     <TitleEditProvider onUpdateTitle={onUpdateTitle}>
       <SidebarTitleEditKeybinds
@@ -954,11 +959,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   >
                     <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
                   </button>
-                  <MuxChatHelpButton
-                    onClick={handleOpenMuxChat}
-                    isSelected={selectedWorkspace?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID}
-                  />
-                  <MuxChatStatusIndicator />
+                  {muxChatWorkspaceExists && (
+                    <>
+                      <MuxChatHelpButton
+                        onClick={handleOpenMuxChat}
+                        isSelected={selectedWorkspace?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID}
+                      />
+                      <MuxChatStatusIndicator />
+                    </>
+                  )}
                 </div>
                 <button
                   onClick={onAddProject}
