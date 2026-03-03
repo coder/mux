@@ -1,8 +1,8 @@
-export type AsyncQueue<T> = {
+export interface AsyncQueue<T> {
   push: (value: T) => void;
   iterate: () => AsyncGenerator<T>;
   end: () => void;
-};
+}
 
 export const SUBSCRIPTION_HEARTBEAT_INTERVAL_MS = 5_000;
 

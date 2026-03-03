@@ -3169,11 +3169,11 @@ export const router = (authToken?: string) => {
           .handler(async function* ({ context, signal }) {
             const service = context.workspaceService;
 
-            type ActivityEvent = {
+            interface ActivityEvent {
               type: "activity";
               workspaceId: string;
               activity: WorkspaceActivitySnapshot | null;
-            };
+            }
 
             const queue = withQueueHeartbeat(
               createAsyncEventQueue<ActivityEvent | { type: "heartbeat" }>(),
