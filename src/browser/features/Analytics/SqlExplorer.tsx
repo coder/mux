@@ -138,7 +138,7 @@ export function SqlExplorer() {
             }}
           />
           <div className="absolute right-2 bottom-2 flex items-center gap-2">
-            <span className="text-muted text-[10px]">⌘+Enter to run</span>
+            <span className="text-muted text-[10px]">Ctrl/Cmd+Enter to run</span>
             <Button
               size="sm"
               onClick={handleRun}
