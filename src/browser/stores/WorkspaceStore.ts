@@ -2520,6 +2520,54 @@ export class WorkspaceStore {
     }
   }
 
+  /**
+   * Creates a stall watchdog that aborts the attempt when no events arrive
+   * within the configured timeout. Call start() only after the subscription
+   * connection is established so handshake latency isn't misclassified as
+   * stream silence.
+   */
+  private createStallWatchdog(
+    attemptController: AbortController,
+    label: string
+  ): { markEvent: () => void; start: () => void; stop: () => void } {
+    let lastEventAt = Date.now();
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    return {
+      markEvent: () => {
+        lastEventAt = Date.now();
+      },
+      start: () => {
+        if (interval != null) {
+          return;
+        }
+
+        lastEventAt = Date.now();
+        interval = setInterval(() => {
+          if (attemptController.signal.aborted) {
+            return;
+          }
+
+          const elapsedMs = Date.now() - lastEventAt;
+          if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) {
+            return;
+          }
+
+          console.warn(
+            `[WorkspaceStore] ${label} stalled (no events for ${elapsedMs}ms); retrying...`
+          );
+          attemptController.abort();
+        }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
+      },
+      stop: () => {
+        if (interval != null) {
+          clearInterval(interval);
+          interval = null;
+        }
+      },
+    };
+  }
+
   private async runTerminalActivitySubscription(controller: AbortController): Promise<void> {
     const signal = controller.signal;
     let attempt = 0;
@@ -2547,30 +2595,26 @@ export class WorkspaceStore {
         const onClientChange = () => attemptController.abort();
         clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
 
-        let lastEventAt = Date.now();
-        const stallInterval = setInterval(() => {
-          if (attemptController.signal.aborted) return;
-
-          const elapsedMs = Date.now() - lastEventAt;
-          if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
-
-          console.warn(
-            `[WorkspaceStore] terminal activity subscription stalled (no events for ${elapsedMs}ms); retrying...`
-          );
-          attemptController.abort();
-        }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
+        const watchdog = this.createStallWatchdog(
+          attemptController,
+          "terminal activity subscription"
+        );
 
         try {
           const iterator = await subscribe(undefined, {
             signal: attemptController.signal,
           });
 
+          // Start watchdog after subscribe connects so timeout measures
+          // post-connect silence, not handshake latency.
+          watchdog.start();
+
           for await (const event of iterator) {
             if (signal.aborted) {
               return;
             }
 
-            lastEventAt = Date.now();
+            watchdog.markEvent();
 
             // Connection is alive again - don't carry old backoff into the next failure.
             attempt = 0;
@@ -2630,7 +2674,7 @@ export class WorkspaceStore {
         } finally {
           signal.removeEventListener("abort", onAbort);
           clientChangeSignal.removeEventListener("abort", onClientChange);
-          clearInterval(stallInterval);
+          watchdog.stop();
         }
 
         if (!signal.aborted && !attemptController.signal.aborted) {
@@ -2662,8 +2706,7 @@ export class WorkspaceStore {
       const onClientChange = () => attemptController.abort();
       clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
 
-      let lastEventAt = Date.now();
-      let stallInterval: ReturnType<typeof setInterval> | undefined;
+      const watchdog = this.createStallWatchdog(attemptController, "activity subscription");
 
       try {
         // Open the live delta stream first so no state transition can be lost
@@ -2690,27 +2733,16 @@ export class WorkspaceStore {
           this.applyWorkspaceActivityList(snapshots);
         });
 
-        // Start the stall watchdog only after bootstrap is complete so slow
-        // list() responses don't trigger false-positive reconnects.
-        lastEventAt = Date.now();
-        stallInterval = setInterval(() => {
-          if (attemptController.signal.aborted) return;
-
-          const elapsedMs = Date.now() - lastEventAt;
-          if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
-
-          console.warn(
-            `[WorkspaceStore] activity subscription stalled (no events for ${elapsedMs}ms); retrying...`
-          );
-          attemptController.abort();
-        }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
+        // Start watchdog after bootstrap so slow list() doesn't trigger
+        // false-positive reconnects.
+        watchdog.start();
 
         for await (const event of iterator) {
           if (signal.aborted) {
             return;
           }
 
-          lastEventAt = Date.now();
+          watchdog.markEvent();
 
           // Connection is alive again - don't carry old backoff into the next failure.
           attempt = 0;
@@ -2750,7 +2782,7 @@ export class WorkspaceStore {
       } finally {
         signal.removeEventListener("abort", onAbort);
         clientChangeSignal.removeEventListener("abort", onClientChange);
-        if (stallInterval != null) clearInterval(stallInterval);
+        watchdog.stop();
       }
 
       const delayMs = calculateSubscriptionBackoffMs(attempt);
