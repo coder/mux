@@ -8,6 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 
 export interface RouterContext {
@@ -51,12 +54,26 @@ export function useRouter(): RouterContext {
 
 /** Get initial route from browser URL or default to home. */
 function getInitialRoute(): string {
-  // In browser mode, read route directly from URL (enables refresh restoration)
-  if (window.location.protocol !== "file:" && !window.location.pathname.endsWith("iframe.html")) {
+  const isStorybook = window.location.pathname.endsWith("iframe.html");
+
+  // In browser mode (not Storybook), read route directly from URL (enables refresh restoration)
+  if (window.location.protocol !== "file:" && !isStorybook) {
     const url = window.location.pathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)
     if (url.startsWith("/") && url !== "/") {
       return url;
+    }
+  }
+
+  // In Storybook, stories seed localStorage via selectWorkspace() during setup.
+  // Read that selection so stories start at the correct workspace view.
+  if (isStorybook) {
+    const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
+      SELECTED_WORKSPACE_KEY,
+      null
+    );
+    if (savedWorkspace?.workspaceId) {
+      return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
     }
   }
 
