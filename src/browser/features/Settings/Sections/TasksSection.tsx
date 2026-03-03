@@ -107,8 +107,8 @@ const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
   {
     id: "mux",
     scope: "built-in",
-    name: "Mux",
-    description: "Configure mux global behavior (system workspace)",
+    name: "Chat With Mux",
+    description: "Configure global Mux settings",
     uiSelectable: false,
     uiRoutable: false,
     subagentRunnable: false,

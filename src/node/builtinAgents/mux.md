@@ -1,6 +1,6 @@
 ---
-name: Mux
-description: Manage global mux configuration, skills, and agent instructions
+name: Chat With Mux
+description: Configure global Mux settings
 ui:
   hidden: true
   routable: true
