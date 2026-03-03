@@ -5,7 +5,8 @@ import { sortSectionsByLinkedList } from "@/common/utils/sections";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
 import { createHash, randomBytes } from "crypto";
-import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
+import { validateProjectPath, isGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -823,8 +824,9 @@ export class ProjectService {
 
   async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
     try {
+const normalizedPath = stripTrailingSlashes(projectPath);
       let config = this.config.loadConfigOrDefault();
-      let projectConfig = config.projects.get(projectPath);
+      let projectConfig = config.projects.get(normalizedPath);
 
       if (!projectConfig) {
         return Err({ type: "project_not_found" as const });
@@ -865,7 +867,7 @@ export class ProjectService {
         await this.config.saveConfig(config);
       }
 
-      let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
 
       const totalWorkspaces = counts.activeCount + counts.archivedCount;
       if (force && totalWorkspaces > 0) {
@@ -881,7 +883,7 @@ export class ProjectService {
         if (projectConfig.workspaces.some((workspace) => !workspace.id)) {
           const allWorkspaceMetadata = await this.config.getAllWorkspaceMetadata();
           for (const metadata of allWorkspaceMetadata) {
-            if (metadata.projectPath !== projectPath) {
+            if (metadata.projectPath !== normalizedPath) {
               continue;
             }
             workspaceIdsByPath.set(metadata.namedWorkspacePath, metadata.id);
@@ -909,24 +911,41 @@ export class ProjectService {
         }
 
         config = this.config.loadConfigOrDefault();
-        projectConfig = config.projects.get(projectPath);
+        projectConfig = config.projects.get(normalizedPath);
         if (!projectConfig) {
           return Err({ type: "project_not_found" as const });
         }
         counts = getProjectWorkspaceCounts(projectConfig.workspaces);
       }
 
+      // Also count multi-project workspace references to this project.
+      // A project cannot be removed if it's still part of a multi-project workspace.
+      const multiProjectConfig = config.projects.get(MULTI_PROJECT_CONFIG_KEY);
+      const referencingMultiProjectWorkspaces =
+        multiProjectConfig?.workspaces.filter((workspace) =>
+          workspace.projects?.some(
+            (project) => stripTrailingSlashes(project.projectPath) === normalizedPath
+          )
+        ) ?? [];
+      const multiProjectWorkspaceCounts = getProjectWorkspaceCounts(
+        referencingMultiProjectWorkspaces
+      );
+      counts = {
+        activeCount: counts.activeCount + multiProjectWorkspaceCounts.activeCount,
+        archivedCount: counts.archivedCount + multiProjectWorkspaceCounts.archivedCount,
+      };
+
       if (counts.activeCount + counts.archivedCount > 0) {
         return Err({ type: "workspace_blockers" as const, ...counts });
       }
 
-      config.projects.delete(projectPath);
+      config.projects.delete(normalizedPath);
       await this.config.saveConfig(config);
 
       try {
-        await this.config.updateProjectSecrets(projectPath, []);
+        await this.config.updateProjectSecrets(normalizedPath, []);
       } catch (error) {
-        log.error(`Failed to clean up secrets for project ${projectPath}:`, error);
+        log.error(`Failed to clean up secrets for project ${normalizedPath}:`, error);
       }
 
       return Ok(undefined);

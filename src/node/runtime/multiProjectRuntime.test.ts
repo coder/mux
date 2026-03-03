@@ -175,6 +175,77 @@ describe("MultiProjectRuntime", () => {
     expect(logCompleteMock).toHaveBeenCalledWith(0);
   });
 
+  it("initWorkspace resolves env per project when envResolver is provided", async () => {
+    const initLogger = {
+      logStep: vi.fn(),
+      logStdout: vi.fn(),
+      logStderr: vi.fn(),
+      logComplete: vi.fn(),
+    };
+
+    const projectOneInitWorkspaceMock = vi.fn().mockResolvedValue({ success: true });
+    const projectOneRuntime = {
+      getWorkspacePath: vi.fn(() => "/tmp/project-one-workspace"),
+      initWorkspace: projectOneInitWorkspaceMock,
+    } as unknown as Runtime;
+
+    const projectTwoInitWorkspaceMock = vi.fn().mockResolvedValue({ success: true });
+    const projectTwoRuntime = {
+      getWorkspacePath: vi.fn(() => "/tmp/project-two-workspace"),
+      initWorkspace: projectTwoInitWorkspaceMock,
+    } as unknown as Runtime;
+
+    const multiRuntime = new MultiProjectRuntime(
+      containerManager,
+      [
+        {
+          projectPath: projectAPath,
+          projectName: "project-a",
+          runtime: projectOneRuntime,
+        },
+        {
+          projectPath: projectBPath,
+          projectName: "project-b",
+          runtime: projectTwoRuntime,
+        },
+      ],
+      workspaceName
+    );
+
+    const envResolverMock = vi.fn((projectPath: string) =>
+      Promise.resolve({
+        PROJECT_SECRET: `secret-${path.basename(projectPath)}`,
+      })
+    );
+    multiRuntime.envResolver = envResolverMock;
+
+    const result = await multiRuntime.initWorkspace({
+      projectPath: projectAPath,
+      branchName: workspaceName,
+      trunkBranch: "main",
+      workspacePath: containerManager.getContainerPath(workspaceName),
+      initLogger,
+      env: { SHARED_SECRET: "shared" },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(envResolverMock).toHaveBeenCalledTimes(2);
+    expect(envResolverMock).toHaveBeenNthCalledWith(1, projectAPath);
+    expect(envResolverMock).toHaveBeenNthCalledWith(2, projectBPath);
+    expect(projectOneInitWorkspaceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: projectAPath,
+        env: { PROJECT_SECRET: `secret-${path.basename(projectAPath)}` },
+      })
+    );
+    expect(projectTwoInitWorkspaceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: projectBPath,
+        env: { PROJECT_SECRET: `secret-${path.basename(projectBPath)}` },
+      })
+    );
+  });
+
   it("initWorkspace returns the first failure after all project init hooks run", async () => {
     const logStepMock = vi.fn();
     const logStdoutMock = vi.fn();

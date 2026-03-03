@@ -37,6 +37,8 @@ export class MultiProjectRuntime implements Runtime {
   ) => Promise<Result<void, string>>;
   readonly postCreateSetup?: (params: WorkspaceInitParams) => Promise<void>;
 
+  public envResolver?: (projectPath: string) => Promise<Record<string, string> | undefined>;
+
   private readonly primaryRuntime: Runtime;
   private readonly containerPath: string;
 
@@ -164,12 +166,14 @@ export class MultiProjectRuntime implements Runtime {
         projectRuntime.projectPath,
         params.branchName
       );
+      const projectEnv = (await this.envResolver?.(projectRuntime.projectPath)) ?? params.env;
 
       const initResult = await projectRuntime.runtime.initWorkspace({
         ...params,
         projectPath: projectRuntime.projectPath,
         workspacePath: projectWorkspacePath,
         initLogger: projectInitLogger,
+        env: projectEnv,
       });
 
       initResults.push(initResult);

@@ -29,6 +29,7 @@ import {
   runBackgroundInit,
   runFullInit,
 } from "@/node/runtime/runtimeFactory";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import {
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
@@ -3753,7 +3754,26 @@ export class WorkspaceService extends EventEmitter {
         sourceRuntimeConfigUpdated,
       } = forkResult.data;
 
-      // Run init for forked workspace (fire-and-forget like create())
+      // Run init for forked workspace (fire-and-forget like create()).
+      // Multi-project forks need per-project secrets for each runtime's init hook.
+      if (targetRuntime instanceof MultiProjectRuntime) {
+        const projectEnvCache = new Map<string, Record<string, string>>();
+        targetRuntime.envResolver = async (runtimeProjectPath: string) => {
+          const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
+          const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
+          if (cachedEnv) {
+            return cachedEnv;
+          }
+
+          const projectEnv = await secretsToRecord(
+            this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
+            this.opResolver
+          );
+          projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
+          return projectEnv;
+        };
+      }
+
       const secrets = await secretsToRecord(
         this.config.getEffectiveSecrets(foundProjectPath),
         this.opResolver
