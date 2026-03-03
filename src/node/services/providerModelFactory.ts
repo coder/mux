@@ -321,9 +321,29 @@ function wrapFetchWithMuxGatewayAutoLogout(
  * Get fetch function for provider - use custom if provided, otherwise unlimited timeout default
  */
 function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
-  return typeof providerConfig.fetch === "function"
-    ? (providerConfig.fetch as typeof fetch)
-    : defaultFetchWithUnlimitedTimeout;
+  if (typeof providerConfig.fetch !== "function") {
+    return defaultFetchWithUnlimitedTimeout;
+  }
+
+  const customFetch = providerConfig.fetch as typeof fetch;
+
+  // Wrap custom fetch to strip the synthetic DevTools correlation header.
+  // Without this, x-mux-devtools-step-id can leak to upstream APIs because
+  // only defaultFetchWithUnlimitedTimeout strips it natively.
+  const wrappedFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    if (init?.headers) {
+      const headers = new Headers(init.headers);
+      captureAndStripDevToolsHeader(headers);
+      return customFetch(input, { ...init, headers });
+    }
+
+    return customFetch(input, init);
+  };
+
+  return Object.assign(wrappedFetch, customFetch) as typeof fetch;
 }
 
 // ---------------------------------------------------------------------------
