@@ -3853,6 +3853,7 @@ export class WorkspaceService extends EventEmitter {
         name: resolvedName,
         projectName,
         projectPath: foundProjectPath,
+        projects: forkResult.data.projects ?? sourceMetadata.projects,
         createdAt: new Date().toISOString(),
         runtimeConfig: forkedRuntimeConfig,
         namedWorkspacePath,
