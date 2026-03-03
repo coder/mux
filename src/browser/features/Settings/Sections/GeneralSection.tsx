@@ -165,6 +165,8 @@ export function GeneralSection() {
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const stopCoderWorkspaceOnArchiveLoadNonceRef = useRef(0);
 
+  const llmDebugLogsLoadNonceRef = useRef(0);
+
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // toggles can't race and persist a stale value via out-of-order writes.
   const stopCoderWorkspaceOnArchiveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -176,18 +178,21 @@ export function GeneralSection() {
       return;
     }
 
-    const nonce = ++stopCoderWorkspaceOnArchiveLoadNonceRef.current;
+    const stopCoderWorkspaceOnArchiveNonce = ++stopCoderWorkspaceOnArchiveLoadNonceRef.current;
+    const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
 
     void api.config
       .getConfig()
       .then((cfg) => {
         // If the user toggled the setting while this request was in flight, keep the UI selection.
-        if (nonce !== stopCoderWorkspaceOnArchiveLoadNonceRef.current) {
-          return;
+        if (stopCoderWorkspaceOnArchiveNonce === stopCoderWorkspaceOnArchiveLoadNonceRef.current) {
+          setStopCoderWorkspaceOnArchive(cfg.stopCoderWorkspaceOnArchive);
         }
 
-        setStopCoderWorkspaceOnArchive(cfg.stopCoderWorkspaceOnArchive);
-        setLlmDebugLogs(cfg.llmDebugLogs === true);
+        // Use an independent nonce so debug-log toggles do not discard archive-setting updates.
+        if (llmDebugLogsNonce === llmDebugLogsLoadNonceRef.current) {
+          setLlmDebugLogs(cfg.llmDebugLogs === true);
+        }
       })
       .catch(() => {
         // Best-effort only. Keep the default (ON) if config fails to load.
@@ -235,8 +240,8 @@ export function GeneralSection() {
   );
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
-    // Invalidate any in-flight initial load so it doesn't overwrite the user's selection.
-    stopCoderWorkspaceOnArchiveLoadNonceRef.current++;
+    // Invalidate any in-flight debug-log load so it doesn't overwrite the user's selection.
+    llmDebugLogsLoadNonceRef.current++;
     setLlmDebugLogs(checked);
     window.dispatchEvent(
       createCustomEvent(CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED, {

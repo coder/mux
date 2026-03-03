@@ -247,23 +247,55 @@ export function createDevToolsMiddleware(
   assert(workspaceId.trim().length > 0, "createDevToolsMiddleware requires a workspaceId");
   assert(service, "createDevToolsMiddleware requires a DevToolsService");
 
+  const runId = randomUUID();
+  let runCreated = false;
+  let runCreationPromise: Promise<void> | null = null;
+  let stepCounter = 0;
+
+  async function ensureRun(): Promise<void> {
+    if (runCreated) {
+      return;
+    }
+
+    if (runCreationPromise) {
+      await runCreationPromise;
+      return;
+    }
+
+    runCreationPromise = (async () => {
+      try {
+        await service.createRun(workspaceId, {
+          id: runId,
+          workspaceId,
+          startedAt: new Date().toISOString(),
+        });
+        runCreated = true;
+      } catch (error) {
+        log.warn("DevTools: failed to create run", {
+          workspaceId,
+          runId,
+          error,
+        });
+      }
+    })();
+
+    try {
+      await runCreationPromise;
+    } finally {
+      runCreationPromise = null;
+    }
+  }
+
   async function createStep(
-    runId: string,
     stepType: DevToolsStep["type"],
     params: LanguageModelV3CallOptions,
     model: LanguageModelV3
   ): Promise<{ stepId: string; startedAtMs: number } | null> {
-    assert(runId.trim().length > 0, "createStep requires a non-empty runId");
-
     try {
-      await service.createRun(workspaceId, {
-        id: runId,
-        workspaceId,
-        startedAt: new Date().toISOString(),
-      });
+      await ensureRun();
 
       const stepId = randomUUID();
-      const stepNumber = 1;
+      const stepNumber = (stepCounter += 1);
       const input = extractInput(params);
 
       await service.createStep(
@@ -310,10 +342,7 @@ export function createDevToolsMiddleware(
         return doGenerate();
       }
 
-      // Reused middleware instances can serve multiple independent model calls,
-      // so each top-level invocation needs a fresh run grouping in DevTools.
-      const runId = randomUUID();
-      const step = await createStep(runId, "generate", params, model);
+      const step = await createStep("generate", params, model);
       if (step == null) {
         return doGenerate();
       }
@@ -411,10 +440,7 @@ export function createDevToolsMiddleware(
       }
 
       const userRequestedRawChunks = params.includeRawChunks === true;
-      // Reused middleware instances can serve multiple independent model calls,
-      // so each top-level invocation needs a fresh run grouping in DevTools.
-      const runId = randomUUID();
-      const step = await createStep(runId, "stream", params, model);
+      const step = await createStep("stream", params, model);
       if (step == null) {
         return doStream();
       }
