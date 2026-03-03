@@ -5,7 +5,12 @@ import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { type Secret, type SecretsConfig } from "@/common/types/secrets";
+import {
+  isSecretReferenceValue,
+  isOpSecretValue,
+  type Secret,
+  type SecretsConfig,
+} from "@/common/types/secrets";
 import type {
   Workspace,
   ProjectConfig,
@@ -1203,30 +1208,12 @@ ${jsonString}`;
     return stripTrailingSlashes(projectPath);
   }
 
-  private static isSecretReferenceValue(value: unknown): value is { secret: string } {
-    return (
-      typeof value === "object" &&
-      value !== null &&
-      "secret" in value &&
-      typeof (value as { secret?: unknown }).secret === "string"
-    );
-  }
-
-  private static isOpSecretValue(value: unknown): value is { op: string } {
-    return (
-      typeof value === "object" &&
-      value !== null &&
-      "op" in value &&
-      typeof (value as { op?: unknown }).op === "string"
-    );
-  }
-
   private static isSecretValue(value: unknown): value is Secret["value"] {
     if (typeof value === "string") {
       return true;
     }
 
-    return Config.isSecretReferenceValue(value) || Config.isOpSecretValue(value);
+    return isSecretReferenceValue(value) || isOpSecretValue(value);
   }
 
   private static isSecret(value: unknown): value is Secret {
@@ -1383,12 +1370,12 @@ ${jsonString}`;
       try {
         const raw = globalRawByKey.get(key);
 
-        if (typeof raw === "string" || Config.isOpSecretValue(raw)) {
+        if (typeof raw === "string" || isOpSecretValue(raw)) {
           globalResolved.set(key, raw);
           return raw;
         }
 
-        if (Config.isSecretReferenceValue(raw)) {
+        if (isSecretReferenceValue(raw)) {
           const target = raw.secret.trim();
           if (!target) {
             globalResolved.set(key, undefined);
@@ -1416,7 +1403,7 @@ ${jsonString}`;
     }
 
     return projectSecrets.map((secret) => {
-      if (!Config.isSecretReferenceValue(secret.value)) {
+      if (!isSecretReferenceValue(secret.value)) {
         return secret;
       }
 
