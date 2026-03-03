@@ -8,10 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
@@ -52,7 +49,7 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
-/** Get initial route from browser URL or localStorage. */
+/** Get initial route from browser URL or default to home. */
 function getInitialRoute(): string {
   // In browser mode, read route directly from URL (enables refresh restoration)
   if (window.location.protocol !== "file:" && !window.location.pathname.endsWith("iframe.html")) {
@@ -63,15 +60,8 @@ function getInitialRoute(): string {
     }
   }
 
-  // Restore last workspace from localStorage (persisted by setSelectedWorkspace).
-  // If no workspace was saved, start at home (the landing page).
-  const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
-    SELECTED_WORKSPACE_KEY,
-    null
-  );
-  if (savedWorkspace?.workspaceId) {
-    return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
-  }
+  // Start at home — the landing page is the default startup view.
+  // Users pick a workspace from the landing page or sidebar.
   return "/";
 }
 
