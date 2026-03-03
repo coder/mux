@@ -293,6 +293,20 @@ export class Config {
     }
   }
 
+  /**
+   * Load the user config from config.json.
+   * Returns undefined if the file is absent.
+   * Throws on parse errors (caught by loadConfigOrDefault's outer try/catch).
+   */
+  private loadUserConfig(): Partial<AppConfigOnDisk> | undefined {
+    if (!fs.existsSync(this.configFile)) {
+      return undefined;
+    }
+
+    const data = fs.readFileSync(this.configFile, "utf-8");
+    return JSON.parse(data) as Partial<AppConfigOnDisk>;
+  }
+
   private mergeSystemAndUserConfig(
     system: Partial<AppConfigOnDisk>,
     user: Partial<AppConfigOnDisk>
@@ -335,12 +349,7 @@ export class Config {
   loadConfigOrDefault(): ProjectsConfig {
     try {
       const systemParsed = this.loadSystemConfig();
-      let userParsed: Partial<AppConfigOnDisk> | undefined;
-
-      if (fs.existsSync(this.configFile)) {
-        const data = fs.readFileSync(this.configFile, "utf-8");
-        userParsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
-      }
+      const userParsed = this.loadUserConfig();
 
       // Merge precedence: system baseline + user overrides. Env var overrides are
       // applied by per-setting getters above this layer.
