@@ -15,6 +15,7 @@ import type {
   DevToolsUsage,
 } from "@/common/types/devtools";
 import assert from "@/common/utils/assert";
+import { log } from "@/node/services/log";
 import { DEVTOOLS_STEP_ID_HEADER, consumeCapturedRequestHeaders } from "./devToolsHeaderCapture";
 import type { DevToolsService } from "./devToolsService";
 
@@ -262,12 +263,21 @@ export function createDevToolsMiddleware(
     }
 
     runCreationPromise = (async () => {
-      await service.createRun(workspaceId, {
-        id: runId,
-        workspaceId,
-        startedAt: new Date().toISOString(),
-      });
-      runCreated = true;
+      try {
+        await service.createRun(workspaceId, {
+          id: runId,
+          workspaceId,
+          startedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        log.warn("DevTools: failed to create run", {
+          workspaceId,
+          runId,
+          error,
+        });
+      } finally {
+        runCreated = true;
+      }
     })();
 
     try {
@@ -281,22 +291,32 @@ export function createDevToolsMiddleware(
     stepType: DevToolsStep["type"],
     params: LanguageModelV3CallOptions,
     model: LanguageModelV3
-  ): Promise<{ stepId: string; startedAtMs: number }> {
-    await ensureRun();
+  ): Promise<{ stepId: string; startedAtMs: number } | null> {
+    try {
+      await ensureRun();
 
-    const stepId = randomUUID();
-    const stepNumber = (stepCounter += 1);
-    const input = extractInput(params);
+      const stepId = randomUUID();
+      const stepNumber = (stepCounter += 1);
+      const input = extractInput(params);
 
-    await service.createStep(
-      workspaceId,
-      createEmptyStep(stepId, runId, stepNumber, stepType, model, input)
-    );
+      await service.createStep(
+        workspaceId,
+        createEmptyStep(stepId, runId, stepNumber, stepType, model, input)
+      );
 
-    return {
-      stepId,
-      startedAtMs: Date.now(),
-    };
+      return {
+        stepId,
+        startedAtMs: Date.now(),
+      };
+    } catch (error) {
+      log.warn("DevTools: failed to create step", {
+        workspaceId,
+        runId,
+        stepType,
+        error,
+      });
+      return null;
+    }
   }
 
   function injectStepIdHeader(params: LanguageModelV3CallOptions, stepId: string): void {
@@ -323,7 +343,12 @@ export function createDevToolsMiddleware(
         return doGenerate();
       }
 
-      const { stepId, startedAtMs } = await createStep("generate", params, model);
+      const step = await createStep("generate", params, model);
+      if (step == null) {
+        return doGenerate();
+      }
+
+      const { stepId, startedAtMs } = step;
       injectStepIdHeader(params, stepId);
 
       let finalized = false;
@@ -337,10 +362,20 @@ export function createDevToolsMiddleware(
           params.abortSignal.removeEventListener("abort", abortHandler);
         }
 
-        await service.updateStep(workspaceId, stepId, {
-          durationMs: Date.now() - startedAtMs,
-          ...update,
-        });
+        try {
+          await service.updateStep(workspaceId, stepId, {
+            durationMs: Date.now() - startedAtMs,
+            ...update,
+          });
+        } catch (error) {
+          // DevTools persistence is best-effort; never let observability failures
+          // reject the model call that already succeeded.
+          log.warn("DevTools: failed to persist step finalization", {
+            workspaceId,
+            stepId,
+            error,
+          });
+        }
       };
 
       const abortHandler = (): void => {
@@ -406,9 +441,13 @@ export function createDevToolsMiddleware(
       }
 
       const userRequestedRawChunks = params.includeRawChunks === true;
-      params.includeRawChunks = true;
+      const step = await createStep("stream", params, model);
+      if (step == null) {
+        return doStream();
+      }
 
-      const { stepId, startedAtMs } = await createStep("stream", params, model);
+      const { stepId, startedAtMs } = step;
+      params.includeRawChunks = true;
       injectStepIdHeader(params, stepId);
 
       let finalized = false;
@@ -456,10 +495,20 @@ export function createDevToolsMiddleware(
           params.abortSignal.removeEventListener("abort", abortHandler);
         }
 
-        await service.updateStep(workspaceId, stepId, {
-          durationMs: Date.now() - startedAtMs,
-          ...update,
-        });
+        try {
+          await service.updateStep(workspaceId, stepId, {
+            durationMs: Date.now() - startedAtMs,
+            ...update,
+          });
+        } catch (error) {
+          // DevTools persistence is best-effort; never let observability failures
+          // reject the model call that already succeeded.
+          log.warn("DevTools: failed to persist step finalization", {
+            workspaceId,
+            stepId,
+            error,
+          });
+        }
       };
 
       const abortHandler = (): void => {
