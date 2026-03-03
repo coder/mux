@@ -121,6 +121,9 @@ Mobile app tests live in `mobile/src/**/*.test.ts` and use Bun's built-in test r
 - If a tool/agent provides an emoji string (e.g., `status_set` or `displayStatus`), render via `EmojiIcon` (`src/browser/components/icons/EmojiIcon.tsx`) instead of rendering the emoji.
 - If a new emoji appears in tool output, extend `EmojiIcon` to map it to an SVG icon.
 - Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
+- For incrementing numeric UI (costs, timers, token counts, percentages), use semantic numeric typography utilities (`counter-nums` / `counter-nums-mono`) to prevent width jitter.
+- Choose `counter-nums-mono` only when monospace is an intentional visual style (e.g., terminal/telemetry), not merely as a workaround.
+- Use `min-w-[Nch]` only when reserving layout width is intentional and separate from tabular numeral stability.
 
 ## Security: Renderer HTML & XSS
 
