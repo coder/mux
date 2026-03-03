@@ -2663,17 +2663,7 @@ export class WorkspaceStore {
       clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
 
       let lastEventAt = Date.now();
-      const stallInterval = setInterval(() => {
-        if (attemptController.signal.aborted) return;
-
-        const elapsedMs = Date.now() - lastEventAt;
-        if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
-
-        console.warn(
-          `[WorkspaceStore] activity subscription stalled (no events for ${elapsedMs}ms); retrying...`
-        );
-        attemptController.abort();
-      }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
+      let stallInterval: ReturnType<typeof setInterval> | undefined;
 
       try {
         // Open the live delta stream first so no state transition can be lost
@@ -2699,6 +2689,21 @@ export class WorkspaceStore {
           }
           this.applyWorkspaceActivityList(snapshots);
         });
+
+        // Start the stall watchdog only after bootstrap is complete so slow
+        // list() responses don't trigger false-positive reconnects.
+        lastEventAt = Date.now();
+        stallInterval = setInterval(() => {
+          if (attemptController.signal.aborted) return;
+
+          const elapsedMs = Date.now() - lastEventAt;
+          if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
+
+          console.warn(
+            `[WorkspaceStore] activity subscription stalled (no events for ${elapsedMs}ms); retrying...`
+          );
+          attemptController.abort();
+        }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
 
         for await (const event of iterator) {
           if (signal.aborted) {
@@ -2745,7 +2750,7 @@ export class WorkspaceStore {
       } finally {
         signal.removeEventListener("abort", onAbort);
         clientChangeSignal.removeEventListener("abort", onClientChange);
-        clearInterval(stallInterval);
+        if (stallInterval != null) clearInterval(stallInterval);
       }
 
       const delayMs = calculateSubscriptionBackoffMs(attempt);
