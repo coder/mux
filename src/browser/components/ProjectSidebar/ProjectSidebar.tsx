@@ -627,6 +627,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     projectPath: string;
     projectName: string;
+    activeCount: number;
     archivedCount: number;
   } | null>(null);
   const projectRemoveError = usePopoverError();
@@ -829,11 +830,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const removeProjectWithFeedback = useCallback(
-    async (
-      projectPath: string,
-      options?: { deleteArchived?: boolean },
-      buttonElement?: HTMLElement
-    ) => {
+    async (projectPath: string, options?: { force?: boolean }, buttonElement?: HTMLElement) => {
       const result = await onRemoveProject(projectPath, options);
       if (!result.success) {
         showProjectRemoveError(projectPath, result.error, buttonElement);
@@ -849,7 +846,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
 
     const result = await removeProjectWithFeedback(deleteConfirmation.projectPath, {
-      deleteArchived: true,
+      force: true,
     });
     if (result.success) {
       setDeleteConfirmation(null);
@@ -1070,23 +1067,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     const workspaceListId = `workspace-list-${sanitizedProjectId}`;
                     const isExpanded = expandedProjectsList.includes(projectPath);
                     const counts = getProjectWorkspaceCounts(config.workspaces);
-                    const canDelete = counts.activeCount === 0;
-                    let removeTooltip: string;
-                    if (canDelete) {
-                      removeTooltip = "Remove project";
-                    } else if (counts.archivedCount === 0) {
-                      removeTooltip =
-                        counts.activeCount === 1
-                          ? "Delete workspace first"
-                          : `Delete all ${counts.activeCount} workspaces first`;
-                    } else if (counts.activeCount === 0) {
-                      removeTooltip =
-                        counts.archivedCount === 1
-                          ? "Delete archived workspace first"
-                          : `Delete ${counts.archivedCount} archived workspaces first`;
-                    } else {
-                      removeTooltip = `Delete ${counts.activeCount} active + ${counts.archivedCount} archived workspaces first`;
-                    }
+                    const removeTooltip = "Remove project";
 
                     return (
                       <div key={projectPath} className="border-hover border-b">
@@ -1166,13 +1147,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  if (!canDelete) return;
-
                                   const buttonElement = event.currentTarget;
-                                  if (counts.archivedCount > 0) {
+                                  const total = counts.activeCount + counts.archivedCount;
+                                  if (total > 0) {
                                     setDeleteConfirmation({
                                       projectPath,
                                       projectName,
+                                      activeCount: counts.activeCount,
                                       archivedCount: counts.archivedCount,
                                     });
                                     return;
@@ -1185,14 +1166,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   );
                                 }}
                                 aria-label={`Remove project ${projectName}`}
-                                aria-disabled={!canDelete}
                                 data-project-path={projectPath}
                                 className={cn(
                                   "text-muted-dark mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200",
                                   "[@media(hover:none)_and_(pointer:coarse)]:hidden",
-                                  canDelete
-                                    ? "cursor-pointer hover:bg-danger-light/10 hover:text-danger-light"
-                                    : "cursor-not-allowed"
+                                  "cursor-pointer hover:bg-danger-light/10 hover:text-danger-light"
                                 )}
                               >
                                 ×
@@ -1660,6 +1638,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           <ProjectDeleteConfirmationModal
             isOpen={deleteConfirmation !== null}
             projectName={deleteConfirmation?.projectName ?? ""}
+            activeCount={deleteConfirmation?.activeCount ?? 0}
             archivedCount={deleteConfirmation?.archivedCount ?? 0}
             onConfirm={handleDeleteConfirm}
             onCancel={handleDeleteCancel}
