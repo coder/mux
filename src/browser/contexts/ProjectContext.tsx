@@ -72,7 +72,10 @@ export interface ProjectContext {
   loading: boolean;
   refreshProjects: () => Promise<void>;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
-  removeProject: (path: string) => Promise<ProjectRemoveResult>;
+  removeProject: (
+    path: string,
+    options?: { deleteArchived?: boolean }
+  ) => Promise<ProjectRemoveResult>;
 
   // Project creation modal
   isProjectCreateModalOpen: boolean;
@@ -209,7 +212,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
   }, []);
 
   const removeProject = useCallback(
-    async (path: string): Promise<ProjectRemoveResult> => {
+    async (path: string, options?: { deleteArchived?: boolean }): Promise<ProjectRemoveResult> => {
       if (!api) {
         return {
           success: false,
@@ -217,7 +220,10 @@ export function ProjectProvider(props: { children: ReactNode }) {
         };
       }
       try {
-        const result = await api.projects.remove({ projectPath: path });
+        const result = await api.projects.remove({
+          projectPath: path,
+          deleteArchived: options?.deleteArchived,
+        });
         if (result.success) {
           setAllProjectsInternal((prev) => {
             const next = new Map(prev);

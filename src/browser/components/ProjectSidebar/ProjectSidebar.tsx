@@ -54,6 +54,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
 import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
+import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModal/ProjectDeleteConfirmationModal";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 import { WorkspaceListItem, type WorkspaceSelection } from "../WorkspaceListItem/WorkspaceListItem";
@@ -623,6 +624,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     displayTitle: string;
     buttonElement?: HTMLElement;
   } | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    projectPath: string;
+    projectName: string;
+    archivedCount: number;
+  } | null>(null);
   const projectRemoveError = usePopoverError();
   const sectionRemoveError = usePopoverError();
 
@@ -778,6 +784,78 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setArchiveConfirmation(null);
   }, []);
 
+  const showProjectRemoveError = useCallback(
+    (
+      projectPath: string,
+      error: {
+        type: string;
+        message?: string;
+        activeCount?: number;
+        archivedCount?: number;
+      },
+      buttonElement?: HTMLElement
+    ) => {
+      let message: string;
+      if (error.type === "workspace_blockers") {
+        const parts: string[] = [];
+        if ((error.activeCount ?? 0) > 0) {
+          parts.push(`${error.activeCount} active`);
+        }
+        if ((error.archivedCount ?? 0) > 0) {
+          parts.push(`${error.archivedCount} archived`);
+        }
+        message = `Has ${parts.join(" and ")} workspace(s)`;
+      } else if (error.type === "project_not_found") {
+        message = "Project not found";
+      } else {
+        message = error.message ?? "Failed to remove project";
+      }
+
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      projectRemoveError.showError(projectPath, message, anchor);
+    },
+    [projectRemoveError]
+  );
+
+  const removeProjectWithFeedback = useCallback(
+    async (
+      projectPath: string,
+      options?: { deleteArchived?: boolean },
+      buttonElement?: HTMLElement
+    ) => {
+      const result = await onRemoveProject(projectPath, options);
+      if (!result.success) {
+        showProjectRemoveError(projectPath, result.error, buttonElement);
+      }
+      return result;
+    },
+    [onRemoveProject, showProjectRemoveError]
+  );
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteConfirmation) {
+      return;
+    }
+
+    const result = await removeProjectWithFeedback(deleteConfirmation.projectPath, {
+      deleteArchived: true,
+    });
+    if (result.success) {
+      setDeleteConfirmation(null);
+    }
+  }, [deleteConfirmation, removeProjectWithFeedback]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteConfirmation(null);
+  }, []);
   const handleCancelWorkspaceCreation = useCallback(
     async (workspaceId: string) => {
       // Give immediate UI feedback (spinner / disabled row) while deletion is in-flight.
@@ -989,7 +1067,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     const workspaceListId = `workspace-list-${sanitizedProjectId}`;
                     const isExpanded = expandedProjectsList.includes(projectPath);
                     const counts = getProjectWorkspaceCounts(config.workspaces);
-                    const canDelete = counts.activeCount === 0 && counts.archivedCount === 0;
+                    const canDelete = counts.activeCount === 0;
                     let removeTooltip: string;
                     if (canDelete) {
                       removeTooltip = "Remove project";
@@ -1086,35 +1164,22 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   if (!canDelete) return;
-                                  const buttonElement = event.currentTarget;
-                                  void (async () => {
-                                    const result = await onRemoveProject(projectPath);
-                                    if (!result.success) {
-                                      const error = result.error;
-                                      let message: string;
-                                      if (error.type === "workspace_blockers") {
-                                        const parts: string[] = [];
-                                        if (error.activeCount > 0) {
-                                          parts.push(`${error.activeCount} active`);
-                                        }
-                                        if (error.archivedCount > 0) {
-                                          parts.push(`${error.archivedCount} archived`);
-                                        }
-                                        message = `Has ${parts.join(" and ")} workspace(s)`;
-                                      } else if (error.type === "project_not_found") {
-                                        message = "Project not found";
-                                      } else {
-                                        message = error.message;
-                                      }
 
-                                      const rect = buttonElement.getBoundingClientRect();
-                                      const anchor = {
-                                        top: rect.top + window.scrollY,
-                                        left: rect.right + 10,
-                                      };
-                                      projectRemoveError.showError(projectPath, message, anchor);
-                                    }
-                                  })();
+                                  const buttonElement = event.currentTarget;
+                                  if (counts.archivedCount > 0) {
+                                    setDeleteConfirmation({
+                                      projectPath,
+                                      projectName,
+                                      archivedCount: counts.archivedCount,
+                                    });
+                                    return;
+                                  }
+
+                                  void removeProjectWithFeedback(
+                                    projectPath,
+                                    undefined,
+                                    buttonElement
+                                  );
                                 }}
                                 aria-label={`Remove project ${projectName}`}
                                 aria-disabled={!canDelete}
@@ -1588,6 +1653,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             confirmLabel="Archive"
             onConfirm={handleArchiveWorkspaceConfirm}
             onCancel={handleArchiveWorkspaceCancel}
+          />
+          <ProjectDeleteConfirmationModal
+            isOpen={deleteConfirmation !== null}
+            projectName={deleteConfirmation?.projectName ?? ""}
+            archivedCount={deleteConfirmation?.archivedCount ?? 0}
+            onConfirm={handleDeleteConfirm}
+            onCancel={handleDeleteCancel}
           />
           <PopoverError
             error={workspaceArchiveError.error}
