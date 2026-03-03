@@ -966,6 +966,16 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     setSelectedWorkspace,
   ]);
 
+  // Self-heal stale workspace routes after startup metadata loads.
+  // If the URL points at a deleted workspace ID, clear selection and persisted state.
+  useEffect(() => {
+    if (loading) return;
+    if (!currentWorkspaceId) return;
+    if (workspaceMetadata.has(currentWorkspaceId)) return;
+
+    setSelectedWorkspace(null);
+  }, [loading, currentWorkspaceId, workspaceMetadata, setSelectedWorkspace]);
+
   // Subscribe to metadata updates (for create/rename/delete operations)
   useEffect(() => {
     if (!api) return;
@@ -1480,17 +1490,38 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     const behavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
     if (behavior !== "new-chat") return;
 
-    hasAutoCreatedRef.current = true;
+    let cancelled = false;
 
-    const workspaceRecency = workspaceStore.getWorkspaceRecency();
-    const recentWorkspace = [...workspaceMetadata.values()]
-      .filter((workspace) => workspace.projectPath)
-      .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
+    const autoCreate = async () => {
+      // In server mode with --add-project, defer startup routing to the launch-project effect.
+      try {
+        const launchProject = await api?.server.getLaunchProject(undefined);
+        if (cancelled || launchProject) return;
+      } catch {
+        // Ignore backend capability errors and continue with local auto-create fallback.
+      }
 
-    if (!recentWorkspace) return;
+      if (cancelled) return;
 
-    createWorkspaceDraft(recentWorkspace.projectPath);
+      hasAutoCreatedRef.current = true;
+
+      const workspaceRecency = workspaceStore.getWorkspaceRecency();
+      const recentWorkspace = [...workspaceMetadata.values()]
+        .filter((workspace) => workspace.projectPath)
+        .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
+
+      if (!recentWorkspace) return;
+
+      createWorkspaceDraft(recentWorkspace.projectPath);
+    };
+
+    void autoCreate();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
+    api,
     loading,
     selectedWorkspace,
     currentSettingsSection,
