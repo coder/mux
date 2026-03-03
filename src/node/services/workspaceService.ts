@@ -4,6 +4,7 @@ import * as fsPromises from "fs/promises";
 import assert from "@/common/utils/assert";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
@@ -2088,7 +2089,9 @@ export class WorkspaceService extends EventEmitter {
 
       const createdAt = new Date().toISOString();
       await this.config.editConfig((config) => {
-        const multiProjectConfig = config.projects.get("_multi") ?? { workspaces: [] };
+        const multiProjectConfig = config.projects.get(MULTI_PROJECT_CONFIG_KEY) ?? {
+          workspaces: [],
+        };
         multiProjectConfig.workspaces.push({
           path: containerPath,
           id: workspaceId,
@@ -2098,7 +2101,7 @@ export class WorkspaceService extends EventEmitter {
           runtimeConfig: finalRuntimeConfig,
           projects: normalizedProjects,
         });
-        config.projects.set("_multi", multiProjectConfig);
+        config.projects.set(MULTI_PROJECT_CONFIG_KEY, multiProjectConfig);
         return config;
       });
 

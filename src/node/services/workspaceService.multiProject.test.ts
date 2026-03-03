@@ -3,6 +3,7 @@ import * as fsPromises from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { Config } from "@/node/config";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
@@ -89,7 +90,7 @@ describe("WorkspaceService multi-project lifecycle", () => {
           return Promise.resolve();
         }),
         getAllWorkspaceMetadata: mock(() => {
-          const workspaces = configState.projects.get("_multi")?.workspaces ?? [];
+          const workspaces = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces ?? [];
           return Promise.resolve(
             workspaces.map(
               (workspace) =>
@@ -213,7 +214,8 @@ describe("WorkspaceService multi-project lifecycle", () => {
           },
         ]);
 
-        const storedMultiWorkspaces = configState.projects.get("_multi")?.workspaces ?? [];
+        const storedMultiWorkspaces =
+          configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces ?? [];
         expect(storedMultiWorkspaces).toHaveLength(1);
         expect(storedMultiWorkspaces[0]?.projects).toEqual([
           { projectPath: projectAPath, projectName: "project-a" },
@@ -385,7 +387,7 @@ describe("WorkspaceService multi-project lifecycle", () => {
           [projectAPath, { workspaces: [], trusted: true }],
           [projectBPath, { workspaces: [], trusted: true }],
           [
-            "_multi",
+            MULTI_PROJECT_CONFIG_KEY,
             {
               workspaces: [
                 {
@@ -409,7 +411,7 @@ describe("WorkspaceService multi-project lifecycle", () => {
         loadConfigOrDefault: mock(() => configState),
         findWorkspace: mock(() => ({
           workspacePath: oldContainerPath,
-          projectPath: "_multi",
+          projectPath: MULTI_PROJECT_CONFIG_KEY,
           workspaceName: oldName,
         })),
         editConfig: mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
@@ -417,7 +419,7 @@ describe("WorkspaceService multi-project lifecycle", () => {
           return Promise.resolve();
         }),
         getAllWorkspaceMetadata: mock(() => {
-          const workspace = configState.projects.get("_multi")?.workspaces[0];
+          const workspace = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces[0];
           return Promise.resolve(
             workspace
               ? [
@@ -544,7 +546,7 @@ describe("WorkspaceService multi-project lifecycle", () => {
           },
         ]);
 
-        const renamedWorkspace = configState.projects.get("_multi")?.workspaces[0];
+        const renamedWorkspace = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces[0];
         expect(renamedWorkspace?.name).toBe(newName);
         expect(renamedWorkspace?.path).toBe(newContainerPath);
       } finally {
