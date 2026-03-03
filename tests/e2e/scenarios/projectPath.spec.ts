@@ -59,9 +59,18 @@ test.describe("Project Path Handling", () => {
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
 
+    // Boot now lands on "/" first when there's no saved workspace in localStorage.
+    // Wait for React hydration before asserting sidebar roles to avoid a race on CI.
+    await page.waitForSelector(
+      '[data-testid="session-stats-row"], [role="navigation"][aria-label="Projects"]',
+      {
+        timeout: 30_000,
+      }
+    );
+
     // Find the project in the sidebar - it should show the project name, not empty
     const navigation = page.getByRole("navigation", { name: "Projects" });
-    await expect(navigation).toBeVisible();
+    await expect(navigation).toBeVisible({ timeout: 30_000 });
 
     // The project name should be visible (extracted correctly despite trailing slash)
     // If the bug was present, we'd see an empty project name or just "/"
