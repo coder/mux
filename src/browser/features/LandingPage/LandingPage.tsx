@@ -202,7 +202,10 @@ function SpendGraph(props: { dateFilters: DateFilters }) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([bucket, costUsd]) => ({
       bucket,
-      label: new Date(bucket).toLocaleDateString("en-US", { weekday: "short" }),
+      label: new Date(bucket).toLocaleDateString("en-US", {
+        weekday: "short",
+        timeZone: "UTC",
+      }),
       costUsd,
     }));
 
