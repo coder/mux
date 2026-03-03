@@ -376,8 +376,6 @@ export class Config {
   /**
    * Remove fields from save data that match system config defaults,
    * preventing materialization of admin-managed baselines into user config.
-   * Projects and taskSettings are excluded — projects go through normalization
-   * that changes their shape, and taskSettings always has a default value.
    */
   private stripSystemDefaults(
     data: Record<string, unknown>,
@@ -385,7 +383,8 @@ export class Config {
   ): void {
     const system = systemConfig as Record<string, unknown>;
     for (const key of Object.keys(data)) {
-      if (key === "projects" || key === "taskSettings") continue;
+      // Projects handled separately below due to array-of-tuples structure.
+      if (key === "projects") continue;
       const dataVal = data[key];
       const sysVal = system[key];
       if (sysVal === undefined) continue;
@@ -418,6 +417,33 @@ export class Config {
         if (JSON.stringify(dataVal) === JSON.stringify(sysVal)) {
           delete data[key];
         }
+      }
+    }
+
+    // Strip system-provided projects that haven't been modified.
+    // Projects are arrays of [path, config] tuples — compare by path key.
+    if (Array.isArray(data.projects) && Array.isArray(systemConfig.projects)) {
+      const systemProjectMap = new Map<string, string>();
+      for (const entry of systemConfig.projects) {
+        if (Array.isArray(entry) && entry.length >= 2 && typeof entry[0] === "string") {
+          const [projectPath, projectConfig] = entry;
+          systemProjectMap.set(projectPath, JSON.stringify(projectConfig));
+        }
+      }
+      const dataProjects = data.projects as Array<[string, unknown]>;
+      const filtered = dataProjects.filter(([projectPath, projectConfig]) => {
+        const systemProjectConfigJson = systemProjectMap.get(projectPath);
+        if (systemProjectConfigJson === undefined) {
+          return true; // User-only project.
+        }
+
+        return JSON.stringify(projectConfig) !== systemProjectConfigJson;
+      });
+
+      if (filtered.length === 0) {
+        delete data.projects;
+      } else {
+        data.projects = filtered;
       }
     }
   }

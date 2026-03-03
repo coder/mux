@@ -514,6 +514,28 @@ describe("Config", () => {
       expect(savedRaw.projects).toEqual([["/user/proj", expect.any(Object)]]);
     });
 
+    it("system taskSettings and projects are stripped on save", async () => {
+      writeSystemConfig({
+        taskSettings: { maxConcurrentTasks: 5 },
+        projects: [["/sys/project", { workspaces: [] }]],
+      });
+      writeUserConfig({
+        projects: [["/user/project", { workspaces: [] }]],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      // System project should not be in saved user config.
+      const savedProjects = savedRaw.projects as Array<[string, unknown]>;
+      const projectPaths = savedProjects.map(([projectPath]) => projectPath);
+      expect(projectPaths).toContain("/user/project");
+      expect(projectPaths).not.toContain("/sys/project");
+    });
+
     it("system object defaults are stripped key-by-key on save", async () => {
       writeSystemConfig({
         featureFlagOverrides: { flagA: "on", flagB: "off" },
