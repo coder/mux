@@ -63,13 +63,3 @@ export const WORKSPACE_DEFAULTS = {
 
 // Freeze the object at runtime to prevent accidental mutation
 Object.freeze(WORKSPACE_DEFAULTS);
-
-/**
- * Type-safe keys for workspace settings
- */
-export type WorkspaceSettingKey = keyof typeof WORKSPACE_DEFAULTS;
-
-/**
- * Type-safe values for workspace settings
- */
-export type WorkspaceSettingValue<K extends WorkspaceSettingKey> = (typeof WORKSPACE_DEFAULTS)[K];
