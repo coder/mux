@@ -402,9 +402,16 @@ function WorkspaceCard(props: { workspaceId: string; title: string; onClick: () 
     gitStatus && (gitStatus.outgoingAdditions > 0 || gitStatus.outgoingDeletions > 0);
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={props.onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          props.onClick();
+        }
+      }}
       data-testid={`workspace-card-${props.workspaceId}`}
       className="bg-background-secondary border-border-medium hover:border-foreground/20 w-full cursor-pointer rounded-lg border p-4 text-left transition-colors"
     >
@@ -436,7 +443,7 @@ function WorkspaceCard(props: { workspaceId: string; title: string; onClick: () 
           </>
         )}
       </div>
-    </button>
+    </div>
   );
 }
 
