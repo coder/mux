@@ -1,4 +1,5 @@
 import assert from "@/common/utils/assert";
+import type React from "react";
 import { useEffect, useState } from "react";
 import type { z } from "zod";
 import type { APIClient } from "@/browser/contexts/API";
@@ -85,6 +86,61 @@ function getAnalyticsNamespace(api: APIClient): AnalyticsNamespace | null {
   return maybeNamespace as AnalyticsNamespace;
 }
 
+/**
+ * Shared effect body for analytics data-fetching hooks.
+ * Handles API readiness check, cancellation on unmount/re-render, and error handling.
+ * Returns the effect cleanup function (or undefined for early-exit paths).
+ */
+function runAnalyticsEffect<T>(
+  api: APIClient | null,
+  setState: React.Dispatch<React.SetStateAction<AsyncState<T>>>,
+  fetcher: (analyticsApi: AnalyticsNamespace) => Promise<T>
+): (() => void) | undefined {
+  if (!api) {
+    setState((previousState) => ({
+      data: previousState.data,
+      loading: true,
+      error: null,
+    }));
+    return;
+  }
+
+  const analyticsApi = getAnalyticsNamespace(api);
+  if (!analyticsApi) {
+    setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
+    return;
+  }
+
+  let ignore = false;
+  setState((previousState) => ({
+    data: previousState.data,
+    loading: true,
+    error: null,
+  }));
+
+  void fetcher(analyticsApi)
+    .then((data) => {
+      if (ignore) {
+        return;
+      }
+      setState({ data, loading: false, error: null });
+    })
+    .catch((error: unknown) => {
+      if (ignore) {
+        return;
+      }
+      setState((previousState) => ({
+        data: previousState.data,
+        loading: false,
+        error: getErrorMessage(error),
+      }));
+    });
+
+  return () => {
+    ignore = true;
+  };
+}
+
 export function useAnalyticsSummary(
   projectPath?: string | null,
   dateFilters?: DateFilterParams
@@ -100,53 +156,11 @@ export function useAnalyticsSummary(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getSummary({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
-      })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getSummary({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
+    );
   }, [api, projectPath, fromMs, toMs]);
 
   return state;
@@ -174,58 +188,16 @@ export function useAnalyticsSpendOverTime(params: {
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getSpendOverTime({
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getSpendOverTime({
         projectPath: params.projectPath ?? null,
         granularity: params.granularity,
         from: fromDate,
         to: toDate,
       })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
-      })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    );
   }, [api, params.projectPath, params.granularity, fromMs, toMs]);
 
   return state;
@@ -245,53 +217,11 @@ export function useAnalyticsSpendByProject(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getSpendByProject({ from: fromDate, to: toDate })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
-      })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getSpendByProject({ from: fromDate, to: toDate })
+    );
   }, [api, fromMs, toMs]);
 
   return state;
@@ -312,53 +242,11 @@ export function useAnalyticsSpendByModel(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getSpendByModel({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
-      })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getSpendByModel({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
+    );
   }, [api, projectPath, fromMs, toMs]);
 
   return state;
@@ -379,53 +267,15 @@ export function useAnalyticsTokensByModel(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getTokensByModel({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getTokensByModel({
+        projectPath: projectPath ?? null,
+        from: fromDate,
+        to: toDate,
       })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    );
   }, [api, projectPath, fromMs, toMs]);
 
   return state;
@@ -452,58 +302,16 @@ export function useAnalyticsTimingDistribution(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getTimingDistribution({
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getTimingDistribution({
         metric,
         projectPath: projectPath ?? null,
         from: fromDate,
         to: toDate,
       })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
-      })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    );
   }, [api, metric, projectPath, fromMs, toMs]);
 
   return state;
@@ -524,53 +332,15 @@ export function useAnalyticsProviderCacheHitRatio(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getCacheHitRatioByProvider({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getCacheHitRatioByProvider({
+        projectPath: projectPath ?? null,
+        from: fromDate,
+        to: toDate,
       })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    );
   }, [api, projectPath, fromMs, toMs]);
 
   return state;
@@ -591,53 +361,15 @@ export function useAnalyticsAgentCostBreakdown(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getAgentCostBreakdown({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getAgentCostBreakdown({
+        projectPath: projectPath ?? null,
+        from: fromDate,
+        to: toDate,
       })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    );
   }, [api, projectPath, fromMs, toMs]);
 
   return state;
@@ -658,53 +390,15 @@ export function useAnalyticsDelegationSummary(
   });
 
   useEffect(() => {
-    if (!api) {
-      setState((previousState) => ({
-        data: previousState.data,
-        loading: true,
-        error: null,
-      }));
-      return;
-    }
-
-    const analyticsApi = getAnalyticsNamespace(api);
-    if (!analyticsApi) {
-      setState({ data: null, loading: false, error: ANALYTICS_UNAVAILABLE_MESSAGE });
-      return;
-    }
-
-    let ignore = false;
-    setState((previousState) => ({
-      data: previousState.data,
-      loading: true,
-      error: null,
-    }));
-
     const fromDate = fromMs == null ? null : new Date(fromMs);
     const toDate = toMs == null ? null : new Date(toMs);
-
-    void analyticsApi
-      .getDelegationSummary({ projectPath: projectPath ?? null, from: fromDate, to: toDate })
-      .then((data) => {
-        if (ignore) {
-          return;
-        }
-        setState({ data, loading: false, error: null });
+    return runAnalyticsEffect(api, setState, (analyticsApi) =>
+      analyticsApi.getDelegationSummary({
+        projectPath: projectPath ?? null,
+        from: fromDate,
+        to: toDate,
       })
-      .catch((error: unknown) => {
-        if (ignore) {
-          return;
-        }
-        setState((previousState) => ({
-          data: previousState.data,
-          loading: false,
-          error: getErrorMessage(error),
-        }));
-      });
-
-    return () => {
-      ignore = true;
-    };
+    );
   }, [api, projectPath, fromMs, toMs]);
 
   return state;
