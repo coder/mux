@@ -1,4 +1,4 @@
-import { useState, useMemo, type ComponentType } from "react";
+import { useState, type ComponentType } from "react";
 import {
   Database,
   Play,
@@ -56,18 +56,12 @@ export function SqlExplorer() {
   const [chartTypeOverride, setChartTypeOverride] = useState<ChartType | null>(null);
   const [showSamples, setShowSamples] = useState(false);
 
-  const inferredChartType = useMemo(() => {
-    if (!data) return "table";
-    return inferChartType(data.columns, data.rows);
-  }, [data]);
+  const inferredChartType = data ? inferChartType(data.columns, data.rows) : "table";
 
   const effectiveChartType = chartTypeOverride ?? inferredChartType;
 
-  const axes = useMemo(() => {
-    if (!data) return { xAxis: "", yAxes: [] };
-    // No explicit axes from raw query, let heuristics decide.
-    return inferAxes(data.columns, undefined, undefined);
-  }, [data]);
+  // No explicit axes from raw query, let heuristics decide.
+  const axes = data ? inferAxes(data.columns, undefined, undefined) : { xAxis: "", yAxes: [] };
 
   const handleRun = () => {
     if (loading) {
