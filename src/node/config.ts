@@ -30,6 +30,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
+import { getErrorMessage } from "@/common/utils/errors";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
@@ -240,22 +241,114 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private readonly systemConfigFile: string;
+  readonly systemConfigWarnings: string[] = [];
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
     this.sessionsDir = path.join(this.rootDir, "sessions");
     this.srcDir = path.join(this.rootDir, "src");
     this.configFile = path.join(this.rootDir, "config.json");
+    this.systemConfigFile = this.resolveSystemConfigFile();
     this.providersFile = path.join(this.rootDir, "providers.jsonc");
     this.secretsFile = path.join(this.rootDir, "secrets.json");
   }
 
+  private resolveSystemConfigFile(): string {
+    if (process.env.MUX_SYSTEM_CONFIG) {
+      return process.env.MUX_SYSTEM_CONFIG;
+    }
+
+    return path.join(this.rootDir, "config.system.json");
+  }
+
+  /**
+   * Load the admin-managed system config baseline.
+   * Returns undefined if the file is absent or fails to load.
+   *
+   * SAFETY: This method never throws. Any failure is caught, logged as a warning,
+   * and stored in systemConfigWarnings. Missing file is the normal case.
+   */
+  private loadSystemConfig(): Partial<AppConfigOnDisk> | undefined {
+    try {
+      if (!fs.existsSync(this.systemConfigFile)) {
+        return undefined;
+      }
+
+      const data = fs.readFileSync(this.systemConfigFile, "utf-8");
+      const parsed: unknown = JSON.parse(data);
+      if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        const warning = `System config at ${this.systemConfigFile} is not a JSON object (skipping)`;
+        this.systemConfigWarnings.push(warning);
+        log.warn(warning);
+        return undefined;
+      }
+
+      return parsed as Partial<AppConfigOnDisk>;
+    } catch (error) {
+      const warning = `Failed to load system config at ${this.systemConfigFile}: ${getErrorMessage(error)}`;
+      this.systemConfigWarnings.push(warning);
+      log.warn(warning);
+      return undefined;
+    }
+  }
+
+  private mergeSystemAndUserConfig(
+    system: Partial<AppConfigOnDisk>,
+    user: Partial<AppConfigOnDisk>
+  ): Partial<AppConfigOnDisk> {
+    const merged: Partial<AppConfigOnDisk> = { ...system };
+    const mergedRecord = merged as Record<string, unknown>;
+    const systemRecord = system as Record<string, unknown>;
+
+    for (const [key, userVal] of Object.entries(user as Record<string, unknown>)) {
+      if (userVal === undefined) continue;
+
+      const systemVal = systemRecord[key];
+      if (
+        systemVal != null &&
+        typeof systemVal === "object" &&
+        !Array.isArray(systemVal) &&
+        userVal != null &&
+        typeof userVal === "object" &&
+        !Array.isArray(userVal)
+      ) {
+        mergedRecord[key] = { ...systemVal, ...userVal };
+      } else {
+        mergedRecord[key] = userVal;
+      }
+    }
+
+    if (Array.isArray(system.projects) || Array.isArray(user.projects)) {
+      const systemProjects = Array.isArray(system.projects) ? system.projects : [];
+      const userProjects = Array.isArray(user.projects) ? user.projects : [];
+      const projectMap = new Map<string, ProjectConfig>(systemProjects);
+      for (const [projectPath, projectConfig] of userProjects) {
+        projectMap.set(projectPath, projectConfig);
+      }
+      merged.projects = Array.from(projectMap.entries());
+    }
+
+    return merged;
+  }
+
   loadConfigOrDefault(): ProjectsConfig {
     try {
+      const systemParsed = this.loadSystemConfig();
+      let userParsed: Partial<AppConfigOnDisk> | undefined;
+
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
+        userParsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
+      }
 
+      // Merge precedence: system baseline + user overrides. Env var overrides are
+      // applied by per-setting getters above this layer.
+      const parsed = systemParsed
+        ? this.mergeSystemAndUserConfig(systemParsed, userParsed ?? {})
+        : userParsed;
+
+      if (parsed) {
         // Config is stored as array of [path, config] pairs.
         // Older/newer files may omit `projects`; treat missing/invalid values as an empty map
         // so top-level settings (provider/runtime/server preferences) still load.
@@ -306,7 +399,6 @@ export class Config {
         const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
           ? undefined
           : layoutPresetsRaw;
-
         return {
           projects: projectsMap,
           apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
