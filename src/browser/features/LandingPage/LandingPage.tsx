@@ -73,10 +73,15 @@ export function LandingPage(props: LandingPageProps) {
       />
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
-          <GatewayCreditsCard />
-          <SessionStatsRow dateFilters={dateFilters} />
-          <SpendGraph dateFilters={dateFilters} />
-          <MuxChatCard />
+          {/* Top row: Chat with Mux + Gateway balance side by side */}
+          <div className="flex gap-4">
+            <MuxChatCard />
+            <GatewayCreditsCard />
+          </div>
+
+          {/* Stats section: graph (left) + 2×2 stat cards (right) */}
+          <StatsSection dateFilters={dateFilters} />
+
           <ProjectsSection dateFilters={dateFilters} />
           <RecentWorkspacesSection />
         </div>
@@ -131,7 +136,7 @@ function GatewayCreditsCard() {
   if (!gateway.isConfigured) return null;
 
   return (
-    <div className="bg-background-secondary border-border-medium rounded-lg border p-4">
+    <div className="bg-background-secondary border-border-medium shrink-0 rounded-lg border p-4">
       <div className="text-muted text-xs">Mux Gateway Balance</div>
       {isLoading ? (
         <Skeleton variant="shimmer" className="mt-1 h-7 w-24" />
@@ -144,17 +149,9 @@ function GatewayCreditsCard() {
   );
 }
 
-// ─── Session stats row ───────────────────────────────────────────────────
-function SessionStatsRow(props: { dateFilters: DateFilters }) {
+// ─── Combined stats section ──────────────────────────────────────────────
+function StatsSection(props: { dateFilters: DateFilters }) {
   const { navigateToAnalytics } = useRouter();
-  const summary = useAnalyticsSummary(null, props.dateFilters);
-
-  const stats = [
-    { label: "Total Spend", value: formatUsd(summary.data?.totalSpendUsd ?? 0) },
-    { label: "Today", value: formatUsd(summary.data?.todaySpendUsd ?? 0) },
-    { label: "Total Tokens", value: formatCompactNumber(summary.data?.totalTokens ?? 0) },
-    { label: "Responses", value: formatCompactNumber(summary.data?.totalResponses ?? 0) },
-  ];
 
   return (
     <div data-testid="session-stats-row">
@@ -168,22 +165,40 @@ function SessionStatsRow(props: { dateFilters: DateFilters }) {
           View all →
         </button>
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {stats.map((stat) => (
-          <div key={stat.label} className={CARD_CLASS}>
-            <div className="text-muted text-xs">{stat.label}</div>
-            <div className="text-foreground mt-1 font-mono text-lg font-semibold">
-              {summary.loading ? <Skeleton variant="shimmer" className="h-5 w-16" /> : stat.value}
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-[2fr_1fr]">
+        <SpendGraph dateFilters={props.dateFilters} />
+        <SessionStatsRow dateFilters={props.dateFilters} />
       </div>
     </div>
   );
 }
 
+// ─── Session stats cards ─────────────────────────────────────────────────
+function SessionStatsRow(props: { dateFilters: DateFilters }) {
+  const summary = useAnalyticsSummary(null, props.dateFilters);
+
+  const stats = [
+    { label: "Total Spend", value: formatUsd(summary.data?.totalSpendUsd ?? 0) },
+    { label: "Today", value: formatUsd(summary.data?.todaySpendUsd ?? 0) },
+    { label: "Total Tokens", value: formatCompactNumber(summary.data?.totalTokens ?? 0) },
+    { label: "Responses", value: formatCompactNumber(summary.data?.totalResponses ?? 0) },
+  ];
+
+  return (
+    <div className="grid h-full auto-rows-fr grid-cols-2 gap-3">
+      {stats.map((stat) => (
+        <div key={stat.label} className={cn(CARD_CLASS, "flex min-h-0 flex-col justify-between")}>
+          <div className="text-muted text-xs">{stat.label}</div>
+          <div className="text-foreground mt-1 font-mono text-lg font-semibold">
+            {summary.loading ? <Skeleton variant="shimmer" className="h-5 w-16" /> : stat.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SpendGraph(props: { dateFilters: DateFilters }) {
-  const { navigateToAnalytics } = useRouter();
   const spendOverTime = useAnalyticsSpendOverTime({
     projectPath: null,
     granularity: "day",
@@ -209,45 +224,34 @@ function SpendGraph(props: { dateFilters: DateFilters }) {
 
   if (spendOverTime.loading) {
     return (
-      <div className={CARD_CLASS}>
-        <h3 className="text-foreground mb-2 text-sm font-medium">Spend (7d)</h3>
-        <Skeleton variant="shimmer" className="h-[200px] w-full" />
+      <div className={cn(CARD_CLASS, "h-full min-h-[220px]")}>
+        <Skeleton variant="shimmer" className="h-full w-full" />
       </div>
     );
   }
 
-  if (chartData.length === 0) return null;
-
   return (
-    <div>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-foreground text-sm font-medium">Spend (7d)</h3>
-        <button onClick={navigateToAnalytics} className="text-muted hover:text-foreground text-xs">
-          View all →
-        </button>
-      </div>
-      <div className={CARD_CLASS}>
-        <ResponsiveContainer width="100%" height={200}>
-          <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} vertical={false} />
-            <XAxis dataKey="label" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
-            <YAxis
-              tick={CHART_AXIS_TICK}
-              axisLine={false}
-              tickLine={false}
-              tickFormatter={(value: number) => formatUsd(Number(value))}
-              width={60}
-            />
-            <Tooltip
-              formatter={(value: number) => [formatUsd(Number(value)), "Spend"]}
-              contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
-              labelStyle={{ color: "var(--color-foreground)" }}
-              cursor={{ fill: "var(--color-hover)" }}
-            />
-            <Bar dataKey="costUsd" fill={ANALYTICS_CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+    <div className={cn(CARD_CLASS, "h-full min-h-[220px]")}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART_AXIS_STROKE} vertical={false} />
+          <XAxis dataKey="label" tick={CHART_AXIS_TICK} axisLine={false} tickLine={false} />
+          <YAxis
+            tick={CHART_AXIS_TICK}
+            axisLine={false}
+            tickLine={false}
+            tickFormatter={(value: number) => formatUsd(Number(value))}
+            width={60}
+          />
+          <Tooltip
+            formatter={(value: number) => [formatUsd(Number(value)), "Spend"]}
+            contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
+            labelStyle={{ color: "var(--color-foreground)" }}
+            cursor={{ fill: "var(--color-hover)" }}
+          />
+          <Bar dataKey="costUsd" fill={ANALYTICS_CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -267,7 +271,7 @@ function MuxChatCard() {
     <button
       type="button"
       onClick={handleOpenMuxChat}
-      className="bg-background-secondary border-border-medium hover:border-foreground/20 flex w-full cursor-pointer items-center gap-4 rounded-lg border p-4 text-left transition-colors"
+      className="bg-background-secondary border-border-medium hover:border-foreground/20 flex min-w-0 flex-1 cursor-pointer items-center gap-4 rounded-lg border p-4 text-left transition-colors"
     >
       <div className="bg-hover flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
         <CircleHelp className="text-muted h-5 w-5" />
@@ -288,7 +292,7 @@ function ProjectsSection(props: { dateFilters: DateFilters }) {
 
   const projects = [...(spendByProject.data ?? [])]
     .sort((a, b) => b.costUsd - a.costUsd)
-    .slice(0, 6);
+    .slice(0, 3);
 
   if (spendByProject.loading) {
     return (
