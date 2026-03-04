@@ -102,9 +102,6 @@ function getItemPaddingLeft(depth?: number): number {
 
 type VisualState = "active" | "idle" | "seen" | "error" | "question";
 
-// Match whole words so statuses like "task" do not get misclassified as question-state.
-const QUESTION_STATUS_WORD_PATTERN = /\b(question|awaiting|ask(?:ed|ing|s)?)\b/;
-
 function getVisualState(opts: {
   awaitingUserQuestion: boolean;
   isInitializing: boolean;
@@ -114,20 +111,11 @@ function getVisualState(opts: {
   isStarting: boolean;
   isUnread: boolean;
   hasAgentStatus: boolean;
-  agentStatusMessage?: string;
 }): VisualState {
-  const statusText = opts.agentStatusMessage?.toLowerCase() ?? "";
-  const hasErrorKeyword =
-    statusText.includes("error") ||
-    statusText.includes("failed") ||
-    statusText.includes("failure") ||
-    statusText.includes("crash");
-  const hasQuestionKeyword = QUESTION_STATUS_WORD_PATTERN.test(statusText);
-
-  if (opts.awaitingUserQuestion || hasQuestionKeyword) {
+  if (opts.awaitingUserQuestion) {
     return "question";
   }
-  if (opts.isRemoving || opts.isArchiving || hasErrorKeyword) {
+  if (opts.isRemoving || opts.isArchiving) {
     return "error";
   }
   if (opts.isWorking || opts.isStarting || opts.isInitializing || opts.hasAgentStatus) {
@@ -440,7 +428,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     isStarting,
     isUnread,
     hasAgentStatus: Boolean(agentStatus),
-    agentStatusMessage: agentStatus?.message,
   });
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
