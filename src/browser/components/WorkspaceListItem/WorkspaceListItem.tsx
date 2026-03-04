@@ -155,9 +155,9 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
   );
 
   return (
-    // Keep the dot anchored to the title row (h-6) so it stays vertically aligned
-    // when this workspace row renders a second status line.
-    <div className="relative flex h-6 w-4 shrink-0 items-center justify-center self-start">
+    // Keep the dot centered relative to the full row height so multi-line rows
+    // (for example while streaming) do not pin the icon to the title line.
+    <div className="relative flex h-4 w-4 shrink-0 items-center justify-center self-center">
       {dot}
     </div>
   );
