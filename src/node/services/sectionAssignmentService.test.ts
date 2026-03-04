@@ -55,13 +55,13 @@ describe("SectionAssignmentService", () => {
   let service: SectionAssignmentService;
 
   beforeEach(() => {
-    getInfoMock = mock(async () => makeMetadata());
-    getActivityListMock = mock(async () => ({ "ws-1": makeActivity() }));
-    refreshAndEmitMetadataMock = mock(async () => undefined);
-    listWorkspacesMock = mock(async () => [makeMetadata()]);
+    getInfoMock = mock(() => makeMetadata());
+    getActivityListMock = mock(() => ({ "ws-1": makeActivity() }));
+    refreshAndEmitMetadataMock = mock(() => undefined);
+    listWorkspacesMock = mock(() => [makeMetadata()]);
 
-    listSectionsMock = mock(async () => []);
-    assignWorkspaceToSectionMock = mock(async () => Ok(undefined));
+    listSectionsMock = mock(() => []);
+    assignWorkspaceToSectionMock = mock(() => Ok(undefined));
 
     const aiEmitter = new EventEmitter() as AIService;
     aiService = aiEmitter;
@@ -88,7 +88,7 @@ describe("SectionAssignmentService", () => {
   });
 
   it("auto-assigns an unpinned workspace to the first matching rule", async () => {
-    listSectionsMock.mockResolvedValueOnce([
+    listSectionsMock.mockReturnValueOnce([
       {
         id: "open-pr",
         name: "Open PR",
@@ -116,7 +116,7 @@ describe("SectionAssignmentService", () => {
   it("does not move workspaces pinned to their section", async () => {
     getInfoMock.mockResolvedValueOnce(makeMetadata({ sectionId: "manual", pinnedToSection: true }));
 
-    listSectionsMock.mockResolvedValueOnce([
+    listSectionsMock.mockReturnValueOnce([
       {
         id: "open-pr",
         name: "Open PR",
@@ -154,7 +154,15 @@ describe("SectionAssignmentService", () => {
   it("debounces rapid stream/activity events into a single evaluation", async () => {
     const evaluateWorkspaceSpy = spyOn(service, "evaluateWorkspace").mockResolvedValue(undefined);
 
-    const streamEndEvent = { workspaceId: "ws-1" } as StreamEndEvent;
+    const streamEndEvent: StreamEndEvent = {
+      type: "stream-end",
+      workspaceId: "ws-1",
+      messageId: "message-1",
+      metadata: {
+        model: "test-model",
+      },
+      parts: [],
+    };
     aiService.emit("stream-end", streamEndEvent);
     aiService.emit("stream-end", streamEndEvent);
     workspaceService.emit("activity", { workspaceId: "ws-1", activity: makeActivity() });

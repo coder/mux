@@ -82,7 +82,7 @@ export class SectionAssignmentService {
     }
 
     const projectPath = metadata.projectPath;
-    const sections = sortSectionsByLinkedList(await this.projectService.listSections(projectPath));
+    const sections = sortSectionsByLinkedList(this.projectService.listSections(projectPath));
     const hasRules = sections.some((section) => (section.rules?.length ?? 0) > 0);
     if (!hasRules) {
       return;
