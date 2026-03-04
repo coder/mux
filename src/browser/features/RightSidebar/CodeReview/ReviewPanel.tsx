@@ -958,7 +958,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
             // Build truncation warning (only when not filtering by path)
             const truncationWarning =
-              truncationInfo && !selectedFilePath
+              truncationInfo && (!selectedFilePath || isImmersive)
                 ? `Diff truncated (${truncationInfo.reason}). Filter by file to see more.`
                 : null;
 
