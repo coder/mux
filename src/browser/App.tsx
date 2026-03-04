@@ -6,7 +6,6 @@ import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceC
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar/ProjectSidebar";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { LeftSidebar } from "./components/LeftSidebar/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal/ProjectCreateModal";
 import { MultiProjectWorkspaceCreateModal } from "./components/MultiProjectWorkspaceCreateModal/MultiProjectWorkspaceCreateModal";
@@ -61,7 +60,6 @@ import {
   markPendingWorkspaceAiSettings,
 } from "@/browser/utils/workspaceAiSettingsSync";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal/AuthTokenModal";
-import { Button } from "./components/Button/Button";
 
 import { ProjectPage } from "@/browser/components/ProjectPage/ProjectPage";
 

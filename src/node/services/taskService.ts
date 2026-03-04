@@ -18,6 +18,7 @@ import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/r
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
@@ -1170,6 +1171,26 @@ export class TaskService {
       forkedFromSource,
       projects: inheritedProjects,
     } = forkResult.data;
+
+    // Multi-project forks need per-project secrets for each runtime's init hook.
+    if (runtimeForTaskWorkspace instanceof MultiProjectRuntime) {
+      const projectEnvCache = new Map<string, Record<string, string>>();
+      runtimeForTaskWorkspace.envResolver = async (runtimeProjectPath: string) => {
+        const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
+        const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
+        if (cachedEnv) {
+          return cachedEnv;
+        }
+
+        const projectEnv = await secretsToRecord(
+          this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
+          this.opResolver
+        );
+        projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
+        return projectEnv;
+      };
+    }
+
     const taskBaseCommitSha = await tryReadGitHeadCommitSha(runtimeForTaskWorkspace, workspacePath);
 
     taskQueueDebug("TaskService.create started (workspace created)", {

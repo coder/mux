@@ -2409,6 +2409,12 @@ export class WorkspaceService extends EventEmitter {
             }
           }
 
+          if (deleteErrors.length > 0 && !force) {
+            return Err(
+              `Failed to delete multi-project workspace from disk: ${deleteErrors.join("; ")}`
+            );
+          }
+
           const containerManager = new ContainerManager(
             getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir
           );
