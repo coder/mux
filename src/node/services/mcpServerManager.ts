@@ -967,6 +967,17 @@ export class MCPServerManager {
         workspaceId,
       });
 
+      let leasedStats = existing.stats;
+      if (restartFailedNames.length > 0) {
+        const failedServerNames = [...existing.stats.failedServerNames, ...restartFailedNames];
+        leasedStats = {
+          ...existing.stats,
+          failedServerCount: failedServerNames.length,
+          failedServerNames,
+        };
+        existing.stats = leasedStats;
+      }
+
       // Even while deferring restarts, ensure new tool lists reflect the latest enabled/disabled
       // server set. We cannot revoke tools already captured by an in-flight stream, but we
       // can avoid exposing tools from newly-disabled servers to the next stream.
@@ -976,7 +987,7 @@ export class MCPServerManager {
 
       return {
         tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
-        stats: existing.stats,
+        stats: leasedStats,
       };
     }
 
