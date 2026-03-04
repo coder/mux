@@ -99,6 +99,15 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y shellcheck
+      - name: Install hadolint
+        run: |
+          set -euo pipefail
+          HADOLINT_VERSION="v2.12.0"
+          curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf \
+            "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
+            -o "$HOME/.local/bin/hadolint"
+          chmod +x "$HOME/.local/bin/hadolint"
+          hadolint --version
       - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
         with:
           extra_nix_config: |

@@ -319,7 +319,7 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck flake-hash-check ## Run all static checks (lint + typecheck + fmt-check)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck lint-hadolint flake-hash-check ## Run all static checks (lint + typecheck + fmt-check)
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -343,6 +343,12 @@ SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modu
 
 lint-shellcheck: ## Run shellcheck on shell scripts
 	shellcheck --external-sources $(SHELL_SRC_FILES)
+
+# Dockerfiles to lint (excludes node_modules, build artifacts, .git)
+DOCKERFILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name 'Dockerfile' 2>/dev/null)
+
+lint-hadolint: ## Run hadolint on Dockerfiles
+	hadolint $(DOCKERFILES)
 
 pin-actions: ## Pin GitHub Actions to SHA hashes (requires GH_TOKEN or gh CLI)
 	./scripts/pin-actions.sh .github/workflows/*.yml .github/actions/*/action.yml

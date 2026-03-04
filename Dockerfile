@@ -21,6 +21,8 @@ RUN npm install -g bun@1.2
 
 # Install git (needed for version generation) and build tools for native modules
 # bzip2 is required for lzma-native to extract its bundled xz source tarball
+# Intentionally keep packages unpinned so Debian security updates flow in without manual version churn.
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends git python3 make g++ bzip2 && rm -rf /var/lib/apt/lists/*
 
 # Copy package files first for better layer caching
@@ -81,6 +83,8 @@ WORKDIR /app
 # - git: required for workspace operations (clone, worktree, etc.)
 # - openssh-client: required for SSH runtime support
 # - ca-certificates: required for HTTPS (git clone, API calls, etc.)
+# Intentionally keep packages unpinned so Debian security updates flow in without manual version churn.
+# hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git openssh-client ca-certificates && \
     rm -rf /var/lib/apt/lists/*

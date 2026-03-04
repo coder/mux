@@ -183,6 +183,7 @@
 
               # Repo linting (make static-check)
               go
+              hadolint
               shellcheck
               shfmt
               gh
