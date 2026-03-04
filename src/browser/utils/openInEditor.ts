@@ -112,19 +112,21 @@ export async function openInEditor(args: {
 
     if (!readPersistedState(extensionInstallAttemptedKey, false)) {
       // Install once in the background so the existing open flow stays non-blocking.
-      args.api?.general
-        .installVsCodeExtension({ editor: extensionEditor })
-        ?.then(
-          () => {
+      // In tests we often pass partial API mocks, so this must never throw even when
+      // installVsCodeExtension is missing.
+      try {
+        args.api?.general
+          .installVsCodeExtension({ editor: extensionEditor })
+          .then(() => {
             updatePersistedState(extensionInstallAttemptedKey, true);
-          },
-          () => {
+          })
+          .catch(() => {
+            // Still mark as attempted to avoid retrying on every open.
             updatePersistedState(extensionInstallAttemptedKey, true);
-          }
-        )
-        ?.catch(() => {
-          /* silently ignore background install errors */
-        });
+          });
+      } catch {
+        // Silently ignore — partial API objects may not expose this method.
+      }
     }
   }
 
