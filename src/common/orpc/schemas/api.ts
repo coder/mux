@@ -23,6 +23,7 @@ import {
   OnChatModeSchema,
   SendMessageOptionsSchema,
   StreamEndEventSchema,
+  ToolPolicySchema,
   UpdateStatusSchema,
   WorkspaceChatMessageSchema,
 } from "./stream";
@@ -1751,6 +1752,7 @@ const DevToolsRunSummarySchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   startedAt: z.string(),
+  toolPolicy: ToolPolicySchema.optional(),
   stepCount: z.number(),
   firstMessage: z.string(),
   hasError: z.boolean(),
