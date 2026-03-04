@@ -253,12 +253,18 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
  * compare only the stable ".mux/plans/..." suffix.
  *
  * Accepts any absolute path containing `/.mux/plans/`, `/.mux-<suffix>/plans/`,
- * or `/var/mux/plans/`.
+ * or `/var/mux/plans/`. Also accepts tilde-prefixed paths like
+ * `~/.mux/plans/...` and `~/.mux-<suffix>/plans/...` from legacy transcripts.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
   if (!filePath) return null;
 
   const normalized = filePath.replace(/\\/g, "/");
+
+  const tildeMatch = /^~\/\.mux(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
+  if (tildeMatch?.[1]) {
+    return `.mux/plans/${tildeMatch[1]}`;
+  }
 
   // Only match absolute paths to avoid false positives from relative paths like
   // "project/.mux/plans/foo.md".

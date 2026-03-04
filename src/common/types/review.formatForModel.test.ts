@@ -95,7 +95,7 @@ describe("formatReviewForModel", () => {
 });
 
 describe("normalizePlanFilePath", () => {
-  test("normalizes absolute mux, mux-suffix, and Docker plan paths to a stable .mux/plans suffix", () => {
+  test("normalizes absolute, tilde-prefixed mux, mux-suffix, and Docker plan paths to a stable .mux/plans suffix", () => {
     expect(normalizePlanFilePath("/opt/user/.mux/plans/project/ws.md")).toBe(
       ".mux/plans/project/ws.md"
     );
@@ -109,6 +109,15 @@ describe("normalizePlanFilePath", () => {
       ".mux/plans/workspace/plan.md"
     );
     expect(normalizePlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("~/.mux/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("~/.mux-dev/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("~/.mux-test/plans/workspace/plan.md")).toBe(
       ".mux/plans/workspace/plan.md"
     );
     expect(normalizePlanFilePath("/home/user/.mux-dev/plans/workspace/plan.md")).toBe(
@@ -132,10 +141,8 @@ describe("normalizePlanFilePath", () => {
   });
 
   test("rejects embedded and relative paths that only contain .mux/plans", () => {
-    expect(normalizePlanFilePath("~/.mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath(".mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("project/.mux/plans/workspace/plan.md")).toBeNull();
-    expect(normalizePlanFilePath("~/.mux-dev/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("project/.mux-dev/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("/var/mux/plans/")).toBeNull();
@@ -143,12 +150,15 @@ describe("normalizePlanFilePath", () => {
 });
 
 describe("isPlanFilePath", () => {
-  test("recognizes absolute local and Docker plan paths across separators", () => {
+  test("recognizes absolute, tilde-prefixed local, and Docker plan paths across separators", () => {
     expect(isPlanFilePath("/opt/user/.mux/plans/project/ws.md")).toBeTrue();
     expect(isPlanFilePath("/home/user/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("/Users/user/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("/root/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("~/.mux/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("~/.mux-dev/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("~/.mux-test/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("C:\\Users\\user\\.mux\\plans\\workspace\\plan.md")).toBeTrue();
     expect(isPlanFilePath("C:/Users/user/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("/home/user/.mux-dev/plans/workspace/plan.md")).toBeTrue();
@@ -161,10 +171,8 @@ describe("isPlanFilePath", () => {
   test("rejects non-plan paths, relative paths, and empty paths", () => {
     expect(isPlanFilePath("src/planning/planner.ts")).toBeFalse();
     expect(isPlanFilePath("plan.txt")).toBeFalse();
-    expect(isPlanFilePath("~/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath(".mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("project/.mux/plans/workspace/plan.md")).toBeFalse();
-    expect(isPlanFilePath("~/.mux-dev/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("project/.mux-dev/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("/var/mux/plan/myproject/workspace.md")).toBeFalse();
