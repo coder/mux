@@ -296,15 +296,23 @@ export class PRStatusStore {
     }
 
     // Smart Sections Phase 3: trigger backend rule re-evaluation on PR status transitions.
-    void this.client.projects.sections.evaluateWorkspace({
-      workspaceId,
-      prState: nextStatus?.state ?? "none",
-      prMergeStatus: nextStatus?.mergeStateStatus,
-      prIsDraft: nextStatus?.isDraft,
-      prHasFailedChecks: nextStatus?.hasFailedChecks,
-      prHasPendingChecks: nextStatus?.hasPendingChecks,
-    });
-    this.workspaceSectionEvaluated.add(workspaceId);
+    this.client.projects.sections
+      .evaluateWorkspace({
+        workspaceId,
+        prState: nextStatus?.state ?? "none",
+        prMergeStatus: nextStatus?.mergeStateStatus,
+        prIsDraft: nextStatus?.isDraft,
+        prHasFailedChecks: nextStatus?.hasFailedChecks,
+        prHasPendingChecks: nextStatus?.hasPendingChecks,
+      })
+      .then(
+        () => {
+          this.workspaceSectionEvaluated.add(workspaceId);
+        },
+        () => {
+          // IPC failure is retried on the next refresh because this workspace stays unevaluated.
+        }
+      );
   }
 
   private setWorkspacePRCacheEntry(workspaceId: string, nextEntry: WorkspacePRCacheEntry): void {
