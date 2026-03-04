@@ -3,6 +3,7 @@ import {
   DEVTOOLS_STEP_ID_HEADER,
   captureAndStripDevToolsHeader,
   consumeCapturedRequestHeaders,
+  redactHeaders,
 } from "../devToolsHeaderCapture";
 
 describe("devToolsHeaderCapture", () => {
@@ -55,6 +56,38 @@ describe("devToolsHeaderCapture", () => {
     expect(captured!["client-secret"]).toBe("[REDACTED]");
     expect(captured!["content-type"]).toBe("application/json");
     expect(captured!["user-agent"]).toBe("mux/1.0 ai-sdk/openai/5.0");
+  });
+
+  it("keeps response token metadata visible for debugging", () => {
+    const headers = redactHeaders(
+      {
+        "anthropic-ratelimit-input-tokens-remaining": "123",
+        "x-ratelimit-tokens-reset": "10",
+      },
+      "response"
+    );
+
+    expect(headers["anthropic-ratelimit-input-tokens-remaining"]).toBe("123");
+    expect(headers["x-ratelimit-tokens-reset"]).toBe("10");
+  });
+
+  it("still redacts response set-cookie headers", () => {
+    const headers = redactHeaders(
+      {
+        "set-cookie": "session=abc123",
+      },
+      "response"
+    );
+
+    expect(headers["set-cookie"]).toBe("[REDACTED]");
+  });
+
+  it("continues redacting request token headers", () => {
+    const headers = redactHeaders({
+      "x-session-token": "token-value",
+    });
+
+    expect(headers["x-session-token"]).toBe("[REDACTED]");
   });
 
   it("consumeCapturedRequestHeaders returns null for unknown stepId", () => {

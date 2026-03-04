@@ -27,21 +27,34 @@ const SENSITIVE_HEADER_NAMES = new Set([
   "x-goog-api-key",
 ]);
 
-/** Prefix-match for bearer/token patterns that may appear under custom names. */
-function isSensitiveHeaderName(name: string): boolean {
+/**
+ * Prefix-match for bearer/token patterns that may appear under custom names.
+ *
+ * Response headers come from the server and do not carry outbound credentials.
+ * Only redact set-cookie (via the cookie check) and known sensitive names there.
+ */
+function isSensitiveHeaderName(name: string, direction: "request" | "response"): boolean {
   const lower = name.toLowerCase();
-  return (
-    SENSITIVE_HEADER_NAMES.has(lower) ||
-    lower.includes("secret") ||
-    lower.includes("token") ||
-    lower.includes("cookie")
-  );
+  if (SENSITIVE_HEADER_NAMES.has(lower) || lower.includes("cookie")) {
+    return true;
+  }
+
+  // Broad substring checks are request-only so response metadata like
+  // anthropic-ratelimit-input-tokens-remaining remains visible for debugging.
+  if (direction === "request") {
+    return lower.includes("secret") || lower.includes("token");
+  }
+
+  return false;
 }
 
-export function redactHeaders(headers: Record<string, string>): Record<string, string> {
+export function redactHeaders(
+  headers: Record<string, string>,
+  direction: "request" | "response" = "request"
+): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    redacted[key] = isSensitiveHeaderName(key) ? "[REDACTED]" : value;
+    redacted[key] = isSensitiveHeaderName(key, direction) ? "[REDACTED]" : value;
   }
   return redacted;
 }

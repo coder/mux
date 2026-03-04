@@ -414,7 +414,10 @@ export function createDevToolsMiddleware(
           requestHeaders: capturedRequestHeaders,
           responseHeaders:
             result.response?.headers != null
-              ? redactHeaders(Object.fromEntries(Object.entries(result.response.headers)))
+              ? redactHeaders(
+                  Object.fromEntries(Object.entries(result.response.headers)),
+                  "response"
+                )
               : null,
           rawResponse: result.response?.body ?? null,
           rawChunks: null,
@@ -573,7 +576,7 @@ export function createDevToolsMiddleware(
       rawRequest = rest.request?.body ?? null;
       responseHeaders =
         rest.response?.headers != null
-          ? redactHeaders(Object.fromEntries(Object.entries(rest.response.headers)))
+          ? redactHeaders(Object.fromEntries(Object.entries(rest.response.headers)), "response")
           : null;
       const reader = stream.getReader();
 
