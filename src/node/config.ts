@@ -336,6 +336,19 @@ export class Config {
       if (userVal === undefined) continue;
 
       const systemVal = systemRecord[key];
+
+      // Type guard: reject user values whose JSON type fundamentally differs
+      // from the system default. Without this, a user value like "oops" for a
+      // boolean field would overwrite the valid system boolean, only to be
+      // stripped to undefined by normalization — silently losing the baseline.
+      if (systemVal !== undefined) {
+        const sysIsArr = Array.isArray(systemVal);
+        const usrIsArr = Array.isArray(userVal);
+        if (sysIsArr !== usrIsArr || (!sysIsArr && typeof systemVal !== typeof userVal)) {
+          continue;
+        }
+      }
+
       if (
         systemVal != null &&
         typeof systemVal === "object" &&
@@ -492,14 +505,33 @@ export class Config {
 
         const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
-        const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
-        const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
+        // Helper: when normalization rejects a merged value (wrong type or
+        // invalid enum), try the raw system value so admin baselines survive.
+        // The merge-level type guard (above) catches cross-type mismatches,
+        // but same-type invalid values (e.g. "garbage" for updateChannel)
+        // still need normalization-level fallback.
+        const fb = <T>(
+          normalize: (v: unknown) => T | undefined,
+          mergedVal: unknown,
+          sysVal: unknown
+        ): T | undefined => normalize(mergedVal) ?? normalize(sysVal);
 
-        // When normalization rejects a malformed user value, fall back to the
-        // system default so admin-provided baselines survive invalid user config.
-        const defaultModel =
-          normalizeOptionalModelString(parsed.defaultModel) ??
-          (systemParsed ? normalizeOptionalModelString(systemParsed.defaultModel) : undefined);
+        const muxGatewayEnabled = fb(
+          parseOptionalBoolean,
+          parsed.muxGatewayEnabled,
+          systemParsed?.muxGatewayEnabled
+        );
+        const muxGatewayModels = fb(
+          parseOptionalStringArray,
+          parsed.muxGatewayModels,
+          systemParsed?.muxGatewayModels
+        );
+
+        const defaultModel = fb(
+          normalizeOptionalModelString,
+          parsed.defaultModel,
+          systemParsed?.defaultModel
+        );
         // For model arrays, normalizeOptionalModelStringArray returns [] (not
         // undefined) when all entries are invalid, so ?? alone won't trigger
         // fallback. Detect "all entries stripped" (raw non-empty → normalized
@@ -518,14 +550,25 @@ export class Config {
         const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
 
         // Default ON: store `false` only so config.json stays minimal.
+        const stopCoderWorkspaceOnArchiveRaw = fb(
+          parseOptionalBoolean,
+          parsed.stopCoderWorkspaceOnArchive,
+          systemParsed?.stopCoderWorkspaceOnArchive
+        );
         const stopCoderWorkspaceOnArchive =
-          parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
-        const updateChannel = parseUpdateChannel(parsed.updateChannel);
+          stopCoderWorkspaceOnArchiveRaw === false ? false : undefined;
+        const updateChannel = fb(
+          parseUpdateChannel,
+          parsed.updateChannel,
+          systemParsed?.updateChannel
+        );
 
         const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
-        const defaultRuntime =
-          normalizeRuntimeEnablementId(parsed.defaultRuntime) ??
-          (systemParsed ? normalizeRuntimeEnablementId(systemParsed.defaultRuntime) : undefined);
+        const defaultRuntime = fb(
+          normalizeRuntimeEnablementId,
+          parsed.defaultRuntime,
+          systemParsed?.defaultRuntime
+        );
 
         const agentAiDefaults =
           parsed.agentAiDefaults !== undefined
@@ -541,14 +584,40 @@ export class Config {
           : layoutPresetsRaw;
         return {
           projects: projectsMap,
-          apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
-          apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi) ? true : undefined,
-          apiServerPort: parseOptionalPort(parsed.apiServerPort),
-          mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
-          mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
+          apiServerBindHost: fb(
+            parseOptionalNonEmptyString,
+            parsed.apiServerBindHost,
+            systemParsed?.apiServerBindHost
+          ),
+          apiServerServeWebUi: fb(
+            parseOptionalBoolean,
+            parsed.apiServerServeWebUi,
+            systemParsed?.apiServerServeWebUi
+          )
+            ? true
+            : undefined,
+          apiServerPort: fb(parseOptionalPort, parsed.apiServerPort, systemParsed?.apiServerPort),
+          mdnsAdvertisementEnabled: fb(
+            parseOptionalBoolean,
+            parsed.mdnsAdvertisementEnabled,
+            systemParsed?.mdnsAdvertisementEnabled
+          ),
+          mdnsServiceName: fb(
+            parseOptionalNonEmptyString,
+            parsed.mdnsServiceName,
+            systemParsed?.mdnsServiceName
+          ),
           serverSshHost: parsed.serverSshHost,
-          serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
-          defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
+          serverAuthGithubOwner: fb(
+            parseOptionalNonEmptyString,
+            parsed.serverAuthGithubOwner,
+            systemParsed?.serverAuthGithubOwner
+          ),
+          defaultProjectDir: fb(
+            parseOptionalNonEmptyString,
+            parsed.defaultProjectDir,
+            systemParsed?.defaultProjectDir
+          ),
           viewedSplashScreens: parsed.viewedSplashScreens,
           layoutPresets,
           taskSettings,
@@ -560,15 +629,35 @@ export class Config {
           // Legacy fields are still parsed and returned for downgrade compatibility.
           subagentAiDefaults: legacySubagentAiDefaults,
           featureFlagOverrides: parsed.featureFlagOverrides,
-          useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
-          muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
-          muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
+          useSSH2Transport: fb(
+            parseOptionalBoolean,
+            parsed.useSSH2Transport,
+            systemParsed?.useSSH2Transport
+          ),
+          muxGovernorUrl: fb(
+            parseOptionalNonEmptyString,
+            parsed.muxGovernorUrl,
+            systemParsed?.muxGovernorUrl
+          ),
+          muxGovernorToken: fb(
+            parseOptionalNonEmptyString,
+            parsed.muxGovernorToken,
+            systemParsed?.muxGovernorToken
+          ),
           stopCoderWorkspaceOnArchive,
-          terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
+          terminalDefaultShell: fb(
+            parseOptionalNonEmptyString,
+            parsed.terminalDefaultShell,
+            systemParsed?.terminalDefaultShell
+          ),
           updateChannel,
           defaultRuntime,
           runtimeEnablement,
-          onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
+          onePasswordAccountName: fb(
+            parseOptionalNonEmptyString,
+            parsed.onePasswordAccountName,
+            systemParsed?.onePasswordAccountName
+          ),
         };
       }
     } catch (error) {

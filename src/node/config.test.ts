@@ -612,6 +612,45 @@ describe("Config", () => {
       // User's intentional [] should win over system defaults
       expect(loaded.hiddenModels).toEqual([]);
     });
+    it("type-mismatched user values do not displace system defaults", () => {
+      writeSystemConfig({
+        mdnsAdvertisementEnabled: true,
+        updateChannel: "stable",
+        featureFlagOverrides: { flagA: "on" },
+        projects: [],
+      });
+      writeUserConfig({
+        // Wrong types: string for boolean, number for string, string for object
+        mdnsAdvertisementEnabled: "oops" as unknown as boolean,
+        updateChannel: 42 as unknown as string,
+        featureFlagOverrides: "bad" as unknown as Record<string, string>,
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // System defaults survive because type-mismatched user values are rejected
+      expect(loaded.mdnsAdvertisementEnabled).toBe(true);
+      expect(loaded.updateChannel).toBe("stable");
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on" });
+    });
+
+    it("same-type but invalid user values fall back to system via normalization", () => {
+      writeSystemConfig({
+        updateChannel: "stable",
+        projects: [],
+      });
+      writeUserConfig({
+        // Same type (string) but invalid enum value
+        updateChannel: "garbage" as "stable",
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Normalization rejects "garbage", fb helper falls back to system "stable"
+      expect(loaded.updateChannel).toBe("stable");
+    });
 
     it("system object defaults are stripped key-by-key on save", async () => {
       writeSystemConfig({
