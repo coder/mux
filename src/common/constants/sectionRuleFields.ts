@@ -40,6 +40,7 @@ export const RULE_FIELD_META: Record<SectionRuleCondition["field"], RuleFieldMet
       { label: "Compact", value: "compact" },
       { label: "Auto", value: "auto" },
       { label: "Explore", value: "explore" },
+      { label: "Ask", value: "ask" },
     ],
   },
   streaming: {
