@@ -6,6 +6,13 @@ export interface ChatAttachment {
   url: string;
   mediaType: string;
   filename?: string;
+  /** Present when the image was auto-resized on attach to fit provider limits. */
+  resizeInfo?: {
+    originalWidth: number;
+    originalHeight: number;
+    newWidth: number;
+    newHeight: number;
+  };
 }
 
 interface ChatAttachmentsProps {
@@ -38,6 +45,11 @@ export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
               <img
                 src={attachment.url}
                 alt="Attached image"
+                title={
+                  attachment.resizeInfo
+                    ? `Resized from ${attachment.resizeInfo.originalWidth}×${attachment.resizeInfo.originalHeight} to ${attachment.resizeInfo.newWidth}×${attachment.resizeInfo.newHeight}`
+                    : undefined
+                }
                 className="pointer-events-none col-start-1 row-start-1 h-full w-full object-cover"
               />
               {handleRemove && (
