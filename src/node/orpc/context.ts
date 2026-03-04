@@ -2,6 +2,7 @@ import type { IncomingHttpHeaders } from "http";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { ProjectService } from "@/node/services/projectService";
+import type { SectionAssignmentService } from "@/node/services/sectionAssignmentService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
 import type { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
@@ -38,6 +39,7 @@ export interface ORPCContext {
   config: Config;
   aiService: AIService;
   projectService: ProjectService;
+  sectionAssignmentService?: SectionAssignmentService;
   workspaceService: WorkspaceService;
   taskService: TaskService;
   providerService: ProviderService;

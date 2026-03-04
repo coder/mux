@@ -8,6 +8,7 @@ import {
   SendMessageErrorSchema,
 } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
+import { SectionRuleSchema } from "@/common/schemas/project";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
 import { SshPromptEventSchema, SshPromptResponseInputSchema } from "./ssh";
@@ -717,6 +718,7 @@ export const projects = {
         sectionId: z.string(),
         name: z.string().min(1).optional(),
         color: z.string().optional(),
+        rules: z.array(SectionRuleSchema).optional(),
       }),
       output: ResultSchema(z.void(), z.string()),
     },
@@ -741,6 +743,24 @@ export const projects = {
         sectionId: z.string().nullable(),
       }),
       output: ResultSchema(z.void(), z.string()),
+    },
+    evaluateWorkspace: {
+      input: z.object({
+        workspaceId: z.string(),
+        prState: z.enum(["OPEN", "CLOSED", "MERGED", "none"]).optional(),
+        prMergeStatus: z.string().optional(),
+        prIsDraft: z.boolean().optional(),
+        prHasFailedChecks: z.boolean().optional(),
+        prHasPendingChecks: z.boolean().optional(),
+        gitDirty: z.boolean().optional(),
+      }),
+      output: z.void(),
+    },
+    evaluateProject: {
+      input: z.object({
+        projectPath: z.string(),
+      }),
+      output: z.void(),
     },
   },
 };

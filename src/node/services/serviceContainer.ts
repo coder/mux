@@ -14,6 +14,7 @@ import { createCoreServices, type CoreServices } from "@/node/services/coreServi
 import { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import { ProjectService } from "@/node/services/projectService";
+import { SectionAssignmentService } from "@/node/services/sectionAssignmentService";
 import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
 import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import { CodexOauthService } from "@/node/services/codexOauthService";
@@ -98,6 +99,7 @@ export class ServiceContainer {
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
   // Desktop-only services
   public readonly projectService: ProjectService;
+  public readonly sectionAssignmentService: SectionAssignmentService;
   public readonly muxGatewayOauthService: MuxGatewayOauthService;
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
@@ -184,6 +186,12 @@ export class ServiceContainer {
 
     this.projectService = new ProjectService(config, this.sshPromptService);
     this.projectService.setWorkspaceService(this.workspaceService);
+
+    this.sectionAssignmentService = new SectionAssignmentService(
+      this.projectService,
+      this.workspaceService,
+      this.aiService
+    );
 
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
@@ -488,6 +496,7 @@ export class ServiceContainer {
       config: this.config,
       aiService: this.aiService,
       projectService: this.projectService,
+      sectionAssignmentService: this.sectionAssignmentService,
       workspaceService: this.workspaceService,
       taskService: this.taskService,
       providerService: this.providerService,

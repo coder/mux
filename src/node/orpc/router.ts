@@ -2597,12 +2597,23 @@ export const router = (authToken?: string) => {
         update: t
           .input(schemas.projects.sections.update.input)
           .output(schemas.projects.sections.update.output)
-          .handler(({ context, input }) =>
-            context.projectService.updateSection(input.projectPath, input.sectionId, {
-              name: input.name,
-              color: input.color,
-            })
-          ),
+          .handler(async ({ context, input }) => {
+            const result = await context.projectService.updateSection(
+              input.projectPath,
+              input.sectionId,
+              {
+                name: input.name,
+                color: input.color,
+                rules: input.rules,
+              }
+            );
+
+            if (result.success && input.rules !== undefined && context.sectionAssignmentService) {
+              await context.sectionAssignmentService.evaluateProject(input.projectPath);
+            }
+
+            return result;
+          }),
         remove: t
           .input(schemas.projects.sections.remove.input)
           .output(schemas.projects.sections.remove.output)
@@ -2622,13 +2633,41 @@ export const router = (authToken?: string) => {
             const result = await context.projectService.assignWorkspaceToSection(
               input.projectPath,
               input.workspaceId,
-              input.sectionId
+              input.sectionId,
+              true
             );
             if (result.success) {
               // Emit metadata update so frontend receives the sectionId change
               await context.workspaceService.refreshAndEmitMetadata(input.workspaceId);
             }
             return result;
+          }),
+        evaluateWorkspace: t
+          .input(schemas.projects.sections.evaluateWorkspace.input)
+          .output(schemas.projects.sections.evaluateWorkspace.output)
+          .handler(async ({ context, input }) => {
+            if (!context.sectionAssignmentService) {
+              return;
+            }
+
+            await context.sectionAssignmentService.evaluateWorkspace(input.workspaceId, {
+              prState: input.prState,
+              prMergeStatus: input.prMergeStatus,
+              prIsDraft: input.prIsDraft,
+              prHasFailedChecks: input.prHasFailedChecks,
+              prHasPendingChecks: input.prHasPendingChecks,
+              gitDirty: input.gitDirty,
+            });
+          }),
+        evaluateProject: t
+          .input(schemas.projects.sections.evaluateProject.input)
+          .output(schemas.projects.sections.evaluateProject.output)
+          .handler(async ({ context, input }) => {
+            if (!context.sectionAssignmentService) {
+              return;
+            }
+
+            await context.sectionAssignmentService.evaluateProject(input.projectPath);
           }),
       },
     },

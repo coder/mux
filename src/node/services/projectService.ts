@@ -1,5 +1,6 @@
 import type { Config, ProjectConfig } from "@/node/config";
 import type { SectionConfig } from "@/common/types/project";
+import type { SectionRule } from "@/common/schemas/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
@@ -1264,7 +1265,7 @@ export class ProjectService {
   async updateSection(
     projectPath: string,
     sectionId: string,
-    updates: { name?: string; color?: string }
+    updates: { name?: string; color?: string; rules?: SectionRule[] }
   ): Promise<Result<void>> {
     try {
       const config = this.config.loadConfigOrDefault();
@@ -1284,6 +1285,7 @@ export class ProjectService {
       const section = sections[sectionIndex];
       if (updates.name !== undefined) section.name = updates.name;
       if (updates.color !== undefined) section.color = updates.color;
+      if (updates.rules !== undefined) section.rules = updates.rules;
 
       await this.config.saveConfig(config);
       return Ok(undefined);
@@ -1371,7 +1373,8 @@ export class ProjectService {
   async assignWorkspaceToSection(
     projectPath: string,
     workspaceId: string,
-    sectionId: string | null
+    sectionId: string | null,
+    pinned?: boolean
   ): Promise<Result<void>> {
     try {
       const config = this.config.loadConfigOrDefault();
@@ -1396,6 +1399,14 @@ export class ProjectService {
       }
 
       workspace.sectionId = sectionId ?? undefined;
+      if (sectionId === null) {
+        workspace.pinnedToSection = undefined;
+      } else if (pinned === true) {
+        workspace.pinnedToSection = true;
+      } else if (pinned === false) {
+        workspace.pinnedToSection = undefined;
+      }
+
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
