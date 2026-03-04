@@ -75,6 +75,8 @@ import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
 import { resolveAgentForStream } from "./agentResolution";
 import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
+import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import {
   simulateContextLimitError,
   simulateToolPolicyNoop,
@@ -900,6 +902,7 @@ export class AIService extends EventEmitter {
       });
 
       // Build agent system prompt, system message, and discover agents/skills.
+      const providersConfig = this.providerService.getConfig();
       const streamSystemContext = await buildStreamSystemContext({
         runtime,
         metadata,
@@ -911,11 +914,11 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions,
         modelString,
         cfg,
-        providersConfig: this.providerService.getConfig(),
+        providersConfig,
         mcpServers,
       });
-      const { agentSystemPrompt, systemMessageTokens, agentDefinitions, availableSkills } =
-        streamSystemContext;
+      const { agentSystemPrompt, agentDefinitions, availableSkills } = streamSystemContext;
+      let systemMessageTokens = streamSystemContext.systemMessageTokens;
       let systemMessage = streamSystemContext.systemMessage;
 
       // Load project secrets (system workspace never gets secrets injected)
@@ -957,6 +960,10 @@ export class AIService extends EventEmitter {
         workspaceLog.warn("MCP servers failed to start", { failedNames });
         // Prepend warning so the model can inform the user about unavailable tools.
         systemMessage = `[Warning: ${mcpStats.failedServerCount} MCP server(s) failed to start: ${failedNames}. Tools from these servers are unavailable. Check MCP server configuration in Settings.]\n\n${systemMessage}`;
+        // Keep context-size estimation accurate after mutating the system prompt.
+        const metadataModel = resolveModelForMetadata(modelString, providersConfig);
+        const tokenizer = await getTokenizerForModel(modelString, metadataModel);
+        systemMessageTokens = await tokenizer.countTokens(systemMessage);
       }
 
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
