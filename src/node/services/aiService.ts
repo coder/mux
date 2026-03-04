@@ -1191,9 +1191,15 @@ export class AIService extends EventEmitter {
       // post-stream recovery when a required tool is skipped.
       const forceToolChoice = !isSubagentWorkspace;
 
-      if (this.devToolsService?.enabled) {
+      const canQueueDevToolsRunMetadata =
+        this.devToolsService?.enabled === true &&
+        typeof modelResult.data.model !== "string" &&
+        modelResult.data.model.specificationVersion === "v3";
+
+      if (canQueueDevToolsRunMetadata) {
         // Correlate pending run metadata with the specific request that reaches
-        // DevTools middleware to avoid cross-request policy leakage.
+        // DevTools middleware to avoid cross-request policy leakage. Queue only
+        // when middleware is guaranteed to run (LanguageModelV3).
         pendingRunMetadataId = String(streamToken);
         this.devToolsService.setPendingRunMetadata(workspaceId, pendingRunMetadataId, {
           toolPolicy:
