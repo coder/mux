@@ -389,7 +389,7 @@ describe("Config", () => {
         { key: "STORED_ONLY", value: "shared" },
       ]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      const record = await secretsToRecord(config.getEffectiveSecrets("/fake/project"));
       expect(record).toEqual({
         INJECTED: "everywhere",
       });
@@ -401,7 +401,7 @@ describe("Config", () => {
       const projectPath = "/fake/project";
       await config.updateProjectSecrets(projectPath, [{ key: "TOKEN", value: "project" }]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
         TOKEN: "project",
       });
@@ -413,7 +413,7 @@ describe("Config", () => {
       const projectPath = "/fake/project";
       await config.updateProjectSecrets(projectPath, [{ key: "LOCAL_TOKEN", value: "local" }]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
         GLOBAL_TOKEN: "global",
         LOCAL_TOKEN: "local",
@@ -445,7 +445,7 @@ describe("Config", () => {
         { key: "C", value: "3", injectAll: true },
       ]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      const record = await secretsToRecord(config.getEffectiveSecrets("/fake/project"));
       expect(record).toEqual({
         C: "3",
       });
@@ -457,14 +457,14 @@ describe("Config", () => {
         { key: "DUP", value: "second", injectAll: false },
       ]);
 
-      expect(secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({});
+      expect(await secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({});
 
       await config.updateGlobalSecrets([
         { key: "DUP", value: "first", injectAll: false },
         { key: "DUP", value: "second", injectAll: true },
       ]);
 
-      expect(secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({
+      expect(await secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({
         DUP: "second",
       });
     });
@@ -625,7 +625,7 @@ describe("Config", () => {
       expect(config.getGlobalSecrets()).toEqual([]);
       expect(config.getProjectSecrets("/repo")).toEqual([{ key: "A", value: "1" }]);
     });
-    it("sanitizes malformed injectAll values without dropping valid secrets", () => {
+    it("sanitizes malformed injectAll values without dropping valid secrets", async () => {
       const projectPath = "/repo";
       const secretsFile = path.join(tempDir, "secrets.json");
       fs.writeFileSync(
@@ -637,7 +637,7 @@ describe("Config", () => {
       );
 
       expect(config.getGlobalSecrets()).toEqual([{ key: "GLOBAL_TOKEN", value: "abc" }]);
-      expect(secretsToRecord(config.getEffectiveSecrets(projectPath))).toEqual({
+      expect(await secretsToRecord(config.getEffectiveSecrets(projectPath))).toEqual({
         TOKEN: "abc",
       });
     });
