@@ -94,41 +94,6 @@ export function getMuxLogsDir(rootDir?: string): string {
   return join(root, "logs");
 }
 
-export function getMuxPlansDir(rootDir?: string): string {
-  const root = rootDir ?? getMuxHome();
-  return join(root, "plans");
-}
-
-/**
- * Get the main configuration file path.
- *
- * @param rootDir - Optional root directory (defaults to getMuxHome())
- */
-export function getMuxConfigFile(rootDir?: string): string {
-  const root = rootDir ?? getMuxHome();
-  return join(root, "config.json");
-}
-
-/**
- * Get the providers configuration file path.
- *
- * @param rootDir - Optional root directory (defaults to getMuxHome())
- */
-export function getMuxProvidersFile(rootDir?: string): string {
-  const root = rootDir ?? getMuxHome();
-  return join(root, "providers.jsonc");
-}
-
-/**
- * Get the secrets file path.
- *
- * @param rootDir - Optional root directory (defaults to getMuxHome())
- */
-export function getMuxSecretsFile(rootDir?: string): string {
-  const root = rootDir ?? getMuxHome();
-  return join(root, "secrets.json");
-}
-
 /**
  * Get the default directory for new projects created with bare names.
  * Example: ~/.mux/projects/my-project
