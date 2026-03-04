@@ -1711,7 +1711,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           void updateSection(projectPath, section.id, { color });
                                         }}
                                         onUpdateRules={(rules) => {
-                                          void updateSection(projectPath, section.id, { rules });
+                                          updateSection(projectPath, section.id, { rules })
+                                            .then((result) => {
+                                              if (!result.success) {
+                                                console.error(
+                                                  "Failed to update section rules:",
+                                                  result.error
+                                                );
+                                              }
+                                            })
+                                            .catch((error) => {
+                                              console.error(
+                                                "Failed to update section rules:",
+                                                error
+                                              );
+                                            });
                                         }}
                                         onDelete={(e) => {
                                           void handleRemoveSection(
