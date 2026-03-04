@@ -621,7 +621,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <button
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
-                      ctxMenu.isOpen || isSelected ? "opacity-100" : "opacity-0",
+                      ctxMenu.isOpen ? "opacity-100" : "opacity-0",
                       "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
                     )}
                     onClick={(e) => e.stopPropagation()}
