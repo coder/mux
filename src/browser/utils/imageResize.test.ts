@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
 import { computeResizedDimensions, resizeImageIfNeeded } from "./imageResize";
 
