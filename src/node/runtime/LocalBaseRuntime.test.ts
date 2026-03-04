@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as os from "os";
 import * as path from "path";
+import { EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import type {
   WorkspaceCreationParams,
@@ -83,5 +84,39 @@ describe("LocalBaseRuntime.resolvePath", () => {
     const resolved = await runtime.resolvePath(".");
     // Should resolve to absolute path
     expect(path.isAbsolute(resolved)).toBe(true);
+  });
+});
+
+describe("LocalBaseRuntime.exec timeout", () => {
+  it("should resolve exitCode with EXIT_CODE_TIMEOUT when command exceeds timeout", async () => {
+    const runtime = new TestLocalRuntime();
+    const stream = await runtime.exec("sleep 30", {
+      cwd: os.tmpdir(),
+      timeout: 1,
+    });
+    const exitCode = await stream.exitCode;
+    expect(exitCode).toBe(EXIT_CODE_TIMEOUT);
+  });
+
+  it("should close stdout/stderr streams on timeout so readers don't hang", async () => {
+    const runtime = new TestLocalRuntime();
+    const stream = await runtime.exec("sleep 30", {
+      cwd: os.tmpdir(),
+      timeout: 1,
+    });
+    // This mimics what bash.ts does: read streams AND await exitCode concurrently.
+    // Without the fix, consumeStream hangs on Windows because the reader never sees EOF.
+    const [exitCode] = await Promise.all([
+      stream.exitCode,
+      stream.stdout
+        .getReader()
+        .read()
+        .then(({ done }) => done),
+      stream.stderr
+        .getReader()
+        .read()
+        .then(({ done }) => done),
+    ]);
+    expect(exitCode).toBe(EXIT_CODE_TIMEOUT);
   });
 });
