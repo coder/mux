@@ -273,8 +273,8 @@ function ProviderOptionsSection(props: { providerOptions: unknown }) {
 }
 
 function TokenUsageSection(props: { usage: DevToolsUsage }) {
-  const inputTotal = getTokenTotalOrUndefined(props.usage.inputTokens);
-  const outputTotal = getTokenTotalOrUndefined(props.usage.outputTokens);
+  const inputTotal = getTokenTotal(props.usage.inputTokens);
+  const outputTotal = getTokenTotal(props.usage.outputTokens);
   const inputBreakdown = isInputTokenBreakdown(props.usage.inputTokens)
     ? props.usage.inputTokens
     : null;
@@ -698,16 +698,6 @@ function getCombinedTotal(
   }
 
   return (inputTotal ?? 0) + (outputTotal ?? 0);
-}
-
-function getTokenTotalOrUndefined(
-  value: number | { total: number } | undefined
-): number | undefined {
-  if (value == null) {
-    return undefined;
-  }
-
-  return getTokenTotal(value);
 }
 
 function formatTokenCount(value: number | undefined): string {
