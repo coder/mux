@@ -59,7 +59,12 @@ import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messag
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
-import type { StreamAbortEvent, StreamAbortReason, StreamEndEvent } from "@/common/types/stream";
+import type {
+  ErrorEvent,
+  StreamAbortEvent,
+  StreamAbortReason,
+  StreamEndEvent,
+} from "@/common/types/stream";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
@@ -293,7 +298,6 @@ export class AIService extends EventEmitter {
     for (const event of [
       "stream-start",
       "stream-delta",
-      "error",
       "tool-call-start",
       "tool-call-delta",
       "tool-call-end",
@@ -303,6 +307,13 @@ export class AIService extends EventEmitter {
     ] as const) {
       this.streamManager.on(event, (data) => this.emit(event, data));
     }
+
+    // Stream errors can bypass stream-end/stream-abort. Clear any queued metadata
+    // so failed requests don't leak pending-run tracking entries.
+    this.streamManager.on("error", (data: ErrorEvent) => {
+      this.clearTrackedPendingDevToolsRunMetadata(data.messageId);
+      this.emit("error", data);
+    });
 
     // stream-end needs extra logic: capture provider response for debug modal
     this.streamManager.on("stream-end", (data: StreamEndEvent) => {
