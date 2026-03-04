@@ -350,11 +350,17 @@ export const router = (authToken?: string) => {
         .input(schemas.tokenizer.calculateStats.input)
         .output(schemas.tokenizer.calculateStats.output)
         .handler(async ({ context, input }) => {
+          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          const parentWorkspaceId = metadataResult.success
+            ? (metadataResult.data.parentWorkspaceId ?? null)
+            : null;
+
           return context.tokenizerService.calculateStats(
             input.workspaceId,
             input.messages,
             input.model,
-            context.providerService.getConfig()
+            context.providerService.getConfig(),
+            parentWorkspaceId
           );
         }),
     },
@@ -4365,6 +4371,31 @@ export const router = (authToken?: string) => {
               cause: error,
             });
           }
+        }),
+
+      getSavedQueries: t
+        .input(schemas.analytics.getSavedQueries.input)
+        .output(schemas.analytics.getSavedQueries.output)
+        .handler(async ({ context }) => {
+          return context.analyticsService.getSavedQueries();
+        }),
+      saveQuery: t
+        .input(schemas.analytics.saveQuery.input)
+        .output(schemas.analytics.saveQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.saveQuery(input);
+        }),
+      updateSavedQuery: t
+        .input(schemas.analytics.updateSavedQuery.input)
+        .output(schemas.analytics.updateSavedQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.updateSavedQuery(input);
+        }),
+      deleteSavedQuery: t
+        .input(schemas.analytics.deleteSavedQuery.input)
+        .output(schemas.analytics.deleteSavedQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.deleteSavedQuery(input);
         }),
 
       rebuildDatabase: t

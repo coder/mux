@@ -332,7 +332,23 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         }
 
         if (waitResult.success) {
-          if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
+          setMuxGatewayLoginStatus("success");
+
+          const refreshPromise = refreshMuxGatewayAccountStatus();
+          // Time-box the balance check so a stalled gateway endpoint doesn't
+          // block first-time onboarding defaults.
+          const accountStatus = await Promise.race([
+            refreshPromise,
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+          ]);
+
+          if (attempt !== muxGatewayLoginAttemptRef.current) {
+            return;
+          }
+
+          const hasCredits = accountStatus == null || accountStatus.remaining_microdollars > 0;
+
+          if (hasCredits && muxGatewayApplyDefaultModelsOnSuccessRef.current) {
             let latestConfig: ProvidersConfigMap | null = providersConfig;
             try {
               latestConfig = await api.providers.getConfig();
@@ -349,8 +365,20 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
-          setMuxGatewayLoginStatus("success");
-          void refreshMuxGatewayAccountStatus();
+          if (!hasCredits && gateway.isEnabled) {
+            gateway.toggleEnabled();
+          }
+
+          // If the timeout won the race, the balance check is still in flight.
+          // When it eventually resolves with depleted credits, disable gateway.
+          if (accountStatus == null) {
+            void refreshPromise.then((laterStatus) => {
+              if (muxGatewayLoginAttemptRef.current !== attempt) return;
+              if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
+                gateway.toggleEnabled();
+              }
+            });
+          }
           return;
         }
 
@@ -424,6 +452,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [
     api,
     backendBaseUrl,
+    gateway,
     isDesktop,
     providersConfig,
     applyDefaultGatewayModels,
@@ -447,27 +476,53 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       if (data.state !== muxGatewayServerState) return;
 
       if (data.ok === true) {
-        if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
-          muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
-
-          const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
-            if (muxGatewayLoginAttemptRef.current !== attempt) return;
-            // Persist gateway models via backend config (no localStorage).
-            applyDefaultGatewayModels(latestConfig);
-          };
-
-          if (api) {
-            api.providers
-              .getConfig()
-              .then(applyLatest)
-              .catch(() => applyLatest(providersConfig));
-          } else {
-            applyLatest(providersConfig);
-          }
-        }
-
         setMuxGatewayLoginStatus("success");
-        void refreshMuxGatewayAccountStatus();
+
+        const refreshPromise = refreshMuxGatewayAccountStatus();
+        // Time-box the balance check so a stalled gateway endpoint doesn't
+        // block first-time onboarding defaults.
+        void Promise.race([
+          refreshPromise,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+        ]).then((accountStatus) => {
+          if (muxGatewayLoginAttemptRef.current !== attempt) return;
+
+          const hasCredits = accountStatus == null || accountStatus.remaining_microdollars > 0;
+
+          if (hasCredits && muxGatewayApplyDefaultModelsOnSuccessRef.current) {
+            muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
+
+            const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
+              if (muxGatewayLoginAttemptRef.current !== attempt) return;
+              // Persist gateway models via backend config (no localStorage).
+              applyDefaultGatewayModels(latestConfig);
+            };
+
+            if (api) {
+              api.providers
+                .getConfig()
+                .then(applyLatest)
+                .catch(() => applyLatest(providersConfig));
+            } else {
+              applyLatest(providersConfig);
+            }
+          }
+
+          if (!hasCredits && gateway.isEnabled) {
+            gateway.toggleEnabled();
+          }
+
+          // If the timeout won the race, the balance check is still in flight.
+          // When it eventually resolves with depleted credits, disable gateway.
+          if (accountStatus == null) {
+            void refreshPromise.then((laterStatus) => {
+              if (muxGatewayLoginAttemptRef.current !== attempt) return;
+              if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
+                gateway.toggleEnabled();
+              }
+            });
+          }
+        });
         return;
       }
 
@@ -481,6 +536,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [
     api,
     backendOrigin,
+    gateway,
     isDesktop,
     muxGatewayLoginStatus,
     muxGatewayServerState,
@@ -617,6 +673,26 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                     <div className="text-destructive mt-2">{muxGatewayAccountError}</div>
                   )}
                 </div>
+
+                {muxGatewayAccountStatus?.remaining_microdollars === 0 && (
+                  <div className="border-destructive/20 bg-destructive/5 mt-2 rounded-md border p-2 text-xs">
+                    <p className="text-destructive font-medium">
+                      Your Mux Gateway credits are depleted.
+                    </p>
+                    <p className="text-muted mt-1">
+                      Gateway routing has been disabled. Configure another provider below, or visit{" "}
+                      <a
+                        href="https://gateway.mux.coder.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent hover:underline"
+                      >
+                        gateway.mux.coder.com
+                      </a>{" "}
+                      to add credits.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <>

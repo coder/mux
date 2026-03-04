@@ -246,12 +246,13 @@ export function countTokensForData(data: unknown, tokenizer: Tokenizer): Promise
 export async function getToolDefinitionTokens(
   toolName: string,
   modelString: string,
-  metadataModelOverride?: string
+  metadataModelOverride: string | undefined,
+  availableToolsOptions: Parameters<typeof getAvailableTools>[1]
 ): Promise<number> {
   try {
     // Tool availability is runtime-model specific (provider + model used for the request),
     // but tokenization should follow metadata-model overrides when configured.
-    const availableTools = getAvailableTools(modelString);
+    const availableTools = getAvailableTools(modelString, availableToolsOptions);
     if (!availableTools.includes(toolName)) {
       return 0;
     }

@@ -1,3 +1,7 @@
+// CDM-01-007: Restrict all file/directory creation to owner-only permissions.
+// Must be set before any filesystem operations occur.
+process.umask(0o077);
+
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
 

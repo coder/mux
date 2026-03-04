@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// CDM-01-007: Restrict all file/directory creation to owner-only permissions.
+process.umask(0o077);
+
 /**
  * Mux CLI entry point.
  *

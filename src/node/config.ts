@@ -36,6 +36,7 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
@@ -361,7 +362,7 @@ export class Config {
   async saveConfig(config: ProjectsConfig): Promise<void> {
     try {
       if (!fs.existsSync(this.rootDir)) {
-        fs.mkdirSync(this.rootDir, { recursive: true });
+        ensurePrivateDirSync(this.rootDir);
       }
 
       const data: Partial<Record<keyof AppConfigOnDisk, unknown>> & {
@@ -1166,7 +1167,7 @@ export class Config {
   saveProvidersConfig(config: ProvidersConfig): void {
     try {
       if (!fs.existsSync(this.rootDir)) {
-        fs.mkdirSync(this.rootDir, { recursive: true });
+        ensurePrivateDirSync(this.rootDir);
       }
 
       // Format with 2-space indentation for readability
@@ -1301,7 +1302,7 @@ ${jsonString}`;
   async saveSecretsConfig(config: SecretsConfig): Promise<void> {
     try {
       if (!fs.existsSync(this.rootDir)) {
-        fs.mkdirSync(this.rootDir, { recursive: true });
+        ensurePrivateDirSync(this.rootDir);
       }
 
       await writeFileAtomic(this.secretsFile, JSON.stringify(config, null, 2), {

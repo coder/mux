@@ -277,8 +277,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     percentage?: number;
   } | null>(null);
   const pushToast = useCallback(
-    (nextToast: Omit<Toast, "id">) => {
-      setToast({ id: Date.now().toString(), ...nextToast });
+    (nextToast: Omit<Toast, "id" | "type"> & { type: Toast["type"] | "info" }) => {
+      // Keep a dedicated "info" intent for callsites while rendering with the shared non-error toast style.
+      const type = nextToast.type === "info" ? "success" : nextToast.type;
+      setToast({ id: Date.now().toString(), ...nextToast, type });
     },
     [setToast]
   );
@@ -1629,6 +1631,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
   }, [variant, workspaceIdForFocus, focusMessageInput, setChatInputAutoFocusState]);
 
+  const showResizeToast = useCallback(
+    (nextAttachments: ChatAttachment[]) => {
+      const resized = nextAttachments.filter((attachment) => attachment.resizeInfo);
+      if (resized.length === 0) {
+        return;
+      }
+
+      const firstResizeInfo = resized[0].resizeInfo;
+      if (!firstResizeInfo) {
+        return;
+      }
+
+      // Tell users when we auto-resize so the attachment dimensions are never surprising.
+      const message =
+        resized.length === 1
+          ? `Image resized from ${firstResizeInfo.originalWidth}×${firstResizeInfo.originalHeight} to ${firstResizeInfo.newWidth}×${firstResizeInfo.newHeight}`
+          : `${resized.length} images resized to fit provider limits`;
+
+      pushToast({ type: "info", message });
+    },
+    [pushToast]
+  );
+
   // Handle paste events to extract attachments
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1653,6 +1678,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       processAttachmentFiles(attachmentFiles)
         .then((nextAttachments) => {
           setAttachments((prev) => [...prev, ...nextAttachments]);
+          showResizeToast(nextAttachments);
         })
         .catch((error) => {
           console.error("Failed to process pasted attachment:", error);
@@ -1662,7 +1688,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           });
         });
     },
-    [editingMessage, pushToast, setAttachments]
+    [editingMessage, pushToast, setAttachments, showResizeToast]
   );
 
   // Handle removing an attachment
@@ -1695,6 +1721,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const successes = outcomes.flatMap((o) => (o.ok ? o.attachments : []));
       if (successes.length > 0) {
         setAttachments((prev) => [...prev, ...successes]);
+        showResizeToast(successes);
       }
       for (const outcome of outcomes) {
         if (!outcome.ok) {
@@ -1852,6 +1879,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       processAttachmentFiles(attachmentFiles)
         .then((nextAttachments) => {
           setAttachments((prev) => [...prev, ...nextAttachments]);
+          showResizeToast(nextAttachments);
         })
         .catch((error) => {
           console.error("Failed to process dropped attachment:", error);
@@ -1861,7 +1889,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           });
         });
     },
-    [editingMessage, pushToast, setAttachments]
+    [editingMessage, pushToast, setAttachments, showResizeToast]
   );
 
   // Handle suggestion selection

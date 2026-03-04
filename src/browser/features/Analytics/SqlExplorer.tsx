@@ -1,22 +1,15 @@
-import { useState, type ComponentType } from "react";
-import {
-  Database,
-  Play,
-  Table,
-  BarChart3,
-  LineChart as LineChartIcon,
-  PieChart as PieChartIcon,
-  AreaChart as AreaChartIcon,
-  AlertTriangle,
-  ChevronDown,
-} from "lucide-react";
-import { cn } from "@/common/lib/utils";
+import { useRef, useState } from "react";
+import { AlertTriangle, Check, ChevronDown, Database, Pin, Play, X } from "lucide-react";
 import { Button } from "@/browser/components/Button/Button";
 import { useAnalyticsRawQuery } from "@/browser/hooks/useAnalytics";
-import { ResultTable } from "../Tools/analyticsQuery/ResultTable";
+import { cn } from "@/common/lib/utils";
+import type { SavedQuery } from "@/common/types/savedQueries";
+import { getErrorMessage } from "@/common/utils/errors";
 import { DynamicChart } from "../Tools/analyticsQuery/DynamicChart";
-import { inferChartType, inferAxes } from "../Tools/analyticsQuery/chartHeuristics";
+import { ResultTable } from "../Tools/analyticsQuery/ResultTable";
+import { inferAxes, inferChartType } from "../Tools/analyticsQuery/chartHeuristics";
 import type { ChartType, ColumnMeta } from "../Tools/analyticsQuery/types";
+import { ChartTypePicker } from "./ChartTypePicker";
 
 export const SAMPLE_QUERIES = [
   {
@@ -37,24 +30,25 @@ export const SAMPLE_QUERIES = [
   },
 ];
 
-const CHART_TYPE_OPTIONS: Array<{
-  type: ChartType;
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-}> = [
-  { type: "table", icon: Table, label: "Table" },
-  { type: "bar", icon: BarChart3, label: "Bar" },
-  { type: "line", icon: LineChartIcon, label: "Line" },
-  { type: "area", icon: AreaChartIcon, label: "Area" },
-  { type: "pie", icon: PieChartIcon, label: "Pie" },
-  { type: "stacked_bar", icon: BarChart3, label: "Stacked" },
-];
+interface SqlExplorerProps {
+  onSaveQuery?: (input: {
+    label: string;
+    sql: string;
+    chartType?: string | null;
+  }) => Promise<SavedQuery | null>;
+}
 
-export function SqlExplorer() {
+export function SqlExplorer(props: SqlExplorerProps) {
   const [sql, setSql] = useState(SAMPLE_QUERIES[0].sql);
   const { data, loading, error, executeQuery } = useAnalyticsRawQuery();
   const [chartTypeOverride, setChartTypeOverride] = useState<ChartType | null>(null);
   const [showSamples, setShowSamples] = useState(false);
+  const [saveLabel, setSaveLabel] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
+  // Keep save metadata aligned with the latest run when queries resolve out of order.
+  const executionIdRef = useRef(0);
 
   const inferredChartType = data ? inferChartType(data.columns, data.rows) : "table";
 
@@ -63,7 +57,7 @@ export function SqlExplorer() {
   // No explicit axes from raw query, let heuristics decide.
   const axes = data ? inferAxes(data.columns, undefined, undefined) : { xAxis: "", yAxes: [] };
 
-  const handleRun = () => {
+  const handleRun = async () => {
     if (loading) {
       return;
     }
@@ -73,7 +67,47 @@ export function SqlExplorer() {
       return;
     }
 
-    void executeQuery(normalizedSql);
+    const thisExecutionId = ++executionIdRef.current;
+    await executeQuery(normalizedSql);
+
+    if (thisExecutionId === executionIdRef.current) {
+      setLastExecutedSql(normalizedSql);
+    }
+  };
+
+  const handleCancelSave = () => {
+    setSaveLabel(null);
+    setSaveError(null);
+  };
+
+  const handleSave = async () => {
+    if (!props.onSaveQuery || !data || !lastExecutedSql || saveLabel === null) {
+      return;
+    }
+
+    const normalizedLabel = saveLabel.trim();
+    const normalizedSql = lastExecutedSql.trim();
+    if (!normalizedLabel || !normalizedSql) {
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const savedQuery = await props.onSaveQuery({
+        label: normalizedLabel,
+        sql: normalizedSql,
+        chartType: chartTypeOverride ?? null,
+      });
+
+      if (savedQuery) {
+        setSaveLabel(null);
+      }
+    } catch (saveQueryError) {
+      setSaveError(getErrorMessage(saveQueryError));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -118,15 +152,15 @@ export function SqlExplorer() {
         <div className="relative">
           <textarea
             value={sql}
-            onChange={(e) => setSql(e.target.value)}
+            onChange={(event) => setSql(event.target.value)}
             spellCheck={false}
             className="border-border-medium bg-background text-foreground focus:border-accent focus:ring-accent min-h-[120px] w-full resize-y rounded-lg border p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:outline-none"
             placeholder="SELECT * FROM events LIMIT 10;"
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
                 if (!loading && sql.trim()) {
-                  handleRun();
+                  void handleRun();
                 }
               }
             }}
@@ -135,7 +169,9 @@ export function SqlExplorer() {
             <span className="text-muted text-[10px]">Ctrl/Cmd+Enter to run</span>
             <Button
               size="sm"
-              onClick={handleRun}
+              onClick={() => {
+                void handleRun();
+              }}
               disabled={loading || !sql.trim()}
               className="h-7 gap-1.5 px-3 text-xs"
             >
@@ -154,30 +190,89 @@ export function SqlExplorer() {
 
         {data && (
           <div className="flex flex-col gap-3 pt-2">
-            <div className="border-border-light flex items-center justify-between border-t pt-3">
-              <div className="flex items-center gap-1">
-                {CHART_TYPE_OPTIONS.map((option) => (
-                  <button
-                    key={option.type}
-                    onClick={() => setChartTypeOverride(option.type)}
-                    className={cn(
-                      "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors",
-                      effectiveChartType === option.type
-                        ? "bg-accent text-accent-foreground"
-                        : "text-muted hover:bg-accent/50 hover:text-foreground"
-                    )}
-                  >
-                    <option.icon className="size-3" />
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+            <div className="border-border-light flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+              <ChartTypePicker
+                activeType={effectiveChartType}
+                onSelect={(nextType) => setChartTypeOverride(nextType)}
+              />
               <div className="text-muted text-[10px]">
                 {data.rowCount.toLocaleString()}
                 {data.rowCountExact ? "" : "+"} rows · {data.durationMs}ms
                 {data.truncated && " · Results truncated"}
               </div>
             </div>
+
+            {props.onSaveQuery && lastExecutedSql && (
+              <div className="border-border-light flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+                <div className="text-muted text-xs">
+                  Pin this query to the dashboard as a saved panel.
+                </div>
+                {saveLabel === null ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setSaveLabel("");
+                      setSaveError(null);
+                    }}
+                    className="h-7 gap-1.5 px-2.5 text-[11px]"
+                  >
+                    <Pin className="size-3" />
+                    Save as Panel
+                  </Button>
+                ) : (
+                  <div className="flex min-w-[240px] items-center gap-1">
+                    <input
+                      value={saveLabel}
+                      onChange={(event) => setSaveLabel(event.target.value)}
+                      placeholder="Panel title"
+                      className="border-border-medium bg-background text-foreground h-7 min-w-0 flex-1 rounded border px-2 text-xs focus:outline-none"
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void handleSave();
+                        }
+
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          handleCancelSave();
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={saving || saveLabel.trim().length === 0}
+                      onClick={() => {
+                        void handleSave();
+                      }}
+                      className="text-muted hover:text-foreground h-7 w-7"
+                      aria-label="Save panel"
+                    >
+                      <Check className="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={saving}
+                      onClick={handleCancelSave}
+                      className="text-muted hover:text-foreground h-7 w-7"
+                      aria-label="Cancel saving panel"
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {saveError && (
+              <div className="border-danger-soft bg-danger-soft/10 text-danger flex items-start gap-2 rounded-lg border p-3 text-xs">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <div className="flex-1 font-mono whitespace-pre-wrap">{saveError}</div>
+              </div>
+            )}
 
             <div className="bg-background border-border-light min-h-[300px] overflow-hidden rounded-lg border">
               {effectiveChartType === "table" ||

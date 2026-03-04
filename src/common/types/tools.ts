@@ -4,7 +4,7 @@
  */
 
 import type { z } from "zod";
-import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { AgentSkillDescriptor, AgentSkillFrontmatter } from "@/common/types/agentSkill";
 import type {
   AgentReportToolResultSchema,
   AgentSkillReadFileToolResultSchema,
@@ -64,6 +64,40 @@ export type AgentSkillWriteToolResult =
 // agent_skill_delete result
 export type AgentSkillDeleteToolResult =
   | { success: true; deleted: "file" | "skill" }
+  | { success: false; error: string };
+
+// skills_catalog_search result
+export interface SkillsCatalogSearchSkill {
+  skillId: string;
+  name: string;
+  owner: string;
+  repo: string;
+  installs: number;
+  url: string;
+}
+
+export type SkillsCatalogSearchToolResult =
+  | {
+      success: true;
+      query: string;
+      searchType: string;
+      skills: SkillsCatalogSearchSkill[];
+      count: number;
+    }
+  | { success: false; error: string };
+
+// skills_catalog_read result
+export type SkillsCatalogReadToolResult =
+  | {
+      success: true;
+      skillId: string;
+      owner: string;
+      repo: string;
+      path: string;
+      frontmatter: AgentSkillFrontmatter;
+      body: string;
+      url: string;
+    }
   | { success: false; error: string };
 
 export interface AskUserQuestionUiOnlyPayload {

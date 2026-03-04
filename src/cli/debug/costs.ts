@@ -4,6 +4,7 @@ import { defaultConfig } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
 import { calculateTokenStats } from "@/common/utils/tokens/tokenStatsCalculator";
 import { defaultModel } from "@/common/utils/ai/models";
+import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 
 /**
  * Debug command to display cost/token statistics for a workspace
@@ -37,8 +38,18 @@ export async function costsCommand(workspaceId: string) {
   const firstAssistantMessage = messages.find((msg) => msg.role === "assistant");
   const model = firstAssistantMessage?.metadata?.model ?? defaultModel;
 
+  // Resolve parent workspace context so child workspaces correctly include
+  // agent_report tool-definition tokens in accounting.
+  const workspaceInfo = defaultConfig.findWorkspace(workspaceId);
+  const parentWorkspaceId = workspaceInfo?.parentWorkspaceId ?? null;
+
   // Calculate stats using shared logic (now synchronous)
-  const stats = await calculateTokenStats(messages, model);
+  const stats = await calculateTokenStats(
+    messages,
+    model,
+    null,
+    getToolAvailabilityOptions({ workspaceId, parentWorkspaceId })
+  );
 
   // Display results
   console.log(`Model: ${stats.model}`);

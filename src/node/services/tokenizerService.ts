@@ -5,6 +5,7 @@ import type { ChatStats } from "@/common/types/chatStats";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import assert from "@/common/utils/assert";
 import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
+import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import type { SessionUsageService, SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import { log } from "./log";
 
@@ -66,7 +67,8 @@ export class TokenizerService {
     workspaceId: string,
     messages: MuxMessage[],
     model: string,
-    providersConfig: ProvidersConfigMap | null = null
+    providersConfig: ProvidersConfigMap | null = null,
+    parentWorkspaceId: string | null = null
   ): Promise<ChatStats> {
     assert(
       typeof workspaceId === "string" && workspaceId.length > 0,
@@ -81,7 +83,12 @@ export class TokenizerService {
     const calcId = ++this.nextCalcId;
     this.latestCalcIdByWorkspace.set(workspaceId, calcId);
 
-    const stats = await calculateTokenStats(messages, model, providersConfig);
+    const stats = await calculateTokenStats(
+      messages,
+      model,
+      providersConfig,
+      getToolAvailabilityOptions({ workspaceId, parentWorkspaceId })
+    );
 
     // Only persist the cache for the most recently-started calculation.
     // Older calculations can finish later and would otherwise overwrite a newer cache.

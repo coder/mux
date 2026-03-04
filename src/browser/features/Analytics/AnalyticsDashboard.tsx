@@ -12,6 +12,7 @@ import {
   useAnalyticsSummary,
   useAnalyticsTimingDistribution,
   useAnalyticsTokensByModel,
+  useSavedQueries,
 } from "@/browser/hooks/useAnalytics";
 import { DESKTOP_TITLEBAR_HEIGHT_CLASS, isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -20,6 +21,7 @@ import { Button } from "@/browser/components/Button/Button";
 import { cn } from "@/common/lib/utils";
 import { AgentCostChart } from "./AgentCostChart";
 import { DelegationChart } from "./DelegationChart";
+import { SavedQueryPanel } from "./SavedQueryPanel";
 import { SqlExplorer } from "./SqlExplorer";
 import { ProviderCacheHitChart } from "./ProviderCacheHitChart";
 import { ModelBreakdown } from "./ModelBreakdown";
@@ -142,6 +144,13 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
     from: dateRange.from,
     to: dateRange.to,
   });
+
+  const {
+    queries: savedQueries,
+    save: saveQuery,
+    update: updateSavedQuery,
+    remove: removeSavedQuery,
+  } = useSavedQueries();
 
   const projectRows = Array.from(userProjects.entries())
     .map(([path]) => ({
@@ -305,7 +314,19 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             loading={delegationSummary.loading}
             error={delegationSummary.error}
           />
-          <SqlExplorer />
+          {savedQueries.length > 0 && (
+            <div className="flex flex-col gap-4">
+              {savedQueries.map((query) => (
+                <SavedQueryPanel
+                  key={query.id}
+                  query={query}
+                  onDelete={removeSavedQuery}
+                  onUpdate={updateSavedQuery}
+                />
+              ))}
+            </div>
+          )}
+          <SqlExplorer onSaveQuery={saveQuery} />
         </div>
       </div>
     </div>

@@ -25,6 +25,8 @@ import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_
 import { createAgentSkillListTool } from "@/node/services/tools/agent_skill_list";
 import { createAgentSkillWriteTool } from "@/node/services/tools/agent_skill_write";
 import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_delete";
+import { createSkillsCatalogSearchTool } from "@/node/services/tools/skills_catalog_search";
+import { createSkillsCatalogReadTool } from "@/node/services/tools/skills_catalog_read";
 import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
 import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
@@ -39,6 +41,7 @@ import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalT
 import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
 import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
+import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -344,6 +347,8 @@ export async function getToolsForModel(
     agent_skill_delete: createAgentSkillDeleteTool(config),
     mux_config_read: createMuxConfigReadTool(config),
     mux_config_write: createMuxConfigWriteTool(config),
+    skills_catalog_search: createSkillsCatalogSearchTool(config),
+    skills_catalog_read: createSkillsCatalogReadTool(config),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     // propose_name is intentionally NOT registered here — it's only used by
@@ -449,12 +454,11 @@ export async function getToolsForModel(
 
   // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
   // Include MCP tools even if they're not in getAvailableTools().
+  const catalogOptions = getToolAvailabilityOptions({ workspaceId });
   const allowlistedToolNames = new Set(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
-      // Mux global tools are always created; tool policy (agent frontmatter)
-      // controls which agents can actually use them.
-      enableMuxGlobalAgentsTools: true,
+      enableSkillsCatalogTools: catalogOptions.enableSkillsCatalogTools,
     })
   );
   for (const toolName of Object.keys(mcpTools ?? {})) {

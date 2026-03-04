@@ -206,6 +206,20 @@ describe("TOOL_DEFINITIONS", () => {
     expect(tools).toContain("mux_config_write");
   });
 
+  it("excludes skills catalog tools by default", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).not.toContain("skills_catalog_search");
+    expect(tools).not.toContain("skills_catalog_read");
+  });
+
+  it("includes skills catalog tools when explicitly enabled", () => {
+    const tools = getAvailableTools("openai:gpt-4o", { enableSkillsCatalogTools: true });
+
+    expect(tools).toContain("skills_catalog_search");
+    expect(tools).toContain("skills_catalog_read");
+  });
+
   it("discourages repeating plan contents or plan file location after propose_plan", () => {
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("do not paste the plan contents");
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("plan file path");
@@ -218,5 +232,27 @@ describe("TOOL_DEFINITIONS", () => {
       advertise: false,
     });
     expect(parsed.success).toBe(false);
+  });
+
+  describe("skills_catalog_read schema", () => {
+    it("rejects invalid skillId values", () => {
+      const schema = TOOL_DEFINITIONS.skills_catalog_read.schema;
+      const validBase = { owner: "test-owner", repo: "test-repo" };
+
+      // Path traversal attempts
+      expect(schema.safeParse({ ...validBase, skillId: "../escape" }).success).toBe(false);
+      expect(schema.safeParse({ ...validBase, skillId: "../../etc/passwd" }).success).toBe(false);
+
+      // Absolute paths
+      expect(schema.safeParse({ ...validBase, skillId: "/tmp/a" }).success).toBe(false);
+
+      // Invalid format (uppercase, underscores, etc.)
+      expect(schema.safeParse({ ...validBase, skillId: "Bad_Name" }).success).toBe(false);
+      expect(schema.safeParse({ ...validBase, skillId: "UPPER" }).success).toBe(false);
+
+      // Valid skill names should pass
+      expect(schema.safeParse({ ...validBase, skillId: "my-skill" }).success).toBe(true);
+      expect(schema.safeParse({ ...validBase, skillId: "skill123" }).success).toBe(true);
+    });
   });
 });

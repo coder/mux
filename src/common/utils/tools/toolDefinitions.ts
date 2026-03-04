@@ -871,6 +871,41 @@ export const TOOL_DEFINITIONS = {
       .strict(),
   },
 
+  skills_catalog_search: {
+    description:
+      "Search the skills.sh community catalog for agent skills. " +
+      "Returns a list of matching skills with their IDs, names, source repos, and install counts. " +
+      "Use skills_catalog_read to preview a skill's full content before installing.",
+    schema: z
+      .object({
+        query: z.string().describe("Search query to find skills in the catalog"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .nullish()
+          .describe("Maximum number of results to return (default: 10)"),
+      })
+      .strict(),
+  },
+
+  skills_catalog_read: {
+    description:
+      "Read the full SKILL.md content for a skill from the skills.sh community catalog. " +
+      "Use this to preview a skill's documentation before installing it with agent_skill_write. " +
+      "The owner and repo come from skills_catalog_search results.",
+    schema: z
+      .object({
+        owner: z.string().describe("GitHub owner from the search result (e.g. 'vercel-labs')"),
+        repo: z
+          .string()
+          .describe("GitHub repository name from the search result (e.g. 'agent-skills')"),
+        skillId: SkillNameSchema.describe("Skill ID from the search result"),
+      })
+      .strict(),
+  },
+
   file_edit_replace_string: {
     description:
       "⚠️ CRITICAL: Always check tool results - edits WILL fail if old_string is not found or unique. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
@@ -1684,6 +1719,7 @@ export function getAvailableTools(
     enableAgentReport?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
+    enableSkillsCatalogTools?: boolean;
   }
 ): string[] {
   const [provider] = modelString.split(":");
@@ -1697,6 +1733,9 @@ export function getAvailableTools(
     "agent_skill_list",
     "agent_skill_write",
     "agent_skill_delete",
+    ...(options?.enableSkillsCatalogTools
+      ? (["skills_catalog_search", "skills_catalog_read"] as const)
+      : []),
     "mux_config_read",
     "mux_config_write",
     "file_read",
