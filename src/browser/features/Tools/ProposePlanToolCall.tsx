@@ -333,10 +333,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   }
 
   const reviews = useReviews(workspaceId ?? "");
-  const normalizedPlanPath =
-    planPath != null ? (normalizePlanFilePath(planPath) ?? planPath) : null;
+  const effectivePlanPath = planPath != null ? (normalizePlanFilePath(planPath) ?? planPath) : null;
   const planReviews =
-    normalizedPlanPath == null
+    effectivePlanPath == null
       ? []
       : reviews.reviews.filter((review) => {
           if (!isPlanFilePath(review.data.filePath)) {
@@ -344,7 +343,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
           }
 
           const normalizedReviewPath = normalizePlanFilePath(review.data.filePath);
-          return normalizedReviewPath === normalizedPlanPath;
+          return normalizedReviewPath === effectivePlanPath;
         });
   const reviewActions: ReviewActionCallbacks = {
     onEditComment: reviews.updateReviewNote,
@@ -853,7 +852,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       ) : annotateMode && canAnnotate ? (
         <PlanAnnotationView
           planContent={planContent}
-          planPath={planPath}
+          planPath={effectivePlanPath ?? undefined}
           onReviewNote={reviews.addReview}
           reviews={planReviews}
           reviewActions={reviewActions}

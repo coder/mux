@@ -286,7 +286,7 @@ export function normalizePlanFilePath(filePath: string): string | null {
   // Plan paths always have the structure <root>/plans/<project>/<file>.
   // Match exactly two path components after /plans/ to avoid false positives
   // on normal repo paths (e.g., src/plans/utils.ts has only one component).
-  const genericPlanMatch = /[/\\]plans[/\\]([^/\\]+[/\\][^/\\]+)$/.exec(normalized);
+  const genericPlanMatch = /[/\\]plans[/\\]([^/\\]+[/\\][^/\\]+\.md)$/.exec(normalized);
   if (genericPlanMatch?.[1]) {
     return `.mux/plans/${genericPlanMatch[1].replace(/\\/g, "/")}`;
   }

@@ -185,6 +185,7 @@ describe("normalizePlanFilePath", () => {
     expect(normalizePlanFilePath("/var/mux/plans/")).toBeNull();
     expect(normalizePlanFilePath("src/plans/utils.ts")).toBeNull();
     expect(normalizePlanFilePath("/src/deeply/plans/a/b/c.ts")).toBeNull();
+    expect(normalizePlanFilePath("/workspace/repo/plans/roadmap/v1.txt")).toBeNull();
   });
 });
 
@@ -212,6 +213,7 @@ describe("isPlanFilePath", () => {
     expect(isPlanFilePath("src/planning/planner.ts")).toBeFalse();
     expect(isPlanFilePath("src/plans/utils.ts")).toBeFalse();
     expect(isPlanFilePath("plan.txt")).toBeFalse();
+    expect(isPlanFilePath("/workspace/repo/plans/roadmap/v1.txt")).toBeFalse();
     expect(isPlanFilePath(".mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("project/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeFalse();

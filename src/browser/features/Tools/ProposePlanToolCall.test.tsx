@@ -65,6 +65,8 @@ let startHereCalls: Array<{
   options: { deletePlanFile?: boolean; sourceAgentId?: string } | undefined;
 }> = [];
 
+let selectableDiffRendererCalls: Array<{ filePath?: string }> = [];
+
 const useStartHereMock = mock(
   (
     workspaceId: string | undefined,
@@ -134,12 +136,23 @@ void mock.module("@/browser/hooks/useReviews", () => ({
 }));
 
 void mock.module("@/browser/features/Shared/DiffRenderer", () => ({
-  SelectableDiffRenderer: () => <div data-testid="selectable-diff-renderer" />,
+  SelectableDiffRenderer: (props: { filePath?: string }) => {
+    selectableDiffRendererCalls.push({ filePath: props.filePath });
+    return <div data-testid="selectable-diff-renderer" data-filepath={props.filePath ?? ""} />;
+  },
 }));
 
 void mock.module("@/common/types/review", () => ({
-  isPlanFilePath: () => true,
-  normalizePlanFilePath: (filePath: string) => filePath,
+  isPlanFilePath: (filePath: string) => /[/\\]plans[/\\]/.test(filePath),
+  normalizePlanFilePath: (filePath: string) => {
+    const normalizedPath = filePath.replace(/\\/g, "/");
+    const tildeMuxMatch = /^~\/\.mux\/plans\/(.+)$/.exec(normalizedPath);
+    if (tildeMuxMatch?.[1]) {
+      return `.mux/plans/${tildeMuxMatch[1]}`;
+    }
+
+    return normalizedPath;
+  },
 }));
 
 const TEST_AGENTS: AgentDefinitionDescriptor[] = [
@@ -213,6 +226,7 @@ describe("ProposePlanToolCall", () => {
 
   beforeEach(() => {
     startHereCalls = [];
+    selectableDiffRendererCalls = [];
     mockApi = null;
     // Save original globals
     originalWindow = globalThis.window;
@@ -352,6 +366,32 @@ describe("ProposePlanToolCall", () => {
 
     await waitFor(() => expect(getPlanContentCalls).toBe(1));
     expect(view.queryByRole("button", { name: "Annotate" })).toBeNull();
+  });
+
+  test("passes normalized plan path to annotation view", () => {
+    const rawPlanPath = "~/.mux/plans/demo/ws-123.md";
+
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        result={{
+          success: true,
+          planPath: rawPlanPath,
+          planContent: "# My Plan\n\nDo the thing.",
+        }}
+        workspaceId="ws-123"
+        isLatest={true}
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Annotate" }));
+
+    const renderer = view.getByTestId("selectable-diff-renderer");
+    expect(renderer.getAttribute("data-filepath")).toBe(".mux/plans/demo/ws-123.md");
+    expect(selectableDiffRendererCalls[selectableDiffRendererCalls.length - 1]?.filePath).toBe(
+      ".mux/plans/demo/ws-123.md"
+    );
   });
 
   test("hides Annotate button when completed propose_plan result is an error", () => {
