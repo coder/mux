@@ -264,6 +264,43 @@ export class PRStatusStore {
     return undefined;
   }
 
+  private maybeReevaluateWorkspaceSection(
+    workspaceId: string,
+    previousStatus: GitHubPRStatus | undefined,
+    nextEntry: WorkspacePRCacheEntry
+  ): void {
+    if (!this.client || nextEntry.error) {
+      return;
+    }
+
+    const nextStatus = nextEntry.status;
+    if (
+      previousStatus?.state === nextStatus?.state &&
+      previousStatus?.mergeStateStatus === nextStatus?.mergeStateStatus &&
+      previousStatus?.isDraft === nextStatus?.isDraft &&
+      previousStatus?.hasFailedChecks === nextStatus?.hasFailedChecks &&
+      previousStatus?.hasPendingChecks === nextStatus?.hasPendingChecks
+    ) {
+      return;
+    }
+
+    // Smart Sections Phase 3: trigger backend rule re-evaluation on PR status transitions.
+    void this.client.projects.sections.evaluateWorkspace({
+      workspaceId,
+      prState: nextStatus?.state ?? "none",
+      prMergeStatus: nextStatus?.mergeStateStatus,
+      prIsDraft: nextStatus?.isDraft,
+      prHasFailedChecks: nextStatus?.hasFailedChecks,
+      prHasPendingChecks: nextStatus?.hasPendingChecks,
+    });
+  }
+
+  private setWorkspacePRCacheEntry(workspaceId: string, nextEntry: WorkspacePRCacheEntry): void {
+    const previousStatus = this.workspacePRCache.get(workspaceId)?.status;
+    this.workspacePRCache.set(workspaceId, nextEntry);
+    this.maybeReevaluateWorkspaceSection(workspaceId, previousStatus, nextEntry);
+  }
+
   /**
    * Detect PR for workspace's current branch via `gh pr view`.
    */
@@ -272,7 +309,7 @@ export class PRStatusStore {
 
     // Mark as loading
     const existing = this.workspacePRCache.get(workspaceId);
-    this.workspacePRCache.set(workspaceId, {
+    this.setWorkspacePRCacheEntry(workspaceId, {
       prLink: existing?.prLink ?? null,
       status: existing?.status,
       loading: true,
@@ -291,7 +328,7 @@ export class PRStatusStore {
       if (!this.isActive) return;
 
       if (!result.success || !result.data.success) {
-        this.workspacePRCache.set(workspaceId, {
+        this.setWorkspacePRCacheEntry(workspaceId, {
           prLink: null,
           error: "Failed to run gh CLI",
           loading: false,
@@ -307,7 +344,7 @@ export class PRStatusStore {
 
         if ("no_pr" in parsed) {
           // No PR for this branch
-          this.workspacePRCache.set(workspaceId, {
+          this.setWorkspacePRCacheEntry(workspaceId, {
             prLink: null,
             loading: false,
             fetchedAt: Date.now(),
@@ -318,7 +355,7 @@ export class PRStatusStore {
           const prLinkBase = parseGitHubPRUrl(prUrl);
 
           if (!prLinkBase) {
-            this.workspacePRCache.set(workspaceId, {
+            this.setWorkspacePRCacheEntry(workspaceId, {
               prLink: null,
               error: "Invalid PR URL from gh CLI",
               loading: false,
@@ -351,7 +388,7 @@ export class PRStatusStore {
               occurrenceCount: 1,
             };
 
-            this.workspacePRCache.set(workspaceId, {
+            this.setWorkspacePRCacheEntry(workspaceId, {
               prLink,
               status,
               loading: false,
@@ -365,7 +402,7 @@ export class PRStatusStore {
           }
         }
       } else {
-        this.workspacePRCache.set(workspaceId, {
+        this.setWorkspacePRCacheEntry(workspaceId, {
           prLink: null,
           error: "Empty response from gh CLI",
           loading: false,
@@ -377,7 +414,7 @@ export class PRStatusStore {
     } catch (err) {
       if (!this.isActive) return;
 
-      this.workspacePRCache.set(workspaceId, {
+      this.setWorkspacePRCacheEntry(workspaceId, {
         prLink: null,
         error: err instanceof Error ? err.message : "Unknown error",
         loading: false,
