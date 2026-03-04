@@ -1893,27 +1893,7 @@ const EditorConfigSchema = z.object({
   customCommand: z.string().optional(),
 });
 
-const StatsTabVariantSchema = z.enum(["control", "stats"]);
-const StatsTabOverrideSchema = z.enum(["default", "on", "off"]);
-const StatsTabStateSchema = z.object({
-  enabled: z.boolean(),
-  variant: StatsTabVariantSchema,
-  override: StatsTabOverrideSchema,
-});
-
 const LogLevelSchema = z.enum(["error", "warn", "info", "debug"]);
-
-// Feature gates (PostHog-backed)
-export const features = {
-  getStatsTabState: {
-    input: z.void(),
-    output: StatsTabStateSchema,
-  },
-  setStatsTabOverride: {
-    input: z.object({ override: StatsTabOverrideSchema }),
-    output: StatsTabStateSchema,
-  },
-};
 
 // General
 export const general = {

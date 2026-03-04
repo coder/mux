@@ -79,7 +79,6 @@ async function createTestServer(): Promise<TestServerHandle> {
     workspaceMcpOverridesService: services.workspaceMcpOverridesService,
     mcpConfigService: services.mcpConfigService,
     mcpOauthService: services.mcpOauthService,
-    featureFlagService: services.featureFlagService,
     sessionTimingService: services.sessionTimingService,
     mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,

@@ -539,24 +539,6 @@ export const router = (authToken?: string) => {
           return { revokedCount };
         }),
     },
-    features: {
-      getStatsTabState: t
-        .input(schemas.features.getStatsTabState.input)
-        .output(schemas.features.getStatsTabState.output)
-        .handler(async ({ context }) => {
-          const state = await context.featureFlagService.getStatsTabState();
-          context.sessionTimingService.setStatsTabState(state);
-          return state;
-        }),
-      setStatsTabOverride: t
-        .input(schemas.features.setStatsTabOverride.input)
-        .output(schemas.features.setStatsTabOverride.output)
-        .handler(async ({ context, input }) => {
-          const state = await context.featureFlagService.setStatsTabOverride(input.override);
-          context.sessionTimingService.setStatsTabState(state);
-          return state;
-        }),
-    },
     config: {
       getConfig: t
         .input(schemas.config.getConfig.input)

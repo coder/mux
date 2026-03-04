@@ -39,7 +39,6 @@ import type {
   ToolCallStartEvent,
 } from "@/common/types/stream";
 import { DevToolsService } from "@/node/services/devToolsService";
-import { FeatureFlagService } from "@/node/services/featureFlagService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import { ExperimentsService } from "@/node/services/experimentsService";
@@ -116,7 +115,6 @@ export class ServiceContainer {
   public readonly mcpOauthService: McpOauthService;
   public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   public readonly telemetryService: TelemetryService;
-  public readonly featureFlagService: FeatureFlagService;
   public readonly sessionTimingService: SessionTimingService;
   public readonly devToolsService: DevToolsService;
   public readonly analyticsService: AnalyticsService;
@@ -235,7 +233,6 @@ export class ServiceContainer {
       this.policyService,
       opResolver
     );
-    this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.signingService = getSigningService();
     this.coderService = coderService;
 
@@ -263,7 +260,7 @@ export class ServiceContainer {
     setSshPromptService(this.sshPromptService);
     setSSH2SshPromptService(this.sshPromptService);
 
-    // Backend timing stats (behind feature flag).
+    // Backend timing stats.
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
       this.sessionTimingService.handleStreamStart(data)
     );
@@ -343,13 +340,6 @@ export class ServiceContainer {
     // Initialize policy service (startup gating)
     await this.policyService.initialize();
 
-    // Initialize feature flag state (don't block startup on network).
-    this.featureFlagService
-      .getStatsTabState()
-      .then((state) => this.sessionTimingService.setStatsTabState(state))
-      .catch(() => {
-        // Ignore feature flag failures.
-      });
     await this.experimentsService.initialize();
     await this.taskService.initialize();
     // Start idle compaction checker
@@ -519,7 +509,6 @@ export class ServiceContainer {
       mcpOauthService: this.mcpOauthService,
       workspaceMcpOverridesService: this.workspaceMcpOverridesService,
       mcpServerManager: this.mcpServerManager,
-      featureFlagService: this.featureFlagService,
       sessionTimingService: this.sessionTimingService,
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,

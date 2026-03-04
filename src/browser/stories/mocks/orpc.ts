@@ -162,7 +162,6 @@ export interface MockORPCClientOptions {
   >;
   /** Session usage data per workspace (for Costs tab) */
   workspaceStatsSnapshots?: Map<string, WorkspaceStatsSnapshot>;
-  statsTabVariant?: "control" | "stats";
   /** Global secrets (Settings → Secrets → Global) */
   globalSecrets?: Secret[];
   /** Project secrets per project */
@@ -318,7 +317,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
     >(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
-    statsTabVariant = "control",
     globalSecrets = [],
     projectSecrets = new Map<string, Secret[]>(),
     terminalSessions: initialTerminalSessions = [],
@@ -359,16 +357,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     logEntries = [],
     clearLogsResult = { success: true, error: null },
   } = options;
-
-  // Feature flags
-  let statsTabOverride: "default" | "on" | "off" = "default";
-
-  const getStatsTabState = () => {
-    // Stats tab is default-on; keep override as a local kill switch.
-    const enabled = statsTabOverride !== "off";
-
-    return { enabled, variant: statsTabVariant, override: statsTabOverride } as const;
-  };
 
   // App now boots into the built-in mux-chat workspace by default.
   // Ensure Storybook mocks always include it so stories don't render "Workspace not found".
@@ -620,13 +608,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       countTokensBatch: (_input: { model: string; texts: string[] }) =>
         Promise.resolve(_input.texts.map(() => 0)),
       calculateStats: () => Promise.resolve(mockStats),
-    },
-    features: {
-      getStatsTabState: () => Promise.resolve(getStatsTabState()),
-      setStatsTabOverride: (input: { override: "default" | "on" | "off" }) => {
-        statsTabOverride = input.override;
-        return Promise.resolve(getStatsTabState());
-      },
     },
     telemetry: {
       track: () => Promise.resolve(undefined),

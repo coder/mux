@@ -472,7 +472,6 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     providersConfig: opts.providersConfig,
     agentAiDefaults: opts.agentAiDefaults,
     backgroundProcesses: bgProcesses,
-    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
     subagentTranscripts: opts.subagentTranscripts,
     idleCompactionHours,
@@ -579,7 +578,6 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APICli
     onChat: createOnChatAdapter(chatHandlers),
     executeBash: createGitStatusExecutor(gitStatus),
     workspaceStatsSnapshots,
-    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
   });
 }
 

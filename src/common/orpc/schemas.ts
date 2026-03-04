@@ -211,7 +211,6 @@ export {
   devtools,
   uiLayouts,
   debug,
-  features,
   general,
   menu,
   agentSkills,

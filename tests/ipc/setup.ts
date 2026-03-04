@@ -103,7 +103,6 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     updateService: services.updateService,
     tokenizerService: services.tokenizerService,
     serverService: services.serverService,
-    featureFlagService: services.featureFlagService,
     workspaceMcpOverridesService: services.workspaceMcpOverridesService,
     sessionTimingService: services.sessionTimingService,
     mcpConfigService: services.mcpConfigService,

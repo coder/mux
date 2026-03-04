@@ -491,7 +491,6 @@ export class WorkspaceStore {
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>(); // Store metadata for name lookup
 
   // Workspace timing stats snapshots (from workspace.stats.subscribe)
-  private statsEnabled = false;
   private workspaceStats = new Map<string, WorkspaceStatsSnapshot>();
   private statsStore = new MapStore<string, WorkspaceStatsSnapshot | null>();
   private statsUnsubscribers = new Map<string, () => void>();
@@ -989,34 +988,6 @@ export class WorkspaceStore {
     })();
   }
 
-  setStatsEnabled(enabled: boolean): void {
-    if (this.statsEnabled === enabled) {
-      return;
-    }
-
-    this.statsEnabled = enabled;
-
-    if (!enabled) {
-      for (const unsubscribe of this.statsUnsubscribers.values()) {
-        unsubscribe();
-      }
-      this.statsUnsubscribers.clear();
-      this.workspaceStats.clear();
-      this.statsStore.clear();
-
-      // Clear is a global notification only. Bump any subscribed workspace IDs so
-      // useSyncExternalStore subscribers re-render and drop stale snapshots.
-      for (const workspaceId of this.statsListenerCounts.keys()) {
-        this.statsStore.bump(workspaceId);
-      }
-      return;
-    }
-
-    // Enable subscriptions for any workspaces that already have UI consumers.
-    for (const workspaceId of this.statsListenerCounts.keys()) {
-      this.subscribeToStats(workspaceId);
-    }
-  }
   setClient(client: RouterClient<AppRouter> | null): void {
     if (this.client === client) {
       return;
@@ -1047,11 +1018,9 @@ export class WorkspaceStore {
       return;
     }
 
-    // If timing stats are enabled, re-subscribe any workspaces that already have UI consumers.
-    if (this.statsEnabled) {
-      for (const workspaceId of this.statsListenerCounts.keys()) {
-        this.subscribeToStats(workspaceId);
-      }
+    // Re-subscribe any workspaces that already have UI consumers.
+    for (const workspaceId of this.statsListenerCounts.keys()) {
+      this.subscribeToStats(workspaceId);
     }
 
     this.ensureActiveOnChatSubscription();
@@ -1362,7 +1331,7 @@ export class WorkspaceStore {
    */
 
   private subscribeToStats(workspaceId: string): void {
-    if (!this.client || !this.statsEnabled) {
+    if (!this.client) {
       return;
     }
 
@@ -1754,7 +1723,7 @@ export class WorkspaceStore {
    * - Clears in-memory timing derived from StreamingMessageAggregator.
    */
   clearTimingStats(workspaceId: string): void {
-    if (this.client && this.statsEnabled) {
+    if (this.client) {
       this.client.workspace.stats
         .clear({ workspaceId })
         .then((result) => {
@@ -3228,9 +3197,7 @@ export class WorkspaceStore {
     this.refreshSessionUsage(workspaceId);
 
     // Stats snapshots are subscribed lazily via subscribeStats().
-    if (this.statsEnabled) {
-      this.subscribeToStats(workspaceId);
-    }
+    this.subscribeToStats(workspaceId);
 
     this.ensureActiveOnChatSubscription();
 

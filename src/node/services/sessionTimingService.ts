@@ -42,15 +42,6 @@ const SESSION_TIMING_VERSION = 2 as const;
 // per-workspace.
 const DELTA_EMIT_THROTTLE_MS = 100;
 
-export type StatsTabVariant = "control" | "stats";
-export type StatsTabOverride = "default" | "on" | "off";
-
-export interface StatsTabState {
-  enabled: boolean;
-  variant: StatsTabVariant;
-  override: StatsTabOverride;
-}
-
 interface ActiveStreamState {
   workspaceId: string;
   messageId: string;
@@ -189,23 +180,9 @@ export class SessionTimingService {
     { lastEmitTimeMs: number; timer?: ReturnType<typeof setTimeout> }
   >();
 
-  private statsTabState: StatsTabState = {
-    enabled: false,
-    variant: "control",
-    override: "default",
-  };
-
   constructor(config: Config, telemetryService: TelemetryService) {
     this.config = config;
     this.telemetryService = telemetryService;
-  }
-
-  setStatsTabState(state: StatsTabState): void {
-    this.statsTabState = state;
-  }
-
-  isEnabled(): boolean {
-    return this.statsTabState.enabled;
   }
 
   addSubscriber(workspaceId: string): void {
@@ -721,7 +698,6 @@ export class SessionTimingService {
 
   handleStreamStart(data: StreamStartEvent): void {
     if (data.replay === true) return;
-    if (!this.isEnabled()) return;
 
     assert(typeof data.workspaceId === "string" && data.workspaceId.length > 0);
     assert(typeof data.messageId === "string" && data.messageId.length > 0);

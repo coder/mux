@@ -24,7 +24,6 @@ import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpO
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { SigningService } from "@/node/services/signingService";
-import type { FeatureFlagService } from "@/node/services/featureFlagService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { TaskService } from "@/node/services/taskService";
@@ -59,7 +58,6 @@ export interface ORPCContext {
   mcpOauthService: McpOauthService;
   workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   mcpServerManager: MCPServerManager;
-  featureFlagService: FeatureFlagService;
   sessionTimingService: SessionTimingService;
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;

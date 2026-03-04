@@ -74,9 +74,7 @@ import { SplashScreenProvider } from "./features/SplashScreens/SplashScreenProvi
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
 import { TooltipProvider } from "./components/Tooltip/Tooltip";
-import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
-import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
@@ -199,11 +197,6 @@ function AppInner() {
 
   // Get workspace store for command palette
   const workspaceStore = useWorkspaceStoreRaw();
-
-  const { statsTabState } = useFeatureFlags();
-  useEffect(() => {
-    workspaceStore.setStatsEnabled(Boolean(statsTabState?.enabled));
-  }, [workspaceStore, statsTabState?.enabled]);
 
   // Track telemetry when workspace selection changes
   const prevWorkspaceRef = useRef<WorkspaceSelection | null>(null);
@@ -1133,29 +1126,27 @@ function AppInner() {
 function App() {
   return (
     <ExperimentsProvider>
-      <FeatureFlagsProvider>
-        <UILayoutsProvider>
-          <TooltipProvider delayDuration={200}>
-            <SettingsProvider>
-              <AboutDialogProvider>
-                <ProviderOptionsProvider>
-                  <SplashScreenProvider>
-                    <TutorialProvider>
-                      <CommandRegistryProvider>
-                        <PowerModeProvider>
-                          <ConfirmDialogProvider>
-                            <AppInner />
-                          </ConfirmDialogProvider>
-                        </PowerModeProvider>
-                      </CommandRegistryProvider>
-                    </TutorialProvider>
-                  </SplashScreenProvider>
-                </ProviderOptionsProvider>
-              </AboutDialogProvider>
-            </SettingsProvider>
-          </TooltipProvider>
-        </UILayoutsProvider>
-      </FeatureFlagsProvider>
+      <UILayoutsProvider>
+        <TooltipProvider delayDuration={200}>
+          <SettingsProvider>
+            <AboutDialogProvider>
+              <ProviderOptionsProvider>
+                <SplashScreenProvider>
+                  <TutorialProvider>
+                    <CommandRegistryProvider>
+                      <PowerModeProvider>
+                        <ConfirmDialogProvider>
+                          <AppInner />
+                        </ConfirmDialogProvider>
+                      </PowerModeProvider>
+                    </CommandRegistryProvider>
+                  </TutorialProvider>
+                </SplashScreenProvider>
+              </ProviderOptionsProvider>
+            </AboutDialogProvider>
+          </SettingsProvider>
+        </TooltipProvider>
+      </UILayoutsProvider>
     </ExperimentsProvider>
   );
 }
