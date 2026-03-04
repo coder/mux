@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import { EventEmitter } from "events";
 
+import assert from "@/common/utils/assert";
 import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
@@ -191,6 +192,15 @@ export class AIService extends EventEmitter {
     }
   >();
 
+  /**
+   * Tracks queued DevTools run metadata by assistant message id so stream-end/abort
+   * can clear orphaned entries when a stream starts but never reaches middleware run creation.
+   */
+  private readonly pendingDevToolsRunMetadataByMessageId = new Map<
+    string,
+    { workspaceId: string; metadataId: string }
+  >();
+
   // Debug: captured LLM request payloads for last send per workspace
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
@@ -296,6 +306,10 @@ export class AIService extends EventEmitter {
 
     // stream-end needs extra logic: capture provider response for debug modal
     this.streamManager.on("stream-end", (data: StreamEndEvent) => {
+      // Streams can end before DevTools middleware creates a run (for example when
+      // interrupted early). Clear any still-queued run metadata for this message.
+      this.clearTrackedPendingDevToolsRunMetadata(data.messageId);
+
       // Best-effort capture of the provider response for the "Last LLM request" debug modal.
       // Must never break live streaming.
       try {
@@ -326,6 +340,10 @@ export class AIService extends EventEmitter {
 
     // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
+      // Aborts can happen before the first provider call reaches DevTools middleware.
+      // Clear any queued run metadata for this message to avoid memory growth.
+      this.clearTrackedPendingDevToolsRunMetadata(data.messageId);
+
       void (async () => {
         try {
           if (data.abandonPartial) {
@@ -352,6 +370,59 @@ export class AIService extends EventEmitter {
         }
       })();
     });
+  }
+
+  private trackPendingDevToolsRunMetadata(
+    messageId: string,
+    workspaceId: string,
+    metadataId: string
+  ): void {
+    assert(messageId.trim().length > 0, "trackPendingDevToolsRunMetadata requires a messageId");
+    assert(workspaceId.trim().length > 0, "trackPendingDevToolsRunMetadata requires a workspaceId");
+    assert(metadataId.trim().length > 0, "trackPendingDevToolsRunMetadata requires a metadataId");
+
+    this.pendingDevToolsRunMetadataByMessageId.set(messageId, {
+      workspaceId,
+      metadataId,
+    });
+  }
+
+  private clearTrackedPendingDevToolsRunMetadata(messageId: string): void {
+    assert(
+      messageId.trim().length > 0,
+      "clearTrackedPendingDevToolsRunMetadata requires a messageId"
+    );
+
+    const pending = this.pendingDevToolsRunMetadataByMessageId.get(messageId);
+    if (!pending) {
+      return;
+    }
+
+    this.pendingDevToolsRunMetadataByMessageId.delete(messageId);
+    this.devToolsService?.clearPendingRunMetadata(pending.workspaceId, pending.metadataId);
+  }
+
+  private clearTrackedPendingDevToolsRunMetadataById(
+    workspaceId: string,
+    metadataId: string
+  ): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "clearTrackedPendingDevToolsRunMetadataById requires a workspaceId"
+    );
+    assert(
+      metadataId.trim().length > 0,
+      "clearTrackedPendingDevToolsRunMetadataById requires a metadataId"
+    );
+
+    for (const [messageId, pending] of this.pendingDevToolsRunMetadataByMessageId.entries()) {
+      if (pending.workspaceId === workspaceId && pending.metadataId === metadataId) {
+        this.pendingDevToolsRunMetadataByMessageId.delete(messageId);
+        break;
+      }
+    }
+
+    this.devToolsService?.clearPendingRunMetadata(workspaceId, metadataId);
   }
 
   private async ensureSessionsDir(): Promise<void> {
@@ -1207,6 +1278,7 @@ export class AIService extends EventEmitter {
               ? effectiveToolPolicy
               : undefined,
         });
+        this.trackPendingDevToolsRunMetadata(assistantMessageId, workspaceId, pendingRunMetadataId);
         requestHeaders = {
           ...requestHeaders,
           [DEVTOOLS_RUN_METADATA_ID_HEADER]: pendingRunMetadataId,
@@ -1250,7 +1322,7 @@ export class AIService extends EventEmitter {
         // StreamManager failed before registering a stream. Clear queued run
         // metadata so it cannot attach to a later unrelated request.
         if (pendingRunMetadataId != null) {
-          this.devToolsService?.clearPendingRunMetadata(workspaceId, pendingRunMetadataId);
+          this.clearTrackedPendingDevToolsRunMetadata(assistantMessageId);
           pendingRunMetadataId = null;
         }
 
@@ -1262,7 +1334,7 @@ export class AIService extends EventEmitter {
       // make sure we don't leave an empty assistant placeholder behind.
       if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
         if (pendingRunMetadataId != null) {
-          this.devToolsService?.clearPendingRunMetadata(workspaceId, pendingRunMetadataId);
+          this.clearTrackedPendingDevToolsRunMetadata(assistantMessageId);
           pendingRunMetadataId = null;
         }
         await deleteAbortedPlaceholder(assistantMessageId);
@@ -1273,7 +1345,7 @@ export class AIService extends EventEmitter {
       return Ok(undefined);
     } catch (error) {
       if (pendingRunMetadataId != null) {
-        this.devToolsService?.clearPendingRunMetadata(workspaceId, pendingRunMetadataId);
+        this.clearTrackedPendingDevToolsRunMetadataById(workspaceId, pendingRunMetadataId);
         pendingRunMetadataId = null;
       }
 

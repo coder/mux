@@ -1752,7 +1752,9 @@ const DevToolsRunSummarySchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   startedAt: z.string(),
-  toolPolicy: ToolPolicySchema.optional(),
+  // Tolerate malformed historical run data from devtools.jsonl without failing
+  // the entire API response; invalid values are dropped at the boundary.
+  toolPolicy: ToolPolicySchema.optional().catch(undefined),
   stepCount: z.number(),
   firstMessage: z.string(),
   hasError: z.boolean(),
