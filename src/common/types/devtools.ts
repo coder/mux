@@ -1,8 +1,11 @@
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+
 /** A "run" = one top-level AI SDK call (streamText/generateText). */
 export interface DevToolsRun {
   id: string;
   workspaceId: string;
   startedAt: string; // ISO timestamp
+  toolPolicy?: ToolPolicy;
 }
 
 /** A "step" = a single LLM round-trip within a run. */

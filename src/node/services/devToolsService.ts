@@ -87,12 +87,37 @@ export class DevToolsService extends EventEmitter {
   private readonly loadingPromises = new Map<string, Promise<void>>();
   private readonly writeQueues = new Map<string, Promise<void>>();
 
+  private readonly pendingRunMetadata = new Map<string, Partial<Pick<DevToolsRun, "toolPolicy">>>();
+
   constructor(private readonly config: Config) {
     super();
   }
 
   get enabled(): boolean {
     return this.config.getLlmDebugLogsEnabled();
+  }
+
+  /**
+   * Queue metadata to be merged into the next run created for this workspace.
+   *
+   * This bridges the timing gap between policy resolution in AIService (before
+   * any provider call) and lazy run creation in DevTools middleware (on first
+   * provider invocation). Metadata is consumed exactly once by createRun.
+   */
+  setPendingRunMetadata(
+    workspaceId: string,
+    metadata: Partial<Pick<DevToolsRun, "toolPolicy">>
+  ): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "DevToolsService.setPendingRunMetadata requires a workspaceId"
+    );
+
+    if (!this.enabled) {
+      return;
+    }
+
+    this.pendingRunMetadata.set(workspaceId, metadata);
   }
 
   async createRun(workspaceId: string, run: DevToolsRun): Promise<void> {
@@ -105,6 +130,14 @@ export class DevToolsService extends EventEmitter {
 
     await this.ensureLoaded(workspaceId);
     const data = this.getOrCreateWorkspaceData(workspaceId);
+
+    // Apply queued run metadata (for example, effective tool policy) captured
+    // before the stream reached provider middleware.
+    const pendingMetadata = this.pendingRunMetadata.get(workspaceId);
+    if (pendingMetadata) {
+      Object.assign(run, pendingMetadata);
+      this.pendingRunMetadata.delete(workspaceId);
+    }
 
     data.runs.set(run.id, run);
     await this.appendToFile(workspaceId, { type: "run", run });
@@ -265,6 +298,7 @@ export class DevToolsService extends EventEmitter {
     data.steps.clear();
     data.clearGeneration += 1;
     data.loaded = true;
+    this.pendingRunMetadata.delete(workspaceId);
 
     // Enqueue truncation so clear() cannot race with pending appends.
     await this.enqueueWrite(workspaceId, async () => {

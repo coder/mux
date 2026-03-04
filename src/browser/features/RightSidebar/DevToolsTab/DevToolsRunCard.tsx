@@ -91,7 +91,7 @@ export function DevToolsRunCard(props: DevToolsRunCardProps) {
           ) : displaySteps && displaySteps.length > 0 ? (
             <div className="flex flex-col gap-1">
               {displaySteps.map((step) => (
-                <DevToolsStepCard key={step.id} step={step} />
+                <DevToolsStepCard key={step.id} step={step} toolPolicy={props.run.toolPolicy} />
               ))}
             </div>
           ) : (

@@ -161,6 +161,62 @@ describe("DevToolsService", () => {
       });
     });
 
+    it("applies pending toolPolicy metadata to the next run", async () => {
+      const config = createTestConfig({ sessionsDir, enabled: true });
+      const service = new DevToolsService(config);
+      const policy = [
+        { regex_match: "propose_plan", action: "require" as const },
+        { regex_match: "agent_report", action: "disable" as const },
+      ];
+
+      service.setPendingRunMetadata("ws-1", { toolPolicy: policy });
+      await service.createRun("ws-1", makeRun("run-1"));
+
+      const runs = await service.getRuns("ws-1");
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.toolPolicy).toEqual(policy);
+    });
+
+    it("persists toolPolicy metadata in jsonl replay", async () => {
+      const config = createTestConfig({ sessionsDir, enabled: true });
+      const service1 = new DevToolsService(config);
+      const policy = [{ regex_match: "bash", action: "disable" as const }];
+
+      service1.setPendingRunMetadata("ws-1", { toolPolicy: policy });
+      await service1.createRun("ws-1", makeRun("run-1"));
+
+      const service2 = new DevToolsService(config);
+      const runs = await service2.getRuns("ws-1");
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.toolPolicy).toEqual(policy);
+    });
+
+    it("does not set toolPolicy when no pending metadata exists", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+
+      await service.createRun("ws-1", makeRun("run-1"));
+
+      const runs = await service.getRuns("ws-1");
+      expect(runs).toHaveLength(1);
+      expect(runs[0]?.toolPolicy).toBeUndefined();
+    });
+
+    it("consumes pending metadata once", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const policy = [{ regex_match: ".*", action: "enable" as const }];
+
+      service.setPendingRunMetadata("ws-1", { toolPolicy: policy });
+      await service.createRun("ws-1", makeRun("run-1", "2025-06-01T00:00:00Z"));
+      await service.createRun("ws-1", makeRun("run-2", "2025-06-01T00:01:00Z"));
+
+      const runs = await service.getRuns("ws-1");
+      const run1 = runs.find((run) => run.id === "run-1");
+      const run2 = runs.find((run) => run.id === "run-2");
+
+      expect(run1?.toolPolicy).toEqual(policy);
+      expect(run2?.toolPolicy).toBeUndefined();
+    });
+
     it("createStep stores step and getRunWithSteps returns it", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       await service.createRun("ws-1", makeRun("run-1"));
@@ -493,6 +549,25 @@ describe("DevToolsService", () => {
   });
 
   describe("event emission", () => {
+    it("emits toolPolicy in run-created summary", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const events: DevToolsEvent[] = [];
+      const policy = [{ regex_match: "propose_plan", action: "require" as const }];
+
+      service.on("update:ws-1", (event: DevToolsEvent) => {
+        events.push(event);
+      });
+
+      service.setPendingRunMetadata("ws-1", { toolPolicy: policy });
+      await service.createRun("ws-1", makeRun("run-1"));
+
+      const runCreated = events.find((event) => event.type === "run-created");
+      expect(runCreated).toBeDefined();
+      if (runCreated?.type === "run-created") {
+        expect(runCreated.run.toolPolicy).toEqual(policy);
+      }
+    });
+
     it("emits run-created, updateStep events, and cleared", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const events: DevToolsEvent[] = [];

@@ -176,6 +176,7 @@ export class AIService extends EventEmitter {
   private readonly sessionUsageService?: SessionUsageService;
   private readonly providerService: ProviderService;
   private readonly providerModelFactory: ProviderModelFactory;
+  private readonly devToolsService?: DevToolsService;
 
   // Tracks in-flight stream startup (before StreamManager emits stream-start).
   // This enables user interrupts (Esc/Ctrl+C) during the UI "starting..." phase.
@@ -226,6 +227,7 @@ export class AIService extends EventEmitter {
     this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
       this.providerService.getConfig()
     );
+    this.devToolsService = devToolsService;
     this.providerModelFactory = new ProviderModelFactory(
       config,
       providerService,
@@ -748,6 +750,17 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
       } = agentResult.data;
       toolNamesForSentinel = agentResult.data.toolNamesForSentinel;
+
+      // Queue run metadata before any provider call so DevTools middleware can
+      // merge it into the lazily-created run entry on first model invocation.
+      // Always overwrite pending state per request to avoid leaking policy from
+      // a prior stream that never reached run creation.
+      this.devToolsService?.setPendingRunMetadata(workspaceId, {
+        toolPolicy:
+          effectiveToolPolicy != null && effectiveToolPolicy.length > 0
+            ? effectiveToolPolicy
+            : undefined,
+      });
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
