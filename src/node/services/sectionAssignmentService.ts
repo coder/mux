@@ -112,7 +112,12 @@ export class SectionAssignmentService {
       return;
     }
 
-    if (metadata.pinnedToSection === true) {
+    // Legacy compat: workspaces with sectionId but no pinnedToSection flag
+    // were manually assigned before smart sections existed — treat as pinned.
+    if (
+      metadata.pinnedToSection === true ||
+      (metadata.sectionId != null && metadata.pinnedToSection == null)
+    ) {
       return;
     }
 
@@ -168,6 +173,12 @@ export class SectionAssignmentService {
 
     if (evaluationResult.hasInconclusiveRules || metadata.sectionId == null) {
       // Preserve current assignment while some rule fields remain unknown.
+      return;
+    }
+
+    // Only unassign if workspace was auto-assigned (pinnedToSection === false).
+    // Not if it's legacy-manual (pinnedToSection undefined) or user-pinned (true).
+    if (metadata.pinnedToSection !== false) {
       return;
     }
 
