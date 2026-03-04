@@ -4,6 +4,7 @@ import { EventEmitter } from "events";
 import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
+import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -353,7 +354,7 @@ export class AIService extends EventEmitter {
 
   private async ensureSessionsDir(): Promise<void> {
     try {
-      await fs.mkdir(this.config.sessionsDir, { recursive: true });
+      await ensurePrivateDir(this.config.sessionsDir);
     } catch (error) {
       log.error("Failed to create sessions directory:", error);
     }

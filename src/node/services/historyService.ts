@@ -10,6 +10,7 @@ import {
   type MuxMetadata,
 } from "@/common/types/message";
 import type { Config } from "@/node/config";
+import { ensurePrivateDir } from "@/node/utils/fs";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { log } from "./log";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
@@ -855,7 +856,7 @@ export class HistoryService {
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
         const workspaceDir = this.config.getSessionDir(workspaceId);
-        await fs.mkdir(workspaceDir, { recursive: true });
+        await ensurePrivateDir(workspaceDir);
         const partialPath = this.getPartialPath(workspaceId);
 
         const partialMessage: MuxMessage = {
@@ -1033,7 +1034,7 @@ export class HistoryService {
   ): Promise<Result<void>> {
     try {
       const workspaceDir = this.config.getSessionDir(workspaceId);
-      await fs.mkdir(workspaceDir, { recursive: true });
+      await ensurePrivateDir(workspaceDir);
       const historyPath = this.getChatHistoryPath(workspaceId);
 
       // DEBUG: Log message append with caller stack trace

@@ -28,6 +28,7 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { listLocalBranches } from "@/node/git";
@@ -1589,7 +1590,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const sessionDir = this.config.getSessionDir(workspaceId);
-      await fsPromises.mkdir(sessionDir, { recursive: true });
+      await ensurePrivateDir(sessionDir);
       const exclusionsPath = path.join(sessionDir, "exclusions.json");
       await fsPromises.writeFile(
         exclusionsPath,
@@ -3141,7 +3142,7 @@ export class WorkspaceService extends EventEmitter {
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
 
       try {
-        await fsPromises.mkdir(newSessionDir, { recursive: true });
+        await ensurePrivateDir(newSessionDir);
 
         const sessionFiles = [
           "chat.jsonl",
