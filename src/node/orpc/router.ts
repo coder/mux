@@ -4332,6 +4332,31 @@ export const router = (authToken?: string) => {
           return context.analyticsService.executeRawQuery(input.sql);
         }),
 
+      getSavedQueries: t
+        .input(schemas.analytics.getSavedQueries.input)
+        .output(schemas.analytics.getSavedQueries.output)
+        .handler(async ({ context }) => {
+          return context.analyticsService.getSavedQueries();
+        }),
+      saveQuery: t
+        .input(schemas.analytics.saveQuery.input)
+        .output(schemas.analytics.saveQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.saveQuery(input);
+        }),
+      updateSavedQuery: t
+        .input(schemas.analytics.updateSavedQuery.input)
+        .output(schemas.analytics.updateSavedQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.updateSavedQuery(input);
+        }),
+      deleteSavedQuery: t
+        .input(schemas.analytics.deleteSavedQuery.input)
+        .output(schemas.analytics.deleteSavedQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.deleteSavedQuery(input);
+        }),
+
       rebuildDatabase: t
         .input(schemas.analytics.rebuildDatabase.input)
         .output(schemas.analytics.rebuildDatabase.output)

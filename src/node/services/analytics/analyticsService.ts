@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 import { Worker } from "node:worker_threads";
+import writeFileAtomic from "write-file-atomic";
 import type {
   AgentCostRow,
   DelegationAgentBreakdownRow,
@@ -15,6 +17,7 @@ import type {
   TimingPercentilesRow,
   TokensByModelRow,
 } from "@/common/orpc/schemas/analytics";
+import type { SavedQuery } from "@/common/types/savedQueries";
 import { getModelProvider } from "@/common/utils/ai/models";
 import type { Config } from "@/node/config";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -413,6 +416,161 @@ export class AnalyticsService {
   ): Promise<T> {
     await this.ensureWorker();
     return this.dispatch<T>("query", { queryName, params });
+  }
+
+  private get savedQueriesPath(): string {
+    return path.join(this.config.rootDir, "analytics", "saved-queries.json");
+  }
+
+  private async readSavedQueries(): Promise<SavedQuery[]> {
+    try {
+      const contents = await fs.readFile(this.savedQueriesPath, "utf8");
+      const parsed = JSON.parse(contents) as { queries?: unknown };
+
+      assert(parsed && typeof parsed === "object", "Saved queries file must contain a JSON object");
+      assert(Array.isArray(parsed.queries), "Saved queries file must contain a queries array");
+
+      const queries: SavedQuery[] = [];
+      for (const query of parsed.queries) {
+        if (!query || typeof query !== "object") {
+          continue;
+        }
+
+        const candidate = query as Partial<SavedQuery>;
+        if (
+          typeof candidate.id !== "string" ||
+          typeof candidate.label !== "string" ||
+          typeof candidate.sql !== "string" ||
+          (candidate.chartType !== null && typeof candidate.chartType !== "string") ||
+          typeof candidate.order !== "number" ||
+          !Number.isFinite(candidate.order) ||
+          typeof candidate.createdAt !== "string"
+        ) {
+          continue;
+        }
+
+        queries.push({
+          id: candidate.id,
+          label: candidate.label,
+          sql: candidate.sql,
+          chartType: candidate.chartType,
+          order: candidate.order,
+          createdAt: candidate.createdAt,
+        });
+      }
+
+      return queries;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+
+      log.warn("[AnalyticsService] Failed to read saved queries file; recovering with empty list", {
+        path: this.savedQueriesPath,
+        error: getErrorMessage(error),
+      });
+      return [];
+    }
+  }
+
+  private async writeSavedQueries(queries: SavedQuery[]): Promise<void> {
+    assert(Array.isArray(queries), "writeSavedQueries requires an array of queries");
+    await fs.mkdir(path.dirname(this.savedQueriesPath), { recursive: true });
+    await writeFileAtomic(this.savedQueriesPath, `${JSON.stringify({ queries }, null, 2)}\n`);
+  }
+
+  async getSavedQueries(): Promise<{ queries: SavedQuery[] }> {
+    const queries = await this.readSavedQueries();
+    return {
+      queries: [...queries].sort((left, right) => left.order - right.order),
+    };
+  }
+
+  async saveQuery(input: {
+    label: string;
+    sql: string;
+    chartType?: string | null;
+  }): Promise<SavedQuery> {
+    assert(input.label.trim().length > 0, "saveQuery requires a non-empty label");
+    assert(input.sql.trim().length > 0, "saveQuery requires non-empty SQL");
+
+    const queries = await this.readSavedQueries();
+    const savedQuery: SavedQuery = {
+      id: crypto.randomUUID(),
+      label: input.label,
+      sql: input.sql,
+      chartType: input.chartType ?? null,
+      order: queries.length,
+      createdAt: new Date().toISOString(),
+    };
+
+    queries.push(savedQuery);
+    await this.writeSavedQueries(queries);
+    return savedQuery;
+  }
+
+  async updateSavedQuery(input: {
+    id: string;
+    label?: string | null;
+    sql?: string | null;
+    chartType?: string | null;
+    order?: number | null;
+  }): Promise<SavedQuery> {
+    assert(input.id.trim().length > 0, "updateSavedQuery requires a non-empty id");
+
+    const queries = await this.readSavedQueries();
+    const index = queries.findIndex((query) => query.id === input.id);
+    assert(index >= 0, `Saved query not found for id '${input.id}'`);
+
+    const current = queries[index];
+    const updatedQuery: SavedQuery = { ...current };
+
+    if (input.label != null) {
+      assert(
+        input.label.trim().length > 0,
+        "updateSavedQuery requires a non-empty label when provided"
+      );
+      updatedQuery.label = input.label;
+    }
+
+    if (input.sql != null) {
+      assert(input.sql.trim().length > 0, "updateSavedQuery requires non-empty SQL when provided");
+      updatedQuery.sql = input.sql;
+    }
+
+    if (input.chartType !== undefined) {
+      assert(
+        input.chartType === null || input.chartType.trim().length > 0,
+        "updateSavedQuery requires non-empty chartType when provided"
+      );
+      updatedQuery.chartType = input.chartType;
+    }
+
+    if (input.order != null) {
+      assert(
+        Number.isInteger(input.order) && input.order >= 0,
+        "updateSavedQuery requires a non-negative integer order when provided"
+      );
+      updatedQuery.order = input.order;
+    }
+
+    queries[index] = updatedQuery;
+    await this.writeSavedQueries(queries);
+    return updatedQuery;
+  }
+
+  async deleteSavedQuery(input: { id: string }): Promise<{ success: boolean }> {
+    assert(input.id.trim().length > 0, "deleteSavedQuery requires a non-empty id");
+
+    const queries = await this.readSavedQueries();
+    const nextQueries = queries.filter((query) => query.id !== input.id);
+    const success = nextQueries.length !== queries.length;
+
+    if (success) {
+      await this.writeSavedQueries(nextQueries);
+    }
+
+    return { success };
   }
 
   async getSummary(

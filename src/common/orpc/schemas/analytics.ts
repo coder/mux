@@ -109,6 +109,15 @@ export const AgentTypeTokenBreakdownSchema = z.object({
   cacheCreateTokens: z.number(),
 });
 
+export const SavedQuerySchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  sql: z.string(),
+  chartType: z.string().nullable(),
+  order: z.number(),
+  createdAt: z.string(),
+});
+
 export const RawQueryColumnSchema = z.object({
   name: z.string(),
   type: z.string(),
@@ -299,6 +308,32 @@ export const analytics = {
       sql: z.string(),
     }),
     output: RawQueryResultSchema,
+  },
+  getSavedQueries: {
+    input: z.void(),
+    output: z.object({ queries: z.array(SavedQuerySchema) }),
+  },
+  saveQuery: {
+    input: z.object({
+      label: z.string(),
+      sql: z.string(),
+      chartType: z.string().nullish(),
+    }),
+    output: SavedQuerySchema,
+  },
+  updateSavedQuery: {
+    input: z.object({
+      id: z.string(),
+      label: z.string().nullish(),
+      sql: z.string().nullish(),
+      chartType: z.string().nullish(),
+      order: z.number().nullish(),
+    }),
+    output: SavedQuerySchema,
+  },
+  deleteSavedQuery: {
+    input: z.object({ id: z.string() }),
+    output: z.object({ success: z.boolean() }),
   },
   rebuildDatabase: {
     input: z.object({}),
