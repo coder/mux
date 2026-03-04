@@ -159,6 +159,9 @@ export class PRStatusStore {
   private workspacePRSubscriptions = new MapStore<string, WorkspacePRCacheEntry>();
   private workspacePRCache = new Map<string, WorkspacePRCacheEntry>();
 
+  // Tracks which workspaces have already had at least one section evaluation payload emitted.
+  private workspaceSectionEvaluated = new Set<string>();
+
   // Track active subscriptions per workspace so we only refresh workspaces that are actually visible.
   private workspaceSubscriptionCounts = new Map<string, number>();
 
@@ -269,17 +272,25 @@ export class PRStatusStore {
     previousStatus: GitHubPRStatus | undefined,
     nextEntry: WorkspacePRCacheEntry
   ): void {
-    if (!this.client || nextEntry.error) {
+    if (!this.client || nextEntry.error || nextEntry.loading) {
       return;
     }
 
     const nextStatus = nextEntry.status;
+    const firstEvaluation = !this.workspaceSectionEvaluated.has(workspaceId);
+    const stateChanged = previousStatus?.state !== nextStatus?.state;
+    const mergeChanged = previousStatus?.mergeStateStatus !== nextStatus?.mergeStateStatus;
+    const draftChanged = previousStatus?.isDraft !== nextStatus?.isDraft;
+    const failedChecksChanged = previousStatus?.hasFailedChecks !== nextStatus?.hasFailedChecks;
+    const pendingChecksChanged = previousStatus?.hasPendingChecks !== nextStatus?.hasPendingChecks;
+
     if (
-      previousStatus?.state === nextStatus?.state &&
-      previousStatus?.mergeStateStatus === nextStatus?.mergeStateStatus &&
-      previousStatus?.isDraft === nextStatus?.isDraft &&
-      previousStatus?.hasFailedChecks === nextStatus?.hasFailedChecks &&
-      previousStatus?.hasPendingChecks === nextStatus?.hasPendingChecks
+      !firstEvaluation &&
+      !stateChanged &&
+      !mergeChanged &&
+      !draftChanged &&
+      !failedChecksChanged &&
+      !pendingChecksChanged
     ) {
       return;
     }
@@ -293,6 +304,7 @@ export class PRStatusStore {
       prHasFailedChecks: nextStatus?.hasFailedChecks,
       prHasPendingChecks: nextStatus?.hasPendingChecks,
     });
+    this.workspaceSectionEvaluated.add(workspaceId);
   }
 
   private setWorkspacePRCacheEntry(workspaceId: string, nextEntry: WorkspacePRCacheEntry): void {
