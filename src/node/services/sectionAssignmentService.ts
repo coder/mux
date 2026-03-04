@@ -171,8 +171,8 @@ export class SectionAssignmentService {
       return;
     }
 
-    if (evaluationResult.hasInconclusiveRules || metadata.sectionId == null) {
-      // Preserve current assignment while some rule fields remain unknown.
+    if (evaluationResult.currentSectionInconclusive || metadata.sectionId == null) {
+      // Preserve current assignment while current-section rule fields remain unknown.
       return;
     }
 

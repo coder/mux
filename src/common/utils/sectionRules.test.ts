@@ -127,6 +127,7 @@ describe("evaluateSectionRules", () => {
     expectResult(evaluateSectionRules(sections, makeCtx()), {
       targetSectionId: undefined,
       hasInconclusiveRules: false,
+      currentSectionInconclusive: false,
     });
   });
 
@@ -142,6 +143,7 @@ describe("evaluateSectionRules", () => {
     expectResult(evaluateSectionRules(sections, makeCtx({ agentMode: "plan" })), {
       targetSectionId: "a",
       hasInconclusiveRules: false,
+      currentSectionInconclusive: false,
     });
   });
 
@@ -157,6 +159,7 @@ describe("evaluateSectionRules", () => {
     expectResult(evaluateSectionRules(sections, makeCtx({ agentMode: "exec" })), {
       targetSectionId: undefined,
       hasInconclusiveRules: false,
+      currentSectionInconclusive: false,
     });
   });
 
@@ -183,6 +186,7 @@ describe("evaluateSectionRules", () => {
       {
         targetSectionId: "a",
         hasInconclusiveRules: false,
+        currentSectionInconclusive: false,
       }
     );
   });
@@ -210,6 +214,7 @@ describe("evaluateSectionRules", () => {
       {
         targetSectionId: undefined,
         hasInconclusiveRules: false,
+        currentSectionInconclusive: false,
       }
     );
   });
@@ -229,6 +234,7 @@ describe("evaluateSectionRules", () => {
     expectResult(evaluateSectionRules(sections, makeCtx({ streaming: true })), {
       targetSectionId: "a",
       hasInconclusiveRules: false,
+      currentSectionInconclusive: false,
     });
   });
 
@@ -249,6 +255,7 @@ describe("evaluateSectionRules", () => {
     expectResult(evaluateSectionRules(sections, makeCtx({ streaming: true })), {
       targetSectionId: "first",
       hasInconclusiveRules: false,
+      currentSectionInconclusive: false,
     });
   });
 
@@ -272,6 +279,7 @@ describe("evaluateSectionRules", () => {
       {
         targetSectionId: undefined,
         hasInconclusiveRules: false,
+        currentSectionInconclusive: false,
       }
     );
   });
@@ -296,6 +304,63 @@ describe("evaluateSectionRules", () => {
       {
         targetSectionId: undefined,
         hasInconclusiveRules: true,
+        currentSectionInconclusive: true,
+      }
+    );
+  });
+
+  it("currentSectionInconclusive is true only for current section's rules", () => {
+    const sections = [
+      makeSection("a", [
+        {
+          conditions: [makeCondition({ field: "prState", op: "eq", value: "OPEN" })],
+        },
+      ]),
+      makeSection("b", [
+        {
+          conditions: [makeCondition({ field: "gitDirty", op: "eq", value: true })],
+        },
+      ]),
+    ];
+
+    expectResult(
+      evaluateSectionRules(
+        sections,
+        makeCtx({
+          currentSectionId: "a",
+          prState: "CLOSED",
+          availableFields: new Set(["prState"]),
+        })
+      ),
+      {
+        targetSectionId: undefined,
+        hasInconclusiveRules: true,
+        currentSectionInconclusive: false,
+      }
+    );
+  });
+
+  it("currentSectionInconclusive is true when current section has unknown fields", () => {
+    const sections = [
+      makeSection("a", [
+        {
+          conditions: [makeCondition({ field: "gitDirty", op: "eq", value: true })],
+        },
+      ]),
+    ];
+
+    expectResult(
+      evaluateSectionRules(
+        sections,
+        makeCtx({
+          currentSectionId: "a",
+          availableFields: new Set(["agentMode", "streaming", "taskStatus", "hasAgentStatus"]),
+        })
+      ),
+      {
+        targetSectionId: undefined,
+        hasInconclusiveRules: true,
+        currentSectionInconclusive: true,
       }
     );
   });
@@ -323,6 +388,7 @@ describe("evaluateSectionRules", () => {
       {
         targetSectionId: "mixed",
         hasInconclusiveRules: true,
+        currentSectionInconclusive: false,
       }
     );
   });
@@ -350,6 +416,7 @@ describe("evaluateSectionRules", () => {
       {
         targetSectionId: undefined,
         hasInconclusiveRules: true,
+        currentSectionInconclusive: false,
       }
     );
   });
@@ -374,6 +441,7 @@ describe("evaluateSectionRules", () => {
       {
         targetSectionId: undefined,
         hasInconclusiveRules: false,
+        currentSectionInconclusive: false,
       }
     );
   });

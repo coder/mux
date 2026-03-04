@@ -28,6 +28,8 @@ export interface SectionRuleEvaluationResult {
   targetSectionId: string | undefined;
   /** True when at least one rule could not be fully evaluated due to unknown fields. */
   hasInconclusiveRules: boolean;
+  /** True when the workspace's current section has rules that couldn't be conclusively evaluated. */
+  currentSectionInconclusive: boolean;
 }
 
 /** Map condition field names to context values. Record mapping keeps field handling exhaustive. */
@@ -125,16 +127,20 @@ export function evaluateSectionRules(
     return {
       targetSectionId: undefined,
       hasInconclusiveRules: false,
+      currentSectionInconclusive: false,
     };
   }
 
   let hasInconclusiveRules = false;
+  let currentSectionInconclusive = false;
 
   for (const section of sections) {
     const rules = section.rules;
     if (!rules || rules.length === 0) {
       continue;
     }
+
+    const isCurrentSection = section.id === ctx.currentSectionId;
 
     for (const rule of rules) {
       let ruleHasInconclusiveCondition = false;
@@ -155,12 +161,16 @@ export function evaluateSectionRules(
 
       if (ruleHasInconclusiveCondition) {
         hasInconclusiveRules = true;
+        if (isCurrentSection) {
+          currentSectionInconclusive = true;
+        }
       }
 
       if (allConditionsPass) {
         return {
           targetSectionId: section.id,
           hasInconclusiveRules,
+          currentSectionInconclusive,
         };
       }
     }
@@ -169,5 +179,6 @@ export function evaluateSectionRules(
   return {
     targetSectionId: undefined,
     hasInconclusiveRules,
+    currentSectionInconclusive,
   };
 }

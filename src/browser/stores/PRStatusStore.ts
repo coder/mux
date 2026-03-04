@@ -274,6 +274,11 @@ export class PRStatusStore {
   invalidateSectionEvaluationCache(): void {
     this.lastEvaluatedPRState.clear();
     this.pendingPRState.clear();
+
+    // Re-send PR context for all cached workspaces so rules re-evaluate after section config changes.
+    for (const [workspaceId, entry] of this.workspacePRCache) {
+      this.maybeReevaluateWorkspaceSection(workspaceId, undefined, entry);
+    }
   }
 
   private getSectionEvaluationPRStateKey(status: GitHubPRStatus | undefined): string {
