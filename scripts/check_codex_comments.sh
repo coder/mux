@@ -82,7 +82,7 @@ compute_codex_sets_from_arrays() {
 
   REGULAR_COMMENTS=$(jq -cn --argjson comments "$comments_json" --arg bot "$BOT_LOGIN_GRAPHQL" '[
     $comments[]
-    | select(.author.login == $bot and .isMinimized == false and (.body | test("Didn.t find any major issues|usage limits have been reached") | not))
+    | select(.author.login == $bot and .isMinimized == false and (.body | test("Didn.t find any major issues|usage limits have been reached|create a Codex account") | not))
   ]')
 
   UNRESOLVED_THREADS=$(jq -cn --argjson threads "$threads_json" --arg bot "$BOT_LOGIN_GRAPHQL" '[
