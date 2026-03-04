@@ -80,6 +80,10 @@ export const WorkspaceMetadataSchema = z.object({
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
   }),
+  pinnedToSection: z.boolean().optional().meta({
+    description:
+      "When true, workspace is pinned to its section and won't be auto-moved by section rules.",
+  }),
 });
 
 export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({

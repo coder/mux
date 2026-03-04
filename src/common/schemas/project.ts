@@ -14,12 +14,38 @@ import { RuntimeEnablementOverridesSchema } from "./runtimeEnablement";
  * Section schema for organizing workspaces within a project.
  * Sections are project-scoped and persist to config.json.
  */
+export const SectionRuleConditionSchema = z.object({
+  field: z.enum([
+    "agentMode",
+    "streaming",
+    "prState",
+    "prMergeStatus",
+    "prIsDraft",
+    "prHasFailedChecks",
+    "prHasPendingChecks",
+    "taskStatus",
+    "hasAgentStatus",
+    "gitDirty",
+  ]),
+  op: z.enum(["eq", "neq", "in"]),
+  value: z.union([z.string(), z.boolean()]),
+});
+export type SectionRuleCondition = z.infer<typeof SectionRuleConditionSchema>;
+
+export const SectionRuleSchema = z.object({
+  conditions: z.array(SectionRuleConditionSchema).min(1),
+});
+export type SectionRule = z.infer<typeof SectionRuleSchema>;
+
 export const SectionConfigSchema = z.object({
   id: z.string().meta({
     description: "Unique section ID (8 hex chars)",
   }),
   name: z.string().meta({
     description: "Display name for the section",
+  }),
+  rules: z.array(SectionRuleSchema).optional().meta({
+    description: "Auto-assignment rules for this section",
   }),
   color: z.string().optional().meta({
     description: "Accent color (hex value like #ff6b6b or preset name)",
@@ -119,6 +145,10 @@ export const WorkspaceConfigSchema = z.object({
   }),
   sectionId: z.string().optional().meta({
     description: "ID of the section this workspace belongs to (optional, unsectioned if absent)",
+  }),
+  pinnedToSection: z.boolean().optional().meta({
+    description:
+      "When true, workspace is pinned to its section and won't be auto-moved by section rules.",
   }),
 });
 
