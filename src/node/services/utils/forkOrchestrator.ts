@@ -127,6 +127,11 @@ async function resolveMultiProjectFallbackTrunkBranch(
     return forkResult.sourceBranch;
   }
 
+  if (preferredTrunkBranch?.trim()) {
+    // Respect caller-supplied fallback before local discovery to match single-project behavior.
+    return preferredTrunkBranch.trim();
+  }
+
   try {
     const localBranches = await listLocalBranches(projectPath);
     if (localBranches.includes(sourceWorkspaceName)) {
@@ -135,9 +140,6 @@ async function resolveMultiProjectFallbackTrunkBranch(
 
     return detectDefaultTrunkBranch(projectPath, localBranches);
   } catch {
-    if (preferredTrunkBranch?.trim()) {
-      return preferredTrunkBranch.trim();
-    }
     return "main";
   }
 }

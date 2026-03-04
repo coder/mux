@@ -87,6 +87,7 @@ async function runOrchestrateFork(params: {
   parentMetadata: WorkspaceMetadata;
   config?: Config;
   trusted?: boolean;
+  preferredTrunkBranch?: string;
 }): Promise<Awaited<ReturnType<typeof orchestrateFork>>> {
   return orchestrateFork({
     sourceRuntime: createProjectRuntimeMocks().runtime,
@@ -100,6 +101,7 @@ async function runOrchestrateFork(params: {
     parentMetadata: params.parentMetadata,
     allowCreateFallback: true,
     trusted: params.trusted,
+    preferredTrunkBranch: params.preferredTrunkBranch,
   });
 }
 
@@ -306,6 +308,51 @@ describe("orchestrateFork (multi-project)", () => {
     expect(projectTwoRuntime.createWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({ trusted: false })
     );
+  });
+
+  it("uses preferredTrunkBranch before local discovery for multi-project fallback", async () => {
+    const projectOneRuntime = createProjectRuntimeMocks();
+    const projectTwoRuntime = createProjectRuntimeMocks();
+    mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
+
+    projectOneRuntime.forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-one",
+      sourceBranch: "main",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.forkWorkspace.mockResolvedValue({
+      success: false,
+      error: "fork unavailable",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.createWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-two",
+    });
+
+    // If fallback trunk resolution reaches local discovery, it would choose "master".
+    listLocalBranchesMock.mockResolvedValue(["master", "feature-two"]);
+    detectDefaultTrunkBranchMock.mockResolvedValue("master");
+
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+      preferredTrunkBranch: "develop",
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
+
+    expect(projectTwoRuntime.createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: PROJECT_TWO_PATH,
+        trunkBranch: "develop",
+      })
+    );
+
+    // The primary project keeps its source branch as the returned trunk branch.
+    expect(result.data.trunkBranch).toBe("main");
+
+    expect(listLocalBranchesMock).not.toHaveBeenCalled();
+    expect(detectDefaultTrunkBranchMock).not.toHaveBeenCalled();
   });
 
   it("resolves fallback create trunk branch per project", async () => {
