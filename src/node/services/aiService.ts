@@ -900,13 +900,7 @@ export class AIService extends EventEmitter {
       });
 
       // Build agent system prompt, system message, and discover agents/skills.
-      const {
-        agentSystemPrompt,
-        systemMessage,
-        systemMessageTokens,
-        agentDefinitions,
-        availableSkills,
-      } = await buildStreamSystemContext({
+      const streamSystemContext = await buildStreamSystemContext({
         runtime,
         metadata,
         workspacePath,
@@ -920,6 +914,9 @@ export class AIService extends EventEmitter {
         providersConfig: this.providerService.getConfig(),
         mcpServers,
       });
+      const { agentSystemPrompt, systemMessageTokens, agentDefinitions, availableSkills } =
+        streamSystemContext;
+      let systemMessage = streamSystemContext.systemMessage;
 
       // Load project secrets (system workspace never gets secrets injected)
       const projectSecrets =
@@ -953,6 +950,13 @@ export class AIService extends EventEmitter {
         } finally {
           mcpSetupDurationMs = Date.now() - start;
         }
+      }
+
+      if (mcpStats && mcpStats.failedServerCount > 0) {
+        const failedNames = mcpStats.failedServerNames.join(", ");
+        workspaceLog.warn("MCP servers failed to start", { failedNames });
+        // Prepend warning so the model can inform the user about unavailable tools.
+        systemMessage = `[Warning: ${mcpStats.failedServerCount} MCP server(s) failed to start: ${failedNames}. Tools from these servers are unavailable. Check MCP server configuration in Settings.]\n\n${systemMessage}`;
       }
 
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
