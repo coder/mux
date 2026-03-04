@@ -1406,7 +1406,7 @@ export class ProjectService {
       } else if (pinned === true) {
         workspace.pinnedToSection = true;
       } else if (pinned === false) {
-        workspace.pinnedToSection = undefined;
+        workspace.pinnedToSection = false;
       }
 
       await this.config.saveConfig(config);
