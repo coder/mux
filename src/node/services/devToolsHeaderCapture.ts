@@ -28,24 +28,38 @@ const SENSITIVE_HEADER_NAMES = new Set([
 ]);
 
 /**
- * Prefix-match for bearer/token patterns that may appear under custom names.
- *
- * Response headers come from the server and do not carry outbound credentials.
- * Only redact set-cookie (via the cookie check) and known sensitive names there.
+ * Response headers can still carry credentials under custom names (for example
+ * from provider proxies), so we keep broad token/secret redaction enabled in
+ * both directions. To avoid over-redacting operational metadata, explicitly
+ * allowlist known non-sensitive rate-limit response headers.
  */
+const SAFE_RESPONSE_TOKEN_HEADER_PREFIXES = [
+  "anthropic-ratelimit-",
+  "x-ratelimit-",
+  "ratelimit-",
+] as const;
+
+function isKnownSafeResponseTokenHeader(name: string): boolean {
+  return SAFE_RESPONSE_TOKEN_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+/** Prefix-match for bearer/token patterns that may appear under custom names. */
 function isSensitiveHeaderName(name: string, direction: "request" | "response"): boolean {
   const lower = name.toLowerCase();
   if (SENSITIVE_HEADER_NAMES.has(lower) || lower.includes("cookie")) {
     return true;
   }
 
-  // Broad substring checks are request-only so response metadata like
-  // anthropic-ratelimit-input-tokens-remaining remains visible for debugging.
-  if (direction === "request") {
-    return lower.includes("secret") || lower.includes("token");
+  const containsTokenLikeSecret = lower.includes("secret") || lower.includes("token");
+  if (!containsTokenLikeSecret) {
+    return false;
   }
 
-  return false;
+  if (direction === "response" && isKnownSafeResponseTokenHeader(lower)) {
+    return false;
+  }
+
+  return true;
 }
 
 export function redactHeaders(

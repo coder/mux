@@ -71,6 +71,17 @@ describe("devToolsHeaderCapture", () => {
     expect(headers["x-ratelimit-tokens-reset"]).toBe("10");
   });
 
+  it("redacts unknown response token headers by default", () => {
+    const headers = redactHeaders(
+      {
+        "x-auth-token": "response-token",
+      },
+      "response"
+    );
+
+    expect(headers["x-auth-token"]).toBe("[REDACTED]");
+  });
+
   it("still redacts response set-cookie headers", () => {
     const headers = redactHeaders(
       {
