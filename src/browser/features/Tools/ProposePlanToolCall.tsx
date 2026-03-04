@@ -333,7 +333,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   }
 
   const reviews = useReviews(workspaceId ?? "");
-  const normalizedPlanPath = planPath != null ? normalizePlanFilePath(planPath) : null;
+  const normalizedPlanPath =
+    planPath != null ? (normalizePlanFilePath(planPath) ?? planPath) : null;
   const planReviews =
     normalizedPlanPath == null
       ? []
