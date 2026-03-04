@@ -333,10 +333,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
         if (waitResult.success) {
           setMuxGatewayLoginStatus("success");
+
+          const refreshPromise = refreshMuxGatewayAccountStatus();
           // Time-box the balance check so a stalled gateway endpoint doesn't
           // block first-time onboarding defaults.
           const accountStatus = await Promise.race([
-            refreshMuxGatewayAccountStatus(),
+            refreshPromise,
             new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
           ]);
 
@@ -365,6 +367,16 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           if (!hasCredits && gateway.isEnabled) {
             gateway.toggleEnabled();
+          }
+
+          // If the timeout won the race, the balance check is still in flight.
+          // When it eventually resolves with depleted credits, disable gateway.
+          if (accountStatus == null) {
+            void refreshPromise.then((laterStatus) => {
+              if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
+                gateway.toggleEnabled();
+              }
+            });
           }
           return;
         }
@@ -465,10 +477,11 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       if (data.ok === true) {
         setMuxGatewayLoginStatus("success");
 
+        const refreshPromise = refreshMuxGatewayAccountStatus();
         // Time-box the balance check so a stalled gateway endpoint doesn't
         // block first-time onboarding defaults.
         void Promise.race([
-          refreshMuxGatewayAccountStatus(),
+          refreshPromise,
           new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
         ]).then((accountStatus) => {
           if (muxGatewayLoginAttemptRef.current !== attempt) return;
@@ -496,6 +509,16 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           if (!hasCredits && gateway.isEnabled) {
             gateway.toggleEnabled();
+          }
+
+          // If the timeout won the race, the balance check is still in flight.
+          // When it eventually resolves with depleted credits, disable gateway.
+          if (accountStatus == null) {
+            void refreshPromise.then((laterStatus) => {
+              if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
+                gateway.toggleEnabled();
+              }
+            });
           }
         });
         return;
