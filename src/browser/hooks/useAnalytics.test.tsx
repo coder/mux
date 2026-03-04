@@ -277,4 +277,37 @@ describe("useAnalytics hooks", () => {
     expect(result.current.error).not.toBe("Internal server error");
     expect(result.current.data).toBeNull();
   });
+
+  test("executeRawQuery keeps infrastructure failures as generic internal errors", async () => {
+    const analyticsStub = createAnalyticsServiceStub(summaryFixture);
+    analyticsStub.service.executeRawQuery = () =>
+      Promise.reject(new Error("Analytics worker exited with code 1"));
+
+    await server?.close();
+    const context: Partial<ORPCContext> = {
+      analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
+    };
+
+    // eslint-disable-next-line no-restricted-syntax -- test-only dynamic import avoids browser/node boundary lint
+    const { createOrpcServer } = await import("@/node/orpc/server");
+
+    server = await createOrpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      context: context as ORPCContext,
+      onOrpcError: () => undefined,
+    });
+    currentApiClient = createHttpClient(server.baseUrl);
+
+    const { result } = renderHook(() => useAnalyticsRawQuery());
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).toBe("Internal server error");
+    expect(result.current.data).toBeNull();
+  });
 });
