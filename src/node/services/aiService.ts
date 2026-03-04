@@ -62,6 +62,7 @@ import type { StreamAbortEvent, StreamAbortReason, StreamEndEvent } from "@/comm
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
+import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
 import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
@@ -544,6 +545,8 @@ export class AIService extends EventEmitter {
 
     const combinedAbortSignal = pendingAbortController.signal;
 
+    let pendingRunMetadataId: string | null = null;
+
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
         await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
@@ -750,17 +753,6 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
       } = agentResult.data;
       toolNamesForSentinel = agentResult.data.toolNamesForSentinel;
-
-      // Queue run metadata before any provider call so DevTools middleware can
-      // merge it into the lazily-created run entry on first model invocation.
-      // Always overwrite pending state per request to avoid leaking policy from
-      // a prior stream that never reached run creation.
-      this.devToolsService?.setPendingRunMetadata(workspaceId, {
-        toolPolicy:
-          effectiveToolPolicy != null && effectiveToolPolicy.length > 0
-            ? effectiveToolPolicy
-            : undefined,
-      });
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
@@ -1068,7 +1060,7 @@ export class AIService extends EventEmitter {
       // anthropic-beta for 1M context). This is the single injection site for
       // provider-specific headers, handling both direct and gateway-routed models
       // identically.
-      const requestHeaders = buildRequestHeaders(
+      let requestHeaders = buildRequestHeaders(
         modelString,
         effectiveMuxProviderOptions,
         workspaceId,
@@ -1199,6 +1191,22 @@ export class AIService extends EventEmitter {
       // post-stream recovery when a required tool is skipped.
       const forceToolChoice = !isSubagentWorkspace;
 
+      if (this.devToolsService?.enabled) {
+        // Correlate pending run metadata with the specific request that reaches
+        // DevTools middleware to avoid cross-request policy leakage.
+        pendingRunMetadataId = String(streamToken);
+        this.devToolsService.setPendingRunMetadata(workspaceId, pendingRunMetadataId, {
+          toolPolicy:
+            effectiveToolPolicy != null && effectiveToolPolicy.length > 0
+              ? effectiveToolPolicy
+              : undefined,
+        });
+        requestHeaders = {
+          ...requestHeaders,
+          [DEVTOOLS_RUN_METADATA_ID_HEADER]: pendingRunMetadataId,
+        };
+      }
+
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
@@ -1233,6 +1241,13 @@ export class AIService extends EventEmitter {
       );
 
       if (!streamResult.success) {
+        // StreamManager failed before registering a stream. Clear queued run
+        // metadata so it cannot attach to a later unrelated request.
+        if (pendingRunMetadataId != null) {
+          this.devToolsService?.clearPendingRunMetadata(workspaceId);
+          pendingRunMetadataId = null;
+        }
+
         // StreamManager already returns SendMessageError
         return Err(streamResult.error);
       }
@@ -1240,6 +1255,10 @@ export class AIService extends EventEmitter {
       // If we were interrupted during StreamManager startup before the stream was registered,
       // make sure we don't leave an empty assistant placeholder behind.
       if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
+        if (pendingRunMetadataId != null) {
+          this.devToolsService?.clearPendingRunMetadata(workspaceId);
+          pendingRunMetadataId = null;
+        }
         await deleteAbortedPlaceholder(assistantMessageId);
       }
 
@@ -1247,6 +1266,11 @@ export class AIService extends EventEmitter {
       // No need for event listener here
       return Ok(undefined);
     } catch (error) {
+      if (pendingRunMetadataId != null) {
+        this.devToolsService?.clearPendingRunMetadata(workspaceId);
+        pendingRunMetadataId = null;
+      }
+
       const errorMessage = getErrorMessage(error);
       log.error("Stream message error:", error);
       // Return as unknown error type

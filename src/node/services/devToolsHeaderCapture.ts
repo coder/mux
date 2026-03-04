@@ -10,6 +10,7 @@ import assert from "@/common/utils/assert";
  * before the request is sent.
  */
 export const DEVTOOLS_STEP_ID_HEADER = "x-mux-devtools-step-id";
+export const DEVTOOLS_RUN_METADATA_ID_HEADER = "x-mux-devtools-run-metadata-id";
 
 /** Captured request headers keyed by step ID. */
 const capturedRequestHeaders = new Map<string, Record<string, string>>();
@@ -93,10 +94,16 @@ export function consumeCapturedRequestHeaders(stepId: string): Record<string, st
  */
 export function captureAndStripDevToolsHeader(headers: Headers): void {
   const rawStepId = headers.get(DEVTOOLS_STEP_ID_HEADER);
-  if (rawStepId == null) return;
 
-  // Strip synthetic header — must never reach the provider API
+  // Strip synthetic headers — they must never reach the provider API.
+  // Run-metadata IDs correlate queued DevTools run metadata with the request
+  // that actually reaches middleware.
   headers.delete(DEVTOOLS_STEP_ID_HEADER);
+  headers.delete(DEVTOOLS_RUN_METADATA_ID_HEADER);
+
+  if (rawStepId == null) {
+    return;
+  }
 
   const stepId = rawStepId.trim();
   if (stepId.length > 0) {

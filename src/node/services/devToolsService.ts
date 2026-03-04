@@ -82,12 +82,17 @@ function applyStepBackwardCompatibilityDefaults(step: DevToolsStep): DevToolsSte
   };
 }
 
+interface PendingRunMetadata {
+  metadataId: string;
+  metadata: Partial<Pick<DevToolsRun, "toolPolicy">>;
+}
+
 export class DevToolsService extends EventEmitter {
   private readonly workspaces = new Map<string, WorkspaceData>();
   private readonly loadingPromises = new Map<string, Promise<void>>();
   private readonly writeQueues = new Map<string, Promise<void>>();
 
-  private readonly pendingRunMetadata = new Map<string, Partial<Pick<DevToolsRun, "toolPolicy">>>();
+  private readonly pendingRunMetadata = new Map<string, PendingRunMetadata>();
 
   constructor(private readonly config: Config) {
     super();
@@ -106,21 +111,44 @@ export class DevToolsService extends EventEmitter {
    */
   setPendingRunMetadata(
     workspaceId: string,
+    metadataId: string,
     metadata: Partial<Pick<DevToolsRun, "toolPolicy">>
   ): void {
     assert(
       workspaceId.trim().length > 0,
       "DevToolsService.setPendingRunMetadata requires a workspaceId"
     );
+    assert(
+      metadataId.trim().length > 0,
+      "DevToolsService.setPendingRunMetadata requires a metadataId"
+    );
 
     if (!this.enabled) {
       return;
     }
 
-    this.pendingRunMetadata.set(workspaceId, metadata);
+    this.pendingRunMetadata.set(workspaceId, {
+      metadataId,
+      metadata,
+    });
   }
 
-  async createRun(workspaceId: string, run: DevToolsRun): Promise<void> {
+  /**
+   * Drop queued run metadata for a workspace.
+   *
+   * This is used when a request exits before DevTools middleware creates a run,
+   * so stale metadata cannot leak into unrelated future runs.
+   */
+  clearPendingRunMetadata(workspaceId: string): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "DevToolsService.clearPendingRunMetadata requires a workspaceId"
+    );
+
+    this.pendingRunMetadata.delete(workspaceId);
+  }
+
+  async createRun(workspaceId: string, run: DevToolsRun, metadataId?: string): Promise<void> {
     if (!this.enabled) {
       return;
     }
@@ -135,7 +163,17 @@ export class DevToolsService extends EventEmitter {
     // before the stream reached provider middleware.
     const pendingMetadata = this.pendingRunMetadata.get(workspaceId);
     if (pendingMetadata) {
-      Object.assign(run, pendingMetadata);
+      const metadataMatches =
+        metadataId != null &&
+        metadataId.trim().length > 0 &&
+        metadataId === pendingMetadata.metadataId;
+
+      if (metadataMatches) {
+        Object.assign(run, pendingMetadata.metadata);
+      }
+
+      // Consume pending metadata in all cases: when IDs mismatch (stale request),
+      // when no ID was provided, or after successful application.
       this.pendingRunMetadata.delete(workspaceId);
     }
 

@@ -17,6 +17,7 @@ import type {
 import assert from "@/common/utils/assert";
 import { log } from "@/node/services/log";
 import {
+  DEVTOOLS_RUN_METADATA_ID_HEADER,
   DEVTOOLS_STEP_ID_HEADER,
   consumeCapturedRequestHeaders,
   redactHeaders,
@@ -256,7 +257,7 @@ export function createDevToolsMiddleware(
   let runCreationPromise: Promise<void> | null = null;
   let stepCounter = 0;
 
-  async function ensureRun(): Promise<void> {
+  async function ensureRun(runMetadataId?: string): Promise<void> {
     if (runCreated) {
       return;
     }
@@ -268,11 +269,15 @@ export function createDevToolsMiddleware(
 
     runCreationPromise = (async () => {
       try {
-        await service.createRun(workspaceId, {
-          id: runId,
+        await service.createRun(
           workspaceId,
-          startedAt: new Date().toISOString(),
-        });
+          {
+            id: runId,
+            workspaceId,
+            startedAt: new Date().toISOString(),
+          },
+          runMetadataId
+        );
         runCreated = true;
       } catch (error) {
         log.warn("DevTools: failed to create run", {
@@ -290,13 +295,24 @@ export function createDevToolsMiddleware(
     }
   }
 
+  function extractRunMetadataId(params: LanguageModelV3CallOptions): string | undefined {
+    const rawMetadataId = params.headers?.[DEVTOOLS_RUN_METADATA_ID_HEADER];
+    if (typeof rawMetadataId !== "string") {
+      return undefined;
+    }
+
+    const runMetadataId = rawMetadataId.trim();
+    return runMetadataId.length > 0 ? runMetadataId : undefined;
+  }
+
   async function createStep(
     stepType: DevToolsStep["type"],
     params: LanguageModelV3CallOptions,
     model: LanguageModelV3
   ): Promise<{ stepId: string; startedAtMs: number } | null> {
     try {
-      await ensureRun();
+      const runMetadataId = extractRunMetadataId(params);
+      await ensureRun(runMetadataId);
 
       const stepId = randomUUID();
       const stepNumber = (stepCounter += 1);

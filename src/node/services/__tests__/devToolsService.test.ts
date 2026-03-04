@@ -168,9 +168,10 @@ describe("DevToolsService", () => {
         { regex_match: "propose_plan", action: "require" as const },
         { regex_match: "agent_report", action: "disable" as const },
       ];
+      const metadataId = "metadata-1";
 
-      service.setPendingRunMetadata("ws-1", { toolPolicy: policy });
-      await service.createRun("ws-1", makeRun("run-1"));
+      service.setPendingRunMetadata("ws-1", metadataId, { toolPolicy: policy });
+      await service.createRun("ws-1", makeRun("run-1"), metadataId);
 
       const runs = await service.getRuns("ws-1");
       expect(runs).toHaveLength(1);
@@ -181,9 +182,10 @@ describe("DevToolsService", () => {
       const config = createTestConfig({ sessionsDir, enabled: true });
       const service1 = new DevToolsService(config);
       const policy = [{ regex_match: "bash", action: "disable" as const }];
+      const metadataId = "metadata-2";
 
-      service1.setPendingRunMetadata("ws-1", { toolPolicy: policy });
-      await service1.createRun("ws-1", makeRun("run-1"));
+      service1.setPendingRunMetadata("ws-1", metadataId, { toolPolicy: policy });
+      await service1.createRun("ws-1", makeRun("run-1"), metadataId);
 
       const service2 = new DevToolsService(config);
       const runs = await service2.getRuns("ws-1");
@@ -204,9 +206,10 @@ describe("DevToolsService", () => {
     it("consumes pending metadata once", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const policy = [{ regex_match: ".*", action: "enable" as const }];
+      const metadataId = "metadata-3";
 
-      service.setPendingRunMetadata("ws-1", { toolPolicy: policy });
-      await service.createRun("ws-1", makeRun("run-1", "2025-06-01T00:00:00Z"));
+      service.setPendingRunMetadata("ws-1", metadataId, { toolPolicy: policy });
+      await service.createRun("ws-1", makeRun("run-1", "2025-06-01T00:00:00Z"), metadataId);
       await service.createRun("ws-1", makeRun("run-2", "2025-06-01T00:01:00Z"));
 
       const runs = await service.getRuns("ws-1");
@@ -214,6 +217,21 @@ describe("DevToolsService", () => {
       const run2 = runs.find((run) => run.id === "run-2");
 
       expect(run1?.toolPolicy).toEqual(policy);
+      expect(run2?.toolPolicy).toBeUndefined();
+    });
+
+    it("drops stale pending metadata when metadata id does not match", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const policy = [{ regex_match: ".*", action: "disable" as const }];
+
+      service.setPendingRunMetadata("ws-1", "stale-metadata", { toolPolicy: policy });
+      await service.createRun("ws-1", makeRun("run-1"), "different-metadata");
+      await service.createRun("ws-1", makeRun("run-2", "2025-06-01T00:01:00Z"));
+
+      const runs = await service.getRuns("ws-1");
+      const run1 = runs.find((run) => run.id === "run-1");
+      const run2 = runs.find((run) => run.id === "run-2");
+      expect(run1?.toolPolicy).toBeUndefined();
       expect(run2?.toolPolicy).toBeUndefined();
     });
 
@@ -553,13 +571,14 @@ describe("DevToolsService", () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const events: DevToolsEvent[] = [];
       const policy = [{ regex_match: "propose_plan", action: "require" as const }];
+      const metadataId = "metadata-4";
 
       service.on("update:ws-1", (event: DevToolsEvent) => {
         events.push(event);
       });
 
-      service.setPendingRunMetadata("ws-1", { toolPolicy: policy });
-      await service.createRun("ws-1", makeRun("run-1"));
+      service.setPendingRunMetadata("ws-1", metadataId, { toolPolicy: policy });
+      await service.createRun("ws-1", makeRun("run-1"), metadataId);
 
       const runCreated = events.find((event) => event.type === "run-created");
       expect(runCreated).toBeDefined();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  DEVTOOLS_RUN_METADATA_ID_HEADER,
   DEVTOOLS_STEP_ID_HEADER,
   captureAndStripDevToolsHeader,
   consumeCapturedRequestHeaders,
@@ -13,12 +14,14 @@ describe("devToolsHeaderCapture", () => {
       "x-api-key": "sk-123",
       "user-agent": "mux/1.0 ai-sdk/anthropic/3.0",
       [DEVTOOLS_STEP_ID_HEADER]: "step-abc",
+      [DEVTOOLS_RUN_METADATA_ID_HEADER]: "metadata-abc",
     });
 
     captureAndStripDevToolsHeader(headers);
 
-    // Synthetic header was stripped from the Headers object
+    // Synthetic headers were stripped from the Headers object
     expect(headers.get(DEVTOOLS_STEP_ID_HEADER)).toBeNull();
+    expect(headers.get(DEVTOOLS_RUN_METADATA_ID_HEADER)).toBeNull();
     // Other headers remain intact
     expect(headers.get("content-type")).toBe("application/json");
 
@@ -29,6 +32,7 @@ describe("devToolsHeaderCapture", () => {
     expect(captured!["x-api-key"]).toBe("[REDACTED]");
     expect(captured!["user-agent"]).toBe("mux/1.0 ai-sdk/anthropic/3.0");
     expect(captured![DEVTOOLS_STEP_ID_HEADER]).toBeUndefined();
+    expect(captured![DEVTOOLS_RUN_METADATA_ID_HEADER]).toBeUndefined();
   });
 
   it("redacts sensitive headers before persisting captured metadata", () => {
@@ -113,6 +117,18 @@ describe("devToolsHeaderCapture", () => {
 
     consumeCapturedRequestHeaders("step-1"); // first read
     expect(consumeCapturedRequestHeaders("step-1")).toBeNull(); // second read → null
+  });
+
+  it("strips run metadata header even without step header", () => {
+    const headers = new Headers({
+      "content-type": "application/json",
+      [DEVTOOLS_RUN_METADATA_ID_HEADER]: "metadata-only",
+    });
+
+    captureAndStripDevToolsHeader(headers);
+
+    expect(headers.get(DEVTOOLS_RUN_METADATA_ID_HEADER)).toBeNull();
+    expect(headers.get("content-type")).toBe("application/json");
   });
 
   it("is a no-op when synthetic header is absent", () => {
