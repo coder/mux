@@ -1,5 +1,20 @@
+import { mock } from "bun:test";
 import { MAX_SVG_TEXT_CHARS } from "@/common/constants/imageAttachments";
 import { describe, expect, test } from "@jest/globals";
+
+// Mock image resizing so these tests do not require browser Image/Canvas APIs.
+// resizeImageIfNeeded has dedicated coverage in imageResize.test.ts.
+mock.module("./imageResize", () => ({
+  resizeImageIfNeeded: async (dataUrl: string) => ({
+    dataUrl,
+    resized: false,
+    originalWidth: 100,
+    originalHeight: 100,
+    width: 100,
+    height: 100,
+  }),
+}));
+
 import {
   generateAttachmentId,
   fileToChatAttachment,
