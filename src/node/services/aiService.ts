@@ -902,7 +902,6 @@ export class AIService extends EventEmitter {
       });
 
       // Build agent system prompt, system message, and discover agents/skills.
-      const providersConfig = this.providerService.getConfig();
       const streamSystemContext = await buildStreamSystemContext({
         runtime,
         metadata,
@@ -914,7 +913,7 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions,
         modelString,
         cfg,
-        providersConfig,
+        providersConfig: this.providerService.getConfig(),
         mcpServers,
       });
       const { agentSystemPrompt, agentDefinitions, availableSkills } = streamSystemContext;
@@ -961,7 +960,10 @@ export class AIService extends EventEmitter {
         // Prepend warning so the model can inform the user about unavailable tools.
         systemMessage = `[Warning: ${mcpStats.failedServerCount} MCP server(s) failed to start: ${failedNames}. Tools from these servers are unavailable. Check MCP server configuration in Settings.]\n\n${systemMessage}`;
         // Keep context-size estimation accurate after mutating the system prompt.
-        const metadataModel = resolveModelForMetadata(modelString, providersConfig);
+        const metadataModel = resolveModelForMetadata(
+          modelString,
+          this.providerService.getConfig()
+        );
         const tokenizer = await getTokenizerForModel(modelString, metadataModel);
         systemMessageTokens = await tokenizer.countTokens(systemMessage);
       }
