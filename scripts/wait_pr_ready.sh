@@ -99,24 +99,25 @@ assert_clean_and_synced_branch() {
   fi
 
   current_branch=$(git rev-parse --abbrev-ref HEAD)
-  remote_branch=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")
 
-  if [[ -z "$remote_branch" ]]; then
-    echo "⚠️  Current branch '$current_branch' has no upstream branch." >&2
-    echo "Setting upstream to origin/$current_branch..." >&2
+  # Always compare against origin/<current-branch>, not @{u}.
+  # Worktrees created from origin/main inherit origin/main as their upstream,
+  # which causes false "not in sync" errors on feature branches.
+  remote_branch="origin/$current_branch"
+
+  # Perform one fetch per orchestrator iteration context and let child scripts reuse it.
+  if ! git fetch origin "$current_branch" --quiet 2>/dev/null; then
+    echo "⚠️  Branch '$current_branch' does not exist on remote." >&2
+    echo "Pushing to origin/$current_branch..." >&2
 
     if git push -u origin "$current_branch" 2>&1; then
-      echo "✅ Upstream set successfully!" >&2
-      remote_branch="origin/$current_branch"
+      echo "✅ Pushed and upstream set successfully!" >&2
     else
-      echo "❌ Error: Failed to set upstream branch." >&2
+      echo "❌ Error: Failed to push branch." >&2
       echo "You may need to push manually: git push -u origin $current_branch" >&2
       return 1
     fi
   fi
-
-  # Perform one fetch per orchestrator iteration context and let child scripts reuse it.
-  git fetch origin "$current_branch" --quiet 2>/dev/null || true
 
   local_hash=$(git rev-parse HEAD)
   remote_hash=$(git rev-parse "$remote_branch")

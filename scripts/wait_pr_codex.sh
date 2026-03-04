@@ -98,26 +98,24 @@ if [ "$SKIP_FETCH_SYNC" = "0" ]; then
   # Get current branch name
   CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-  # Get remote tracking branch
-  REMOTE_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")
+  # Always compare against origin/<current-branch>, not @{u}.
+  # Worktrees created from origin/main inherit origin/main as their upstream,
+  # which causes false "not in sync" errors on feature branches.
+  REMOTE_BRANCH="origin/$CURRENT_BRANCH"
 
-  if [[ -z "$REMOTE_BRANCH" ]]; then
-    echo "⚠️  Current branch '$CURRENT_BRANCH' has no upstream branch." >&2
-    echo "Setting upstream to origin/$CURRENT_BRANCH..." >&2
+  # Fetch latest remote state before comparing
+  if ! git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null; then
+    echo "⚠️  Branch '$CURRENT_BRANCH' does not exist on remote." >&2
+    echo "Pushing to origin/$CURRENT_BRANCH..." >&2
 
-    # Try to set upstream
     if git push -u origin "$CURRENT_BRANCH" 2>&1; then
-      echo "✅ Upstream set successfully!" >&2
-      REMOTE_BRANCH="origin/$CURRENT_BRANCH"
+      echo "✅ Pushed and upstream set successfully!" >&2
     else
-      echo "❌ Error: Failed to set upstream branch." >&2
+      echo "❌ Error: Failed to push branch." >&2
       echo "You may need to push manually: git push -u origin $CURRENT_BRANCH" >&2
       exit 1
     fi
   fi
-
-  # Fetch latest remote state before comparing
-  git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null || true
 
   # Check if local and remote are in sync
   LOCAL_HASH=$(git rev-parse HEAD)
