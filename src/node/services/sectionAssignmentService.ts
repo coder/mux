@@ -83,6 +83,10 @@ export class SectionAssignmentService {
       this.scheduleEvaluation(event.workspaceId);
     });
 
+    this.workspaceService.on("metadata", (event) => {
+      this.scheduleEvaluation(event.workspaceId);
+    });
+
     this.workspaceService.on("activity", (event: { workspaceId: string }) => {
       this.scheduleEvaluation(event.workspaceId);
     });
@@ -136,9 +140,10 @@ export class SectionAssignmentService {
       const previous = this.lastKnownFrontendContext.get(workspaceId) ?? {};
       mergedContext = { ...previous, ...stripUndefined({ ...frontendContext }) };
 
-      // Frontend omits prMergeStatus when no PR exists; clear cached value to avoid stale rule matches.
+      // When the PR no longer exists, mark merge status as a concrete sentinel so
+      // merge-status rules evaluate false (conclusive) instead of becoming unknown.
       if (mergedContext.prState === "none") {
-        mergedContext.prMergeStatus = undefined;
+        mergedContext.prMergeStatus = "none";
       }
 
       this.lastKnownFrontendContext.set(workspaceId, mergedContext);
