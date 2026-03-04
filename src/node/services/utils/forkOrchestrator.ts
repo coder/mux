@@ -218,6 +218,16 @@ export async function orchestrateFork(
     const getProjectTrusted = (projectPath: string): boolean =>
       configSnapshot.projects.get(stripTrailingSlashes(projectPath))?.trusted ?? false;
 
+    // Trust gate: multi-project forks must fail before any fork/create work starts
+    // if any project is untrusted. Parent workspaces can outlive trust changes,
+    // so re-check each project at fork time.
+    for (const project of projects) {
+      const projectTrusted = getProjectTrusted(project.projectPath);
+      if (!projectTrusted) {
+        return Err(`Project ${project.projectPath} is not trusted`);
+      }
+    }
+
     const sourceProjectRuntimes: MultiProjectRuntimeEntry[] = projects.map((project) => ({
       projectPath: project.projectPath,
       projectName: project.projectName,

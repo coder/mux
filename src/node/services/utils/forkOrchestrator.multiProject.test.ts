@@ -95,7 +95,12 @@ async function runOrchestrateFork(params: {
     sourceWorkspaceName: SOURCE_WORKSPACE_NAME,
     newWorkspaceName: NEW_WORKSPACE_NAME,
     initLogger: createInitLogger(),
-    config: params.config ?? createConfig(),
+    config:
+      params.config ??
+      createConfig({
+        [PROJECT_ONE_PATH]: true,
+        [PROJECT_TWO_PATH]: true,
+      }),
     sourceWorkspaceId: SOURCE_WORKSPACE_ID,
     sourceRuntimeConfig: SOURCE_RUNTIME_CONFIG,
     parentMetadata: params.parentMetadata,
@@ -255,7 +260,7 @@ describe("orchestrateFork (multi-project)", () => {
       parentMetadata: createParentMetadata(),
       config: createConfig({
         [PROJECT_ONE_PATH]: true,
-        [PROJECT_TWO_PATH]: false,
+        [PROJECT_TWO_PATH]: true,
       }),
     });
 
@@ -264,31 +269,43 @@ describe("orchestrateFork (multi-project)", () => {
       expect.objectContaining({ trusted: true })
     );
     expect(projectTwoRuntime.forkWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ trusted: false })
+      expect.objectContaining({ trusted: true })
     );
     expect(projectTwoRuntime.createWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ trusted: false })
+      expect.objectContaining({ trusted: true })
     );
+  });
+
+  it("fails multi-project fork before creating workspaces when any project is untrusted", async () => {
+    const projectOneRuntime = createProjectRuntimeMocks();
+    const projectTwoRuntime = createProjectRuntimeMocks();
+    mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
+
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+      config: createConfig({
+        [PROJECT_ONE_PATH]: true,
+        [PROJECT_TWO_PATH]: false,
+      }),
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: `Project ${PROJECT_TWO_PATH} is not trusted`,
+    });
+    expect(projectOneRuntime.forkWorkspace).not.toHaveBeenCalled();
+    expect(projectTwoRuntime.forkWorkspace).not.toHaveBeenCalled();
+    expect(projectOneRuntime.createWorkspace).not.toHaveBeenCalled();
+    expect(projectTwoRuntime.createWorkspace).not.toHaveBeenCalled();
+    expect(createContainerMock).not.toHaveBeenCalled();
+    expect(removeContainerMock).not.toHaveBeenCalled();
+    expect(applyForkRuntimeUpdatesMock).not.toHaveBeenCalled();
   });
 
   it("defaults unknown project trust to false during multi-project fork", async () => {
     const projectOneRuntime = createProjectRuntimeMocks();
     const projectTwoRuntime = createProjectRuntimeMocks();
     mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
-
-    projectOneRuntime.forkWorkspace.mockResolvedValue({
-      success: true,
-      workspacePath: "/tmp/child/project-one",
-      sourceBranch: "main",
-    } satisfies WorkspaceForkResult);
-    projectTwoRuntime.forkWorkspace.mockResolvedValue({
-      success: false,
-      error: "fork unavailable",
-    } satisfies WorkspaceForkResult);
-    projectTwoRuntime.createWorkspace.mockResolvedValue({
-      success: true,
-      workspacePath: "/tmp/child/project-two",
-    });
 
     const result = await runOrchestrateFork({
       parentMetadata: createParentMetadata(),
@@ -298,16 +315,17 @@ describe("orchestrateFork (multi-project)", () => {
       trusted: true,
     });
 
-    expect(result.success).toBe(true);
-    expect(projectOneRuntime.forkWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ trusted: true })
-    );
-    expect(projectTwoRuntime.forkWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ trusted: false })
-    );
-    expect(projectTwoRuntime.createWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ trusted: false })
-    );
+    expect(result).toEqual({
+      success: false,
+      error: `Project ${PROJECT_TWO_PATH} is not trusted`,
+    });
+    expect(projectOneRuntime.forkWorkspace).not.toHaveBeenCalled();
+    expect(projectTwoRuntime.forkWorkspace).not.toHaveBeenCalled();
+    expect(projectOneRuntime.createWorkspace).not.toHaveBeenCalled();
+    expect(projectTwoRuntime.createWorkspace).not.toHaveBeenCalled();
+    expect(createContainerMock).not.toHaveBeenCalled();
+    expect(removeContainerMock).not.toHaveBeenCalled();
+    expect(applyForkRuntimeUpdatesMock).not.toHaveBeenCalled();
   });
 
   it("uses preferredTrunkBranch before local discovery for multi-project fallback", async () => {
@@ -459,7 +477,10 @@ describe("orchestrateFork (multi-project)", () => {
       sourceWorkspaceName: SOURCE_WORKSPACE_NAME,
       newWorkspaceName: NEW_WORKSPACE_NAME,
       initLogger: createInitLogger(),
-      config: createConfig(),
+      config: createConfig({
+        [PROJECT_ONE_PATH]: true,
+        [PROJECT_TWO_PATH]: true,
+      }),
       sourceWorkspaceId: SOURCE_WORKSPACE_ID,
       sourceRuntimeConfig: SOURCE_RUNTIME_CONFIG,
       parentMetadata: createParentMetadata(),
@@ -476,7 +497,7 @@ describe("orchestrateFork (multi-project)", () => {
       NEW_WORKSPACE_NAME,
       true,
       undefined,
-      false
+      true
     );
     expect(projectTwoRuntime.deleteWorkspace).not.toHaveBeenCalled();
     expect(createContainerMock).not.toHaveBeenCalled();
