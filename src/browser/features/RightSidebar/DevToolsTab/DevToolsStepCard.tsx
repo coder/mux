@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   AlertCircle,
   BarChart3,
@@ -19,6 +19,7 @@ import type {
 import { getTokenTotal } from "@/common/types/devtools";
 import { assertNever } from "@/common/utils/assertNever";
 import { formatDuration } from "@/common/utils/formatDuration";
+import { truncateToFirstLine } from "./devToolsStepCardHelpers";
 
 const PRE_CLASS_NAME =
   "whitespace-pre-wrap break-all text-[10px] text-muted bg-background-primary rounded border border-border-light p-2 mt-1 max-h-[220px] overflow-auto";
@@ -570,27 +571,35 @@ function JsonBlock(props: { data: unknown; emptyMessage?: string; maxHeight?: st
   );
 }
 
-function ToolCallCard(props: { toolCall: unknown }) {
+/**
+ * Keep DevTools expansion affordances consistent: tool calls, prompt messages, and
+ * reasoning blocks all use the same chevron + preview interaction pattern.
+ */
+function CollapsibleCard(props: {
+  icon: ReactNode;
+  label?: ReactNode;
+  preview: string;
+  borderColorClass: string;
+  children: ReactNode;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const toolCallRecord = isRecord(props.toolCall) ? props.toolCall : null;
-  const toolName =
-    toolCallRecord != null && typeof toolCallRecord.toolName === "string"
-      ? toolCallRecord.toolName
-      : "unknown";
-  const args = toolCallRecord?.args;
-  const argsPreview = formatArgsPreview(args);
 
   return (
-    <div className="bg-background-primary rounded border border-l-2 border-violet-500/30 px-2 py-1">
+    <div
+      className={cn(
+        "bg-background-primary rounded border border-l-2 px-2 py-1",
+        props.borderColorClass
+      )}
+    >
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
         className="hover:bg-hover/50 flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left"
       >
-        <Wrench className="h-3 w-3 shrink-0 text-violet-500" />
-        <span className="text-foreground text-[10px] font-semibold">{toolName}</span>
-        {!expanded && argsPreview.length > 0 && (
-          <span className="text-muted truncate text-[10px]">{argsPreview}</span>
+        {props.icon}
+        {props.label}
+        {!expanded && props.preview.length > 0 && (
+          <span className="text-muted truncate text-[10px]">{props.preview}</span>
         )}
         <ChevronRight
           className={cn(
@@ -600,40 +609,45 @@ function ToolCallCard(props: { toolCall: unknown }) {
         />
       </button>
 
-      {expanded && (
-        <div className="mt-1">
-          <JsonBlock data={args} emptyMessage="No arguments" maxHeight="150px" />
-        </div>
-      )}
+      {expanded && <div className="mt-1">{props.children}</div>}
     </div>
   );
 }
 
-function MessagePreview(props: { message: unknown }) {
-  const [expanded, setExpanded] = useState(false);
-  const role = getPromptRole(props.message);
-  const content = extractDisplayContent(getPromptContent(props.message));
-  const isTruncated = content.length > 350;
-  const displayContent = !expanded && isTruncated ? `${content.slice(0, 350)}…` : content;
+function ToolCallCard(props: { toolCall: unknown }) {
+  const toolCallRecord = isRecord(props.toolCall) ? props.toolCall : null;
+  const toolName =
+    toolCallRecord != null && typeof toolCallRecord.toolName === "string"
+      ? toolCallRecord.toolName
+      : "unknown";
+  const args = toolCallRecord?.args;
 
   return (
-    <div className="border-border-light overflow-hidden rounded border">
-      <div className="bg-hover/40 flex items-center px-2 py-1">
-        <RoleBadge role={role} />
-      </div>
-      <pre className="text-muted max-h-[160px] overflow-auto p-2 text-[10px] break-words whitespace-pre-wrap">
-        {displayContent}
+    <CollapsibleCard
+      icon={<Wrench className="h-3 w-3 shrink-0 text-violet-500" />}
+      label={<span className="text-foreground text-[10px] font-semibold">{toolName}</span>}
+      preview={formatArgsPreview(args)}
+      borderColorClass="border-violet-500/30"
+    >
+      <JsonBlock data={args} emptyMessage="No arguments" maxHeight="150px" />
+    </CollapsibleCard>
+  );
+}
+
+function MessagePreview(props: { message: unknown }) {
+  const role = getPromptRole(props.message);
+  const content = extractDisplayContent(getPromptContent(props.message));
+
+  return (
+    <CollapsibleCard
+      icon={<RoleBadge role={role} />}
+      preview={truncateToFirstLine(content, 80)}
+      borderColorClass="border-border-light"
+    >
+      <pre className="text-muted max-h-[220px] overflow-auto text-[10px] break-words whitespace-pre-wrap">
+        {content}
       </pre>
-      {isTruncated && (
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="text-link px-2 pb-1 text-[10px] hover:underline"
-        >
-          {expanded ? "Show less" : "Show more"}
-        </button>
-      )}
-    </div>
+    </CollapsibleCard>
   );
 }
 
@@ -649,30 +663,17 @@ function RoleBadge(props: { role: string }) {
 }
 
 function ReasoningBlock(props: { text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const isLongText = props.text.length > 180;
-  const preview = isLongText ? `${props.text.slice(0, 180)}…` : props.text;
-
   return (
-    <div className="bg-background-primary rounded border border-l-2 border-amber-500/30 px-2 py-1">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="hover:bg-hover/50 flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left"
-      >
-        <Brain className="h-3 w-3 shrink-0 text-amber-500" />
-        <span className="text-foreground text-[10px] font-medium">Thinking</span>
-        <ChevronRight
-          className={cn(
-            "text-muted ml-auto h-2.5 w-2.5 shrink-0 transition-transform",
-            expanded && "rotate-90"
-          )}
-        />
-      </button>
-      <pre className="text-muted mt-1 max-h-[220px] overflow-auto text-[10px] break-words whitespace-pre-wrap">
-        {expanded ? props.text : preview}
+    <CollapsibleCard
+      icon={<Brain className="h-3 w-3 shrink-0 text-amber-500" />}
+      label={<span className="text-foreground text-[10px] font-medium">Thinking</span>}
+      preview={truncateToFirstLine(props.text, 80)}
+      borderColorClass="border-amber-500/30"
+    >
+      <pre className="text-muted max-h-[220px] overflow-auto text-[10px] break-words whitespace-pre-wrap">
+        {props.text}
       </pre>
-    </div>
+    </CollapsibleCard>
   );
 }
 
