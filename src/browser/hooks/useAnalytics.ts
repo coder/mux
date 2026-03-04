@@ -5,6 +5,7 @@ import type { z } from "zod";
 import type { APIClient } from "@/browser/contexts/API";
 import { useAPI } from "@/browser/contexts/API";
 import type { analytics } from "@/common/orpc/schemas/analytics";
+import type { SavedQuery } from "@/common/types/savedQueries";
 import { getErrorMessage } from "@/common/utils/errors";
 
 export type Summary = z.infer<typeof analytics.getSummary.output>;
@@ -55,6 +56,14 @@ interface AnalyticsNamespace {
   executeRawQuery?: (input: {
     sql: string;
   }) => Promise<z.infer<typeof analytics.executeRawQuery.output>>;
+  getSavedQueries?: () => Promise<z.infer<typeof analytics.getSavedQueries.output>>;
+  saveQuery?: (input: z.input<typeof analytics.saveQuery.input>) => Promise<SavedQuery>;
+  updateSavedQuery?: (
+    input: z.input<typeof analytics.updateSavedQuery.input>
+  ) => Promise<SavedQuery>;
+  deleteSavedQuery?: (
+    input: z.input<typeof analytics.deleteSavedQuery.input>
+  ) => Promise<z.infer<typeof analytics.deleteSavedQuery.output>>;
 }
 
 const ANALYTICS_UNAVAILABLE_MESSAGE = "Analytics backend is not available in this build.";
@@ -440,4 +449,98 @@ export function useAnalyticsRawQuery() {
   };
 
   return { ...state, executeQuery, clearResults };
+}
+
+async function loadSavedQueries(
+  api: APIClient | null,
+  setQueries: React.Dispatch<React.SetStateAction<SavedQuery[]>>,
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>
+): Promise<void> {
+  setLoading(true);
+
+  if (!api) {
+    setLoading(false);
+    return;
+  }
+
+  const namespace = getAnalyticsNamespace(api);
+  if (!namespace || typeof namespace.getSavedQueries !== "function") {
+    setLoading(false);
+    return;
+  }
+
+  try {
+    const result = await namespace.getSavedQueries();
+    setQueries(result.queries);
+  } catch {
+    // Silently degrade — dashboard renders without saved panels.
+  } finally {
+    setLoading(false);
+  }
+}
+
+export function useSavedQueries() {
+  const { api } = useAPI();
+  const [queries, setQueries] = useState<SavedQuery[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = async () => {
+    await loadSavedQueries(api, setQueries, setLoading);
+  };
+
+  useEffect(() => {
+    void loadSavedQueries(api, setQueries, setLoading);
+  }, [api]);
+
+  const save = async (input: { label: string; sql: string; chartType?: string | null }) => {
+    if (!api) {
+      return null;
+    }
+
+    const namespace = getAnalyticsNamespace(api);
+    if (!namespace || typeof namespace.saveQuery !== "function") {
+      return null;
+    }
+
+    const saved = await namespace.saveQuery(input);
+    await refresh();
+    return saved;
+  };
+
+  const update = async (input: {
+    id: string;
+    label?: string;
+    sql?: string;
+    chartType?: string | null;
+    order?: number;
+  }) => {
+    if (!api) {
+      return null;
+    }
+
+    const namespace = getAnalyticsNamespace(api);
+    if (!namespace || typeof namespace.updateSavedQuery !== "function") {
+      return null;
+    }
+
+    const updated = await namespace.updateSavedQuery(input);
+    await refresh();
+    return updated;
+  };
+
+  const remove = async (id: string) => {
+    if (!api) {
+      return;
+    }
+
+    const namespace = getAnalyticsNamespace(api);
+    if (!namespace || typeof namespace.deleteSavedQuery !== "function") {
+      return;
+    }
+
+    await namespace.deleteSavedQuery({ id });
+    await refresh();
+  };
+
+  return { queries, loading, save, update, remove, refresh };
 }
