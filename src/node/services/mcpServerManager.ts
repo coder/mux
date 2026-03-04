@@ -23,6 +23,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 const TEST_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
+const MCP_STARTUP_TIMEOUT_MS = 60_000; // 60s — generous for npx package downloads
 
 /** Detect errors from the @ai-sdk/mcp SDK indicating the client/transport is closed.
  *  MCPClientError is not exported from the SDK, so we match on known message patterns.
@@ -539,6 +540,7 @@ export interface MCPWorkspaceStats {
   startedServerCount: number;
   failedServerCount: number;
   autoFallbackCount: number;
+  failedServerNames: string[];
 
   hasStdio: boolean;
   hasHttp: boolean;
@@ -898,6 +900,8 @@ export class MCPServerManager {
       };
     }
 
+    let restartFailedNames: string[] = [];
+
     // If a stream is actively running, avoid closing MCP clients out from under it.
     //
     // Note: AIService may fetch tools before StreamManager interrupts an existing stream,
@@ -943,14 +947,16 @@ export class MCPServerManager {
           }
         }
 
-        const restartedInstances = await this.startServers(
-          serversToRestart,
-          runtime,
-          projectPath,
-          workspacePath,
-          projectSecrets,
-          () => this.markActivity(workspaceId)
-        );
+        const { instances: restartedInstances, failedServerNames: failedNames } =
+          await this.startServers(
+            serversToRestart,
+            runtime,
+            projectPath,
+            workspacePath,
+            projectSecrets,
+            () => this.markActivity(workspaceId)
+          );
+        restartFailedNames = failedNames;
 
         for (const [serverName, instance] of restartedInstances) {
           existing.instances.set(serverName, instance);
@@ -988,7 +994,7 @@ export class MCPServerManager {
 
     await this.stopServers(workspaceId);
 
-    const instances = await this.startServers(
+    const { instances, failedServerNames: startFailedNames } = await this.startServers(
       enabledServers,
       runtime,
       projectPath,
@@ -996,6 +1002,8 @@ export class MCPServerManager {
       projectSecrets,
       () => this.markActivity(workspaceId)
     );
+
+    const allFailedNames = [...restartFailedNames, ...startFailedNames];
 
     const resolvedTransports = new Set<ResolvedTransport>();
     for (const instance of instances.values()) {
@@ -1020,8 +1028,9 @@ export class MCPServerManager {
     const stats: MCPWorkspaceStats = {
       enabledServerCount: enabledEntries.length,
       startedServerCount: instances.size,
-      failedServerCount: Math.max(0, enabledEntries.length - instances.size),
+      failedServerCount: allFailedNames.length,
       autoFallbackCount: [...instances.values()].filter((i) => i.autoFallbackUsed).length,
+      failedServerNames: allFailedNames,
       hasStdio,
       hasHttp,
       hasSse,
@@ -1255,8 +1264,9 @@ export class MCPServerManager {
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void
-  ): Promise<Map<string, MCPServerInstance>> {
-    const result = new Map<string, MCPServerInstance>();
+  ): Promise<{ instances: Map<string, MCPServerInstance>; failedServerNames: string[] }> {
+    const instances = new Map<string, MCPServerInstance>();
+    const failedServerNames: string[] = [];
     const entries = Object.entries(servers);
 
     for (const [name, info] of entries) {
@@ -1271,18 +1281,66 @@ export class MCPServerManager {
           onActivity
         );
         if (instance) {
-          result.set(name, instance);
+          instances.set(name, instance);
         }
       } catch (error) {
         const message = getErrorMessage(error);
         log.error("Failed to start MCP server", { name, error: message });
+        failedServerNames.push(name);
       }
     }
 
-    return result;
+    return { instances, failedServerNames };
   }
 
   private async startSingleServer(
+    name: string,
+    info: MCPServerInfo,
+    runtime: Runtime,
+    projectPath: string,
+    workspacePath: string,
+    projectSecrets: Record<string, string> | undefined,
+    onActivity: () => void
+  ): Promise<MCPServerInstance | null> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error(`MCP server '${name}' timed out after ${MCP_STARTUP_TIMEOUT_MS}ms`)),
+        MCP_STARTUP_TIMEOUT_MS
+      );
+      // Don't keep the process alive just for this timer.
+      if (
+        timeoutHandle !== undefined &&
+        typeof timeoutHandle === "object" &&
+        "unref" in timeoutHandle &&
+        typeof timeoutHandle.unref === "function"
+      ) {
+        timeoutHandle.unref();
+      }
+    });
+
+    try {
+      return await Promise.race([
+        this.startSingleServerImpl(
+          name,
+          info,
+          runtime,
+          projectPath,
+          workspacePath,
+          projectSecrets,
+          onActivity
+        ),
+        timeout,
+      ]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  private async startSingleServerImpl(
     name: string,
     info: MCPServerInfo,
     runtime: Runtime,
@@ -1295,7 +1353,7 @@ export class MCPServerManager {
       log.debug("[MCP] Spawning stdio server", { name });
       const execStream = await runtime.exec(info.command, {
         cwd: workspacePath,
-        timeout: 60 * 60 * 24, // 24 hours
+        timeout: MCP_STARTUP_TIMEOUT_MS / 1000,
       });
 
       const transport = new MCPStdioTransport(execStream);
