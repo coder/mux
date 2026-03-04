@@ -42,6 +42,13 @@ function buildAvailableFields(
     }
   }
 
+  // PR merge status is evaluated relative to whether a PR exists at all. When PR state is
+  // known but merge status is missing (for example prState === "none"), keep the field
+  // available so comparisons evaluate as a known "no value" instead of becoming inconclusive.
+  if (frontendContext?.prState !== undefined) {
+    availableFields.add("prMergeStatus");
+  }
+
   return availableFields;
 }
 
@@ -140,10 +147,10 @@ export class SectionAssignmentService {
       const previous = this.lastKnownFrontendContext.get(workspaceId) ?? {};
       mergedContext = { ...previous, ...stripUndefined({ ...frontendContext }) };
 
-      // When the PR no longer exists, mark merge status as a concrete sentinel so
-      // merge-status rules evaluate false (conclusive) instead of becoming unknown.
+      // When the PR no longer exists, explicitly clear merge status so stale values from
+      // earlier PR states do not affect merge-status rules.
       if (mergedContext.prState === "none") {
-        mergedContext.prMergeStatus = "none";
+        mergedContext.prMergeStatus = undefined;
       }
 
       this.lastKnownFrontendContext.set(workspaceId, mergedContext);

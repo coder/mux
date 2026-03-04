@@ -64,6 +64,11 @@ describe("evaluateCondition", () => {
     expect(evaluateCondition(condition, makeCtx({ prState: "none" }))).toBe(true);
   });
 
+  it("returns false for neq when field value is undefined", () => {
+    const condition = makeCondition({ field: "prMergeStatus", op: "neq", value: "CLEAN" });
+    expect(evaluateCondition(condition, makeCtx({ prMergeStatus: undefined }))).toBe(false);
+  });
+
   it("returns inconclusive when the condition field is unavailable", () => {
     const condition = makeCondition({ field: "prState", op: "eq", value: "OPEN" });
     const ctx = makeCtx({

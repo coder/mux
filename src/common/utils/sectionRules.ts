@@ -71,9 +71,15 @@ export function evaluateCondition(
 
   switch (condition.op) {
     case "eq":
+      if (actual === undefined) {
+        return false;
+      }
       return actual === condition.value;
 
     case "neq":
+      if (actual === undefined) {
+        return false;
+      }
       return actual !== condition.value;
 
     case "in": {
