@@ -147,6 +147,13 @@ export class SectionAssignmentService {
     const evaluationResult = evaluateSectionRules(sortedSections, context);
 
     if (evaluationResult.targetSectionId !== undefined) {
+      // If the current section couldn't be conclusively evaluated with this context
+      // (for example backend-only evaluation without PR/git fields), preserve the
+      // current assignment instead of churning to a different matching section.
+      if (evaluationResult.currentSectionInconclusive) {
+        return;
+      }
+
       if (evaluationResult.targetSectionId === metadata.sectionId) {
         return;
       }

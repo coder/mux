@@ -365,6 +365,37 @@ describe("evaluateSectionRules", () => {
     );
   });
 
+  it("does not reassign when current section is inconclusive even if another section matches", () => {
+    const sections = [
+      makeSection("a", [
+        {
+          conditions: [makeCondition({ field: "prState", op: "eq", value: "OPEN" })],
+        },
+      ]),
+      makeSection("b", [
+        {
+          conditions: [makeCondition({ field: "streaming", op: "eq", value: false })],
+        },
+      ]),
+    ];
+
+    expectResult(
+      evaluateSectionRules(
+        sections,
+        makeCtx({
+          currentSectionId: "a",
+          streaming: false,
+          availableFields: new Set(["agentMode", "streaming", "taskStatus", "hasAgentStatus"]),
+        })
+      ),
+      {
+        targetSectionId: "b",
+        hasInconclusiveRules: true,
+        currentSectionInconclusive: true,
+      }
+    );
+  });
+
   it("returns first conclusive match even when prior rules were inconclusive", () => {
     const sections = [
       makeSection("mixed", [
