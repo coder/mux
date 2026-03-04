@@ -26,7 +26,8 @@ describe("AnalyticsService saved queries", () => {
   });
 
   test("getSavedQueries returns empty array when file does not exist", async () => {
-    await expect(service.getSavedQueries()).resolves.toEqual({ queries: [] });
+    const result = await service.getSavedQueries();
+    expect(result).toEqual({ queries: [] });
   });
 
   test("saveQuery creates file and returns query with generated id", async () => {
@@ -116,12 +117,15 @@ describe("AnalyticsService saved queries", () => {
   });
 
   test("updateSavedQuery throws for non-existent id", async () => {
-    await expect(
-      service.updateSavedQuery({
+    try {
+      await service.updateSavedQuery({
         id: "does-not-exist",
         label: "Updated",
-      })
-    ).rejects.toThrow("Saved query not found");
+      });
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(String(err)).toContain("Saved query not found");
+    }
   });
 
   test("deleteSavedQuery removes query and returns success true", async () => {
@@ -130,7 +134,8 @@ describe("AnalyticsService saved queries", () => {
     const result = await service.deleteSavedQuery({ id: saved.id });
 
     expect(result).toEqual({ success: true });
-    await expect(service.getSavedQueries()).resolves.toEqual({ queries: [] });
+    const afterDelete = await service.getSavedQueries();
+    expect(afterDelete).toEqual({ queries: [] });
   });
 
   test("deleteSavedQuery returns success false for non-existent id", async () => {
@@ -142,6 +147,7 @@ describe("AnalyticsService saved queries", () => {
     await fs.mkdir(path.dirname(savedQueriesPath), { recursive: true });
     await fs.writeFile(savedQueriesPath, "not json");
 
-    await expect(service.getSavedQueries()).resolves.toEqual({ queries: [] });
+    const recovered = await service.getSavedQueries();
+    expect(recovered).toEqual({ queries: [] });
   });
 });
