@@ -111,18 +111,22 @@ export async function openInEditor(args: {
     const extensionInstallAttemptedKey = `${VS_CODE_EXTENSION_INSTALL_ATTEMPTED_KEY}:${extensionEditor}`;
 
     if (!readPersistedState(extensionInstallAttemptedKey, false)) {
-      // Mark as attempted immediately to prevent duplicate install RPCs from rapid opens.
-      updatePersistedState(extensionInstallAttemptedKey, true);
+      // Only attempt (and mark as attempted) when the API is actually available.
+      // If api is null (startup/reconnect), skip so the next open can retry.
+      if (args.api) {
+        // Mark as attempted immediately to prevent duplicate install RPCs from rapid opens.
+        updatePersistedState(extensionInstallAttemptedKey, true);
 
-      // Install once in the background so the existing open flow stays non-blocking.
-      // In tests we often pass partial API mocks, so this must never throw even when
-      // installVsCodeExtension is missing.
-      try {
-        args.api?.general.installVsCodeExtension({ editor: extensionEditor }).catch(() => {
-          /* silently ignore background install errors */
-        });
-      } catch {
-        // Silently ignore — partial API objects may not expose this method.
+        // Install once in the background so the existing open flow stays non-blocking.
+        // In tests we often pass partial API mocks, so this must never throw even when
+        // installVsCodeExtension is missing.
+        try {
+          args.api.general.installVsCodeExtension({ editor: extensionEditor }).catch(() => {
+            /* silently ignore background install errors */
+          });
+        } catch {
+          // Silently ignore — partial API objects may not expose this method.
+        }
       }
     }
   }
