@@ -82,17 +82,20 @@ function applyStepBackwardCompatibilityDefaults(step: DevToolsStep): DevToolsSte
   };
 }
 
-interface PendingRunMetadata {
-  metadataId: string;
-  metadata: Partial<Pick<DevToolsRun, "toolPolicy">>;
-}
+type PendingRunMetadata = Partial<Pick<DevToolsRun, "toolPolicy">>;
 
 export class DevToolsService extends EventEmitter {
   private readonly workspaces = new Map<string, WorkspaceData>();
   private readonly loadingPromises = new Map<string, Promise<void>>();
   private readonly writeQueues = new Map<string, Promise<void>>();
 
-  private readonly pendingRunMetadata = new Map<string, PendingRunMetadata>();
+  /**
+   * Queued run metadata grouped by workspace and request metadata ID.
+   *
+   * Multiple streamMessage calls can overlap within one workspace, so we keep
+   * one pending metadata payload per request instead of a single workspace slot.
+   */
+  private readonly pendingRunMetadata = new Map<string, Map<string, PendingRunMetadata>>();
 
   constructor(private readonly config: Config) {
     super();
@@ -127,18 +130,18 @@ export class DevToolsService extends EventEmitter {
       return;
     }
 
-    this.pendingRunMetadata.set(workspaceId, {
-      metadataId,
-      metadata,
-    });
+    const byWorkspace =
+      this.pendingRunMetadata.get(workspaceId) ?? new Map<string, PendingRunMetadata>();
+    byWorkspace.set(metadataId, metadata);
+    this.pendingRunMetadata.set(workspaceId, byWorkspace);
   }
 
   /**
    * Drop queued run metadata for a workspace.
    *
-   * When metadataId is provided, only clear if the queued entry matches that ID.
-   * This prevents one request's cleanup path from deleting metadata queued by a
-   * newer overlapping request in the same workspace.
+   * When metadataId is provided, clear only that request's entry.
+   * This prevents one request's cleanup path from deleting metadata queued by
+   * overlapping requests in the same workspace.
    */
   clearPendingRunMetadata(workspaceId: string, metadataId?: string): void {
     assert(
@@ -146,23 +149,25 @@ export class DevToolsService extends EventEmitter {
       "DevToolsService.clearPendingRunMetadata requires a workspaceId"
     );
 
-    const pendingMetadata = this.pendingRunMetadata.get(workspaceId);
-    if (!pendingMetadata) {
+    const byWorkspace = this.pendingRunMetadata.get(workspaceId);
+    if (!byWorkspace) {
       return;
     }
 
-    if (metadataId != null) {
-      assert(
-        metadataId.trim().length > 0,
-        "DevToolsService.clearPendingRunMetadata requires a non-empty metadataId"
-      );
-
-      if (pendingMetadata.metadataId !== metadataId) {
-        return;
-      }
+    if (metadataId == null) {
+      this.pendingRunMetadata.delete(workspaceId);
+      return;
     }
 
-    this.pendingRunMetadata.delete(workspaceId);
+    assert(
+      metadataId.trim().length > 0,
+      "DevToolsService.clearPendingRunMetadata requires a non-empty metadataId"
+    );
+
+    byWorkspace.delete(metadataId);
+    if (byWorkspace.size === 0) {
+      this.pendingRunMetadata.delete(workspaceId);
+    }
   }
 
   async createRun(workspaceId: string, run: DevToolsRun, metadataId?: string): Promise<void> {
@@ -177,16 +182,18 @@ export class DevToolsService extends EventEmitter {
     const data = this.getOrCreateWorkspaceData(workspaceId);
 
     // Apply queued run metadata (for example, effective tool policy) captured
-    // before the stream reached provider middleware.
-    const pendingMetadata = this.pendingRunMetadata.get(workspaceId);
-    if (pendingMetadata) {
-      const metadataMatches =
-        metadataId != null &&
-        metadataId.trim().length > 0 &&
-        metadataId === pendingMetadata.metadataId;
+    // before the stream reached provider middleware. Lookup is keyed by request
+    // metadata ID so overlapping requests cannot overwrite each other.
+    const byWorkspace = this.pendingRunMetadata.get(workspaceId);
+    const normalizedMetadataId = metadataId?.trim();
+    if (byWorkspace && normalizedMetadataId != null && normalizedMetadataId.length > 0) {
+      const pendingMetadata = byWorkspace.get(normalizedMetadataId);
+      if (pendingMetadata != null) {
+        Object.assign(run, pendingMetadata);
+        byWorkspace.delete(normalizedMetadataId);
+      }
 
-      if (metadataMatches) {
-        Object.assign(run, pendingMetadata.metadata);
+      if (byWorkspace.size === 0) {
         this.pendingRunMetadata.delete(workspaceId);
       }
     }

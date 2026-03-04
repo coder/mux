@@ -220,6 +220,25 @@ describe("DevToolsService", () => {
       expect(run2?.toolPolicy).toBeUndefined();
     });
 
+    it("stores pending metadata per metadata id for overlapping requests", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const policyA = [{ regex_match: "propose_plan", action: "require" as const }];
+      const policyB = [{ regex_match: "switch_agent", action: "disable" as const }];
+
+      service.setPendingRunMetadata("ws-1", "metadata-a", { toolPolicy: policyA });
+      service.setPendingRunMetadata("ws-1", "metadata-b", { toolPolicy: policyB });
+
+      await service.createRun("ws-1", makeRun("run-1", "2025-06-01T00:00:00Z"), "metadata-a");
+      await service.createRun("ws-1", makeRun("run-2", "2025-06-01T00:01:00Z"), "metadata-b");
+
+      const runs = await service.getRuns("ws-1");
+      const run1 = runs.find((run) => run.id === "run-1");
+      const run2 = runs.find((run) => run.id === "run-2");
+
+      expect(run1?.toolPolicy).toEqual(policyA);
+      expect(run2?.toolPolicy).toEqual(policyB);
+    });
+
     it("retains pending metadata when metadata id does not match", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const policy = [{ regex_match: ".*", action: "disable" as const }];
