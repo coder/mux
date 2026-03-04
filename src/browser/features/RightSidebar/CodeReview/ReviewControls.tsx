@@ -98,6 +98,33 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
 
   return (
     <div className="border-border-light flex flex-wrap items-center gap-2 border-b px-2 py-1 text-[11px]">
+      {onToggleImmersive && (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleImmersive}
+                className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-[11px] transition-colors duration-150"
+                aria-label={isImmersive ? "Exit immersive review" : "Enter immersive review"}
+                data-tutorial="immersive-review"
+              >
+                {isImmersive ? (
+                  <ArrowLeft aria-hidden="true" className="h-3 w-3 shrink-0" />
+                ) : (
+                  <Maximize2 aria-hidden="true" className="h-3 w-3 shrink-0" />
+                )}
+                <span>{isImmersive ? "Exit" : "Full-screen review"}</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isImmersive ? "Exit" : "Enter"} immersive review (
+              {formatKeybind(KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)})
+            </TooltipContent>
+          </Tooltip>
+          <div className="bg-border-light h-3 w-px" />
+        </>
+      )}
+
       {onRefresh && (
         <RefreshButton
           onClick={onRefresh}
@@ -171,34 +198,7 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         </select>
       </label>
 
-      {onToggleImmersive && (
-        <>
-          <div className="bg-border-light ml-auto h-3 w-px" />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={onToggleImmersive}
-                className="text-muted hover:text-foreground flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-[11px] transition-colors duration-150"
-                aria-label={isImmersive ? "Exit immersive review" : "Enter immersive review"}
-                data-tutorial="immersive-review"
-              >
-                {isImmersive ? (
-                  <ArrowLeft aria-hidden="true" className="h-3 w-3" />
-                ) : (
-                  <Maximize2 aria-hidden="true" className="h-3 w-3" />
-                )}
-                <span>{isImmersive ? "Exit" : "Full-screen review"}</span>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">
-              {isImmersive ? "Exit" : "Enter"} immersive review (
-              {formatKeybind(KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)})
-            </TooltipContent>
-          </Tooltip>
-        </>
-      )}
-
-      <span className={`text-dim whitespace-nowrap ${onToggleImmersive ? "" : "ml-auto"}`}>
+      <span className="text-dim ml-auto whitespace-nowrap">
         {stats.read}/{stats.total}
       </span>
     </div>
