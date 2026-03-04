@@ -252,33 +252,30 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
  * Converts Windows separators and strips absolute mux-home prefixes so callers can
  * compare only the stable ".mux/plans/..." suffix.
  *
- * Supports local mux-home roots (`~/.mux/plans/...`, `/home/<user>/.mux/plans/...`,
- * `/Users/<user>/.mux/plans/...`, `/root/.mux/plans/...`, `C:/Users/<user>/.mux/plans/...`)
- * and Docker (`/var/mux/plans/...`) roots.
+ * Accepts any absolute path containing `/.mux/plans/` or `/var/mux/plans/`.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
   if (!filePath) return null;
 
   const normalized = filePath.replace(/\\/g, "/");
 
-  // Accept plan files rooted at the current user's mux-home locations:
-  // - ~/.mux/plans/...                       (shell shorthand)
-  // - /home/<user>/.mux/plans/...            (Linux)
-  // - /Users/<user>/.mux/plans/...           (macOS)
-  // - /root/.mux/plans/...                   (root user)
-  // - C:/Users/<user>/.mux/plans/...         (Windows, after separator normalization)
-  const muxHomeMatch =
-    /^(?:~|\/home\/[^/]+|\/Users\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]+)\/\.mux\/plans\/(.+)$/.exec(
-      normalized
-    );
-  if (muxHomeMatch?.[1]) {
-    return `.mux/plans/${muxHomeMatch[1]}`;
+  // Only match absolute paths to avoid false positives from relative paths like
+  // "project/.mux/plans/foo.md".
+  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
+  if (!isAbsolute) return null;
+
+  const muxPrefix = "/.mux/plans/";
+  const muxIdx = normalized.indexOf(muxPrefix);
+  if (muxIdx !== -1) {
+    const suffix = `.mux/plans/${normalized.slice(muxIdx + muxPrefix.length)}`;
+    return suffix === ".mux/plans/" ? null : suffix;
   }
 
-  // Accept Docker-mounted plan paths.
-  const dockerMatch = /^\/var\/mux\/plans\/(.+)$/.exec(normalized);
-  if (dockerMatch?.[1]) {
-    return `.mux/plans/${dockerMatch[1]}`;
+  const dockerPrefix = "/var/mux/plans/";
+  const dockerIdx = normalized.indexOf(dockerPrefix);
+  if (dockerIdx !== -1) {
+    const suffix = `.mux/plans/${normalized.slice(dockerIdx + dockerPrefix.length)}`;
+    return suffix === ".mux/plans/" ? null : suffix;
   }
 
   return null;

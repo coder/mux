@@ -24,7 +24,7 @@ describe("formatReviewForModel", () => {
   test("formats plan annotations with Plan location instead of raw plan file path", () => {
     const formatted = formatReviewForModel({
       ...baseReviewData,
-      filePath: "~/.mux/plans/workspace/my-plan.md",
+      filePath: "/opt/user/.mux/plans/workspace/my-plan.md",
       lineRange: "+5-8",
     });
 
@@ -84,9 +84,9 @@ describe("formatReviewForModel", () => {
 });
 
 describe("normalizePlanFilePath", () => {
-  test("normalizes mux-home and Docker plan paths to a stable .mux/plans suffix", () => {
-    expect(normalizePlanFilePath("~/.mux/plans/workspace/plan.md")).toBe(
-      ".mux/plans/workspace/plan.md"
+  test("normalizes absolute mux and Docker plan paths to a stable .mux/plans suffix", () => {
+    expect(normalizePlanFilePath("/opt/user/.mux/plans/project/ws.md")).toBe(
+      ".mux/plans/project/ws.md"
     );
     expect(normalizePlanFilePath("/home/user/.mux/plans/workspace/plan.md")).toBe(
       ".mux/plans/workspace/plan.md"
@@ -97,42 +97,48 @@ describe("normalizePlanFilePath", () => {
     expect(normalizePlanFilePath("/root/.mux/plans/workspace/plan.md")).toBe(
       ".mux/plans/workspace/plan.md"
     );
+    expect(normalizePlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
     expect(normalizePlanFilePath("C:\\Users\\user\\.mux\\plans\\workspace\\plan.md")).toBe(
       ".mux/plans/workspace/plan.md"
     );
     expect(normalizePlanFilePath("/var/mux/plans/myproject/workspace.md")).toBe(
       ".mux/plans/myproject/workspace.md"
     );
+    expect(normalizePlanFilePath("C:\\var\\mux\\plans\\myproject\\workspace.md")).toBe(
+      ".mux/plans/myproject/workspace.md"
+    );
   });
 
   test("rejects embedded and relative paths that only contain .mux/plans", () => {
+    expect(normalizePlanFilePath("~/.mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath(".mux/plans/workspace/plan.md")).toBeNull();
-    expect(normalizePlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("project/.mux/plans/workspace/plan.md")).toBeNull();
-    expect(normalizePlanFilePath("C:\\var\\mux\\plans\\myproject\\workspace.md")).toBeNull();
     expect(normalizePlanFilePath("/var/mux/plans/")).toBeNull();
   });
 });
 
 describe("isPlanFilePath", () => {
-  test("recognizes local and Docker plan paths across separators", () => {
-    expect(isPlanFilePath("~/.mux/plans/workspace/plan.md")).toBeTrue();
+  test("recognizes absolute local and Docker plan paths across separators", () => {
+    expect(isPlanFilePath("/opt/user/.mux/plans/project/ws.md")).toBeTrue();
     expect(isPlanFilePath("/home/user/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("/Users/user/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("/root/.mux/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("C:\\Users\\user\\.mux\\plans\\workspace\\plan.md")).toBeTrue();
     expect(isPlanFilePath("C:/Users/user/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("/var/mux/plans/myproject/workspace.md")).toBeTrue();
+    expect(isPlanFilePath("C:\\var\\mux\\plans\\myproject\\workspace.md")).toBeTrue();
   });
 
-  test("rejects non-plan paths and empty paths", () => {
+  test("rejects non-plan paths, relative paths, and empty paths", () => {
     expect(isPlanFilePath("src/planning/planner.ts")).toBeFalse();
     expect(isPlanFilePath("plan.txt")).toBeFalse();
+    expect(isPlanFilePath("~/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath(".mux/plans/workspace/plan.md")).toBeFalse();
-    expect(isPlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("project/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("/var/mux/plan/myproject/workspace.md")).toBeFalse();
-    expect(isPlanFilePath("C:\\var\\mux\\plans\\myproject\\workspace.md")).toBeFalse();
     expect(isPlanFilePath("")).toBeFalse();
   });
 });
