@@ -24,9 +24,9 @@ export function useMuxGatewayAccountStatus() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<MuxGatewayAccountStatus | null> => {
     if (!api) {
-      return;
+      return null;
     }
 
     setIsLoading(true);
@@ -36,7 +36,7 @@ export function useMuxGatewayAccountStatus() {
       const result = await api.muxGateway.getAccountStatus();
       if (result.success) {
         setData(result.data);
-        return;
+        return result.data;
       }
 
       if (result.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
@@ -46,13 +46,15 @@ export function useMuxGatewayAccountStatus() {
 
         setData(null);
         setError(null);
-        return;
+        return null;
       }
 
       setError(result.error);
+      return null;
     } catch (err) {
       const message = getErrorMessage(err);
       setError(message);
+      return null;
     } finally {
       setIsLoading(false);
     }
