@@ -235,7 +235,8 @@ export const TaskAwaitToolArgsSchema = z
       .array(z.string().min(1))
       .nullish()
       .describe(
-        "List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace."
+        "List of task IDs to await — use only real IDs returned by prior task or bash tool results; never fabricate an ID. " +
+          "When omitted, waits for all active descendant tasks of the current workspace."
       ),
     filter: z
       .string()
@@ -983,7 +984,9 @@ export const TOOL_DEFINITIONS = {
       "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
       "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns a completed reportMarkdown. " +
       "If the foreground wait times out, returns a queued/running taskId with a note (the task continues running); use task_await to monitor progress. " +
-      "If run_in_background is true, returns a queued/running taskId with a note; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+      "If run_in_background is true, returns immediately with a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+      "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
+      "Use run_in_background: true when launching multiple tasks in parallel so you can await them as a batch. " +
       "Use the bash tool to run shell commands.",
     schema: TaskToolArgsSchema,
   },
@@ -996,7 +999,11 @@ export const TOOL_DEFINITIONS = {
   task_await: {
     description:
       "Wait for one or more tasks to produce output. " +
-      "Agent tasks return reports when completed. " +
+      "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task or bash — " +
+      "the taskId is not available until the spawning tool returns. " +
+      "Always wait for the task/bash tool result first, then call task_await in a subsequent step. " +
+      "When omitting task_ids to await all active tasks, ensure at least one background task was already spawned in a prior step. " +
+      "\n\nAgent tasks return reports when completed. " +
       "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
       "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
       "WARNING: when using filter, non-matching lines are permanently discarded. " +

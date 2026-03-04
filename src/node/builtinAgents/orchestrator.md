@@ -148,7 +148,7 @@ Patch integration loop (default):
 
 Sequential protocol (only for dependency chains):
 
-1. Spawn the prerequisite implementation task (`exec` or `plan`, based on complexity) with `run_in_background: false` (or spawn, then immediately `task_await`).
+1. Spawn the prerequisite implementation task (`exec` or `plan`, based on complexity) with `run_in_background: false`.
 2. Dry-run apply its patch (`dry_run: true`); then apply for real (`dry_run: false`). If either step fails, follow the conflict playbook above (including `git am --abort` only when a real apply leaves a git-am session in progress).
 3. Only after the patch is applied, spawn the dependent implementation task.
 4. Repeat until the dependency chain is complete.
