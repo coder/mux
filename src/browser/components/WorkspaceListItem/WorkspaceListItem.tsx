@@ -691,7 +691,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   "text-foreground block truncate text-left text-[14px] leading-6 transition-colors duration-200",
                   !isDisabled && "cursor-pointer",
                   isGeneratingTitle && "italic",
-                  visualState === "seen" && "text-secondary"
+                  !isSelected && visualState === "seen" && "text-secondary"
                 )}
                 onDoubleClick={(e) => {
                   if (isDisabled) return;
