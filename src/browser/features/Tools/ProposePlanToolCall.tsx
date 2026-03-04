@@ -367,8 +367,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     (isEphemeralPreviewMode || ((isLatest ?? false) && hasCompletedToolCall)) &&
     hasPlanContentInChat &&
     workspaceId &&
-    planPath &&
-    isPlanFilePath(planPath)
+    planPath
   );
   const isPlanVisible = isEphemeralPreviewMode || expanded;
 

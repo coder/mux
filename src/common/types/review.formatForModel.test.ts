@@ -43,6 +43,17 @@ describe("formatReviewForModel", () => {
     expect(formatted).not.toContain("/var/mux/plans");
   });
 
+  test("formats dev-mode mux plan annotations with Plan location", () => {
+    const formatted = formatReviewForModel({
+      ...baseReviewData,
+      filePath: "/home/user/.mux-dev/plans/workspace/my-plan.md",
+      lineRange: "+5-8",
+    });
+
+    expect(formatted).toContain("Re Plan:L5-8");
+    expect(formatted).not.toContain(".mux-dev/plans");
+  });
+
   test("uses clean L-prefixed line ranges for plan annotations", () => {
     const formatted = formatReviewForModel({
       ...baseReviewData,
@@ -84,7 +95,7 @@ describe("formatReviewForModel", () => {
 });
 
 describe("normalizePlanFilePath", () => {
-  test("normalizes absolute mux and Docker plan paths to a stable .mux/plans suffix", () => {
+  test("normalizes absolute mux, mux-suffix, and Docker plan paths to a stable .mux/plans suffix", () => {
     expect(normalizePlanFilePath("/opt/user/.mux/plans/project/ws.md")).toBe(
       ".mux/plans/project/ws.md"
     );
@@ -98,6 +109,15 @@ describe("normalizePlanFilePath", () => {
       ".mux/plans/workspace/plan.md"
     );
     expect(normalizePlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("/home/user/.mux-dev/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("/home/user/.mux-test/plans/workspace/plan.md")).toBe(
+      ".mux/plans/workspace/plan.md"
+    );
+    expect(normalizePlanFilePath("C:\\Users\\user\\.mux-dev\\plans\\workspace\\plan.md")).toBe(
       ".mux/plans/workspace/plan.md"
     );
     expect(normalizePlanFilePath("C:\\Users\\user\\.mux\\plans\\workspace\\plan.md")).toBe(
@@ -115,6 +135,9 @@ describe("normalizePlanFilePath", () => {
     expect(normalizePlanFilePath("~/.mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath(".mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("project/.mux/plans/workspace/plan.md")).toBeNull();
+    expect(normalizePlanFilePath("~/.mux-dev/plans/workspace/plan.md")).toBeNull();
+    expect(normalizePlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeNull();
+    expect(normalizePlanFilePath("project/.mux-dev/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("/var/mux/plans/")).toBeNull();
   });
 });
@@ -128,6 +151,9 @@ describe("isPlanFilePath", () => {
     expect(isPlanFilePath("/tmp/.mux/plans/workspace/plan.md")).toBeTrue();
     expect(isPlanFilePath("C:\\Users\\user\\.mux\\plans\\workspace\\plan.md")).toBeTrue();
     expect(isPlanFilePath("C:/Users/user/.mux/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("/home/user/.mux-dev/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("/home/user/.mux-test/plans/workspace/plan.md")).toBeTrue();
+    expect(isPlanFilePath("C:\\Users\\user\\.mux-dev\\plans\\workspace\\plan.md")).toBeTrue();
     expect(isPlanFilePath("/var/mux/plans/myproject/workspace.md")).toBeTrue();
     expect(isPlanFilePath("C:\\var\\mux\\plans\\myproject\\workspace.md")).toBeTrue();
   });
@@ -138,6 +164,9 @@ describe("isPlanFilePath", () => {
     expect(isPlanFilePath("~/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath(".mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("project/.mux/plans/workspace/plan.md")).toBeFalse();
+    expect(isPlanFilePath("~/.mux-dev/plans/workspace/plan.md")).toBeFalse();
+    expect(isPlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeFalse();
+    expect(isPlanFilePath("project/.mux-dev/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("/var/mux/plan/myproject/workspace.md")).toBeFalse();
     expect(isPlanFilePath("")).toBeFalse();
   });

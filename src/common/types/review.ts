@@ -252,7 +252,8 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
  * Converts Windows separators and strips absolute mux-home prefixes so callers can
  * compare only the stable ".mux/plans/..." suffix.
  *
- * Accepts any absolute path containing `/.mux/plans/` or `/var/mux/plans/`.
+ * Accepts any absolute path containing `/.mux/plans/`, `/.mux-<suffix>/plans/`,
+ * or `/var/mux/plans/`.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
   if (!filePath) return null;
@@ -264,18 +265,14 @@ export function normalizePlanFilePath(filePath: string): string | null {
   const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
   if (!isAbsolute) return null;
 
-  const muxPrefix = "/.mux/plans/";
-  const muxIdx = normalized.indexOf(muxPrefix);
-  if (muxIdx !== -1) {
-    const suffix = `.mux/plans/${normalized.slice(muxIdx + muxPrefix.length)}`;
-    return suffix === ".mux/plans/" ? null : suffix;
+  const muxHomeMatch = /\/\.mux(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
+  if (muxHomeMatch?.[1]) {
+    return `.mux/plans/${muxHomeMatch[1]}`;
   }
 
-  const dockerPrefix = "/var/mux/plans/";
-  const dockerIdx = normalized.indexOf(dockerPrefix);
-  if (dockerIdx !== -1) {
-    const suffix = `.mux/plans/${normalized.slice(dockerIdx + dockerPrefix.length)}`;
-    return suffix === ".mux/plans/" ? null : suffix;
+  const dockerMatch = /\/var\/mux\/plans\/(.+)/.exec(normalized);
+  if (dockerMatch?.[1]) {
+    return `.mux/plans/${dockerMatch[1]}`;
   }
 
   return null;
