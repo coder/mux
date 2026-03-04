@@ -2982,8 +2982,7 @@ export class WorkspaceStore {
       const onClientChange = () => attemptController.abort();
       clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
 
-      let stallInterval: ReturnType<typeof setInterval> | null = null;
-      let lastChatEventAt = Date.now();
+      const watchdog = this.createStallWatchdog(attemptController, `onChat(${workspaceId})`);
 
       try {
         // Always reset caughtUp at subscription start so historical events are
@@ -3049,26 +3048,16 @@ export class WorkspaceStore {
           this.resetChatStateForReplay(workspaceId);
         }
 
-        // Stall watchdog: server sends heartbeats every 5s, so if we don't receive ANY events
-        // (including heartbeats) for 10s, the connection is likely dead.
-        stallInterval = setInterval(() => {
-          if (attemptController.signal.aborted) return;
-
-          const elapsedMs = Date.now() - lastChatEventAt;
-          if (elapsedMs < SUBSCRIPTION_STALL_TIMEOUT_MS) return;
-
-          console.warn(
-            `[WorkspaceStore] onChat appears stalled for ${workspaceId} (no events for ${elapsedMs}ms); retrying...`
-          );
-          attemptController.abort();
-        }, SUBSCRIPTION_STALL_CHECK_INTERVAL_MS);
+        // Start watchdog after subscribe connects so timeout measures
+        // post-connect silence, not handshake latency.
+        watchdog.start();
 
         for await (const data of iterator) {
           if (signal.aborted) {
             return;
           }
 
-          lastChatEventAt = Date.now();
+          watchdog.markEvent();
 
           // Connection is alive again - don't carry old backoff into the next failure.
           attempt = 0;
@@ -3134,9 +3123,7 @@ export class WorkspaceStore {
       } finally {
         signal.removeEventListener("abort", onAbort);
         clientChangeSignal.removeEventListener("abort", onClientChange);
-        if (stallInterval) {
-          clearInterval(stallInterval);
-        }
+        watchdog.stop();
       }
 
       if (this.isWorkspaceRegistered(workspaceId)) {
