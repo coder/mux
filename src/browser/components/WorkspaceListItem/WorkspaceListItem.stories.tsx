@@ -16,6 +16,7 @@ import {
   createPendingTool,
 } from "@/browser/stories/mockFactory";
 import { addEphemeralMessage, workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   GIT_STATUS_INDICATOR_MODE_KEY,
   LEFT_SIDEBAR_COLLAPSED_KEY,
@@ -108,24 +109,24 @@ function StoryScaffold(props: { children: ReactNode }) {
     })
   );
 
-  window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
-  window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, JSON.stringify("line-delta"));
-  window.localStorage.setItem(
-    getStatusStateKey("ws-selected"),
-    JSON.stringify({ emoji: "🔍", message: "Agent text will go here like so" })
-  );
-  window.localStorage.setItem(
-    getStatusStateKey("ws-active"),
-    JSON.stringify({ emoji: "🔧", message: "Agent text will go here like so" })
-  );
-  window.localStorage.setItem(
-    getStatusStateKey("ws-error"),
-    JSON.stringify({ emoji: "🔧", message: "Build failed with error" })
-  );
-  window.localStorage.setItem(
-    getStatusStateKey("ws-question"),
-    JSON.stringify({ emoji: "🔍", message: "Agent has a question for you" })
-  );
+  updatePersistedState(LEFT_SIDEBAR_COLLAPSED_KEY, false);
+  updatePersistedState(GIT_STATUS_INDICATOR_MODE_KEY, "line-delta");
+  updatePersistedState(getStatusStateKey("ws-selected"), {
+    emoji: "🔍",
+    message: "Agent text will go here like so",
+  });
+  updatePersistedState(getStatusStateKey("ws-active"), {
+    emoji: "🔧",
+    message: "Agent text will go here like so",
+  });
+  updatePersistedState(getStatusStateKey("ws-error"), {
+    emoji: "🔧",
+    message: "Build failed with error",
+  });
+  updatePersistedState(getStatusStateKey("ws-question"), {
+    emoji: "🔍",
+    message: "Agent has a question for you",
+  });
 
   return (
     <APIProvider client={api}>
@@ -133,7 +134,7 @@ function StoryScaffold(props: { children: ReactNode }) {
         <TitleEditProvider onUpdateTitle={() => Promise.resolve({ success: true })}>
           <TooltipProvider>
             <DndProvider backend={HTML5Backend}>
-              <div className="w-[360px] rounded-md border border-white/10 bg-[#1e1e1e] p-2">
+              <div className="border-border bg-surface-primary w-[360px] rounded-md border p-2">
                 <div className="space-y-1">{props.children}</div>
               </div>
             </DndProvider>
@@ -237,9 +238,9 @@ function renderIdleState(isUnread: boolean) {
   const workspace = STORY_WORKSPACES[2];
   const createdAtMs = Date.parse(workspace.createdAt ?? new Date(NOW).toISOString());
   // Explicitly control idle visual state for stories: unread => gray ring dot, seen => hidden dot.
-  window.localStorage.setItem(
+  updatePersistedState(
     getWorkspaceLastReadKey(workspace.id),
-    JSON.stringify(isUnread ? createdAtMs - 60_000 : createdAtMs + 60_000)
+    isUnread ? createdAtMs - 60_000 : createdAtMs + 60_000
   );
   return renderSingleWorkspaceState(2);
 }
