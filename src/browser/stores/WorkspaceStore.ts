@@ -111,6 +111,7 @@ export interface WorkspaceSidebarState {
   canInterrupt: boolean;
   isStarting: boolean;
   awaitingUserQuestion: boolean;
+  lastAbortReason: StreamAbortReasonSnapshot | null;
   currentModel: string | null;
   recencyTimestamp: number | null;
   loadedSkills: LoadedSkill[];
@@ -1715,6 +1716,7 @@ export class WorkspaceStore {
       cached?.canInterrupt === fullState.canInterrupt &&
       cached.isStarting === isStarting &&
       cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
+      cached.lastAbortReason === fullState.lastAbortReason &&
       cached.currentModel === fullState.currentModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
       cached.loadedSkills === fullState.loadedSkills &&
@@ -1734,6 +1736,7 @@ export class WorkspaceStore {
       canInterrupt: fullState.canInterrupt,
       isStarting,
       awaitingUserQuestion: fullState.awaitingUserQuestion,
+      lastAbortReason: fullState.lastAbortReason,
       currentModel: fullState.currentModel,
       recencyTimestamp: fullState.recencyTimestamp,
       loadedSkills: fullState.loadedSkills,

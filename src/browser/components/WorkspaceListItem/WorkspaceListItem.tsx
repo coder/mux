@@ -100,7 +100,7 @@ function getItemPaddingLeft(depth?: number): number {
   return 12 + Math.min(32, safeDepth) * 12;
 }
 
-type VisualState = "active" | "idle" | "seen" | "error" | "question";
+type VisualState = "active" | "idle" | "seen" | "hidden" | "error" | "question";
 
 function getVisualState(opts: {
   awaitingUserQuestion: boolean;
@@ -111,8 +111,12 @@ function getVisualState(opts: {
   isStarting: boolean;
   isUnread: boolean;
   isSelected: boolean;
+  hasError: boolean;
 }): VisualState {
   if (opts.isRemoving || opts.isArchiving) {
+    return "hidden";
+  }
+  if (opts.hasError) {
     return "error";
   }
   if (opts.awaitingUserQuestion) {
@@ -131,7 +135,7 @@ function getVisualState(opts: {
 }
 
 function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
-  const shouldHideDot = !props.isDraft && props.state === "seen";
+  const shouldHideDot = !props.isDraft && (props.state === "seen" || props.state === "hidden");
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
   ) : shouldHideDot ? (
@@ -433,11 +437,18 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     }
   };
 
-  const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus, terminalActiveCount } =
-    useWorkspaceSidebarState(workspaceId);
+  const {
+    canInterrupt,
+    awaitingUserQuestion,
+    isStarting,
+    agentStatus,
+    terminalActiveCount,
+    lastAbortReason,
+  } = useWorkspaceSidebarState(workspaceId);
 
   const fallbackModel = useWorkspaceFallbackModel(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+  const hasError = lastAbortReason !== null && lastAbortReason.reason !== "user";
   const visualState = getVisualState({
     awaitingUserQuestion,
     isInitializing,
@@ -447,6 +458,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     isStarting,
     isUnread,
     isSelected,
+    hasError,
   });
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;

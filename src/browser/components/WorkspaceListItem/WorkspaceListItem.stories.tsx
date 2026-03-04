@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { ReactNode } from "react";
+import { useEffect } from "react";
 import { WorkspaceListItem } from "@/browser/components/WorkspaceListItem/WorkspaceListItem";
 import { APIProvider } from "@/browser/contexts/API";
 import { TelemetryEnabledProvider } from "@/browser/contexts/TelemetryEnabledContext";
@@ -12,10 +13,11 @@ import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import {
   NOW,
   createWorkspace,
-  createAssistantMessage,
-  createPendingTool,
 } from "@/browser/stories/mockFactory";
-import { addEphemeralMessage, workspaceStore } from "@/browser/stores/WorkspaceStore";
+import {
+  useWorkspaceStoreRaw,
+  workspaceStore,
+} from "@/browser/stores/WorkspaceStore";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   GIT_STATUS_INDICATOR_MODE_KEY,
@@ -41,7 +43,7 @@ const STORY_WORKSPACES = [
   createWorkspace({
     id: "ws-selected",
     name: "selected",
-    title: "Name of agent workflow active",
+    title: "Selected agent workflow",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
     createdAt: new Date(NOW - 1_000).toISOString(),
@@ -49,7 +51,7 @@ const STORY_WORKSPACES = [
   createWorkspace({
     id: "ws-active",
     name: "active",
-    title: "Name of agent workflow active",
+    title: "Active agent workflow",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
     createdAt: new Date(NOW - 2_000).toISOString(),
@@ -57,7 +59,7 @@ const STORY_WORKSPACES = [
   createWorkspace({
     id: "ws-idle",
     name: "idle",
-    title: "Name of agent workflow active",
+    title: "Idle agent workflow",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
     createdAt: new Date(NOW - 3_000).toISOString(),
@@ -65,7 +67,7 @@ const STORY_WORKSPACES = [
   createWorkspace({
     id: "ws-error",
     name: "error",
-    title: "Name of agent workflow active",
+    title: "Error state agent workflow",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
     createdAt: new Date(NOW - 4_000).toISOString(),
@@ -73,42 +75,87 @@ const STORY_WORKSPACES = [
   createWorkspace({
     id: "ws-question",
     name: "question",
-    title: "Name of agent workflow active",
+    title: "Agent workflow needs input",
     projectName: PROJECT_NAME,
     projectPath: PROJECT_PATH,
     createdAt: new Date(NOW - 5_000).toISOString(),
   }),
 ];
 
-function StoryScaffold(props: { children: ReactNode }) {
-  const api = createMockORPCClient();
+function StoryScaffold(props: { children: ReactNode; activeWorkspaceId?: string }) {
+  const api = createMockORPCClient({
+    onChat: (workspaceId, emit) => {
+      emit({ type: "caught-up", hasOlderHistory: false });
+      if (workspaceId === "ws-active") {
+        emit({
+          type: "stream-start",
+          workspaceId,
+          messageId: "story-ws-active-stream",
+          model: "mock-model",
+          historySequence: 1_000,
+          startTime: NOW,
+        });
+      }
+      if (workspaceId === "ws-error") {
+        emit({
+          type: "stream-start",
+          workspaceId,
+          messageId: "story-ws-error-stream",
+          model: "mock-model",
+          historySequence: 1_001,
+          startTime: NOW,
+        });
+        emit({
+          type: "stream-abort",
+          workspaceId,
+          messageId: "story-ws-error-stream",
+          abortReason: "system",
+        });
+      }
+      if (workspaceId === "ws-question") {
+        emit({
+          type: "stream-start",
+          workspaceId,
+          messageId: "story-ws-question-stream",
+          model: "mock-model",
+          historySequence: 1_002,
+          startTime: NOW,
+        });
+        emit({
+          type: "tool-call-start",
+          workspaceId,
+          messageId: "story-ws-question-stream",
+          toolCallId: "story-call-ask-1",
+          toolName: "ask_user_question",
+          args: {
+            questions: [
+              {
+                id: "scope",
+                prompt: "Which approach should we use?",
+                options: [
+                  { id: "a", label: "Approach A" },
+                  { id: "b", label: "Approach B" },
+                ],
+              },
+            ],
+          },
+          tokens: 5,
+          timestamp: NOW,
+        });
+      }
+    },
+  });
+  const workspaceStoreRaw = useWorkspaceStoreRaw();
+  useEffect(() => {
+    workspaceStoreRaw.setClient(api);
+    return () => {
+      workspaceStoreRaw.setClient(null);
+    };
+  }, [api, workspaceStoreRaw]);
   for (const workspace of STORY_WORKSPACES) {
     workspaceStore.addWorkspace(workspace);
   }
-  // Seed a pending ask_user_question call so ws-question exercises the
-  // awaitingUserQuestion path (MessageCircleQuestionMark) in WorkspaceListItem.
-  addEphemeralMessage(
-    "ws-question",
-    createAssistantMessage("story-ws-question-ask", "I have a few clarifying questions.", {
-      historySequence: 999,
-      timestamp: NOW,
-      toolCalls: [
-        createPendingTool("story-call-ask-1", "ask_user_question", {
-          questions: [
-            {
-              id: "scope",
-              prompt: "Which approach should we use?",
-              options: [
-                { id: "a", label: "Approach A" },
-                { id: "b", label: "Approach B" },
-              ],
-            },
-          ],
-        }),
-      ],
-    })
-  );
-
+  workspaceStore.setActiveWorkspaceId(props.activeWorkspaceId ?? null);
   updatePersistedState(LEFT_SIDEBAR_COLLAPSED_KEY, false);
   updatePersistedState(GIT_STATUS_INDICATOR_MODE_KEY, "line-delta");
   updatePersistedState(getStatusStateKey("ws-selected"), {
@@ -203,7 +250,7 @@ function renderFigmaStates() {
         draft={{
           draftId: "draft-state",
           draftNumber: 1,
-          title: "Draft",
+          title: "Draft agent workflow",
           promptPreview: "",
           onOpen: () => undefined,
           onDelete: () => undefined,
@@ -218,7 +265,7 @@ function renderFigmaStates() {
 function renderSingleWorkspaceState(workspaceIndex: number, options?: { isArchiving?: boolean }) {
   const workspace = STORY_WORKSPACES[workspaceIndex];
   return (
-    <StoryScaffold>
+    <StoryScaffold activeWorkspaceId={workspace.id}>
       <WorkspaceListItem
         metadata={workspace}
         projectPath={PROJECT_PATH}
@@ -253,7 +300,7 @@ function renderDraftState() {
         draft={{
           draftId: "draft-state",
           draftNumber: 1,
-          title: "Draft",
+          title: "Draft agent workflow",
           promptPreview: "",
           onOpen: () => undefined,
           onDelete: () => undefined,
