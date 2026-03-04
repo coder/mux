@@ -105,21 +105,27 @@ export async function openInEditor(args: {
       ? editorConfig.editor
       : null;
 
-  if (extensionEditor && !readPersistedState(VS_CODE_EXTENSION_INSTALL_ATTEMPTED_KEY, false)) {
-    // Install once in the background so the existing open flow stays non-blocking.
-    args.api?.general
-      .installVsCodeExtension({ editor: extensionEditor })
-      ?.then(
-        () => {
-          updatePersistedState(VS_CODE_EXTENSION_INSTALL_ATTEMPTED_KEY, true);
-        },
-        () => {
-          updatePersistedState(VS_CODE_EXTENSION_INSTALL_ATTEMPTED_KEY, true);
-        }
-      )
-      ?.catch(() => {
-        /* silently ignore background install errors */
-      });
+  // Browser mode runs RPCs on the remote Mux host, so extension installation cannot
+  // satisfy local editor requirements there.
+  if (!isBrowserMode && extensionEditor) {
+    const extensionInstallAttemptedKey = `${VS_CODE_EXTENSION_INSTALL_ATTEMPTED_KEY}:${extensionEditor}`;
+
+    if (!readPersistedState(extensionInstallAttemptedKey, false)) {
+      // Install once in the background so the existing open flow stays non-blocking.
+      args.api?.general
+        .installVsCodeExtension({ editor: extensionEditor })
+        ?.then(
+          () => {
+            updatePersistedState(extensionInstallAttemptedKey, true);
+          },
+          () => {
+            updatePersistedState(extensionInstallAttemptedKey, true);
+          }
+        )
+        ?.catch(() => {
+          /* silently ignore background install errors */
+        });
+    }
   }
 
   const isSSH = isSSHRuntime(args.runtimeConfig);
