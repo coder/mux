@@ -333,11 +333,17 @@ export const router = (authToken?: string) => {
         .input(schemas.tokenizer.calculateStats.input)
         .output(schemas.tokenizer.calculateStats.output)
         .handler(async ({ context, input }) => {
+          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          const parentWorkspaceId = metadataResult.success
+            ? (metadataResult.data.parentWorkspaceId ?? null)
+            : null;
+
           return context.tokenizerService.calculateStats(
             input.workspaceId,
             input.messages,
             input.model,
-            context.providerService.getConfig()
+            context.providerService.getConfig(),
+            parentWorkspaceId
           );
         }),
     },

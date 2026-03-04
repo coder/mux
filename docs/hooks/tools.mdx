@@ -459,6 +459,27 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>skills_catalog_read (3)</summary>
+
+| Env var                   | JSON path | Type   | Description                                                         |
+| ------------------------- | --------- | ------ | ------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_OWNER`    | `owner`   | string | GitHub owner from the search result (e.g. 'vercel-labs')            |
+| `MUX_TOOL_INPUT_REPO`     | `repo`    | string | GitHub repository name from the search result (e.g. 'agent-skills') |
+| `MUX_TOOL_INPUT_SKILL_ID` | `skillId` | string | Skill ID from the search result                                     |
+
+</details>
+
+<details>
+<summary>skills_catalog_search (2)</summary>
+
+| Env var                | JSON path | Type   | Description                                       |
+| ---------------------- | --------- | ------ | ------------------------------------------------- |
+| `MUX_TOOL_INPUT_LIMIT` | `limit`   | number | Maximum number of results to return (default: 10) |
+| `MUX_TOOL_INPUT_QUERY` | `query`   | string | Search query to find skills in the catalog        |
+
+</details>
+
+<details>
 <summary>status_set (3)</summary>
 
 | Env var                  | JSON path | Type   | Description                                                                                                                                  |

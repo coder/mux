@@ -253,11 +253,17 @@ export function collectUniqueToolNames(messages: MuxMessage[]): Set<string> {
 export async function fetchAllToolDefinitions(
   toolNames: Set<string>,
   model: string,
-  metadataModelOverride?: string
+  metadataModelOverride: string | undefined,
+  availableToolsOptions: Parameters<typeof getToolDefinitionTokens>[3]
 ): Promise<Map<string, number>> {
   const entries = await Promise.all(
     Array.from(toolNames).map(async (toolName) => {
-      const tokens = await getToolDefinitionTokens(toolName, model, metadataModelOverride);
+      const tokens = await getToolDefinitionTokens(
+        toolName,
+        model,
+        metadataModelOverride,
+        availableToolsOptions
+      );
       return [toolName, tokens] as const;
     })
   );
@@ -398,7 +404,8 @@ export function mergeResults(
 export async function calculateTokenStats(
   messages: MuxMessage[],
   model: string,
-  providersConfig: ProvidersConfigMap | null = null
+  providersConfig: ProvidersConfigMap | null,
+  availableToolsOptions: Parameters<typeof getToolDefinitionTokens>[3]
 ): Promise<ChatStats> {
   if (messages.length === 0) {
     return {
@@ -423,7 +430,8 @@ export async function calculateTokenStats(
   const toolDefinitions = await fetchAllToolDefinitions(
     toolNames,
     model,
-    metadataModel !== model ? metadataModel : undefined
+    metadataModel !== model ? metadataModel : undefined,
+    availableToolsOptions
   );
 
   // Phase 2: Extract sync metadata (no awaits)

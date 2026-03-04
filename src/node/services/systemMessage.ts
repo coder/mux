@@ -14,6 +14,7 @@ import {
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getMuxHome } from "@/common/constants/paths";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
+import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import { assertNever } from "@/common/utils/assertNever";
 
 // NOTE: keep this in sync with the docs/models.md file
@@ -220,6 +221,7 @@ export function extractToolInstructions(
   options?: {
     enableAgentReport?: boolean;
     enableMuxGlobalAgentsTools?: boolean;
+    enableSkillsCatalogTools?: boolean;
     agentInstructions?: string;
   }
 ): Record<string, string> {
@@ -266,8 +268,10 @@ export async function readToolInstructions(
   );
 
   return extractToolInstructions(globalInstructions, contextInstructions, modelString, {
-    enableAgentReport: Boolean(metadata.parentWorkspaceId),
-    enableMuxGlobalAgentsTools: true,
+    ...getToolAvailabilityOptions({
+      workspaceId: metadata.id,
+      parentWorkspaceId: metadata.parentWorkspaceId,
+    }),
     agentInstructions,
   });
 }
