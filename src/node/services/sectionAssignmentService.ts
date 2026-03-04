@@ -1,5 +1,7 @@
 import assert from "@/common/utils/assert";
+import type { SectionRuleCondition } from "@/common/schemas/project";
 import type { StreamEndEvent } from "@/common/types/stream";
+import type { SectionConfig } from "@/common/types/project";
 import { evaluateSectionRules, type WorkspaceRuleContext } from "@/common/utils/sectionRules";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
 import { log } from "@/node/services/log";
@@ -8,6 +10,34 @@ import type { ProjectService } from "./projectService";
 import type { WorkspaceService } from "./workspaceService";
 
 const DEBOUNCE_MS = 300;
+
+const FRONTEND_ONLY_FIELDS = new Set<SectionRuleCondition["field"]>([
+  "prState",
+  "prMergeStatus",
+  "prIsDraft",
+  "prHasFailedChecks",
+  "prHasPendingChecks",
+  "gitDirty",
+]);
+
+function sectionHasFrontendOnlyRules(section: SectionConfig): boolean {
+  return (
+    section.rules?.some((rule) =>
+      rule.conditions.some((condition) => FRONTEND_ONLY_FIELDS.has(condition.field))
+    ) ?? false
+  );
+}
+
+function hasFrontendOnlyContext(frontendContext: FrontendProvidedContext | undefined): boolean {
+  return (
+    frontendContext?.prState !== undefined ||
+    frontendContext?.prMergeStatus !== undefined ||
+    frontendContext?.prIsDraft !== undefined ||
+    frontendContext?.prHasFailedChecks !== undefined ||
+    frontendContext?.prHasPendingChecks !== undefined ||
+    frontendContext?.gitDirty !== undefined
+  );
+}
 
 export interface FrontendProvidedContext {
   prState?: "OPEN" | "CLOSED" | "MERGED" | "none";
@@ -82,8 +112,22 @@ export class SectionAssignmentService {
     }
 
     const projectPath = metadata.projectPath;
-    const sections = sortSectionsByLinkedList(this.projectService.listSections(projectPath));
-    const hasRules = sections.some((section) => (section.rules?.length ?? 0) > 0);
+    const sortedSections = sortSectionsByLinkedList(this.projectService.listSections(projectPath));
+    const frontendContextAvailable = hasFrontendOnlyContext(frontendContext);
+
+    if (!frontendContextAvailable && metadata.sectionId) {
+      const currentSection = sortedSections.find((section) => section.id === metadata.sectionId);
+      if (currentSection && sectionHasFrontendOnlyRules(currentSection)) {
+        // Preserve assignment when backend-triggered reevaluation lacks frontend-only PR/git context.
+        return;
+      }
+    }
+
+    const sectionsToEvaluate = frontendContextAvailable
+      ? sortedSections
+      : sortedSections.filter((section) => !sectionHasFrontendOnlyRules(section));
+
+    const hasRules = sectionsToEvaluate.some((section) => (section.rules?.length ?? 0) > 0);
     if (!hasRules) {
       return;
     }
@@ -107,7 +151,7 @@ export class SectionAssignmentService {
       pinnedToSection: false,
     };
 
-    const nextSectionId = evaluateSectionRules(sections, context);
+    const nextSectionId = evaluateSectionRules(sectionsToEvaluate, context);
     if (nextSectionId === metadata.sectionId) {
       return;
     }

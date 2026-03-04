@@ -135,6 +135,71 @@ describe("SectionAssignmentService", () => {
     expect(refreshAndEmitMetadataMock).not.toHaveBeenCalled();
   });
 
+  it("preserves current frontend-only section when reevaluating without frontend context", async () => {
+    getInfoMock.mockResolvedValueOnce(makeMetadata({ sectionId: "open-pr" }));
+
+    listSectionsMock.mockReturnValueOnce([
+      {
+        id: "open-pr",
+        name: "Open PR",
+        rules: [
+          {
+            conditions: [{ field: "prState", op: "eq", value: "OPEN" }],
+          },
+        ],
+      },
+      {
+        id: "streaming",
+        name: "Streaming",
+        rules: [
+          {
+            conditions: [{ field: "streaming", op: "eq", value: true }],
+          },
+        ],
+      },
+    ]);
+
+    await service.evaluateWorkspace("ws-1");
+
+    expect(getActivityListMock).not.toHaveBeenCalled();
+    expect(assignWorkspaceToSectionMock).not.toHaveBeenCalled();
+    expect(refreshAndEmitMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it("skips frontend-only sections when frontend context is unavailable", async () => {
+    listSectionsMock.mockReturnValueOnce([
+      {
+        id: "not-open-pr",
+        name: "Not Open PR",
+        rules: [
+          {
+            conditions: [{ field: "prState", op: "neq", value: "OPEN" }],
+          },
+        ],
+      },
+      {
+        id: "non-streaming",
+        name: "Non-streaming",
+        rules: [
+          {
+            conditions: [{ field: "streaming", op: "eq", value: false }],
+          },
+        ],
+      },
+    ]);
+
+    await service.evaluateWorkspace("ws-1");
+
+    expect(assignWorkspaceToSectionMock).toHaveBeenCalledTimes(1);
+    expect(assignWorkspaceToSectionMock).toHaveBeenCalledWith(
+      "/project/demo",
+      "ws-1",
+      "non-streaming",
+      false
+    );
+    expect(refreshAndEmitMetadataMock).toHaveBeenCalledTimes(1);
+  });
+
   it("re-evaluates only workspaces from the requested project", async () => {
     listWorkspacesMock.mockResolvedValueOnce([
       makeMetadata({ id: "ws-1", projectPath: "/project/demo" }),

@@ -1842,6 +1842,40 @@ exit 1
     });
   });
 
+  describe("sections", () => {
+    it("clears section pins when removing a section", async () => {
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          {
+            path: "/fake/project/.mux/ws-1",
+            id: "ws-1",
+            sectionId: "review",
+            pinnedToSection: true,
+          },
+        ],
+        sections: [
+          {
+            id: "review",
+            name: "Review",
+          },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.removeSection(projectPath, "review");
+
+      expect(result.success).toBe(true);
+      const after = config.loadConfigOrDefault();
+      const project = after.projects.get(projectPath);
+      expect(project).toBeDefined();
+      expect(project?.sections ?? []).toHaveLength(0);
+      expect(project?.workspaces[0]?.sectionId).toBeUndefined();
+      expect(project?.workspaces[0]?.pinnedToSection).toBeUndefined();
+    });
+  });
+
   describe("remove", () => {
     it("removes project with no workspaces", async () => {
       const projectPath = "/fake/project";

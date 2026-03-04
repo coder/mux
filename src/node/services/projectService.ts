@@ -1316,9 +1316,11 @@ export class ProjectService {
 
       const workspacesInSection = project.workspaces.filter((w) => w.sectionId === sectionId);
 
-      // Unsection all workspaces in this section
+      // Unsection all workspaces in this section.
+      // A removed section can never be a valid pin target, so clear stale pins too.
       for (const workspace of workspacesInSection) {
         workspace.sectionId = undefined;
+        workspace.pinnedToSection = undefined;
       }
 
       // Remove the section
