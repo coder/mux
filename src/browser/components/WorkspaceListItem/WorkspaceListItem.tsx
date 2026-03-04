@@ -102,6 +102,9 @@ function getItemPaddingLeft(depth?: number): number {
 
 type VisualState = "active" | "idle" | "seen" | "error" | "question";
 
+// Match whole words so statuses like "task" do not get misclassified as question-state.
+const QUESTION_STATUS_WORD_PATTERN = /\b(question|awaiting|ask(?:ed|ing|s)?)\b/;
+
 function getVisualState(opts: {
   awaitingUserQuestion: boolean;
   isInitializing: boolean;
@@ -119,8 +122,7 @@ function getVisualState(opts: {
     statusText.includes("failed") ||
     statusText.includes("failure") ||
     statusText.includes("crash");
-  const hasQuestionKeyword =
-    statusText.includes("question") || statusText.includes("awaiting") || statusText.includes("ask");
+  const hasQuestionKeyword = QUESTION_STATUS_WORD_PATTERN.test(statusText);
 
   if (opts.awaitingUserQuestion || hasQuestionKeyword) {
     return "question";
@@ -135,10 +137,7 @@ function getVisualState(opts: {
   return opts.isUnread ? "idle" : "seen";
 }
 
-function StatusDot(props: {
-  state: VisualState;
-  isDraft?: boolean;
-}) {
+function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
   const shouldHideDot = !props.isDraft && props.state === "seen";
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
@@ -158,7 +157,9 @@ function StatusDot(props: {
     />
   );
 
-  return <div className="relative mt-1 flex h-4 w-4 shrink-0 items-center justify-center">{dot}</div>;
+  return (
+    <div className="relative mt-1 flex h-4 w-4 shrink-0 items-center justify-center">{dot}</div>
+  );
 }
 
 /** Action button wrapper (archive/delete) with consistent sizing and alignment */
@@ -355,7 +356,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         node.style.visibility = "visible";
       });
     },
-    [ctxMenu.isOpen, ctxMenu.position?.x, ctxMenu.position?.y]
+    [ctxMenu.isOpen]
   );
 
   useEffect(() => {
@@ -364,19 +365,24 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     }
   }, [isEditing, ctxMenu]);
 
-  const handleEditInputRef = useCallback(
-    (node: HTMLInputElement | null) => {
-      if (!node) {
-        return;
-      }
+  const wasEditingRef = useRef(false);
+  useEffect(() => {
+    if (isEditing && !wasEditingRef.current) {
+      // Initialize draft title exactly once per edit session so metadata refreshes
+      // never overwrite what the user has typed in the input.
+      setEditingTitle(displayTitle);
+      setTitleError(null);
+    }
+    wasEditingRef.current = isEditing;
+  }, [isEditing, displayTitle]);
 
-      const nextTitle = displayTitle;
-      setEditingTitle((currentTitle) => (currentTitle === nextTitle ? currentTitle : nextTitle));
-      setTitleError((currentError) => (currentError === null ? currentError : null));
-      node.focus();
-    },
-    [displayTitle]
-  );
+  const handleEditInputRef = useCallback((node: HTMLInputElement | null) => {
+    if (!node) {
+      return;
+    }
+
+    node.focus();
+  }, []);
 
   // SHARE_TRANSCRIPT keybind is handled in WorkspaceMenuBar (always mounted),
   // so it works even when the sidebar is collapsed and list items are unmounted.
@@ -527,9 +533,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        <StatusDot
-          state={visualState}
-        />
+        <StatusDot state={visualState} />
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
         {isInitializing ? (

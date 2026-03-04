@@ -9,7 +9,12 @@ import { HTML5Backend } from "react-dnd-html5-backend";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { screen, waitFor, userEvent } from "@storybook/test";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { NOW, createWorkspace, createAssistantMessage, createPendingTool } from "@/browser/stories/mockFactory";
+import {
+  NOW,
+  createWorkspace,
+  createAssistantMessage,
+  createPendingTool,
+} from "@/browser/stories/mockFactory";
 import { addEphemeralMessage, workspaceStore } from "@/browser/stores/WorkspaceStore";
 import {
   GIT_STATUS_INDICATOR_MODE_KEY,
