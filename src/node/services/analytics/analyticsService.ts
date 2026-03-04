@@ -495,12 +495,15 @@ export class AnalyticsService {
     assert(input.sql.trim().length > 0, "saveQuery requires non-empty SQL");
 
     const queries = await this.readSavedQueries();
+    const nextOrder =
+      queries.length === 0 ? 0 : Math.max(...queries.map((query) => query.order)) + 1;
+
     const savedQuery: SavedQuery = {
       id: crypto.randomUUID(),
       label: input.label,
       sql: input.sql,
       chartType: input.chartType ?? null,
-      order: queries.length,
+      order: nextOrder,
       createdAt: new Date().toISOString(),
     };
 

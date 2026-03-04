@@ -51,7 +51,7 @@ describe("AnalyticsService saved queries", () => {
     expect(onDisk.queries[0]).toEqual(savedQuery);
   });
 
-  test("saveQuery auto-increments order", async () => {
+  test("saveQuery auto-increments order from max after deletions", async () => {
     const first = await service.saveQuery({ label: "Q1", sql: "SELECT 1" });
     const second = await service.saveQuery({ label: "Q2", sql: "SELECT 2" });
     const third = await service.saveQuery({ label: "Q3", sql: "SELECT 3" });
@@ -59,6 +59,15 @@ describe("AnalyticsService saved queries", () => {
     expect(first.order).toBe(0);
     expect(second.order).toBe(1);
     expect(third.order).toBe(2);
+
+    const deleted = await service.deleteSavedQuery({ id: second.id });
+    expect(deleted).toEqual({ success: true });
+
+    const fourth = await service.saveQuery({ label: "Q4", sql: "SELECT 4" });
+    expect(fourth.order).toBe(3);
+
+    const savedQueries = await service.getSavedQueries();
+    expect(savedQueries.queries.map((query) => query.order)).toEqual([0, 2, 3]);
   });
 
   test("getSavedQueries returns queries sorted by order", async () => {
