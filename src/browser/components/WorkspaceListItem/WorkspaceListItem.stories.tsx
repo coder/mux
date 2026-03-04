@@ -10,14 +10,8 @@ import { HTML5Backend } from "react-dnd-html5-backend";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { screen, waitFor, userEvent } from "@storybook/test";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import {
-  NOW,
-  createWorkspace,
-} from "@/browser/stories/mockFactory";
-import {
-  useWorkspaceStoreRaw,
-  workspaceStore,
-} from "@/browser/stores/WorkspaceStore";
+import { NOW, createWorkspace } from "@/browser/stories/mockFactory";
+import { useWorkspaceStoreRaw, workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   GIT_STATUS_INDICATOR_MODE_KEY,
