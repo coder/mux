@@ -865,7 +865,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     lastDiffRefreshTriggerRef.current = refreshTrigger;
     const isManualRefresh = refreshTrigger !== 0 && prevRefreshTrigger !== refreshTrigger;
 
-    const pathFilter = selectedFilePath ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
+    const pathFilter =
+      selectedFilePath && !isImmersive ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
 
     const diffCommand = buildGitDiffCommand(
       filters.diffBase,
@@ -1005,6 +1006,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     selectedFilePath,
     refreshTrigger,
     isCreating,
+    isImmersive,
   ]);
 
   // Persist includeUncommitted when it changes

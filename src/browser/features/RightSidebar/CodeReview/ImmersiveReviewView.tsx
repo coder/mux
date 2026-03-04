@@ -50,7 +50,7 @@ interface ImmersiveReviewViewProps {
   fileTree: FileTreeNode | null;
   /** Filtered hunks (respects current filters) */
   hunks: DiffHunk[];
-  /** All hunks (unfiltered, for context) */
+  /** All hunks for the active file set (bypasses frontend filters like read/search) */
   allHunks: DiffHunk[];
   /** True while diff/tree payload for this workspace is still loading. */
   isLoading?: boolean;
