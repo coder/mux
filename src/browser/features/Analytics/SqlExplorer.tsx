@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Database, Pin, Play, X } from "lucide-react";
 import { Button } from "@/browser/components/Button/Button";
 import { useAnalyticsRawQuery } from "@/browser/hooks/useAnalytics";
@@ -46,6 +46,21 @@ export function SqlExplorer(props: SqlExplorerProps) {
   const [saveLabel, setSaveLabel] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
+  const pendingExecutedSqlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (loading || error || !data) {
+      return;
+    }
+
+    const executedSql = pendingExecutedSqlRef.current;
+    if (!executedSql) {
+      return;
+    }
+
+    setLastExecutedSql(executedSql);
+  }, [data, error, loading]);
 
   const inferredChartType = data ? inferChartType(data.columns, data.rows) : "table";
 
@@ -64,6 +79,7 @@ export function SqlExplorer(props: SqlExplorerProps) {
       return;
     }
 
+    pendingExecutedSqlRef.current = normalizedSql;
     void executeQuery(normalizedSql);
   };
 
@@ -73,12 +89,12 @@ export function SqlExplorer(props: SqlExplorerProps) {
   };
 
   const handleSave = async () => {
-    if (!props.onSaveQuery || !data || saveLabel === null) {
+    if (!props.onSaveQuery || !data || !lastExecutedSql || saveLabel === null) {
       return;
     }
 
     const normalizedLabel = saveLabel.trim();
-    const normalizedSql = sql.trim();
+    const normalizedSql = lastExecutedSql.trim();
     if (!normalizedLabel || !normalizedSql) {
       return;
     }
@@ -192,7 +208,7 @@ export function SqlExplorer(props: SqlExplorerProps) {
               </div>
             </div>
 
-            {props.onSaveQuery && (
+            {props.onSaveQuery && lastExecutedSql && (
               <div className="border-border-light flex flex-wrap items-center justify-between gap-2 border-t pt-3">
                 <div className="text-muted text-xs">
                   Pin this query to the dashboard as a saved panel.
