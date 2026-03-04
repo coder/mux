@@ -194,7 +194,7 @@ describe("MCPServerManager", () => {
     const result = await manager.getToolsForWorkspace({
       workspaceId,
       projectPath,
-      runtime: {} as Runtime,
+      runtime: {} as unknown as Runtime,
       workspacePath,
     });
 
