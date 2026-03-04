@@ -302,14 +302,21 @@ export function isPlanFilePath(filePath: string): boolean {
 }
 
 function formatPlanLineRange(lineRange: string): string {
-  const newRangeMatch = /\+(\d+(?:-\d+)?)/.exec(lineRange);
+  const trimmedLineRange = lineRange.trim();
+
+  const newRangeMatch = /\+(\d+(?:-\d+)?)/.exec(trimmedLineRange);
   if (newRangeMatch?.[1]) {
     return `L${newRangeMatch[1]}`;
   }
 
-  const oldRangeMatch = /-(\d+(?:-\d+)?)/.exec(lineRange);
+  const oldRangeMatch = /(?:^|\s)-(\d+(?:-\d+)?)(?=\s|$)/.exec(trimmedLineRange);
   if (oldRangeMatch?.[1]) {
     return `L${oldRangeMatch[1]}`;
+  }
+
+  const bareRangeMatch = /^(\d+(?:-\d+)?)$/.exec(trimmedLineRange);
+  if (bareRangeMatch?.[1]) {
+    return `L${bareRangeMatch[1]}`;
   }
 
   return lineRange;

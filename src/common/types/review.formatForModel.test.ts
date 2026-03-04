@@ -75,6 +75,26 @@ describe("formatReviewForModel", () => {
     expect(formatted).toContain("Re Plan:L5-8");
   });
 
+  test("formats unprefixed line range correctly for plan annotations", () => {
+    const formatted = formatReviewForModel({
+      ...baseReviewData,
+      filePath: "/home/user/.mux/plans/project/ws.md",
+      lineRange: "42-45",
+    });
+
+    expect(formatted).toContain("Re Plan:L42-45");
+  });
+
+  test("formats single-line unprefixed range for plan annotations", () => {
+    const formatted = formatReviewForModel({
+      ...baseReviewData,
+      filePath: "/home/user/.mux/plans/project/ws.md",
+      lineRange: "10",
+    });
+
+    expect(formatted).toContain("Re Plan:L10");
+  });
+
   test("does not treat bare .mux/plans relative paths as plan annotations", () => {
     const formatted = formatReviewForModel({
       ...baseReviewData,
