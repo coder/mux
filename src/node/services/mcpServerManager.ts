@@ -1314,12 +1314,15 @@ export class MCPServerManager {
     onActivity: () => void
   ): Promise<MCPServerInstance | null> {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const abortController = new AbortController();
 
     const timeout = new Promise<never>((_resolve, reject) => {
-      timeoutHandle = setTimeout(
-        () => reject(new Error(`MCP server '${name}' timed out after ${MCP_STARTUP_TIMEOUT_MS}ms`)),
-        MCP_STARTUP_TIMEOUT_MS
-      );
+      timeoutHandle = setTimeout(() => {
+        // Promise.race does not cancel the losing startup branch automatically.
+        // Abort in-flight startup so stdio processes and partial MCP clients are cleaned up.
+        abortController.abort();
+        reject(new Error(`MCP server '${name}' timed out after ${MCP_STARTUP_TIMEOUT_MS}ms`));
+      }, MCP_STARTUP_TIMEOUT_MS);
       // Don't keep the process alive just for this timer.
       if (
         timeoutHandle !== undefined &&
@@ -1340,7 +1343,8 @@ export class MCPServerManager {
           projectPath,
           workspacePath,
           projectSecrets,
-          onActivity
+          onActivity,
+          abortController.signal
         ),
         timeout,
       ]);
@@ -1358,14 +1362,24 @@ export class MCPServerManager {
     _projectPath: string,
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
-    onActivity: () => void
+    onActivity: () => void,
+    signal: AbortSignal
   ): Promise<MCPServerInstance | null> {
+    if (signal.aborted) {
+      return null;
+    }
+
     if (info.transport === "stdio") {
       log.debug("[MCP] Spawning stdio server", { name });
       const execStream = await runtime.exec(info.command, {
         cwd: workspacePath,
         timeout: 60 * 60 * 24, // 24 hours — process lifetime, not startup
+        abortSignal: signal,
       });
+
+      if (signal.aborted) {
+        return null;
+      }
 
       const transport = new MCPStdioTransport(execStream);
 
@@ -1387,49 +1401,111 @@ export class MCPServerManager {
         log.error("[MCP] Transport error", { name, error: getErrorMessage(error) });
       };
 
-      await transport.start();
-      const client = await createMCPClient({ transport });
-      const rawTools = await client.tools();
-      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
-        onActivity,
-        onClosed: () => {
-          if (instanceRef.current) instanceRef.current.isClosed = true;
-        },
-      });
+      let client: Awaited<ReturnType<typeof createMCPClient>> | null = null;
+      let cleanupPromise: Promise<void> | null = null;
+      const cleanupStartupResources = async () => {
+        if (!cleanupPromise) {
+          cleanupPromise = (async () => {
+            if (client) {
+              try {
+                await client.close();
+              } catch (error) {
+                log.debug("[MCP] Error closing client during startup cleanup", { name, error });
+              }
+              client = null;
+            }
 
-      log.info("[MCP] Server ready", {
-        name,
-        transport: "stdio",
-        toolCount: Object.keys(tools).length,
-      });
+            try {
+              await transport.close();
+            } catch (error) {
+              log.debug("[MCP] Error closing transport during startup cleanup", { name, error });
+            }
+          })();
+        }
 
-      const instance: MCPServerInstance = {
-        name,
-        resolvedTransport: "stdio",
-        autoFallbackUsed: false,
-        tools,
-        isClosed: transportClosed,
-        close: async () => {
-          // Mark closed first to prevent any new tool calls from being treated as
-          // valid by higher-level caching logic.
-          markClosed();
-
-          try {
-            await client.close();
-          } catch (error) {
-            log.debug("[MCP] Error closing client", { name, error });
-          }
-          try {
-            await transport.close();
-          } catch (error) {
-            log.debug("[MCP] Error closing transport", { name, error });
-          }
-          instanceRef.current = null;
-        },
+        await cleanupPromise;
       };
 
-      instanceRef.current = instance;
-      return instance;
+      const onAbort = () => {
+        log.debug("[MCP] Aborting stdio startup", { name });
+        void cleanupStartupResources();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+
+      try {
+        await transport.start();
+        if (signal.aborted) {
+          await cleanupStartupResources();
+          return null;
+        }
+
+        client = await createMCPClient({ transport });
+        if (signal.aborted) {
+          await cleanupStartupResources();
+          return null;
+        }
+
+        const rawTools = await client.tools();
+        if (signal.aborted) {
+          await cleanupStartupResources();
+          return null;
+        }
+
+        const readyClient = client;
+        if (!readyClient) {
+          await cleanupStartupResources();
+          return null;
+        }
+
+        const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
+          onActivity,
+          onClosed: () => {
+            if (instanceRef.current) instanceRef.current.isClosed = true;
+          },
+        });
+
+        log.info("[MCP] Server ready", {
+          name,
+          transport: "stdio",
+          toolCount: Object.keys(tools).length,
+        });
+
+        const instance: MCPServerInstance = {
+          name,
+          resolvedTransport: "stdio",
+          autoFallbackUsed: false,
+          tools,
+          isClosed: transportClosed,
+          close: async () => {
+            // Mark closed first to prevent any new tool calls from being treated as
+            // valid by higher-level caching logic.
+            markClosed();
+
+            try {
+              await readyClient.close();
+            } catch (error) {
+              log.debug("[MCP] Error closing client", { name, error });
+            }
+            try {
+              await transport.close();
+            } catch (error) {
+              log.debug("[MCP] Error closing transport", { name, error });
+            }
+            instanceRef.current = null;
+          },
+        };
+
+        instanceRef.current = instance;
+        return instance;
+      } catch (error) {
+        await cleanupStartupResources();
+        if (signal.aborted) {
+          return null;
+        }
+        throw error;
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
     }
 
     const { headers } = resolveHeaders(info.headers, projectSecrets);
@@ -1441,6 +1517,10 @@ export class MCPServerManager {
       serverName: name,
       serverUrl: info.url,
     });
+
+    if (signal.aborted) {
+      return null;
+    }
 
     const instanceRef: { current: MCPServerInstance | null } = { current: null };
     let transportErrored = false;
@@ -1482,73 +1562,125 @@ export class MCPServerManager {
         onUncaughtError,
       });
 
-    let client: Awaited<ReturnType<typeof createMCPClient>>;
-    let resolvedTransport: ResolvedTransport;
+    let client: Awaited<ReturnType<typeof createMCPClient>> | null = null;
+    let resolvedTransport: ResolvedTransport = "http";
     let autoFallbackUsed = false;
+    let cleanupPromise: Promise<void> | null = null;
 
-    if (info.transport === "http") {
-      resolvedTransport = "http";
-      client = await tryHttp();
-    } else if (info.transport === "sse") {
-      resolvedTransport = "sse";
-      client = await trySse();
-    } else {
-      // auto
-      try {
-        resolvedTransport = "http";
-        client = await tryHttp();
-      } catch (error) {
-        if (!shouldAutoFallbackToSse(error)) {
-          throw error;
-        }
-        autoFallbackUsed = true;
-        resolvedTransport = "sse";
-        log.debug("[MCP] Auto-fallback http→sse", { name, status: extractHttpStatusCode(error) });
-        client = await trySse();
+    const cleanupStartupClient = async () => {
+      if (!cleanupPromise) {
+        cleanupPromise = (async () => {
+          if (!client) {
+            return;
+          }
+
+          try {
+            await client.close();
+          } catch (error) {
+            log.debug("[MCP] Error closing client during startup cleanup", { name, error });
+          } finally {
+            client = null;
+          }
+        })();
       }
-    }
 
-    let clientClosed = false;
-
-    const rawTools = await client.tools();
-    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
-      onActivity,
-      onClosed: () => {
-        if (instanceRef.current) instanceRef.current.isClosed = true;
-      },
-    });
-
-    log.info("[MCP] Server ready", {
-      name,
-      transport: resolvedTransport,
-      toolCount: Object.keys(tools).length,
-      autoFallbackUsed,
-    });
-
-    const instance: MCPServerInstance = {
-      name,
-      resolvedTransport,
-      autoFallbackUsed,
-      tools,
-      isClosed: transportErrored || clientClosed,
-      close: async () => {
-        // Mark closed first to prevent any new tool calls from being treated as
-        // valid by higher-level caching logic.
-        if (!clientClosed) {
-          clientClosed = true;
-          instance.isClosed = true;
-        }
-
-        try {
-          await client.close();
-        } catch (error) {
-          log.debug("[MCP] Error closing client", { name, error });
-        }
-        instanceRef.current = null;
-      },
+      await cleanupPromise;
     };
 
-    instanceRef.current = instance;
-    return instance;
+    const onAbort = () => {
+      log.debug("[MCP] Aborting network startup", { name, transport: info.transport });
+      void cleanupStartupClient();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      if (info.transport === "http") {
+        resolvedTransport = "http";
+        client = await tryHttp();
+      } else if (info.transport === "sse") {
+        resolvedTransport = "sse";
+        client = await trySse();
+      } else {
+        // auto
+        try {
+          resolvedTransport = "http";
+          client = await tryHttp();
+        } catch (error) {
+          if (!shouldAutoFallbackToSse(error)) {
+            throw error;
+          }
+          autoFallbackUsed = true;
+          resolvedTransport = "sse";
+          log.debug("[MCP] Auto-fallback http→sse", { name, status: extractHttpStatusCode(error) });
+          client = await trySse();
+        }
+      }
+
+      if (signal.aborted) {
+        await cleanupStartupClient();
+        return null;
+      }
+
+      const activeClient = client;
+      if (!activeClient) {
+        return null;
+      }
+
+      const rawTools = await activeClient.tools();
+      if (signal.aborted) {
+        await cleanupStartupClient();
+        return null;
+      }
+
+      let clientClosed = false;
+
+      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
+        onActivity,
+        onClosed: () => {
+          if (instanceRef.current) instanceRef.current.isClosed = true;
+        },
+      });
+
+      log.info("[MCP] Server ready", {
+        name,
+        transport: resolvedTransport,
+        toolCount: Object.keys(tools).length,
+        autoFallbackUsed,
+      });
+
+      const instance: MCPServerInstance = {
+        name,
+        resolvedTransport,
+        autoFallbackUsed,
+        tools,
+        isClosed: transportErrored || clientClosed,
+        close: async () => {
+          // Mark closed first to prevent any new tool calls from being treated as
+          // valid by higher-level caching logic.
+          if (!clientClosed) {
+            clientClosed = true;
+            instance.isClosed = true;
+          }
+
+          try {
+            await activeClient.close();
+          } catch (error) {
+            log.debug("[MCP] Error closing client", { name, error });
+          }
+          instanceRef.current = null;
+        },
+      };
+
+      instanceRef.current = instance;
+      return instance;
+    } catch (error) {
+      await cleanupStartupClient();
+      if (signal.aborted) {
+        return null;
+      }
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 }
