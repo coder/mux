@@ -5,18 +5,11 @@ import {
 } from "@/common/config/schemas/modelParameters";
 import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
 import { getModelName } from "@/common/utils/ai/models";
+import { isPlainObject } from "@/common/utils/isPlainObject";
 
 export interface ResolvedModelParameterOverrides {
   standard: ResolvedCallSettingsOverrides;
   providerExtras?: Record<string, unknown>;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const proto: unknown = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
 }
 
 /**

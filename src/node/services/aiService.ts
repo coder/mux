@@ -53,6 +53,7 @@ import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
+import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
@@ -118,15 +119,6 @@ function safeClone<T>(value: T): T {
     : (JSON.parse(JSON.stringify(value)) as T);
 }
 
-/** Plain-object guard for recursive provider option merging. */
-function isProviderPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value == null || Array.isArray(value)) {
-    return false;
-  }
-  const proto: unknown = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
-}
-
 /**
  * Recursively merge user-provided provider extras under Mux-built provider options.
  * Mux values win on leaf conflicts; both sides' non-conflicting nested fields are preserved.
@@ -140,7 +132,7 @@ function mergeProviderExtrasUnderMux(
   for (const [key, muxValue] of Object.entries(muxProviderNamespace)) {
     const extraValue = merged[key];
     merged[key] =
-      isProviderPlainObject(extraValue) && isProviderPlainObject(muxValue)
+      isPlainObject(extraValue) && isPlainObject(muxValue)
         ? mergeProviderExtrasUnderMux(extraValue, muxValue)
         : muxValue;
   }
@@ -1089,7 +1081,7 @@ export class AIService extends EventEmitter {
       const mergedProviderOptions = resolvedOverrides.providerExtras
         ? {
             ...providerOptions,
-            [canonicalProviderName]: isProviderPlainObject(muxProviderNamespace)
+            [canonicalProviderName]: isPlainObject(muxProviderNamespace)
               ? mergeProviderExtrasUnderMux(resolvedOverrides.providerExtras, muxProviderNamespace)
               : resolvedOverrides.providerExtras,
           }
