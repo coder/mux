@@ -550,6 +550,36 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
 
     const disposable = new DisposableProcess(childProcess);
 
+    // Register cleanup to force-close stdio streams on timeout/abort.
+    // On Windows, killing a process tree via taskkill doesn't always close
+    // Node.js pipe handles immediately, causing Web ReadableStream readers
+    // (from Readable.toWeb()) to hang indefinitely on reader.read().
+    // Queue an EOF first so current readers complete cleanly, then destroy
+    // the underlying Node streams to close any stuck handles.
+    disposable.addCleanup(() => {
+      if (childProcess.pid === undefined) return;
+      killProcessTree(childProcess.pid);
+      if (
+        childProcess.stdout &&
+        !childProcess.stdout.destroyed &&
+        !childProcess.stdout.readableEnded
+      ) {
+        childProcess.stdout.push(null);
+      }
+      if (
+        childProcess.stderr &&
+        !childProcess.stderr.destroyed &&
+        !childProcess.stderr.readableEnded
+      ) {
+        childProcess.stderr.push(null);
+      }
+      setImmediate(() => {
+        childProcess.stdout?.destroy();
+        childProcess.stderr?.destroy();
+        childProcess.stdin?.destroy();
+      });
+    });
+
     // Convert Node.js streams to Web Streams (casts required for ExecStream compatibility)
     /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
     const stdout = Readable.toWeb(childProcess.stdout!) as unknown as ReadableStream<Uint8Array>;
