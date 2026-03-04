@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Database, Pin, Play, X } from "lucide-react";
 import { Button } from "@/browser/components/Button/Button";
 import { useAnalyticsRawQuery } from "@/browser/hooks/useAnalytics";
@@ -47,20 +47,8 @@ export function SqlExplorer(props: SqlExplorerProps) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastExecutedSql, setLastExecutedSql] = useState<string | null>(null);
-  const pendingExecutedSqlRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (loading || error || !data) {
-      return;
-    }
-
-    const executedSql = pendingExecutedSqlRef.current;
-    if (!executedSql) {
-      return;
-    }
-
-    setLastExecutedSql(executedSql);
-  }, [data, error, loading]);
+  // Keep save metadata aligned with the latest run when queries resolve out of order.
+  const executionIdRef = useRef(0);
 
   const inferredChartType = data ? inferChartType(data.columns, data.rows) : "table";
 
@@ -69,7 +57,7 @@ export function SqlExplorer(props: SqlExplorerProps) {
   // No explicit axes from raw query, let heuristics decide.
   const axes = data ? inferAxes(data.columns, undefined, undefined) : { xAxis: "", yAxes: [] };
 
-  const handleRun = () => {
+  const handleRun = async () => {
     if (loading) {
       return;
     }
@@ -79,8 +67,12 @@ export function SqlExplorer(props: SqlExplorerProps) {
       return;
     }
 
-    pendingExecutedSqlRef.current = normalizedSql;
-    void executeQuery(normalizedSql);
+    const thisExecutionId = ++executionIdRef.current;
+    await executeQuery(normalizedSql);
+
+    if (thisExecutionId === executionIdRef.current) {
+      setLastExecutedSql(normalizedSql);
+    }
   };
 
   const handleCancelSave = () => {
@@ -168,7 +160,7 @@ export function SqlExplorer(props: SqlExplorerProps) {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
                 if (!loading && sql.trim()) {
-                  handleRun();
+                  void handleRun();
                 }
               }
             }}
@@ -177,7 +169,9 @@ export function SqlExplorer(props: SqlExplorerProps) {
             <span className="text-muted text-[10px]">Ctrl/Cmd+Enter to run</span>
             <Button
               size="sm"
-              onClick={handleRun}
+              onClick={() => {
+                void handleRun();
+              }}
               disabled={loading || !sql.trim()}
               className="h-7 gap-1.5 px-3 text-xs"
             >
