@@ -267,6 +267,12 @@ export function normalizePlanFilePath(filePath: string): string | null {
     return `.mux/plans/${tildeMatch[1]}`;
   }
 
+  // Already-normalized relative path from a previous normalizePlanFilePath call.
+  // This ensures round-trip stability: normalize(normalize(path)) === normalize(path).
+  if (normalized.startsWith(".mux/plans/")) {
+    return normalized;
+  }
+
   // Only match absolute paths to avoid false positives from relative paths like
   // "project/.mux/plans/foo.md".
   const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);

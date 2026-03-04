@@ -95,14 +95,15 @@ describe("formatReviewForModel", () => {
     expect(formatted).toContain("Re Plan:L10");
   });
 
-  test("does not treat bare .mux/plans relative paths as plan annotations", () => {
+  test("treats bare .mux/plans relative paths as plan annotations", () => {
     const formatted = formatReviewForModel({
       ...baseReviewData,
       filePath: ".mux/plans/workspace/my-plan.md",
       lineRange: "+5-8",
     });
 
-    expect(formatted).toContain("Re .mux/plans/workspace/my-plan.md:+5-8");
+    expect(formatted).toContain("Re Plan:L5-8");
+    expect(formatted).not.toContain(".mux/plans");
   });
 
   test("does not treat non-plan paths containing plan-like words as plan paths", () => {
@@ -177,8 +178,15 @@ describe("normalizePlanFilePath", () => {
     );
   });
 
+  test("round-trips already-normalized plan paths", () => {
+    const firstPass = normalizePlanFilePath("/home/user/.mux/plans/project/ws.md");
+    expect(firstPass).toBe(".mux/plans/project/ws.md");
+    // Second pass should return the same result
+    const secondPass = normalizePlanFilePath(firstPass!);
+    expect(secondPass).toBe(".mux/plans/project/ws.md");
+  });
+
   test("rejects embedded/relative mux paths and non-plan /plans patterns", () => {
-    expect(normalizePlanFilePath(".mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("project/.mux/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeNull();
     expect(normalizePlanFilePath("project/.mux-dev/plans/workspace/plan.md")).toBeNull();
@@ -209,12 +217,15 @@ describe("isPlanFilePath", () => {
     expect(isPlanFilePath("/tmp/custom-root/plans/project/ws.md")).toBeTrue();
   });
 
+  test("isPlanFilePath recognizes already-normalized paths", () => {
+    expect(isPlanFilePath(".mux/plans/project/ws.md")).toBe(true);
+  });
+
   test("rejects non-plan paths, relative paths, and empty paths", () => {
     expect(isPlanFilePath("src/planning/planner.ts")).toBeFalse();
     expect(isPlanFilePath("src/plans/utils.ts")).toBeFalse();
     expect(isPlanFilePath("plan.txt")).toBeFalse();
     expect(isPlanFilePath("/workspace/repo/plans/roadmap/v1.txt")).toBeFalse();
-    expect(isPlanFilePath(".mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("project/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath("project/.mux-dev/plans/workspace/plan.md")).toBeFalse();
