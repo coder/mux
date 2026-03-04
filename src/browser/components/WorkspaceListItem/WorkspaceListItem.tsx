@@ -110,7 +110,6 @@ function getVisualState(opts: {
   isWorking: boolean;
   isStarting: boolean;
   isUnread: boolean;
-  hasAgentStatus: boolean;
 }): VisualState {
   if (opts.awaitingUserQuestion) {
     return "question";
@@ -118,7 +117,7 @@ function getVisualState(opts: {
   if (opts.isRemoving || opts.isArchiving) {
     return "error";
   }
-  if (opts.isWorking || opts.isStarting || opts.isInitializing || opts.hasAgentStatus) {
+  if (opts.isWorking || opts.isStarting || opts.isInitializing) {
     return "active";
   }
   // Figma distinguishes idle unseen (ringed dot + primary title) from seen (subtle square + secondary title).
@@ -427,7 +426,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     isWorking,
     isStarting,
     isUnread,
-    hasAgentStatus: Boolean(agentStatus),
   });
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
