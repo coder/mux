@@ -200,6 +200,7 @@ export class AnalyticsService {
   private initPromise: Promise<void> | null = null;
   private disposePromise: Promise<void> | null = null;
   private isDisposed = false;
+  private _savedQueryMutex: Promise<void> = Promise.resolve();
 
   constructor(private readonly config: Config) {}
 
@@ -422,6 +423,19 @@ export class AnalyticsService {
     return path.join(this.config.rootDir, "analytics", "saved-queries.json");
   }
 
+  private withSavedQueryLock<T>(fn: () => Promise<T>): Promise<T> {
+    assert(typeof fn === "function", "withSavedQueryLock requires a mutation callback");
+
+    // Serialize all saved-query read-modify-write mutations so concurrent callers
+    // cannot clobber one another by writing stale snapshots.
+    const result = this._savedQueryMutex.then(fn, fn);
+    this._savedQueryMutex = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
   private async readSavedQueries(): Promise<SavedQuery[]> {
     try {
       const contents = await fs.readFile(this.savedQueriesPath, "utf8");
@@ -494,22 +508,24 @@ export class AnalyticsService {
     assert(input.label.trim().length > 0, "saveQuery requires a non-empty label");
     assert(input.sql.trim().length > 0, "saveQuery requires non-empty SQL");
 
-    const queries = await this.readSavedQueries();
-    const nextOrder =
-      queries.length === 0 ? 0 : Math.max(...queries.map((query) => query.order)) + 1;
+    return this.withSavedQueryLock(async () => {
+      const queries = await this.readSavedQueries();
+      const nextOrder =
+        queries.length === 0 ? 0 : Math.max(...queries.map((query) => query.order)) + 1;
 
-    const savedQuery: SavedQuery = {
-      id: crypto.randomUUID(),
-      label: input.label,
-      sql: input.sql,
-      chartType: input.chartType ?? null,
-      order: nextOrder,
-      createdAt: new Date().toISOString(),
-    };
+      const savedQuery: SavedQuery = {
+        id: crypto.randomUUID(),
+        label: input.label,
+        sql: input.sql,
+        chartType: input.chartType ?? null,
+        order: nextOrder,
+        createdAt: new Date().toISOString(),
+      };
 
-    queries.push(savedQuery);
-    await this.writeSavedQueries(queries);
-    return savedQuery;
+      queries.push(savedQuery);
+      await this.writeSavedQueries(queries);
+      return savedQuery;
+    });
   }
 
   async updateSavedQuery(input: {
@@ -521,59 +537,66 @@ export class AnalyticsService {
   }): Promise<SavedQuery> {
     assert(input.id.trim().length > 0, "updateSavedQuery requires a non-empty id");
 
-    const queries = await this.readSavedQueries();
-    const index = queries.findIndex((query) => query.id === input.id);
-    assert(index >= 0, `Saved query not found for id '${input.id}'`);
+    return this.withSavedQueryLock(async () => {
+      const queries = await this.readSavedQueries();
+      const index = queries.findIndex((query) => query.id === input.id);
+      assert(index >= 0, `Saved query not found for id '${input.id}'`);
 
-    const current = queries[index];
-    const updatedQuery: SavedQuery = { ...current };
+      const current = queries[index];
+      const updatedQuery: SavedQuery = { ...current };
 
-    if (input.label != null) {
-      assert(
-        input.label.trim().length > 0,
-        "updateSavedQuery requires a non-empty label when provided"
-      );
-      updatedQuery.label = input.label;
-    }
+      if (input.label != null) {
+        assert(
+          input.label.trim().length > 0,
+          "updateSavedQuery requires a non-empty label when provided"
+        );
+        updatedQuery.label = input.label;
+      }
 
-    if (input.sql != null) {
-      assert(input.sql.trim().length > 0, "updateSavedQuery requires non-empty SQL when provided");
-      updatedQuery.sql = input.sql;
-    }
+      if (input.sql != null) {
+        assert(
+          input.sql.trim().length > 0,
+          "updateSavedQuery requires non-empty SQL when provided"
+        );
+        updatedQuery.sql = input.sql;
+      }
 
-    if (input.chartType !== undefined) {
-      assert(
-        input.chartType === null || input.chartType.trim().length > 0,
-        "updateSavedQuery requires non-empty chartType when provided"
-      );
-      updatedQuery.chartType = input.chartType;
-    }
+      if (input.chartType !== undefined) {
+        assert(
+          input.chartType === null || input.chartType.trim().length > 0,
+          "updateSavedQuery requires non-empty chartType when provided"
+        );
+        updatedQuery.chartType = input.chartType;
+      }
 
-    if (input.order != null) {
-      assert(
-        Number.isInteger(input.order) && input.order >= 0,
-        "updateSavedQuery requires a non-negative integer order when provided"
-      );
-      updatedQuery.order = input.order;
-    }
+      if (input.order != null) {
+        assert(
+          Number.isInteger(input.order) && input.order >= 0,
+          "updateSavedQuery requires a non-negative integer order when provided"
+        );
+        updatedQuery.order = input.order;
+      }
 
-    queries[index] = updatedQuery;
-    await this.writeSavedQueries(queries);
-    return updatedQuery;
+      queries[index] = updatedQuery;
+      await this.writeSavedQueries(queries);
+      return updatedQuery;
+    });
   }
 
   async deleteSavedQuery(input: { id: string }): Promise<{ success: boolean }> {
     assert(input.id.trim().length > 0, "deleteSavedQuery requires a non-empty id");
 
-    const queries = await this.readSavedQueries();
-    const nextQueries = queries.filter((query) => query.id !== input.id);
-    const success = nextQueries.length !== queries.length;
+    return this.withSavedQueryLock(async () => {
+      const queries = await this.readSavedQueries();
+      const nextQueries = queries.filter((query) => query.id !== input.id);
+      const success = nextQueries.length !== queries.length;
 
-    if (success) {
-      await this.writeSavedQueries(nextQueries);
-    }
+      if (success) {
+        await this.writeSavedQueries(nextQueries);
+      }
 
-    return { success };
+      return { success };
+    });
   }
 
   async getSummary(
