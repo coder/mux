@@ -514,7 +514,7 @@ describe("StreamingMessageAggregator", () => {
   });
 
   describe("todo lifecycle", () => {
-    test("should clear todos when stream ends", () => {
+    test("should preserve todos when stream ends", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Start a stream
@@ -571,11 +571,11 @@ describe("StreamingMessageAggregator", () => {
         parts: [],
       });
 
-      // Todos should be cleared
-      expect(aggregator.getCurrentTodos()).toHaveLength(0);
+      // Todos should persist after stream end
+      expect(aggregator.getCurrentTodos()).toHaveLength(2);
     });
 
-    test("should clear todos when stream aborts", () => {
+    test("should preserve todos when stream aborts", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       aggregator.handleStreamStart({
@@ -621,11 +621,11 @@ describe("StreamingMessageAggregator", () => {
         metadata: {},
       });
 
-      // Todos should be cleared
-      expect(aggregator.getCurrentTodos()).toHaveLength(0);
+      // Todos should persist after stream abort
+      expect(aggregator.getCurrentTodos()).toHaveLength(1);
     });
 
-    test("should reconstruct todos on reload ONLY when reconnecting to active stream", () => {
+    test("should reconstruct todos on reload regardless of active stream", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const historicalMessage = {
@@ -663,10 +663,10 @@ describe("StreamingMessageAggregator", () => {
 
       // Scenario 2: Reload without active stream (hasActiveStream = false)
       aggregator2.loadHistoricalMessages([historicalMessage], false);
-      expect(aggregator2.getCurrentTodos()).toHaveLength(0);
+      expect(aggregator2.getCurrentTodos()).toHaveLength(2);
     });
 
-    test("should reconstruct agentStatus but NOT todos when no active stream", () => {
+    test("should reconstruct agentStatus and todos when no active stream", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const historicalMessage = {
@@ -706,11 +706,11 @@ describe("StreamingMessageAggregator", () => {
       // agentStatus should be reconstructed (persists across sessions)
       expect(aggregator.getAgentStatus()).toEqual({ emoji: "🔧", message: "Working on it" });
 
-      // TODOs should NOT be reconstructed (stream-scoped)
-      expect(aggregator.getCurrentTodos()).toHaveLength(0);
+      // TODOs should be reconstructed from history
+      expect(aggregator.getCurrentTodos()).toHaveLength(1);
     });
 
-    test("should clear todos when new user message arrives during active stream", () => {
+    test("should preserve todos when new user message arrives during active stream", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Simulate an active stream with todos
@@ -758,8 +758,8 @@ describe("StreamingMessageAggregator", () => {
         metadata: { historySequence: 2, timestamp: Date.now() },
       });
 
-      // Todos should be cleared when new user message arrives
-      expect(aggregator.getCurrentTodos()).toHaveLength(0);
+      // Todos should persist when a new user message arrives
+      expect(aggregator.getCurrentTodos()).toHaveLength(1);
     });
   });
 
