@@ -579,6 +579,40 @@ describe("Config", () => {
       expect(loaded.defaultModel).toBe("openai:gpt-4o");
     });
 
+    it("system hiddenModels fallback when all user entries are invalid", () => {
+      writeSystemConfig({
+        hiddenModels: ["openai:gpt-4o-mini"],
+        projects: [],
+      });
+      writeUserConfig({
+        // All entries invalid — normalization strips them to []
+        hiddenModels: ["not-a-valid-model"],
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Should fall back to system hidden models, not empty array
+      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+    });
+
+    it("user intentionally empty hiddenModels is not overridden by system", () => {
+      writeSystemConfig({
+        hiddenModels: ["openai:gpt-4o-mini"],
+        projects: [],
+      });
+      writeUserConfig({
+        // Explicit empty array — user wants no hidden models
+        hiddenModels: [],
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // User's intentional [] should win over system defaults
+      expect(loaded.hiddenModels).toEqual([]);
+    });
+
     it("system object defaults are stripped key-by-key on save", async () => {
       writeSystemConfig({
         featureFlagOverrides: { flagA: "on", flagB: "off" },
