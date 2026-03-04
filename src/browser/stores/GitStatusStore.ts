@@ -145,6 +145,12 @@ export class GitStatusStore {
     this.refreshController.requestImmediate();
   }
 
+  /** Called when section rules change to force re-evaluation with fresh git context on next poll. */
+  invalidateSectionEvaluationCache(): void {
+    this.lastEvaluatedDirty.clear();
+    this.pendingEvaluatedDirty.clear();
+  }
+
   /**
    * Set the refreshing state for a workspace and notify subscribers.
    */
@@ -672,4 +678,9 @@ export function useGitStatusStoreRaw(): GitStatusStore {
 export function invalidateGitStatus(workspaceId: string): void {
   const store = getGitStoreInstance();
   store.invalidateWorkspace(workspaceId);
+}
+
+export function invalidateGitSectionEvaluationCache(): void {
+  const store = getGitStoreInstance();
+  store.invalidateSectionEvaluationCache();
 }

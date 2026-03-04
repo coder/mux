@@ -270,6 +270,12 @@ export class PRStatusStore {
     return undefined;
   }
 
+  /** Called when section rules change to force re-evaluation with fresh PR context on next poll. */
+  invalidateSectionEvaluationCache(): void {
+    this.lastEvaluatedPRState.clear();
+    this.pendingPRState.clear();
+  }
+
   private getSectionEvaluationPRStateKey(status: GitHubPRStatus | undefined): string {
     const state = status?.state ?? "none";
     const mergeStatus = status?.mergeStateStatus ?? "none";
@@ -660,6 +666,10 @@ export function getPRStatusStoreInstance(): PRStatusStore {
 
 export function setPRStatusStoreInstance(store: PRStatusStore): void {
   storeInstance = store;
+}
+
+export function invalidatePRSectionEvaluationCache(): void {
+  getPRStatusStoreInstance().invalidateSectionEvaluationCache();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

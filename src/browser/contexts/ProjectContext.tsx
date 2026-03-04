@@ -28,6 +28,8 @@ import {
   normalizeProjectPathForComparison,
   resolveProjectPathFromProjectQuery,
 } from "@/common/utils/deepLink";
+import { invalidatePRSectionEvaluationCache } from "@/browser/stores/PRStatusStore";
+import { invalidateGitSectionEvaluationCache } from "@/browser/stores/GitStatusStore";
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -482,6 +484,12 @@ export function ProjectProvider(props: { children: ReactNode }) {
       if (!api) return { success: false, error: "API not connected" };
       const result = await api.projects.sections.update({ projectPath, sectionId, ...updates });
       if (result.success) {
+        if (updates.rules !== undefined) {
+          // Rule evaluation runs server-side without live frontend PR/git context.
+          // Clear frontend dedupe caches so the next poll resends current context.
+          invalidatePRSectionEvaluationCache();
+          invalidateGitSectionEvaluationCache();
+        }
         await refreshProjects();
       }
       return result;
