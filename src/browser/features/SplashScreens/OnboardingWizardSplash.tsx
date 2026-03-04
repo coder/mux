@@ -373,6 +373,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           // When it eventually resolves with depleted credits, disable gateway.
           if (accountStatus == null) {
             void refreshPromise.then((laterStatus) => {
+              if (muxGatewayLoginAttemptRef.current !== attempt) return;
               if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
                 gateway.toggleEnabled();
               }
@@ -515,6 +516,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           // When it eventually resolves with depleted credits, disable gateway.
           if (accountStatus == null) {
             void refreshPromise.then((laterStatus) => {
+              if (muxGatewayLoginAttemptRef.current !== attempt) return;
               if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
                 gateway.toggleEnabled();
               }
