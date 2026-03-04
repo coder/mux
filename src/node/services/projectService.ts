@@ -6,7 +6,6 @@ import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
 import { createHash, randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
-import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -824,7 +823,7 @@ export class ProjectService {
 
   async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
     try {
-const normalizedPath = stripTrailingSlashes(projectPath);
+      const normalizedPath = stripTrailingSlashes(projectPath);
       let config = this.config.loadConfigOrDefault();
       let projectConfig = config.projects.get(normalizedPath);
 
@@ -867,7 +866,7 @@ const normalizedPath = stripTrailingSlashes(projectPath);
         await this.config.saveConfig(config);
       }
 
-let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
 
       const totalWorkspaces = counts.activeCount + counts.archivedCount;
       if (force && totalWorkspaces > 0) {
@@ -918,21 +917,35 @@ let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
         counts = getProjectWorkspaceCounts(projectConfig.workspaces);
       }
 
-      // Also count multi-project workspace references to this project.
-      // A project cannot be removed if it's still part of a multi-project workspace.
-      const multiProjectConfig = config.projects.get(MULTI_PROJECT_CONFIG_KEY);
-      const referencingMultiProjectWorkspaces =
-        multiProjectConfig?.workspaces.filter((workspace) =>
+      // Also count multi-project workspace references to this project from OTHER project buckets.
+      // Multi-project workspaces can be stored under _multi (interactive creation) or under
+      // any project bucket (task/fork creation via taskService).
+      let crossProjectActiveCount = 0;
+      let crossProjectArchivedCount = 0;
+      for (const [configKey, otherConfig] of config.projects) {
+        if (configKey === normalizedPath) {
+          // Project workspaces in this bucket are already counted above.
+          continue;
+        }
+
+        const referencingWorkspaces = otherConfig.workspaces.filter((workspace) =>
           workspace.projects?.some(
             (project) => stripTrailingSlashes(project.projectPath) === normalizedPath
           )
-        ) ?? [];
-      const multiProjectWorkspaceCounts = getProjectWorkspaceCounts(
-        referencingMultiProjectWorkspaces
-      );
+        );
+
+        if (referencingWorkspaces.length === 0) {
+          continue;
+        }
+
+        const referencingWorkspaceCounts = getProjectWorkspaceCounts(referencingWorkspaces);
+        crossProjectActiveCount += referencingWorkspaceCounts.activeCount;
+        crossProjectArchivedCount += referencingWorkspaceCounts.archivedCount;
+      }
+
       counts = {
-        activeCount: counts.activeCount + multiProjectWorkspaceCounts.activeCount,
-        archivedCount: counts.archivedCount + multiProjectWorkspaceCounts.archivedCount,
+        activeCount: counts.activeCount + crossProjectActiveCount,
+        archivedCount: counts.archivedCount + crossProjectArchivedCount,
       };
 
       if (counts.activeCount + counts.archivedCount > 0) {

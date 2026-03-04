@@ -2129,6 +2129,39 @@ exit 1
       expect(after.projects.has(projectPath)).toBe(true);
     });
 
+    it("blocks removal when multi-project workspaces in other project buckets reference the project", async () => {
+      const projectPath = "/fake/project";
+      const otherProjectPath = "/fake/other-project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [] });
+      cfg.projects.set(otherProjectPath, {
+        workspaces: [
+          {
+            path: "/fake/other-project-multi-workspace",
+            projects: [
+              { projectPath: `${projectPath}/`, projectName: "project" },
+              { projectPath: otherProjectPath, projectName: "other" },
+            ],
+          },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+      if (result.error.type !== "workspace_blockers") {
+        throw new Error("Expected workspace blockers");
+      }
+      expect(result.error.activeCount).toBe(1);
+      expect(result.error.archivedCount).toBe(0);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(true);
+    });
+
     it("auto-prunes stale workspace entries and removes project", async () => {
       const stalePath = path.join(tempDir, "deleted-workspace-dir");
       // Do NOT create the directory — simulating manual deletion
