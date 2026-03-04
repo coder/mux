@@ -8,7 +8,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { DynamicChart } from "../Tools/analyticsQuery/DynamicChart";
 import { ResultTable } from "../Tools/analyticsQuery/ResultTable";
 import { inferAxes, inferChartType } from "../Tools/analyticsQuery/chartHeuristics";
-import type { ChartType, ColumnMeta } from "../Tools/analyticsQuery/types";
+import type { ChartType } from "../Tools/analyticsQuery/types";
 import { ChartTypePicker } from "./ChartTypePicker";
 
 export const SAMPLE_QUERIES = [
@@ -279,7 +279,7 @@ export function SqlExplorer(props: SqlExplorerProps) {
               axes.yAxes.length === 0 ||
               axes.xAxis.length === 0 ? (
                 <ResultTable
-                  columns={data.columns as unknown as ColumnMeta[]}
+                  columns={data.columns}
                   rows={data.rows}
                   chartType={effectiveChartType}
                 />
