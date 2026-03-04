@@ -448,7 +448,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const fallbackModel = useWorkspaceFallbackModel(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
-  const hasError = lastAbortReason !== null && lastAbortReason.reason !== "user";
+  const hasError = lastAbortReason?.reason === "system";
   const visualState = getVisualState({
     awaitingUserQuestion,
     isInitializing,
