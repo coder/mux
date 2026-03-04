@@ -253,8 +253,9 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
  * compare only the stable ".mux/plans/..." suffix.
  *
  * Accepts any absolute path containing `/.mux/plans/`, `/.mux-<suffix>/plans/`,
- * or `/var/mux/plans/`. Also accepts tilde-prefixed paths like
- * `~/.mux/plans/...` and `~/.mux-<suffix>/plans/...` from legacy transcripts.
+ * `/var/mux/plans/`, or a generic custom mux root with `/plans/<project>/<file>`.
+ * Also accepts tilde-prefixed paths like `~/.mux/plans/...` and
+ * `~/.mux-<suffix>/plans/...` from legacy transcripts.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
   if (!filePath) return null;
@@ -279,6 +280,15 @@ export function normalizePlanFilePath(filePath: string): string | null {
   const dockerMatch = /\/var\/mux\/plans\/(.+)/.exec(normalized);
   if (dockerMatch?.[1]) {
     return `.mux/plans/${dockerMatch[1]}`;
+  }
+
+  // Generic fallback: covers custom MUX_ROOT directories.
+  // Plan paths always have the structure <root>/plans/<project>/<file>.
+  // Match exactly two path components after /plans/ to avoid false positives
+  // on normal repo paths (e.g., src/plans/utils.ts has only one component).
+  const genericPlanMatch = normalized.match(/[/\\]plans[/\\]([^/\\]+[/\\][^/\\]+)$/);
+  if (genericPlanMatch?.[1]) {
+    return `.mux/plans/${genericPlanMatch[1].replace(/\\/g, "/")}`;
   }
 
   return null;
