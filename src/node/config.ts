@@ -837,6 +837,7 @@ export class Config {
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               sectionId: workspace.sectionId,
+              pinnedToSection: workspace.pinnedToSection,
             };
 
             // Migrate missing createdAt to config for next load
@@ -924,8 +925,9 @@ export class Config {
             // Preserve archived timestamps from config
             metadata.archivedAt ??= workspace.archivedAt;
             metadata.unarchivedAt ??= workspace.unarchivedAt;
-            // Preserve section assignment from config
+            // Preserve section assignment/pinning from config
             metadata.sectionId ??= workspace.sectionId;
+            metadata.pinnedToSection ??= workspace.pinnedToSection;
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
@@ -937,6 +939,7 @@ export class Config {
             workspace.name = metadata.name;
             workspace.createdAt = metadata.createdAt;
             workspace.runtimeConfig = metadata.runtimeConfig;
+            workspace.pinnedToSection = metadata.pinnedToSection;
             configModified = true;
 
             workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
@@ -976,6 +979,7 @@ export class Config {
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               sectionId: workspace.sectionId,
+              pinnedToSection: workspace.pinnedToSection,
             };
 
             // Save to config for next load
@@ -983,6 +987,7 @@ export class Config {
             workspace.name = metadata.name;
             workspace.createdAt = metadata.createdAt;
             workspace.runtimeConfig = metadata.runtimeConfig;
+            workspace.pinnedToSection = metadata.pinnedToSection;
             configModified = true;
 
             workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
@@ -1019,6 +1024,7 @@ export class Config {
             taskPrompt: workspace.taskPrompt,
             taskTrunkBranch: workspace.taskTrunkBranch,
             sectionId: workspace.sectionId,
+            pinnedToSection: workspace.pinnedToSection,
           };
 
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
@@ -1082,6 +1088,7 @@ export class Config {
         archivedAt: metadata.archivedAt,
         unarchivedAt: metadata.unarchivedAt,
         sectionId: metadata.sectionId,
+        pinnedToSection: metadata.pinnedToSection,
       };
 
       if (existingIndex >= 0) {

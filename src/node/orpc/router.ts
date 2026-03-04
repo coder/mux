@@ -2617,15 +2617,29 @@ export const router = (authToken?: string) => {
         remove: t
           .input(schemas.projects.sections.remove.input)
           .output(schemas.projects.sections.remove.output)
-          .handler(({ context, input }) =>
-            context.projectService.removeSection(input.projectPath, input.sectionId)
-          ),
+          .handler(async ({ context, input }) => {
+            const result = await context.projectService.removeSection(
+              input.projectPath,
+              input.sectionId
+            );
+            if (result.success && context.sectionAssignmentService) {
+              await context.sectionAssignmentService.evaluateProject(input.projectPath);
+            }
+            return result;
+          }),
         reorder: t
           .input(schemas.projects.sections.reorder.input)
           .output(schemas.projects.sections.reorder.output)
-          .handler(({ context, input }) =>
-            context.projectService.reorderSections(input.projectPath, input.sectionIds)
-          ),
+          .handler(async ({ context, input }) => {
+            const result = await context.projectService.reorderSections(
+              input.projectPath,
+              input.sectionIds
+            );
+            if (result.success && context.sectionAssignmentService) {
+              await context.sectionAssignmentService.evaluateProject(input.projectPath);
+            }
+            return result;
+          }),
         assignWorkspace: t
           .input(schemas.projects.sections.assignWorkspace.input)
           .output(schemas.projects.sections.assignWorkspace.output)
