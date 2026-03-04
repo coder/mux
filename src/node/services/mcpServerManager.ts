@@ -1404,24 +1404,22 @@ export class MCPServerManager {
       let client: Awaited<ReturnType<typeof createMCPClient>> | null = null;
       let cleanupPromise: Promise<void> | null = null;
       const cleanupStartupResources = async () => {
-        if (!cleanupPromise) {
-          cleanupPromise = (async () => {
-            if (client) {
-              try {
-                await client.close();
-              } catch (error) {
-                log.debug("[MCP] Error closing client during startup cleanup", { name, error });
-              }
-              client = null;
-            }
-
+        cleanupPromise ??= (async () => {
+          if (client) {
             try {
-              await transport.close();
+              await client.close();
             } catch (error) {
-              log.debug("[MCP] Error closing transport during startup cleanup", { name, error });
+              log.debug("[MCP] Error closing client during startup cleanup", { name, error });
             }
-          })();
-        }
+            client = null;
+          }
+
+          try {
+            await transport.close();
+          } catch (error) {
+            log.debug("[MCP] Error closing transport during startup cleanup", { name, error });
+          }
+        })();
 
         await cleanupPromise;
       };
@@ -1568,21 +1566,19 @@ export class MCPServerManager {
     let cleanupPromise: Promise<void> | null = null;
 
     const cleanupStartupClient = async () => {
-      if (!cleanupPromise) {
-        cleanupPromise = (async () => {
-          if (!client) {
-            return;
-          }
+      cleanupPromise ??= (async () => {
+        if (!client) {
+          return;
+        }
 
-          try {
-            await client.close();
-          } catch (error) {
-            log.debug("[MCP] Error closing client during startup cleanup", { name, error });
-          } finally {
-            client = null;
-          }
-        })();
-      }
+        try {
+          await client.close();
+        } catch (error) {
+          log.debug("[MCP] Error closing client during startup cleanup", { name, error });
+        } finally {
+          client = null;
+        }
+      })();
 
       await cleanupPromise;
     };
