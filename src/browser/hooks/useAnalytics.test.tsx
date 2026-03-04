@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { RPCLink as HTTPRPCLink } from "@orpc/client/fetch";
 import { createORPCClient } from "@orpc/client";
@@ -10,6 +10,7 @@ import type { ORPCContext } from "@/node/orpc/context";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import {
   useAnalyticsProviderCacheHitRatio,
+  useAnalyticsRawQuery,
   useAnalyticsSpendByModel,
   useAnalyticsSummary,
   type Summary,
@@ -72,6 +73,7 @@ type AnalyticsServiceStub = Pick<
   | "rebuildAll"
   | "clearWorkspace"
   | "ingestWorkspace"
+  | "executeRawQuery"
 >;
 
 function createAnalyticsServiceStub(summary: Summary): {
@@ -106,6 +108,7 @@ function createAnalyticsServiceStub(summary: Summary): {
       rebuildAll: () => Promise.resolve({ success: true, workspacesIngested: 0 }),
       clearWorkspace: () => undefined,
       ingestWorkspace: () => undefined,
+      executeRawQuery: () => Promise.reject(new Error("stub: not implemented")),
     },
   };
 }
@@ -239,5 +242,39 @@ describe("useAnalytics hooks", () => {
     expect(latest.projectPath).toBe("/tmp/project");
     expect(latest.from.toISOString()).toBe(from.toISOString());
     expect(latest.to.toISOString()).toBe(to.toISOString());
+  });
+
+  test("executeRawQuery surfaces backend error message instead of generic 500", async () => {
+    const duckDbError = 'Binder Error: Referenced column "total_tokens" not found in FROM clause!';
+    const analyticsStub = createAnalyticsServiceStub(summaryFixture);
+    analyticsStub.service.executeRawQuery = () => Promise.reject(new Error(duckDbError));
+
+    await server?.close();
+    const context: Partial<ORPCContext> = {
+      analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
+    };
+
+    // eslint-disable-next-line no-restricted-syntax -- test-only dynamic import avoids browser/node boundary lint
+    const { createOrpcServer } = await import("@/node/orpc/server");
+
+    server = await createOrpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      context: context as ORPCContext,
+      onOrpcError: () => undefined,
+    });
+    currentApiClient = createHttpClient(server.baseUrl);
+
+    const { result } = renderHook(() => useAnalyticsRawQuery());
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT sum(total_tokens) FROM events;");
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.error).toContain("total_tokens");
+    expect(result.current.error).not.toBe("Internal server error");
+    expect(result.current.data).toBeNull();
   });
 });

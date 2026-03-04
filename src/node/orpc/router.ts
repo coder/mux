@@ -1,4 +1,4 @@
-import { os } from "@orpc/server";
+import { os, ORPCError } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
 import { OnePasswordService } from "@/node/services/onePasswordService";
@@ -4329,7 +4329,16 @@ export const router = (authToken?: string) => {
         .input(schemas.analytics.executeRawQuery.input)
         .output(schemas.analytics.executeRawQuery.output)
         .handler(async ({ context, input }) => {
-          return context.analyticsService.executeRawQuery(input.sql);
+          try {
+            return await context.analyticsService.executeRawQuery(input.sql);
+          } catch (error) {
+            // User-written SQL errors should be visible in the UI instead of a generic
+            // internal server error so query debugging can happen without backend logs.
+            throw new ORPCError("BAD_REQUEST", {
+              message: getErrorMessage(error),
+              cause: error,
+            });
+          }
         }),
 
       rebuildDatabase: t

@@ -18,7 +18,7 @@ import { DynamicChart } from "../Tools/analyticsQuery/DynamicChart";
 import { inferChartType, inferAxes } from "../Tools/analyticsQuery/chartHeuristics";
 import type { ChartType, ColumnMeta } from "../Tools/analyticsQuery/types";
 
-const SAMPLE_QUERIES = [
+export const SAMPLE_QUERIES = [
   {
     label: "Top Models by Cost",
     sql: "SELECT model, sum(total_cost_usd) as total_cost\nFROM events\nGROUP BY model\nORDER BY total_cost DESC\nLIMIT 10;",
@@ -33,7 +33,7 @@ const SAMPLE_QUERIES = [
   },
   {
     label: "Tokens by Thinking Level",
-    sql: "SELECT thinking_level, sum(total_tokens) as total_tokens\nFROM events\nWHERE thinking_level IS NOT NULL\nGROUP BY thinking_level\nORDER BY total_tokens DESC;",
+    sql: "SELECT thinking_level, sum(input_tokens + output_tokens + reasoning_tokens + cached_tokens + cache_create_tokens) as total_tokens\nFROM events\nWHERE thinking_level IS NOT NULL\nGROUP BY thinking_level\nORDER BY total_tokens DESC;",
   },
 ];
 
