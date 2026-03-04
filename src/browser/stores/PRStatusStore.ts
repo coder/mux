@@ -279,11 +279,9 @@ export class PRStatusStore {
   private getSectionEvaluationPRStateKey(status: GitHubPRStatus | undefined): string {
     const state = status?.state ?? "none";
     const mergeStatus = status?.mergeStateStatus ?? "none";
-    const isDraft = status?.isDraft == null ? "unknown" : status.isDraft ? "true" : "false";
-    const hasFailedChecks =
-      status?.hasFailedChecks == null ? "unknown" : status.hasFailedChecks ? "true" : "false";
-    const hasPendingChecks =
-      status?.hasPendingChecks == null ? "unknown" : status.hasPendingChecks ? "true" : "false";
+    const isDraft = status?.isDraft ? "true" : "false";
+    const hasFailedChecks = status?.hasFailedChecks ? "true" : "false";
+    const hasPendingChecks = status?.hasPendingChecks ? "true" : "false";
 
     return `${state}:${mergeStatus}:${isDraft}:${hasFailedChecks}:${hasPendingChecks}`;
   }
@@ -300,9 +298,9 @@ export class PRStatusStore {
     const nextStatus = nextEntry.status;
     const nextState = nextStatus?.state ?? "none";
     const nextMergeStatus = nextStatus?.mergeStateStatus;
-    const nextIsDraft = nextStatus?.isDraft;
-    const nextHasFailedChecks = nextStatus?.hasFailedChecks;
-    const nextHasPendingChecks = nextStatus?.hasPendingChecks;
+    const nextIsDraft = nextStatus?.isDraft ?? false;
+    const nextHasFailedChecks = nextStatus?.hasFailedChecks ?? false;
+    const nextHasPendingChecks = nextStatus?.hasPendingChecks ?? false;
     const nextStateKey = this.getSectionEvaluationPRStateKey(nextStatus);
 
     const previousStateKey = this.getSectionEvaluationPRStateKey(previousStatus);
