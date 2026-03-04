@@ -133,6 +133,63 @@ describe("AIService.setupStreamEventForwarding", () => {
     expect(internals.pendingDevToolsRunMetadataByMessageId.has(abortEvent.messageId)).toBe(false);
   });
 
+  it("forwards stream-abort with empty messageId without throwing", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-abort-empty-message-id");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    internals.pendingDevToolsRunMetadataByMessageId.set("message-1", {
+      workspaceId: "workspace-1",
+      metadataId: "metadata-1",
+    });
+
+    const abortEvent: StreamAbortEvent = {
+      type: "stream-abort",
+      workspaceId: "workspace-1",
+      messageId: "",
+      abandonPartial: true,
+    };
+
+    const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
+      service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
+    });
+
+    streamManager.emit("stream-abort", abortEvent);
+
+    expect(await forwardedAbortPromise).toEqual(abortEvent);
+    expect(clearPendingRunMetadataSpy).not.toHaveBeenCalled();
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has("message-1")).toBe(true);
+  });
+
   it("clears tracked devtools run metadata on stream-end", async () => {
     using muxHome = new DisposableTempDir("ai-service-stream-end-devtools-cleanup");
     const config = new Config(muxHome.path);

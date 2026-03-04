@@ -388,10 +388,11 @@ export class AIService extends EventEmitter {
   }
 
   private clearTrackedPendingDevToolsRunMetadata(messageId: string): void {
-    assert(
-      messageId.trim().length > 0,
-      "clearTrackedPendingDevToolsRunMetadata requires a messageId"
-    );
+    // StreamManager can emit stream-abort with an empty messageId during startup races.
+    // Treat that as "nothing to clear" instead of throwing so interruptStream remains reliable.
+    if (messageId.trim().length === 0) {
+      return;
+    }
 
     const pending = this.pendingDevToolsRunMetadataByMessageId.get(messageId);
     if (!pending) {
