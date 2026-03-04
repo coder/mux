@@ -54,15 +54,15 @@ describe("formatReviewForModel", () => {
     expect(formatted).not.toContain(".mux-dev/plans");
   });
 
-  test("formats custom MUX_ROOT plan annotations with Plan location", () => {
+  test("formats custom MUX_ROOT plan annotations with raw file location", () => {
     const formatted = formatReviewForModel({
       ...baseReviewData,
       filePath: "/tmp/custom-root/plans/project/ws.md",
       lineRange: "+5-8",
     });
 
-    expect(formatted).toContain("Re Plan:L5-8");
-    expect(formatted).not.toContain("/tmp/custom-root/plans");
+    expect(formatted).toContain("Re /tmp/custom-root/plans/project/ws.md:+5-8");
+    expect(formatted).not.toContain("Re Plan:");
   });
 
   test("uses clean L-prefixed line ranges for plan annotations", () => {
@@ -170,12 +170,6 @@ describe("normalizePlanFilePath", () => {
     expect(normalizePlanFilePath("C:\\var\\mux\\plans\\myproject\\workspace.md")).toBe(
       ".mux/plans/myproject/workspace.md"
     );
-    expect(normalizePlanFilePath("/tmp/custom-root/plans/project/ws.md")).toBe(
-      ".mux/plans/project/ws.md"
-    );
-    expect(normalizePlanFilePath("/opt/mux-production/plans/project/ws.md")).toBe(
-      ".mux/plans/project/ws.md"
-    );
   });
 
   test("round-trips already-normalized plan paths", () => {
@@ -193,6 +187,8 @@ describe("normalizePlanFilePath", () => {
     expect(normalizePlanFilePath("/var/mux/plans/")).toBeNull();
     expect(normalizePlanFilePath("src/plans/utils.ts")).toBeNull();
     expect(normalizePlanFilePath("/src/deeply/plans/a/b/c.ts")).toBeNull();
+    expect(normalizePlanFilePath("/tmp/custom-root/plans/project/ws.md")).toBeNull();
+    expect(normalizePlanFilePath("/opt/mux-production/plans/project/ws.md")).toBeNull();
     expect(normalizePlanFilePath("/workspace/repo/plans/roadmap/v1.txt")).toBeNull();
   });
 });
@@ -214,7 +210,6 @@ describe("isPlanFilePath", () => {
     expect(isPlanFilePath("C:\\Users\\user\\.mux-dev\\plans\\workspace\\plan.md")).toBeTrue();
     expect(isPlanFilePath("/var/mux/plans/myproject/workspace.md")).toBeTrue();
     expect(isPlanFilePath("C:\\var\\mux\\plans\\myproject\\workspace.md")).toBeTrue();
-    expect(isPlanFilePath("/tmp/custom-root/plans/project/ws.md")).toBeTrue();
   });
 
   test("isPlanFilePath recognizes already-normalized paths", () => {
@@ -225,6 +220,7 @@ describe("isPlanFilePath", () => {
     expect(isPlanFilePath("src/planning/planner.ts")).toBeFalse();
     expect(isPlanFilePath("src/plans/utils.ts")).toBeFalse();
     expect(isPlanFilePath("plan.txt")).toBeFalse();
+    expect(isPlanFilePath("/tmp/custom-root/plans/project/ws.md")).toBeFalse();
     expect(isPlanFilePath("/workspace/repo/plans/roadmap/v1.txt")).toBeFalse();
     expect(isPlanFilePath("project/.mux/plans/workspace/plan.md")).toBeFalse();
     expect(isPlanFilePath(".mux-dev/plans/workspace/plan.md")).toBeFalse();
