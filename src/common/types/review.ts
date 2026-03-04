@@ -249,25 +249,30 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
 /**
  * Normalize a plan file path for cross-platform matching.
  *
- * Converts Windows separators and strips any absolute/tilde prefix so callers can
+ * Converts Windows separators and strips absolute mux-home prefixes so callers can
  * compare only the stable ".mux/plans/..." suffix.
  *
- * Supports both local (`~/.mux/plans/...`) and Docker (`/var/mux/plans/...`) roots.
+ * Supports both local (`~/.mux/plans/...` / `/home/user/.mux/plans/...`) and Docker
+ * (`/var/mux/plans/...`) roots.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
   if (!filePath) return null;
 
   const normalized = filePath.replace(/\\/g, "/");
-  if (normalized.startsWith(".mux/plans/")) {
-    return normalized;
-  }
-
   const planRoots = ["/.mux/plans/", "/var/mux/plans/"] as const;
+
   for (const planRoot of planRoots) {
     const embeddedPlanRootIndex = normalized.indexOf(planRoot);
-    if (embeddedPlanRootIndex >= 0) {
-      return `.mux/plans/${normalized.slice(embeddedPlanRootIndex + planRoot.length)}`;
+    if (embeddedPlanRootIndex < 0) {
+      continue;
     }
+
+    const normalizedSuffix = normalized.slice(embeddedPlanRootIndex + planRoot.length);
+    if (!normalizedSuffix) {
+      return null;
+    }
+
+    return `.mux/plans/${normalizedSuffix}`;
   }
 
   return null;

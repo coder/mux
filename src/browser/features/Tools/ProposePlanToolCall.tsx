@@ -379,7 +379,12 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   }, [canAnnotate]);
 
   useEffect(() => {
-    if (!canAnnotate || !isPlanVisible) {
+    // Scope the global annotate shortcut to the latest non-ephemeral plan tool call.
+    // Ephemeral previews can still use the button, but should not all toggle together.
+    const canUseAnnotateKeybind =
+      canAnnotate && isPlanVisible && (isLatest ?? false) && !isEphemeralPreviewMode;
+
+    if (!canUseAnnotateKeybind) {
       return;
     }
 
@@ -404,7 +409,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [canAnnotate, isPlanVisible]);
+  }, [canAnnotate, isPlanVisible, isLatest, isEphemeralPreviewMode]);
 
   // When using "Start Here" (replace chat history), the plan is already included in the
   // conversation *only* when the Propose Plan tool result includes full plan text.
@@ -848,7 +853,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       ) : annotateMode && canAnnotate ? (
         <PlanAnnotationView
           planContent={planContent}
-          planPath={normalizedPlanPath ?? planPath}
+          planPath={planPath}
           onReviewNote={reviews.addReview}
           reviews={planReviews}
           reviewActions={reviewActions}

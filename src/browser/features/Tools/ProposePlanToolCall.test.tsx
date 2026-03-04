@@ -407,6 +407,38 @@ describe("ProposePlanToolCall", () => {
     expect(view.container.querySelector("pre")).toBeNull();
   });
 
+  test("does not toggle annotate mode with Shift+A in ephemeral previews", () => {
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    const view = renderToolCall(
+      <>
+        <ProposePlanToolCall
+          args={{}}
+          status="completed"
+          content="# My Plan\n\nDo the thing."
+          path={planPath}
+          workspaceId="ws-123"
+          isEphemeralPreview={true}
+        />
+        <ProposePlanToolCall
+          args={{}}
+          status="completed"
+          content="# Another Plan\n\nDo the other thing."
+          path={planPath}
+          workspaceId="ws-123"
+          isEphemeralPreview={true}
+        />
+      </>
+    );
+
+    expect(view.getAllByRole("button", { name: "Annotate" }).length).toBe(2);
+
+    fireEvent.keyDown(document, { key: "a", shiftKey: true });
+
+    expect(view.queryByRole("button", { name: "Exit Annotate" })).toBeNull();
+    expect(view.getAllByRole("button", { name: "Annotate" }).length).toBe(2);
+  });
+
   test("switches to exec and sends a message when clicking Implement", async () => {
     const workspaceId = "ws-123";
     const planPath = "~/.mux/plans/demo/ws-123.md";
