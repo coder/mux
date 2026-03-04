@@ -210,11 +210,18 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
       <StatusDot state="idle" isDraft />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex min-w-0 items-center gap-1 text-[14px] leading-6">
-          <PenLine className="text-muted h-3 w-3 shrink-0" />
-          <span className="text-muted min-w-0 truncate text-left italic">{draft.title}</span>
+          <PenLine className={cn("h-3 w-3 shrink-0", isSelected ? "text-foreground" : "text-muted")} />
+          <span className={cn("min-w-0 truncate text-left italic", isSelected ? "text-foreground" : "text-muted")}>
+            {draft.title}
+          </span>
         </div>
         {hasPromptPreview && (
-          <span className="text-muted block truncate text-left text-xs leading-4">
+          <span
+            className={cn(
+              "block truncate text-left text-xs leading-4",
+              isSelected ? "text-foreground" : "text-muted"
+            )}
+          >
             {draft.promptPreview}
           </span>
         )}
