@@ -333,7 +333,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
         if (waitResult.success) {
           setMuxGatewayLoginStatus("success");
-          const accountStatus = await refreshMuxGatewayAccountStatus();
+          // Time-box the balance check so a stalled gateway endpoint doesn't
+          // block first-time onboarding defaults.
+          const accountStatus = await Promise.race([
+            refreshMuxGatewayAccountStatus(),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+          ]);
 
           if (attempt !== muxGatewayLoginAttemptRef.current) {
             return;
@@ -460,8 +465,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       if (data.ok === true) {
         setMuxGatewayLoginStatus("success");
 
-        // Check balance, then apply models only if credits remain.
-        void refreshMuxGatewayAccountStatus().then((accountStatus) => {
+        // Time-box the balance check so a stalled gateway endpoint doesn't
+        // block first-time onboarding defaults.
+        void Promise.race([
+          refreshMuxGatewayAccountStatus(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+        ]).then((accountStatus) => {
           if (muxGatewayLoginAttemptRef.current !== attempt) return;
 
           const hasCredits = accountStatus == null || accountStatus.remaining_microdollars > 0;
