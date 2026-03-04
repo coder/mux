@@ -348,12 +348,22 @@ export class Config {
       // object-valued setting.
       if (systemVal != null && typeof systemVal === "object" && !Array.isArray(systemVal)) {
         if (userVal != null && typeof userVal === "object" && !Array.isArray(userVal)) {
-          // LIMITATION: This is a shallow key-level merge — user sub-values replace
-          // system sub-values without per-value validation. E.g., a user setting
-          // featureFlagOverrides.flagA = "bogus" overwrites the admin's "on". This
-          // is accepted because validation lives in consumers (getFeatureFlagOverride),
-          // not the config merge layer, and the set of valid values varies per key.
-          mergedRecord[key] = { ...systemVal, ...userVal };
+          // Deep merge with per-key type validation: user sub-keys override system
+          // sub-keys, but only when the types are compatible. This prevents a
+          // malformed user entry (e.g., runtimeEnablement.docker: "oops" instead of
+          // false) from displacing a valid admin baseline. When both are same-type
+          // strings, user wins — consumer-level validation handles invalid values.
+          const sysObj = systemVal as Record<string, unknown>;
+          const usrObj = userVal as Record<string, unknown>;
+          const merged: Record<string, unknown> = { ...sysObj };
+          for (const [subKey, usrSubVal] of Object.entries(usrObj)) {
+            const sysSubVal = sysObj[subKey];
+            if (sysSubVal !== undefined && typeof usrSubVal !== typeof sysSubVal) {
+              continue; // Type mismatch — keep system sub-value
+            }
+            merged[subKey] = usrSubVal;
+          }
+          mergedRecord[key] = merged;
         }
         // else: user value is non-object — skip it, system object survives.
       } else {

@@ -669,6 +669,26 @@ describe("Config", () => {
       // System object survives — merge rejects non-object user value for object fields
       expect(loaded.runtimeEnablement).toEqual({ docker: false });
     });
+    it("type-mismatched sub-values in objects preserve system defaults", () => {
+      writeSystemConfig({
+        runtimeEnablement: { docker: false },
+        featureFlagOverrides: { flagA: "on" },
+        projects: [],
+      });
+      writeUserConfig({
+        // docker: "oops" has wrong type (string vs boolean) — system's false survives
+        runtimeEnablement: { docker: "oops" as unknown as false, ssh: false },
+        // flagA: 42 has wrong type (number vs string) — system's "on" survives
+        featureFlagOverrides: { flagA: 42 as unknown as string, flagB: "off" },
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Type-matched user entries win, type-mismatched ones keep system value
+      expect(loaded.runtimeEnablement).toEqual({ docker: false, ssh: false });
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on", flagB: "off" });
+    });
 
     it("same-type but invalid user values fall back to system via normalization", () => {
       writeSystemConfig({
