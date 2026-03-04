@@ -270,7 +270,15 @@ export class PRStatusStore {
     return undefined;
   }
 
-  /** Called when section rules change to force re-evaluation with fresh PR context on next poll. */
+  /**
+   * Clear cached evaluation state so the next PR status change triggers
+   * re-evaluation. Also re-sends PR context for all cached workspaces.
+   *
+   * v1 limitation: only re-evaluates workspaces whose PR status has been
+   * fetched (subscribed workspaces). Un-subscribed workspaces are evaluated
+   * server-side without PR context, so PR-based rules remain inconclusive
+   * for them until they are viewed. Future scope: backend PR polling.
+   */
   invalidateSectionEvaluationCache(): void {
     this.lastEvaluatedPRState.clear();
     this.pendingPRState.clear();

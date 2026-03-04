@@ -145,7 +145,15 @@ export class GitStatusStore {
     this.refreshController.requestImmediate();
   }
 
-  /** Called when section rules change to force re-evaluation with fresh git context on next poll. */
+  /**
+   * Clear cached evaluation state so the next git status change triggers
+   * re-evaluation. Also re-sends git context for all cached workspaces.
+   *
+   * v1 limitation: only re-evaluates workspaces with cached git status.
+   * Workspaces without cached status are evaluated server-side without
+   * git context, so git-based rules remain inconclusive for them until
+   * polled. Future scope: backend git status tracking.
+   */
   invalidateSectionEvaluationCache(): void {
     this.lastEvaluatedDirty.clear();
     this.pendingEvaluatedDirty.clear();
