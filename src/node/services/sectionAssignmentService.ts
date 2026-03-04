@@ -56,6 +56,8 @@ export interface FrontendProvidedContext {
 export class SectionAssignmentService {
   private pendingEvaluations = new Map<string, ReturnType<typeof setTimeout>>();
 
+  private lastKnownFrontendContext = new Map<string, FrontendProvidedContext>();
+
   constructor(
     private readonly projectService: ProjectService,
     private readonly workspaceService: WorkspaceService,
@@ -127,21 +129,34 @@ export class SectionAssignmentService {
     const activityByWorkspace = await this.workspaceService.getActivityList();
     const activity = activityByWorkspace[workspaceId];
 
+    // Merge incoming frontend context with last-known state so that
+    // rules combining PR and git fields can be fully evaluated even
+    // though the stores send updates independently.
+    let mergedContext: FrontendProvidedContext | undefined;
+    if (frontendContext) {
+      const previous = this.lastKnownFrontendContext.get(workspaceId) ?? {};
+      mergedContext = { ...previous, ...frontendContext };
+      this.lastKnownFrontendContext.set(workspaceId, mergedContext);
+    } else {
+      // Backend-triggered evaluation (stream-end, activity) — use last-known
+      mergedContext = this.lastKnownFrontendContext.get(workspaceId);
+    }
+
     const context: WorkspaceRuleContext = {
       workspaceId,
       agentMode: metadata.agentId,
       streaming: activity?.streaming ?? false,
-      prState: frontendContext?.prState,
-      prMergeStatus: frontendContext?.prMergeStatus,
-      prIsDraft: frontendContext?.prIsDraft,
-      prHasFailedChecks: frontendContext?.prHasFailedChecks,
-      prHasPendingChecks: frontendContext?.prHasPendingChecks,
+      prState: mergedContext?.prState,
+      prMergeStatus: mergedContext?.prMergeStatus,
+      prIsDraft: mergedContext?.prIsDraft,
+      prHasFailedChecks: mergedContext?.prHasFailedChecks,
+      prHasPendingChecks: mergedContext?.prHasPendingChecks,
       taskStatus: metadata.taskStatus,
       hasAgentStatus: activity?.agentStatus != null,
-      gitDirty: frontendContext?.gitDirty,
+      gitDirty: mergedContext?.gitDirty,
       currentSectionId: metadata.sectionId,
       pinnedToSection: false,
-      availableFields: buildAvailableFields(frontendContext),
+      availableFields: buildAvailableFields(mergedContext),
     };
 
     const evaluationResult = evaluateSectionRules(sortedSections, context);
