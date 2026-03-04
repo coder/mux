@@ -45,6 +45,7 @@ import {
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -2467,9 +2468,34 @@ export class TaskService {
         const initLogger = getInitLogger();
 
         const parentMetadataResult = await this.aiService.getWorkspaceMetadata(parentId);
-        const parentMetadataForFork = parentMetadataResult.success
+        let parentMetadataForFork = parentMetadataResult.success
           ? parentMetadataResult.data
           : undefined;
+
+        if (!parentMetadataForFork && Array.isArray(task.projects) && task.projects.length > 1) {
+          // Queued tasks persist the parent's project refs at queue time. If the parent metadata lookup
+          // fails later (for example, parent workspace deleted while queued), synthesize enough metadata
+          // for orchestrateFork to preserve multi-project behavior instead of falling back to single-project.
+          const primaryProjectRef =
+            task.projects.find(
+              (project) =>
+                stripTrailingSlashes(project.projectPath) ===
+                stripTrailingSlashes(taskEntry.projectPath)
+            ) ?? task.projects[0];
+          const projectName =
+            coerceNonEmptyString(primaryProjectRef?.projectName) ??
+            coerceNonEmptyString(taskEntry.projectPath.split("/").filter(Boolean).at(-1)) ??
+            taskEntry.projectPath;
+
+          parentMetadataForFork = {
+            id: parentId,
+            name: parentWorkspaceName,
+            projectPath: taskEntry.projectPath,
+            projectName,
+            runtimeConfig: parentRuntimeConfig,
+            projects: task.projects,
+          } satisfies WorkspaceMetadata;
+        }
 
         const forkOrchestratorResult = await orchestrateFork({
           sourceRuntime: runtime,
