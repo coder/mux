@@ -351,8 +351,14 @@ export class Config {
           // Deep merge with per-key type validation: user sub-keys override system
           // sub-keys, but only when the types are compatible. This prevents a
           // malformed user entry (e.g., runtimeEnablement.docker: "oops" instead of
-          // false) from displacing a valid admin baseline. When both are same-type
-          // strings, user wins — consumer-level validation handles invalid values.
+          // false) from displacing a valid admin baseline. When both are same-type,
+          // user wins — consumer-level validation handles invalid values.
+          //
+          // LIMITATION (sparse storage): for fields like runtimeEnablement where only
+          // `false` is meaningful, a user's same-type `true` passes the type check
+          // but gets dropped by normalization — the system's `false` is lost. This is
+          // inherent to the sparse storage pattern; a dedicated follow-up can address
+          // it via per-value semantic validation in the normalizer.
           const sysObj = systemVal as Record<string, unknown>;
           const usrObj = userVal as Record<string, unknown>;
           const merged: Record<string, unknown> = { ...sysObj };
