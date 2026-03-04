@@ -30,6 +30,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WAIT_CODEX_SCRIPT="$SCRIPT_DIR/wait_pr_codex.sh"
 WAIT_CHECKS_SCRIPT="$SCRIPT_DIR/wait_pr_checks.sh"
 CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
+# shellcheck source=./lib/branch_sync_guard.sh
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/branch_sync_guard.sh"
 
 for required in "$WAIT_CODEX_SCRIPT" "$WAIT_CHECKS_SCRIPT" "$CHECK_CODEX_COMMENTS_SCRIPT"; do
   if [ ! -x "$required" ]; then
@@ -84,11 +87,6 @@ load_repo_context() {
 }
 
 assert_clean_and_synced_branch() {
-  local current_branch
-  local remote_branch
-  local local_hash
-  local remote_hash
-
   if ! git diff-index --quiet HEAD --; then
     echo "❌ Error: You have uncommitted changes in your working directory." >&2
     echo "" >&2
@@ -98,54 +96,7 @@ assert_clean_and_synced_branch() {
     return 1
   fi
 
-  current_branch=$(git rev-parse --abbrev-ref HEAD)
-
-  # Always compare against origin/<current-branch>, not @{u}.
-  # Worktrees created from origin/main inherit origin/main as their upstream,
-  # which causes false "not in sync" errors on feature branches.
-  remote_branch="origin/$current_branch"
-
-  # Perform one fetch per orchestrator iteration context and let child scripts reuse it.
-  if ! git fetch origin "$current_branch" --quiet 2>/dev/null; then
-    echo "⚠️  Branch '$current_branch' does not exist on remote." >&2
-    echo "Pushing to origin/$current_branch..." >&2
-
-    if git push -u origin "$current_branch" 2>&1; then
-      echo "✅ Pushed and upstream set successfully!" >&2
-    else
-      echo "❌ Error: Failed to push branch." >&2
-      echo "You may need to push manually: git push -u origin $current_branch" >&2
-      return 1
-    fi
-  fi
-
-  local_hash=$(git rev-parse HEAD)
-  remote_hash=$(git rev-parse "$remote_branch")
-
-  if [[ "$local_hash" != "$remote_hash" ]]; then
-    echo "❌ Error: Local branch is not in sync with remote." >&2
-    echo "" >&2
-    echo "Local:  $local_hash" >&2
-    echo "Remote: $remote_hash" >&2
-    echo "" >&2
-
-    if git merge-base --is-ancestor "$remote_hash" HEAD 2>/dev/null; then
-      local ahead
-      ahead=$(git rev-list --count "$remote_branch"..HEAD)
-      echo "Your branch is $ahead commit(s) ahead of '$remote_branch'." >&2
-      echo "Push your changes with: git push" >&2
-    elif git merge-base --is-ancestor HEAD "$remote_hash" 2>/dev/null; then
-      local behind
-      behind=$(git rev-list --count HEAD.."$remote_branch")
-      echo "Your branch is $behind commit(s) behind '$remote_branch'." >&2
-      echo "Pull the latest changes with: git pull" >&2
-    else
-      echo "Your branch has diverged from '$remote_branch'." >&2
-      echo "You may need to rebase or merge." >&2
-    fi
-
-    return 1
-  fi
+  assert_branch_synced || return 1
 }
 
 load_repo_context

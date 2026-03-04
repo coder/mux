@@ -33,6 +33,9 @@ POLL_INTERVAL_SECS=30
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_REVIEWS_SCRIPT="$SCRIPT_DIR/check_pr_reviews.sh"
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
+# shellcheck source=./lib/branch_sync_guard.sh
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/branch_sync_guard.sh"
 
 if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "❌ PR number must be numeric. Got: '$PR_NUMBER'" >&2
@@ -60,55 +63,7 @@ if [ "$SKIP_FETCH_SYNC" = "0" ]; then
     exit 1
   fi
 
-  # Get current branch name
-  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
-  # Always compare against origin/<current-branch>, not @{u}.
-  # Worktrees created from origin/main inherit origin/main as their upstream,
-  # which causes false "not in sync" errors on feature branches.
-  REMOTE_BRANCH="origin/$CURRENT_BRANCH"
-
-  # Fetch latest remote state before comparing
-  if ! git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null; then
-    echo "⚠️  Branch '$CURRENT_BRANCH' does not exist on remote." >&2
-    echo "Pushing to origin/$CURRENT_BRANCH..." >&2
-
-    if git push -u origin "$CURRENT_BRANCH" 2>&1; then
-      echo "✅ Pushed and upstream set successfully!" >&2
-    else
-      echo "❌ Error: Failed to push branch." >&2
-      echo "You may need to push manually: git push -u origin $CURRENT_BRANCH" >&2
-      exit 1
-    fi
-  fi
-
-  # Check if local and remote are in sync
-  LOCAL_HASH=$(git rev-parse HEAD)
-  REMOTE_HASH=$(git rev-parse "$REMOTE_BRANCH")
-
-  if [[ "$LOCAL_HASH" != "$REMOTE_HASH" ]]; then
-    echo "❌ Error: Local branch is not in sync with remote." >&2
-    echo "" >&2
-    echo "Local:  $LOCAL_HASH" >&2
-    echo "Remote: $REMOTE_HASH" >&2
-    echo "" >&2
-
-    # Check if we're ahead, behind, or diverged
-    if git merge-base --is-ancestor "$REMOTE_HASH" HEAD 2>/dev/null; then
-      AHEAD=$(git rev-list --count "$REMOTE_BRANCH"..HEAD)
-      echo "Your branch is $AHEAD commit(s) ahead of '$REMOTE_BRANCH'." >&2
-      echo "Push your changes with: git push" >&2
-    elif git merge-base --is-ancestor HEAD "$REMOTE_HASH" 2>/dev/null; then
-      BEHIND=$(git rev-list --count HEAD.."$REMOTE_BRANCH")
-      echo "Your branch is $BEHIND commit(s) behind '$REMOTE_BRANCH'." >&2
-      echo "Pull the latest changes with: git pull" >&2
-    else
-      echo "Your branch has diverged from '$REMOTE_BRANCH'." >&2
-      echo "You may need to rebase or merge." >&2
-    fi
-
-    exit 1
-  fi
+  assert_branch_synced || exit 1
 fi
 
 LAST_MERGE_STATE="UNKNOWN"
