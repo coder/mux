@@ -1364,7 +1364,7 @@ export class MCPServerManager {
       log.debug("[MCP] Spawning stdio server", { name });
       const execStream = await runtime.exec(info.command, {
         cwd: workspacePath,
-        timeout: MCP_STARTUP_TIMEOUT_MS / 1000,
+        timeout: 60 * 60 * 24, // 24 hours — process lifetime, not startup
       });
 
       const transport = new MCPStdioTransport(execStream);
