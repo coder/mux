@@ -161,10 +161,10 @@ describe("mux CLI", () => {
       expect(result.stdout).toContain("--quiet");
     });
 
-    test("shows default model as opus", async () => {
+    test("shows default model as sonnet", async () => {
       const result = await runCli(["run", "--help"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("anthropic:claude-opus-4-6");
+      expect(result.stdout).toContain("anthropic:claude-sonnet-4-6");
     });
 
     test("no message shows error", async () => {
