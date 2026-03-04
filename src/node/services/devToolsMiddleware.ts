@@ -15,6 +15,7 @@ import type {
   DevToolsUsage,
 } from "@/common/types/devtools";
 import assert from "@/common/utils/assert";
+import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import {
   DEVTOOLS_RUN_METADATA_ID_HEADER,
@@ -26,14 +27,6 @@ import type { DevToolsService } from "./devToolsService";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function extractErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.length > 0) {
-    return error.message;
-  }
-
-  return String(error);
 }
 
 function extractFinishReason(reason: unknown): string | undefined {
@@ -446,7 +439,7 @@ export function createDevToolsMiddleware(
         await finalizeStep({
           output: null,
           usage: null,
-          error: extractErrorMessage(error),
+          error: getErrorMessage(error),
           rawRequest: null,
           requestHeaders: capturedRequestHeaders,
           responseHeaders: null,
@@ -578,7 +571,7 @@ export function createDevToolsMiddleware(
         await finalizeStep({
           output: null,
           usage: null,
-          error: extractErrorMessage(error),
+          error: getErrorMessage(error),
           rawRequest: null,
           requestHeaders: capturedRequestHeaders,
           responseHeaders: null,
@@ -653,7 +646,7 @@ export function createDevToolsMiddleware(
           case "error": {
             finishReason ??= "error";
             // Capture the error payload so the step is marked as failed in DevTools.
-            streamError = extractErrorMessage(chunk.error);
+            streamError = getErrorMessage(chunk.error);
             break;
           }
           default:
@@ -696,7 +689,7 @@ export function createDevToolsMiddleware(
             await finalizeStep({
               output: buildOutput(),
               usage,
-              error: extractErrorMessage(error),
+              error: getErrorMessage(error),
               rawRequest,
               requestHeaders: capturedRequestHeaders,
               responseHeaders,

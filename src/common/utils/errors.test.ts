@@ -9,6 +9,48 @@ describe("getErrorMessage", () => {
     expect(getErrorMessage(undefined)).toBe("undefined");
   });
 
+  it("returns .message from a plain object with a message property", () => {
+    expect(getErrorMessage({ message: "rate limit exceeded", code: 429 })).toBe(
+      "rate limit exceeded"
+    );
+  });
+
+  it("falls back to String() when reading message throws", () => {
+    const obj = {};
+    Object.defineProperty(obj, "message", {
+      get() {
+        throw new Error("getter boom");
+      },
+    });
+
+    expect(getErrorMessage(obj)).toBe("[object Object]");
+  });
+
+  it("returns JSON for a plain object without a message property", () => {
+    expect(getErrorMessage({ code: 429, status: "error" })).toBe('{"code":429,"status":"error"}');
+  });
+
+  it("returns JSON for a plain object with empty message", () => {
+    expect(getErrorMessage({ message: "", code: 500 })).toBe('{"message":"","code":500}');
+  });
+
+  it("returns JSON for an array error value", () => {
+    expect(getErrorMessage(["error1", "error2"])).toBe('["error1","error2"]');
+  });
+
+  it("falls back to String() when JSON serialization returns undefined", () => {
+    const obj = {
+      toJSON: () => undefined,
+    };
+    expect(getErrorMessage(obj)).toBe("[object Object]");
+  });
+
+  it("falls back to String() for circular plain objects", () => {
+    const obj: Record<string, unknown> = { code: 500 };
+    obj.self = obj;
+    expect(getErrorMessage(obj)).toBe("[object Object]");
+  });
+
   it("returns .message for a plain Error", () => {
     expect(getErrorMessage(new Error("something failed"))).toBe("something failed");
   });
