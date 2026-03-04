@@ -252,27 +252,33 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
  * Converts Windows separators and strips absolute mux-home prefixes so callers can
  * compare only the stable ".mux/plans/..." suffix.
  *
- * Supports both local (`~/.mux/plans/...` / `/home/user/.mux/plans/...`) and Docker
- * (`/var/mux/plans/...`) roots.
+ * Supports local mux-home roots (`~/.mux/plans/...`, `/home/<user>/.mux/plans/...`,
+ * `/Users/<user>/.mux/plans/...`, `/root/.mux/plans/...`, `C:/Users/<user>/.mux/plans/...`)
+ * and Docker (`/var/mux/plans/...`) roots.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
   if (!filePath) return null;
 
   const normalized = filePath.replace(/\\/g, "/");
-  const planRoots = ["/.mux/plans/", "/var/mux/plans/"] as const;
 
-  for (const planRoot of planRoots) {
-    const embeddedPlanRootIndex = normalized.indexOf(planRoot);
-    if (embeddedPlanRootIndex < 0) {
-      continue;
-    }
+  // Accept plan files rooted at the current user's mux-home locations:
+  // - ~/.mux/plans/...                       (shell shorthand)
+  // - /home/<user>/.mux/plans/...            (Linux)
+  // - /Users/<user>/.mux/plans/...           (macOS)
+  // - /root/.mux/plans/...                   (root user)
+  // - C:/Users/<user>/.mux/plans/...         (Windows, after separator normalization)
+  const muxHomeMatch =
+    /^(?:~|\/home\/[^/]+|\/Users\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]+)\/\.mux\/plans\/(.+)$/.exec(
+      normalized
+    );
+  if (muxHomeMatch?.[1]) {
+    return `.mux/plans/${muxHomeMatch[1]}`;
+  }
 
-    const normalizedSuffix = normalized.slice(embeddedPlanRootIndex + planRoot.length);
-    if (!normalizedSuffix) {
-      return null;
-    }
-
-    return `.mux/plans/${normalizedSuffix}`;
+  // Accept Docker-mounted plan paths.
+  const dockerMatch = /^\/var\/mux\/plans\/(.+)$/.exec(normalized);
+  if (dockerMatch?.[1]) {
+    return `.mux/plans/${dockerMatch[1]}`;
   }
 
   return null;
