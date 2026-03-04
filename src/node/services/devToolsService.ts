@@ -136,14 +136,31 @@ export class DevToolsService extends EventEmitter {
   /**
    * Drop queued run metadata for a workspace.
    *
-   * This is used when a request exits before DevTools middleware creates a run,
-   * so stale metadata cannot leak into unrelated future runs.
+   * When metadataId is provided, only clear if the queued entry matches that ID.
+   * This prevents one request's cleanup path from deleting metadata queued by a
+   * newer overlapping request in the same workspace.
    */
-  clearPendingRunMetadata(workspaceId: string): void {
+  clearPendingRunMetadata(workspaceId: string, metadataId?: string): void {
     assert(
       workspaceId.trim().length > 0,
       "DevToolsService.clearPendingRunMetadata requires a workspaceId"
     );
+
+    const pendingMetadata = this.pendingRunMetadata.get(workspaceId);
+    if (!pendingMetadata) {
+      return;
+    }
+
+    if (metadataId != null) {
+      assert(
+        metadataId.trim().length > 0,
+        "DevToolsService.clearPendingRunMetadata requires a non-empty metadataId"
+      );
+
+      if (pendingMetadata.metadataId !== metadataId) {
+        return;
+      }
+    }
 
     this.pendingRunMetadata.delete(workspaceId);
   }
@@ -170,11 +187,8 @@ export class DevToolsService extends EventEmitter {
 
       if (metadataMatches) {
         Object.assign(run, pendingMetadata.metadata);
+        this.pendingRunMetadata.delete(workspaceId);
       }
-
-      // Consume pending metadata in all cases: when IDs mismatch (stale request),
-      // when no ID was provided, or after successful application.
-      this.pendingRunMetadata.delete(workspaceId);
     }
 
     data.runs.set(run.id, run);

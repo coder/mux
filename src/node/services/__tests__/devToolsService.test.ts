@@ -220,19 +220,31 @@ describe("DevToolsService", () => {
       expect(run2?.toolPolicy).toBeUndefined();
     });
 
-    it("drops stale pending metadata when metadata id does not match", async () => {
+    it("retains pending metadata when metadata id does not match", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const policy = [{ regex_match: ".*", action: "disable" as const }];
 
       service.setPendingRunMetadata("ws-1", "stale-metadata", { toolPolicy: policy });
       await service.createRun("ws-1", makeRun("run-1"), "different-metadata");
-      await service.createRun("ws-1", makeRun("run-2", "2025-06-01T00:01:00Z"));
+      await service.createRun("ws-1", makeRun("run-2", "2025-06-01T00:01:00Z"), "stale-metadata");
 
       const runs = await service.getRuns("ws-1");
       const run1 = runs.find((run) => run.id === "run-1");
       const run2 = runs.find((run) => run.id === "run-2");
       expect(run1?.toolPolicy).toBeUndefined();
-      expect(run2?.toolPolicy).toBeUndefined();
+      expect(run2?.toolPolicy).toEqual(policy);
+    });
+
+    it("clearPendingRunMetadata only clears matching metadata id", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      const policy = [{ regex_match: ".*", action: "require" as const }];
+
+      service.setPendingRunMetadata("ws-1", "metadata-keep", { toolPolicy: policy });
+      service.clearPendingRunMetadata("ws-1", "metadata-other");
+      await service.createRun("ws-1", makeRun("run-1"), "metadata-keep");
+
+      const runs = await service.getRuns("ws-1");
+      expect(runs[0]?.toolPolicy).toEqual(policy);
     });
 
     it("createStep stores step and getRunWithSteps returns it", async () => {

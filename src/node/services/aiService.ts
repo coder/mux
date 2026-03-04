@@ -1244,7 +1244,7 @@ export class AIService extends EventEmitter {
         // StreamManager failed before registering a stream. Clear queued run
         // metadata so it cannot attach to a later unrelated request.
         if (pendingRunMetadataId != null) {
-          this.devToolsService?.clearPendingRunMetadata(workspaceId);
+          this.devToolsService?.clearPendingRunMetadata(workspaceId, pendingRunMetadataId);
           pendingRunMetadataId = null;
         }
 
@@ -1256,7 +1256,7 @@ export class AIService extends EventEmitter {
       // make sure we don't leave an empty assistant placeholder behind.
       if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
         if (pendingRunMetadataId != null) {
-          this.devToolsService?.clearPendingRunMetadata(workspaceId);
+          this.devToolsService?.clearPendingRunMetadata(workspaceId, pendingRunMetadataId);
           pendingRunMetadataId = null;
         }
         await deleteAbortedPlaceholder(assistantMessageId);
@@ -1267,7 +1267,7 @@ export class AIService extends EventEmitter {
       return Ok(undefined);
     } catch (error) {
       if (pendingRunMetadataId != null) {
-        this.devToolsService?.clearPendingRunMetadata(workspaceId);
+        this.devToolsService?.clearPendingRunMetadata(workspaceId, pendingRunMetadataId);
         pendingRunMetadataId = null;
       }
 
