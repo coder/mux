@@ -74,13 +74,3 @@ export function normalizeOrder(order: string[], projects: Map<string, ProjectCon
     .sort((a, b) => a.localeCompare(b));
   return [...missing, ...filtered];
 }
-
-/**
- * Shallow equality for string arrays.
- */
-export function equalOrders(a: string[], b: string[]): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}

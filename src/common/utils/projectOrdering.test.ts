@@ -1,10 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import {
-  sortProjectsByOrder,
-  reorderProjects,
-  normalizeOrder,
-  equalOrders,
-} from "./projectOrdering";
+import { sortProjectsByOrder, reorderProjects, normalizeOrder } from "./projectOrdering";
 import type { ProjectConfig } from "@/node/config";
 
 describe("projectOrdering", () => {
@@ -95,31 +90,6 @@ describe("projectOrdering", () => {
       const order = ["/c", "/a", "/b"];
       const result = normalizeOrder(order, projects);
       expect(result).toEqual(["/c", "/a", "/b"]);
-    });
-  });
-
-  describe("equalOrders", () => {
-    it("returns true for identical arrays", () => {
-      const a = ["/a", "/b", "/c"];
-      const b = ["/a", "/b", "/c"];
-      expect(equalOrders(a, b)).toBe(true);
-    });
-
-    it("returns false for arrays with different lengths", () => {
-      const a = ["/a", "/b"];
-      const b = ["/a", "/b", "/c"];
-      expect(equalOrders(a, b)).toBe(false);
-    });
-
-    it("returns false for arrays with different order", () => {
-      const a = ["/a", "/b", "/c"];
-      const b = ["/a", "/c", "/b"];
-      expect(equalOrders(a, b)).toBe(false);
-    });
-
-    it("returns true for same reference", () => {
-      const a = ["/a", "/b", "/c"];
-      expect(equalOrders(a, a)).toBe(true);
     });
   });
 
