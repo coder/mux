@@ -110,15 +110,21 @@ function getVisualState(opts: {
   isWorking: boolean;
   isStarting: boolean;
   isUnread: boolean;
+  isSelected: boolean;
 }): VisualState {
-  if (opts.awaitingUserQuestion) {
-    return "question";
-  }
   if (opts.isRemoving || opts.isArchiving) {
     return "error";
   }
+  if (opts.awaitingUserQuestion) {
+    return "question";
+  }
   if (opts.isWorking || opts.isStarting || opts.isInitializing) {
     return "active";
+  }
+  // Avoid unread flicker for the currently selected workspace while last-read
+  // timestamps catch up on the next render.
+  if (opts.isSelected) {
+    return "seen";
   }
   // Figma distinguishes idle unseen (ringed dot + primary title) from seen (subtle square + secondary title).
   return opts.isUnread ? "idle" : "seen";
@@ -426,6 +432,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     isWorking,
     isStarting,
     isUnread,
+    isSelected,
   });
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
