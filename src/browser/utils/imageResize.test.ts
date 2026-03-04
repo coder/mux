@@ -1,33 +1,6 @@
-import type {
-  afterEach as BunAfterEach,
-  beforeEach as BunBeforeEach,
-  describe as BunDescribe,
-  expect as BunExpect,
-  test as BunTest,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
 import { computeResizedDimensions, resizeImageIfNeeded } from "./imageResize";
-
-interface TestApi {
-  describe: BunDescribe;
-  test: BunTest;
-  expect: BunExpect;
-  beforeEach: BunBeforeEach;
-  afterEach: BunAfterEach;
-}
-
-let testApi: TestApi;
-
-try {
-  // eslint-disable-next-line no-restricted-syntax
-  testApi = await import("bun:test");
-} catch {
-  // eslint-disable-next-line no-restricted-syntax
-  // @ts-expect-error - vitest is provided by `bun x vitest` at runtime in this repo.
-  testApi = (await import("vitest")) as TestApi;
-}
-
-const { describe, test, expect, beforeEach, afterEach } = testApi;
 
 interface ToDataUrlCall {
   type: string | undefined;
