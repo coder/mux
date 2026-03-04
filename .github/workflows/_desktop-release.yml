@@ -56,26 +56,8 @@ jobs:
           AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
 
       - name: Package and publish for macOS
-        shell: bash
-        run: |
-          # Retry up to 3× — Apple's timestamp server used by codesign --timestamp
-          # is occasionally unreachable, causing transient "The timestamp service is
-          # not available" failures during code signing.
-          max_attempts=3
-          for attempt in $(seq 1 $max_attempts); do
-            echo "::group::Attempt $attempt of $max_attempts"
-            if make dist-mac-release; then
-              echo "::endgroup::"
-              exit 0
-            fi
-            echo "::endgroup::"
-            if [ "$attempt" -lt "$max_attempts" ]; then
-              echo "⚠️ Attempt $attempt failed — retrying in 30s..."
-              sleep 30
-            fi
-          done
-          echo "::error::All $max_attempts attempts failed"
-          exit 1
+        # Retry for transient Apple timestamp-server failures during code signing.
+        run: ./scripts/retry.sh 3 30 make dist-mac-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
