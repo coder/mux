@@ -132,7 +132,7 @@ export async function fileToChatAttachment(file: File): Promise<ChatAttachment> 
     return {
       id: generateAttachmentId(),
       url: resizeResult.dataUrl,
-      mediaType,
+      mediaType: resizeResult.mediaType,
       filename: file.name.trim() ? file.name : undefined,
       ...(resizeResult.resized
         ? {

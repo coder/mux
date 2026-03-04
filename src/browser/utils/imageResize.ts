@@ -7,6 +7,7 @@ export interface ResizeDimensions {
 
 export interface ResizeResult {
   dataUrl: string;
+  mediaType: string;
   resized: boolean;
   originalWidth: number;
   originalHeight: number;
@@ -41,8 +42,8 @@ export function computeResizedDimensions(
 
   const scale = Math.min(maxDimension / width, maxDimension / height);
   return {
-    width: Math.round(width * scale),
-    height: Math.round(height * scale),
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
   };
 }
 
@@ -63,6 +64,7 @@ export async function resizeImageIfNeeded(
   if (!resizedDimensions) {
     return {
       dataUrl,
+      mediaType,
       resized: false,
       originalWidth,
       originalHeight,
@@ -90,6 +92,7 @@ export async function resizeImageIfNeeded(
 
   return {
     dataUrl: resizedDataUrl,
+    mediaType: outputMediaType,
     resized: true,
     originalWidth,
     originalHeight,

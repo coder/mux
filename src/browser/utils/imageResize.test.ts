@@ -144,6 +144,20 @@ describe("computeResizedDimensions", () => {
       height: 400,
     });
   });
+
+  test("clamps very thin image dimensions to at least 1 pixel", () => {
+    expect(computeResizedDimensions(1, 5000, MAX_IMAGE_DIMENSION)).toEqual({
+      width: 1,
+      height: 2000,
+    });
+  });
+
+  test("clamps very wide thin image dimensions to at least 1 pixel", () => {
+    expect(computeResizedDimensions(5000, 1, MAX_IMAGE_DIMENSION)).toEqual({
+      width: 2000,
+      height: 1,
+    });
+  });
 });
 
 describe("resizeImageIfNeeded", () => {
@@ -160,6 +174,7 @@ describe("resizeImageIfNeeded", () => {
       width: 2000,
       height: 1000,
       dataUrl: "data:image/jpeg;base64,resized",
+      mediaType: "image/jpeg",
     });
     expect(toDataUrlCalls).toEqual([{ type: "image/jpeg", quality: 0.9 }]);
   });
@@ -168,8 +183,9 @@ describe("resizeImageIfNeeded", () => {
     mockImageWidth = 3000;
     mockImageHeight = 3000;
 
-    await resizeImageIfNeeded("data:image/webp;base64,input", "image/webp");
+    const result = await resizeImageIfNeeded("data:image/webp;base64,input", "image/webp");
 
+    expect(result.mediaType).toBe("image/png");
     expect(toDataUrlCalls).toEqual([{ type: "image/png", quality: undefined }]);
   });
 
@@ -182,6 +198,7 @@ describe("resizeImageIfNeeded", () => {
 
     expect(result).toEqual({
       dataUrl: inputDataUrl,
+      mediaType: "image/png",
       resized: false,
       originalWidth: 100,
       originalHeight: 100,
@@ -200,6 +217,7 @@ describe("resizeImageIfNeeded", () => {
 
     expect(result).toEqual({
       dataUrl: "data:image/png;base64,resized",
+      mediaType: "image/png",
       resized: true,
       originalWidth: 1500,
       originalHeight: 3000,
