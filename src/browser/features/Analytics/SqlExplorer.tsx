@@ -117,7 +117,9 @@ export function SqlExplorer(props: SqlExplorerProps) {
             className="text-muted hover:text-foreground h-7 gap-1 px-2 text-[11px]"
           >
             Sample Queries
-            <ChevronDown className={cn("size-3 transition-transform", showSamples && "rotate-180")} />
+            <ChevronDown
+              className={cn("size-3 transition-transform", showSamples && "rotate-180")}
+            />
           </Button>
           {showSamples && (
             <div className="bg-sidebar border-border-medium absolute top-full right-0 z-50 mt-1 w-64 rounded-md border p-1 shadow-lg">
@@ -192,7 +194,9 @@ export function SqlExplorer(props: SqlExplorerProps) {
 
             {props.onSaveQuery && (
               <div className="border-border-light flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-                <div className="text-muted text-xs">Pin this query to the dashboard as a saved panel.</div>
+                <div className="text-muted text-xs">
+                  Pin this query to the dashboard as a saved panel.
+                </div>
                 {saveLabel === null ? (
                   <Button
                     variant="secondary"
@@ -261,7 +265,9 @@ export function SqlExplorer(props: SqlExplorerProps) {
             )}
 
             <div className="bg-background border-border-light min-h-[300px] overflow-hidden rounded-lg border">
-              {effectiveChartType === "table" || axes.yAxes.length === 0 || axes.xAxis.length === 0 ? (
+              {effectiveChartType === "table" ||
+              axes.yAxes.length === 0 ||
+              axes.xAxis.length === 0 ? (
                 <ResultTable
                   columns={data.columns as unknown as ColumnMeta[]}
                   rows={data.rows}
