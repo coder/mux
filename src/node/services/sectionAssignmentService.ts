@@ -1,6 +1,6 @@
 import type { SectionRuleCondition } from "@/common/schemas/project";
 import type { StreamEndEvent } from "@/common/types/stream";
-import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceActivitySnapshot, WorkspaceMetadata } from "@/common/types/workspace";
 import assert from "@/common/utils/assert";
 import { evaluateSectionRules, type WorkspaceRuleContext } from "@/common/utils/sectionRules";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
@@ -115,7 +115,8 @@ export class SectionAssignmentService {
   async evaluateWorkspace(
     workspaceId: string,
     frontendContext?: FrontendProvidedContext,
-    existingMetadata?: WorkspaceMetadata
+    existingMetadata?: WorkspaceMetadata,
+    activityMap?: Record<string, WorkspaceActivitySnapshot>
   ): Promise<void> {
     assert(
       typeof workspaceId === "string" && workspaceId.trim().length > 0,
@@ -126,21 +127,6 @@ export class SectionAssignmentService {
     if (!metadata) {
       return;
     }
-
-    // Legacy compat: workspaces with sectionId but no pinnedToSection flag
-    // were manually assigned before smart sections existed — treat as pinned.
-    if (
-      metadata.pinnedToSection === true ||
-      (metadata.sectionId != null && metadata.pinnedToSection == null)
-    ) {
-      return;
-    }
-
-    const projectPath = metadata.projectPath;
-    const sortedSections = sortSectionsByLinkedList(this.projectService.listSections(projectPath));
-
-    const activityByWorkspace = await this.workspaceService.getActivityList();
-    const activity = activityByWorkspace[workspaceId];
 
     // Merge incoming frontend context with last-known state so that
     // rules combining PR and git fields can be fully evaluated even
@@ -160,6 +146,21 @@ export class SectionAssignmentService {
       // Backend-triggered evaluation (stream-end, activity) — use last-known
       mergedContext = this.lastKnownFrontendContext.get(workspaceId);
     }
+
+    // Legacy compat: workspaces with sectionId but no pinnedToSection flag
+    // were manually assigned before smart sections existed — treat as pinned.
+    if (
+      metadata.pinnedToSection === true ||
+      (metadata.sectionId != null && metadata.pinnedToSection == null)
+    ) {
+      return;
+    }
+
+    const projectPath = metadata.projectPath;
+    const sortedSections = sortSectionsByLinkedList(this.projectService.listSections(projectPath));
+
+    const activityByWorkspace = activityMap ?? (await this.workspaceService.getActivityList());
+    const activity = activityByWorkspace[workspaceId];
 
     const context: WorkspaceRuleContext = {
       workspaceId,
@@ -249,6 +250,7 @@ export class SectionAssignmentService {
     );
 
     const workspaces = await this.workspaceService.list();
+    const activityMap = await this.workspaceService.getActivityList();
 
     for (const workspace of workspaces) {
       if (workspace.projectPath !== projectPath) {
@@ -256,7 +258,7 @@ export class SectionAssignmentService {
       }
 
       try {
-        await this.evaluateWorkspace(workspace.id, undefined, workspace);
+        await this.evaluateWorkspace(workspace.id, undefined, workspace, activityMap);
       } catch (error) {
         log.error("Failed to evaluate workspace during project section assignment", {
           workspaceId: workspace.id,
