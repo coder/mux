@@ -1,6 +1,7 @@
 import type { FilePart } from "@/common/orpc/types";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
+import { resizeImageIfNeeded } from "@/browser/utils/imageResize";
 
 const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -122,6 +123,29 @@ export async function fileToChatAttachment(file: File): Promise<ChatAttachment> 
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+
+  const isRasterImage = mediaType.startsWith("image/") && mediaType !== SVG_MEDIA_TYPE;
+  if (isRasterImage) {
+    // Auto-resize large images before sending so providers don't reject oversized inputs.
+    const resizeResult = await resizeImageIfNeeded(dataUrl, mediaType);
+
+    return {
+      id: generateAttachmentId(),
+      url: resizeResult.dataUrl,
+      mediaType,
+      filename: file.name.trim() ? file.name : undefined,
+      ...(resizeResult.resized
+        ? {
+            resizeInfo: {
+              originalWidth: resizeResult.originalWidth,
+              originalHeight: resizeResult.originalHeight,
+              newWidth: resizeResult.width,
+              newHeight: resizeResult.height,
+            },
+          }
+        : {}),
+    };
+  }
 
   return {
     id: generateAttachmentId(),
