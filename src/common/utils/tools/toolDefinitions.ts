@@ -235,7 +235,7 @@ export const TaskAwaitToolArgsSchema = z
       .array(z.string().min(1))
       .nullish()
       .describe(
-        "List of task IDs to await — use only real IDs returned by prior task or bash tool results; never fabricate an ID. " +
+        "List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. " +
           "When omitted, waits for all active descendant tasks of the current workspace."
       ),
     filter: z
