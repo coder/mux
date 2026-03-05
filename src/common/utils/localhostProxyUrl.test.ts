@@ -129,4 +129,31 @@ describe("normalizeLocalhostProxyUrl", () => {
       })
     ).toBe(originalUrl);
   });
+
+  test("preserves path prefix from path-based proxy template", () => {
+    expect(
+      normalizeLocalhostProxyUrl({
+        url: "http://localhost:3000/foo?x=1#h",
+        localhostProxyTemplate: "https://coder.example/proxy/{{port}}/",
+      })
+    ).toBe("https://coder.example/proxy/3000/foo?x=1#h");
+  });
+
+  test("preserves path prefix with root source path", () => {
+    expect(
+      normalizeLocalhostProxyUrl({
+        url: "http://localhost:3000/",
+        localhostProxyTemplate: "https://coder.example/proxy/{{port}}/",
+      })
+    ).toBe("https://coder.example/proxy/3000/");
+  });
+
+  test("preserves path prefix from template without trailing slash", () => {
+    expect(
+      normalizeLocalhostProxyUrl({
+        url: "http://localhost:8080/api/v1?debug=true",
+        localhostProxyTemplate: "https://coder.example/proxy/{{port}}",
+      })
+    ).toBe("https://coder.example/proxy/8080/api/v1?debug=true");
+  });
 });

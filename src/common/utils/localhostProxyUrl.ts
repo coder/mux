@@ -68,8 +68,10 @@ export function normalizeLocalhostProxyUrl(options: NormalizeLocalhostProxyUrlOp
     return options.url;
   }
 
-  // Preserve request target from the clicked URL while normalizing only the origin.
-  rewrittenUrl.pathname = sourceUrl.pathname;
+  // Preserve proxy base path from template (e.g. /proxy/3000/) and
+  // append clicked request target path.
+  const templatePathBase = rewrittenUrl.pathname.replace(/\/+$/, "");
+  rewrittenUrl.pathname = templatePathBase + sourceUrl.pathname;
   rewrittenUrl.search = sourceUrl.search;
   rewrittenUrl.hash = sourceUrl.hash;
 
