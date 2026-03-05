@@ -130,10 +130,31 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   /**
+   * Refresh cached container requirements from current runtime state.
+   * Called at every entry boundary that may precede PTY/exec usage,
+   * so credential env is always available regardless of lifecycle ordering.
+   */
+  private refreshContainerRequirements(
+    runtimeEnv: Record<string, string> | undefined = this.lastCredentialEnv
+  ): void {
+    if (!this.currentWorkspacePath) {
+      this.containerMounts = [];
+      this.containerEnv = {};
+      return;
+    }
+
+    this.computeContainerRequirements(this.currentWorkspacePath, runtimeEnv);
+  }
+
+  /**
    * Env vars that should be forwarded into devcontainer processes.
    * Consumed by ptyService for terminal sessions.
    */
   getContainerEnv(): Record<string, string> {
+    if (this.currentWorkspacePath && Object.keys(this.containerEnv).length === 0) {
+      this.refreshContainerRequirements();
+    }
+
     return this.containerEnv;
   }
 
@@ -475,7 +496,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     initLogger.logStep("Building devcontainer...");
 
     this.lastCredentialEnv = env;
-    this.computeContainerRequirements(workspacePath, env);
+    this.currentWorkspacePath = workspacePath;
+    this.refreshContainerRequirements(env);
 
     try {
       const result = await devcontainerUp({
@@ -779,7 +801,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         },
       };
 
-      this.computeContainerRequirements(this.currentWorkspacePath, this.lastCredentialEnv);
+      this.refreshContainerRequirements();
       const result = await devcontainerUp({
         workspaceFolder: this.currentWorkspacePath,
         configPath: this.configPath,
@@ -872,6 +894,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
    */
   setCurrentWorkspacePath(workspacePath: string): void {
     this.currentWorkspacePath = workspacePath;
+    this.refreshContainerRequirements();
   }
 
   /**

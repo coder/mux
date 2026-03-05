@@ -271,4 +271,33 @@ describe("DevcontainerRuntime.getContainerEnv", () => {
     expect(runtime.getContainerEnv()).toEqual({});
     expect(internal.containerMounts).toEqual([{ source: dotGitDir, target: dotGitDir }]);
   });
+
+  it("returns credential env after setCurrentWorkspacePath with shareCredentials=true", async () => {
+    process.env.GIT_ASKPASS = "/usr/bin/coder";
+    const workspacePath = await createTempDir("mux-devcontainer-setpath-");
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+      shareCredentials: true,
+    });
+
+    runtime.setCurrentWorkspacePath(workspacePath);
+
+    // Env should be populated without calling ensureReady()
+    expect(runtime.getContainerEnv()).toMatchObject({ GIT_ASKPASS: "/usr/bin/coder" });
+  });
+
+  it("keeps env empty after setCurrentWorkspacePath with shareCredentials=false", async () => {
+    process.env.GIT_ASKPASS = "/usr/bin/coder";
+    const workspacePath = await createTempDir("mux-devcontainer-setpath-nocred-");
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+      // shareCredentials defaults to false
+    });
+
+    runtime.setCurrentWorkspacePath(workspacePath);
+
+    expect(runtime.getContainerEnv()).toEqual({});
+  });
 });
