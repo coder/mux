@@ -48,6 +48,7 @@ Use this index to find a page's:
   - **Getting Started**
     - Introduction (`/`) → `references/docs/index.mdx`
     - Install (`/install`) → `references/docs/install.mdx` — Download and install Mux for macOS, Linux, and Windows
+    - Chat with Mux (`/getting-started/chat`) → `references/docs/getting-started/chat.mdx` — Ask questions about Mux, configure settings, install skills, and explore usage analytics
     - **Models**
       - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in Mux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
