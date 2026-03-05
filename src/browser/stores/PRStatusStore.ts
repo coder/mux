@@ -316,7 +316,6 @@ export class PRStatusStore {
             const { hasPendingChecks, hasFailedChecks } = summarizeStatusCheckRollup(
               parsed.statusCheckRollup
             );
-            const mergeQueueEntry = await this.fetchMergeQueueEntry(workspaceId, prLinkBase);
 
             const status: GitHubPRStatus = {
               state: (parsed.state as GitHubPRStatus["state"]) ?? "OPEN",
@@ -329,7 +328,6 @@ export class PRStatusStore {
               baseRefName: (parsed.baseRefName as string) ?? "",
               hasPendingChecks,
               hasFailedChecks,
-              mergeQueueEntry,
               fetchedAt: Date.now(),
             };
 
@@ -350,6 +348,46 @@ export class PRStatusStore {
 
             // Persist to localStorage for instant display on app restart
             prStatusLRU.set(workspaceId, { prLink, status });
+
+            // Fetch merge queue metadata off the critical path so base PR status remains responsive.
+            const statusFetchedAt = status.fetchedAt;
+            const mergeQueueUpdate = this.fetchMergeQueueEntry(workspaceId, prLinkBase).then(
+              (mergeQueueEntry) => {
+                if (!this.isActive || mergeQueueEntry == null) {
+                  return;
+                }
+
+                const currentEntry = this.workspacePRCache.get(workspaceId);
+                if (!currentEntry?.status || !currentEntry.prLink) {
+                  return;
+                }
+
+                // Ignore stale async updates from older refresh cycles.
+                if (
+                  currentEntry.status.fetchedAt !== statusFetchedAt ||
+                  currentEntry.prLink.url !== prLink.url
+                ) {
+                  return;
+                }
+
+                const updatedStatus: GitHubPRStatus = {
+                  ...currentEntry.status,
+                  mergeQueueEntry,
+                };
+                this.workspacePRCache.set(workspaceId, {
+                  ...currentEntry,
+                  status: updatedStatus,
+                });
+                prStatusLRU.set(workspaceId, {
+                  prLink: currentEntry.prLink,
+                  status: updatedStatus,
+                });
+                this.workspacePRSubscriptions.bump(workspaceId);
+              }
+            );
+            mergeQueueUpdate.catch(() => {
+              // Non-fatal: merge queue metadata is best-effort.
+            });
           }
         }
       } else {
