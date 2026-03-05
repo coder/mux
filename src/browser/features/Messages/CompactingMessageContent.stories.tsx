@@ -67,10 +67,7 @@ export const StreamingCompactionWithConfigureHint: Story = {
         hintElement={
           <span className="text-muted text-[11px]">
             No compaction model set —{" "}
-            <button
-              type="button"
-              className="text-link cursor-pointer underline underline-offset-2"
-            >
+            <button type="button" className="text-link cursor-pointer underline underline-offset-2">
               configure
             </button>
           </span>

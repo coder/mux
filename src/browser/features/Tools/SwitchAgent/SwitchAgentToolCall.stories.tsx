@@ -17,10 +17,8 @@ export const SwitchAgentHandoff: Story = {
   args: {
     args: {
       agentId: "plan",
-      reason:
-        "This requires a scoped rollout plan with risk assessment before making code edits.",
-      followUp:
-        "Draft a migration plan that lists dependencies, sequencing, and rollback steps.",
+      reason: "This requires a scoped rollout plan with risk assessment before making code edits.",
+      followUp: "Draft a migration plan that lists dependencies, sequencing, and rollback steps.",
     },
     status: "completed",
   },
