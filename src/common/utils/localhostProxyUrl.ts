@@ -36,7 +36,7 @@ function getTemplatePort(url: URL): string {
 
 export function normalizeLocalhostProxyUrl(options: NormalizeLocalhostProxyUrlOptions): string {
   const template = options.localhostProxyTemplate?.trim();
-  if (!template || !template.includes(PORT_TEMPLATE_VARIABLE)) {
+  if (!template?.includes(PORT_TEMPLATE_VARIABLE)) {
     return options.url;
   }
 
