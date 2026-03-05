@@ -156,6 +156,9 @@ export class PRStatusStore {
   // Track active subscriptions per workspace so we only refresh workspaces that are actually visible.
   private workspaceSubscriptionCounts = new Map<string, number>();
 
+  // Track per-workspace async merge queue enrichment to avoid overlapping gh api calls.
+  private mergeQueueRefreshInFlight = new Map<string, Promise<void>>();
+
   // Like GitStatusStore: batch immediate refreshes triggered by subscriptions.
   private immediateUpdateQueued = false;
 
@@ -349,45 +352,7 @@ export class PRStatusStore {
             // Persist to localStorage for instant display on app restart
             prStatusLRU.set(workspaceId, { prLink, status });
 
-            // Fetch merge queue metadata off the critical path so base PR status remains responsive.
-            const statusFetchedAt = status.fetchedAt;
-            const mergeQueueUpdate = this.fetchMergeQueueEntry(workspaceId, prLinkBase).then(
-              (mergeQueueEntry) => {
-                if (!this.isActive || mergeQueueEntry == null) {
-                  return;
-                }
-
-                const currentEntry = this.workspacePRCache.get(workspaceId);
-                if (!currentEntry?.status || !currentEntry.prLink) {
-                  return;
-                }
-
-                // Ignore stale async updates from older refresh cycles.
-                if (
-                  currentEntry.status.fetchedAt !== statusFetchedAt ||
-                  currentEntry.prLink.url !== prLink.url
-                ) {
-                  return;
-                }
-
-                const updatedStatus: GitHubPRStatus = {
-                  ...currentEntry.status,
-                  mergeQueueEntry,
-                };
-                this.workspacePRCache.set(workspaceId, {
-                  ...currentEntry,
-                  status: updatedStatus,
-                });
-                prStatusLRU.set(workspaceId, {
-                  prLink: currentEntry.prLink,
-                  status: updatedStatus,
-                });
-                this.workspacePRSubscriptions.bump(workspaceId);
-              }
-            );
-            mergeQueueUpdate.catch(() => {
-              // Non-fatal: merge queue metadata is best-effort.
-            });
+            this.scheduleMergeQueueRefresh(workspaceId, prLinkBase, prUrl, status.fetchedAt);
           }
         }
       } else {
@@ -411,6 +376,65 @@ export class PRStatusStore {
       });
       this.workspacePRSubscriptions.bump(workspaceId);
     }
+  }
+
+  /**
+   * Enqueue merge queue enrichment for a workspace without overlapping requests.
+   */
+  private scheduleMergeQueueRefresh(
+    workspaceId: string,
+    prLinkBase: { owner: string; repo: string; number: number },
+    prUrl: string,
+    statusFetchedAt: number
+  ): void {
+    if (this.mergeQueueRefreshInFlight.has(workspaceId)) {
+      return;
+    }
+
+    const refreshPromise = this.fetchMergeQueueEntry(workspaceId, prLinkBase)
+      .then((mergeQueueEntry) => {
+        if (!this.isActive || mergeQueueEntry == null) {
+          return;
+        }
+
+        const currentEntry = this.workspacePRCache.get(workspaceId);
+        if (!currentEntry?.status || !currentEntry.prLink) {
+          return;
+        }
+
+        // Ignore stale async updates from older refresh cycles.
+        if (
+          currentEntry.status.fetchedAt !== statusFetchedAt ||
+          currentEntry.prLink.url !== prUrl
+        ) {
+          return;
+        }
+
+        const updatedStatus: GitHubPRStatus = {
+          ...currentEntry.status,
+          mergeQueueEntry,
+        };
+        this.workspacePRCache.set(workspaceId, {
+          ...currentEntry,
+          status: updatedStatus,
+        });
+        prStatusLRU.set(workspaceId, {
+          prLink: currentEntry.prLink,
+          status: updatedStatus,
+        });
+        this.workspacePRSubscriptions.bump(workspaceId);
+      })
+      .catch(() => {
+        // Non-fatal: merge queue metadata is best-effort.
+      })
+      .finally(() => {
+        const inFlight = this.mergeQueueRefreshInFlight.get(workspaceId);
+        if (inFlight === refreshPromise) {
+          this.mergeQueueRefreshInFlight.delete(workspaceId);
+        }
+      });
+
+    this.mergeQueueRefreshInFlight.set(workspaceId, refreshPromise);
   }
 
   /**
@@ -512,6 +536,7 @@ export class PRStatusStore {
    */
   dispose(): void {
     this.isActive = false;
+    this.mergeQueueRefreshInFlight.clear();
     this.refreshController.dispose();
   }
 }
