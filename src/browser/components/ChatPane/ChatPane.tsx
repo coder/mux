@@ -920,12 +920,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   runtimeConfig={runtimeConfig}
                 />
               </div>
-              {/* Sticky gradient fades content into the input area. Lives inside the
-                  scroll container so it never overlaps the browser-painted scrollbar. */}
+              {/*
+                Sticky gradient fades content into the input area while staying shallow
+                enough not to wash over the streaming status/token line above the input.
+                Lives inside the scroll container so it never overlaps the browser-painted scrollbar.
+              */}
               <div
                 aria-hidden="true"
                 className="from-surface-primary pointer-events-none sticky bottom-[-15px]
-                  mx-[-15px] mt-[-2rem] mb-[-15px] h-8 bg-linear-to-t to-transparent"
+                  mx-[-15px] mt-[-1.5rem] mb-[-15px] h-6 bg-linear-to-t to-transparent"
               />
             </div>
             <PositionedMenu
