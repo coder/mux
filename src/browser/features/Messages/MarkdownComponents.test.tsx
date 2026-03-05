@@ -254,6 +254,25 @@ describe("MarkdownComponents anchors", () => {
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
   });
 
+  test("derives coder-style template from current host when injected template is missing", () => {
+    window.location.href =
+      "https://5173--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/workspace/f5a5ed5f7e";
+    (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =
+      undefined;
+
+    const element = markdownComponents.a({
+      href: "http://127.0.0.1:8080/api/health?x=1#ok",
+      children: "Open forwarded health",
+    });
+
+    const { getByRole } = render(element);
+    const link = getByRole("link", { name: "Open forwarded health" });
+
+    expect(link.getAttribute("href")).toBe(
+      "https://8080--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/api/health?x=1#ok"
+    );
+  });
+
   test("keeps non-loopback hrefs unchanged", () => {
     window.location.href = "https://coder.example.com/@u/ws/apps/mux/";
     (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =

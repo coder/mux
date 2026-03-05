@@ -7,6 +7,7 @@ import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClien
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
+import { resolveBrowserLocalhostProxyTemplate } from "@/browser/utils/browserLocalhostProxyTemplate";
 import { normalizeLocalhostProxyUrl } from "@/common/utils/localhostProxyUrl";
 
 interface CodeProps {
@@ -234,7 +235,12 @@ export const markdownComponents = {
       typeof href === "string" && typeof window !== "undefined"
         ? normalizeLocalhostProxyUrl({
             url: href,
-            localhostProxyTemplate: window.__MUX_PROXY_URI_TEMPLATE__ ?? null,
+            localhostProxyTemplate: resolveBrowserLocalhostProxyTemplate({
+              injectedTemplate: window.__MUX_PROXY_URI_TEMPLATE__ ?? null,
+              browserProtocol: window.location.protocol,
+              browserHostname: window.location.hostname,
+              browserPort: window.location.port,
+            }),
             browserHost: window.location.host,
           })
         : href;

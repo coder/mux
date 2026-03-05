@@ -1,4 +1,5 @@
 import { normalizeLocalhostProxyUrl } from "@/common/utils/localhostProxyUrl";
+import { resolveBrowserLocalhostProxyTemplate } from "./browserLocalhostProxyTemplate";
 
 let windowOpenProxyNormalizationInstalled = false;
 
@@ -21,7 +22,12 @@ export function installWindowOpenLocalhostProxyNormalization(): void {
         ? urlString
         : normalizeLocalhostProxyUrl({
             url: urlString,
-            localhostProxyTemplate: window.__MUX_PROXY_URI_TEMPLATE__,
+            localhostProxyTemplate: resolveBrowserLocalhostProxyTemplate({
+              injectedTemplate: window.__MUX_PROXY_URI_TEMPLATE__,
+              browserProtocol: window.location.protocol,
+              browserHostname: window.location.hostname,
+              browserPort: window.location.port,
+            }),
             browserHost: window.location.host,
           });
 
