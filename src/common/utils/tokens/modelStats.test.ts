@@ -25,6 +25,18 @@ describe("getModelStats", () => {
       expect(stats?.input_cost_per_token).toBeGreaterThan(0);
     });
 
+    test("should fall back from dated GPT-5.4 IDs to the published family entry", () => {
+      const stats = getModelStats("openai:gpt-5.4-2026-03-05");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1_050_000);
+    });
+
+    test("should resolve dated GPT-5.4 Pro IDs behind mux-gateway", () => {
+      const stats = getModelStats("mux-gateway:openai/gpt-5.4-pro-2026-03-05");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1_050_000);
+    });
+
     test("models-extra.ts should override models.json", () => {
       // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k.
       // The exact value matters here: it proves the override mechanism works.

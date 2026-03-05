@@ -72,6 +72,10 @@ function extractModelStats(data: RawModelData): ModelStats {
   };
 }
 
+function stripVersionDateSuffix(modelName: string): string {
+  return modelName.replace(/-(?:\d{4}-\d{2}-\d{2}|\d{8})$/, "");
+}
+
 /**
  * Generates lookup keys for a model string with multiple naming patterns
  * Handles LiteLLM conventions like "ollama/model-cloud" and "provider/model"
@@ -81,12 +85,22 @@ function generateLookupKeys(modelString: string): string[] {
   const provider = colonIndex !== -1 ? modelString.slice(0, colonIndex) : "";
   const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
   const litellmProvider = PROVIDER_KEY_ALIASES[provider] ?? provider;
+  const unversionedModelName = stripVersionDateSuffix(modelName);
 
   const keys: string[] = [];
 
   // Prefer provider-scoped matches first so provider-specific limits win over generic entries.
   if (provider) {
     keys.push(`${litellmProvider}/${modelName}`, `${litellmProvider}/${modelName}-cloud`);
+
+    // Version-pinned model IDs like gpt-5.4-2026-03-05 should fall back to the
+    // base model entry when models-extra/models.json only publish the family key.
+    if (unversionedModelName !== modelName) {
+      keys.push(
+        `${litellmProvider}/${unversionedModelName}`,
+        `${litellmProvider}/${unversionedModelName}-cloud`
+      );
+    }
 
     // Fallback: strip size suffix for base model lookup
     // "ollama:gpt-oss:20b" → "ollama/gpt-oss"
@@ -97,6 +111,9 @@ function generateLookupKeys(modelString: string): string[] {
   }
 
   keys.push(modelName);
+  if (unversionedModelName !== modelName) {
+    keys.push(unversionedModelName);
+  }
 
   return keys;
 }
