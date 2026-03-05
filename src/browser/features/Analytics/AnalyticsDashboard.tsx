@@ -180,11 +180,12 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
   }, [navigateFromAnalytics]);
 
   return (
-    <div className="bg-dark flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="bg-surface-primary flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
         data-testid="analytics-header"
         className={cn(
-          "bg-sidebar border-border-light titlebar-safe-right titlebar-safe-right-gutter-3 flex shrink-0 items-center gap-2 border-b px-3",
+          `bg-surface-primary border-border-light titlebar-safe-right 
+          titlebar-safe-right-gutter-3 flex shrink-0 items-center gap-2 border-b px-3`,
           desktopMode
             ? `${DESKTOP_TITLEBAR_HEIGHT_CLASS} titlebar-drag flex-nowrap`
             : "flex-wrap py-2 md:h-8 md:flex-nowrap md:py-0"

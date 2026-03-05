@@ -717,7 +717,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       <div
         ref={chatAreaRef}
         aria-hidden={immersiveHidden || undefined}
-        className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
+        className="bg-surface-primary flex min-w-96 flex-1 flex-col 
+          [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full 
+          [@media(max-width:768px)]:min-w-0"
       >
         <PerfRenderMarker id="chat-pane.header">
           <WorkspaceMenuBar
@@ -918,6 +920,13 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   runtimeConfig={runtimeConfig}
                 />
               </div>
+              {/* Sticky gradient fades content into the input area. Lives inside the
+                  scroll container so it never overlaps the browser-painted scrollbar. */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none sticky bottom-[-15px] -mx-[15px] -mb-[15px]
+                  mt-[-2rem] h-8 bg-linear-to-t from-surface-primary to-transparent"
+              />
             </div>
             <PositionedMenu
               open={transcriptMenu.isOpen}

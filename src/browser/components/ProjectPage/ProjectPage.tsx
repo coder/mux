@@ -263,7 +263,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     <AgentProvider projectPath={projectPath}>
       <ThinkingProvider projectPath={projectPath}>
         {/* Flex container to fill parent space */}
-        <div className="bg-dark relative flex flex-1 flex-col overflow-hidden">
+        <div className="bg-surface-primary relative flex flex-1 flex-col overflow-hidden">
           {/* Draggable header bar - matches WorkspaceMenuBar for consistency */}
           <div
             className={cn(

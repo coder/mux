@@ -17,7 +17,7 @@
         margin: 0;
         padding: 0;
         overflow: hidden;
-        background: var(--color-background, #1e1e1e);
+        background: var(--color-surface-primary, #0a0a0b);
         color: var(--color-foreground, #d4d4d4);
         font-family: var(
           --font-primary,
@@ -38,13 +38,34 @@
       }
 
       :root[data-theme="light"] body {
-        background: #f5f6f8;
+        background: #ffffff;
+      }
+
+      :root[data-theme="flexoki-light"] body {
+        background: #fffcf0;
       }
 
       #root {
         height: 100vh; /* fallback for older browsers */
         height: 100dvh;
         overflow: hidden;
+        background: var(--color-surface-primary, #0a0a0b);
+      }
+
+      :root[data-theme="light"] #root {
+        background: #ffffff;
+      }
+
+      :root[data-theme="flexoki-light"] #root {
+        background: #fffcf0;
+      }
+
+      :root[data-theme="flexoki-dark"] body {
+        background: #100f0f;
+      }
+
+      :root[data-theme="flexoki-dark"] #root {
+        background: #100f0f;
       }
 
       /* Pre-JS placeholder to avoid a blank screen on cold start. */
@@ -67,12 +88,12 @@
       .boot-loader__logo {
         width: 200px;
         height: auto;
-        color: var(--color-foreground, #d4d4d4);
+        color: #ffffff;
       }
 
       :root[data-theme="light"] .boot-loader__logo,
       :root[data-theme$="-light"] .boot-loader__logo {
-        color: var(--color-foreground, #1e1e1e);
+        color: #000000;
       }
 
       .boot-loader__text {

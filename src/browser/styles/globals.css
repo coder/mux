@@ -1083,7 +1083,7 @@ h3 {
 }
 
 body {
-  background-color: var(--color-background);
+  background-color: var(--color-surface-primary);
   color: var(--color-foreground);
   font-family: var(--font-primary);
   font-size: 14px;
@@ -1137,6 +1137,7 @@ body,
 #root,
 #storybook-root {
   overflow: hidden;
+  background-color: var(--color-surface-primary);
 }
 
 /* Mobile improvements - only apply to touch devices */

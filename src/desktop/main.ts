@@ -483,7 +483,7 @@ async function showSplashScreen() {
     height: 300,
     frame: false,
     transparent: false,
-    backgroundColor: "#1f1f1f", // Match splash HTML background (hsl(0 0% 12%)) - prevents white flash
+    backgroundColor: "#0a0a0b", // Match surface-primary - prevents flash
     alwaysOnTop: true,
     center: true,
     resizable: false,
@@ -771,6 +771,7 @@ function createWindow() {
     y: windowState.y,
     width: windowState.width,
     height: windowState.height,
+    backgroundColor: "#0a0a0b",
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

@@ -50,7 +50,7 @@ const WorkspacePlaceholder: React.FC<{
 }> = (props) => (
   <div
     className={cn(
-      "relative flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
+      "relative flex flex-1 flex-row bg-surface-primary text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
       props.className
     )}
     style={{ containerType: "inline-size" }}
@@ -169,7 +169,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     <div
       ref={shellRef}
       className={cn(
-        "relative flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
+        "relative flex flex-1 flex-row bg-surface-primary text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
         props.className
       )}
       style={{ containerType: "inline-size" }}
@@ -208,7 +208,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
       <div
         id="review-immersive-root"
         hidden={!isReviewImmersive}
-        className="bg-dark absolute inset-0 z-50"
+        className="bg-surface-primary absolute inset-0 z-50"
         data-testid="review-immersive-root"
       />
 
