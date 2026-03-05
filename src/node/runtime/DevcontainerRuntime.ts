@@ -32,7 +32,7 @@ import {
   runInitHookOnRuntime,
   shouldSkipInitHook,
 } from "./initHook";
-import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
+import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -550,34 +550,11 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
 
     const disposable = new DisposableProcess(childProcess);
 
-    // Register cleanup to force-close stdio streams on timeout/abort.
-    // On Windows, killing a process tree via taskkill doesn't always close
-    // Node.js pipe handles immediately, causing Web ReadableStream readers
-    // (from Readable.toWeb()) to hang indefinitely on reader.read().
-    // Queue an EOF first so current readers complete cleanly, then destroy
-    // the underlying Node streams to close any stuck handles.
+    // Register cleanup to kill process tree and force-close stdio on timeout/abort.
     disposable.addCleanup(() => {
       if (childProcess.pid === undefined) return;
       killProcessTree(childProcess.pid);
-      if (
-        childProcess.stdout &&
-        !childProcess.stdout.destroyed &&
-        !childProcess.stdout.readableEnded
-      ) {
-        childProcess.stdout.push(null);
-      }
-      if (
-        childProcess.stderr &&
-        !childProcess.stderr.destroyed &&
-        !childProcess.stderr.readableEnded
-      ) {
-        childProcess.stderr.push(null);
-      }
-      setImmediate(() => {
-        childProcess.stdout?.destroy();
-        childProcess.stderr?.destroy();
-        childProcess.stdin?.destroy();
-      });
+      forceCloseStdio(childProcess);
     });
 
     // Convert Node.js streams to Web Streams (casts required for ExecStream compatibility)
