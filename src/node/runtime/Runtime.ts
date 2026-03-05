@@ -612,6 +612,13 @@ export interface Runtime {
    * - DockerRuntime: /var/mux (world-readable, avoids /root permission issues)
    */
   getMuxHome(): string;
+
+  /**
+   * Env vars that should be forwarded into container processes.
+   * Used by ptyService to inject credential env into devcontainer terminal sessions.
+   * Returns empty record for runtimes that don't need env forwarding (local, ssh).
+   */
+  getContainerEnv?(): Record<string, string>;
 }
 
 /**

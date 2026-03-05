@@ -118,6 +118,14 @@ export class PTYService {
         devcontainerArgs.push("--config", runtimeConfig.configPath);
       }
 
+      // Forward the runtime's credential env (GIT_ASKPASS, CODER_*, etc.)
+      // into the terminal session. The runtime owns the policy (shareCredentials gate);
+      // ptyService just relays whatever the runtime computed.
+      const containerEnv = runtime.getContainerEnv();
+      for (const [key, value] of Object.entries(containerEnv)) {
+        devcontainerArgs.push("--remote-env", `${key}=${value}`);
+      }
+
       devcontainerArgs.push("--", "/bin/sh");
       runtimeLabel = "Devcontainer";
       log.info(

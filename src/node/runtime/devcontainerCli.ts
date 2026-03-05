@@ -8,6 +8,7 @@
  * - down: stop and remove the container
  */
 import { spawn } from "child_process";
+import type { BindMount } from "./credentialForwarding";
 import type { InitLogger } from "./Runtime";
 import { LineBuffer } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -141,8 +142,8 @@ export interface DevcontainerUpOptions {
   configPath?: string;
   initLogger: InitLogger;
   abortSignal?: AbortSignal;
-  /** Additional mount flags (for credential sharing) */
-  additionalMounts?: string[];
+  /** Additional bind mounts (formatted to CLI wire format when emitting --mount args) */
+  additionalMounts?: BindMount[];
   /** Additional remote env vars */
   remoteEnv?: Record<string, string>;
   /** Timeout in milliseconds (default: 30 minutes) */
@@ -168,6 +169,7 @@ const SENSITIVE_REMOTE_ENV_KEYS = new Set([
   "GITHUB_TOKEN",
   "GH_ENTERPRISE_TOKEN",
   "GITHUB_ENTERPRISE_TOKEN",
+  "CODER_AGENT_TOKEN",
 ]);
 
 function redactRemoteEnvArgs(args: string[]): string[] {
@@ -259,7 +261,8 @@ export async function devcontainerUp(
   // Add mounts for credential sharing
   if (additionalMounts) {
     for (const mount of additionalMounts) {
-      baseArgs.push("--mount", mount);
+      // Single formatting point — the devcontainer CLI only accepts type/source/target/external.
+      baseArgs.push("--mount", `type=bind,source=${mount.source},target=${mount.target}`);
     }
   }
 

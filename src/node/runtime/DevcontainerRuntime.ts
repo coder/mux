@@ -23,7 +23,11 @@ import { shescape, streamToString } from "./streamUtils";
 import {
   readHostGitconfig,
   resolveGhToken,
+  resolveHostCredentialEnv,
+  resolveCoderAgentMount,
+  resolveGitdirMount,
   resolveSshAgentForwarding,
+  type BindMount,
 } from "./credentialForwarding";
 import { devcontainerUp, devcontainerDown } from "./devcontainerCli";
 import {
@@ -65,6 +69,10 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   private lastCredentialEnv?: Record<string, string>;
   private readonly shareCredentials: boolean;
 
+  // Cached container requirements (mounts + env), computed by computeContainerRequirements()
+  private containerMounts: BindMount[] = [];
+  private containerEnv: Record<string, string> = {};
+
   // Cached from devcontainer up output
   private remoteHomeDir?: string;
   private remoteWorkspaceFolder?: string;
@@ -77,31 +85,56 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     deferredRuntimeAccess: true,
   };
 
-  private buildCredentialForwarding(env?: Record<string, string>): {
-    additionalMounts: string[];
-    remoteEnv: Record<string, string>;
-  } {
-    const additionalMounts: string[] = [];
-    const remoteEnv: Record<string, string> = {};
+  /**
+   * Compute all mounts and env vars the container needs.
+   * Called once during postCreateSetup() and ensureReady(); results cached
+   * on this.containerMounts / this.containerEnv for use by exec() and getContainerEnv().
+   *
+   * Gitdir mount is always resolved (worktree correctness).
+   * Credential env/mounts are gated behind shareCredentials.
+   */
+  private computeContainerRequirements(
+    workspacePath: string,
+    runtimeEnv?: Record<string, string>
+  ): void {
+    const mounts: BindMount[] = [];
+    const env: Record<string, string> = {};
 
-    if (!this.shareCredentials) {
-      return { additionalMounts, remoteEnv };
+    // Always: bind-mount parent .git dir for worktree support.
+    // Without this, git inside the container can't resolve the gitdir reference.
+    const gitdirMount = resolveGitdirMount(workspacePath);
+    if (gitdirMount) mounts.push(gitdirMount);
+
+    if (this.shareCredentials) {
+      // Forward host credential env (GIT_ASKPASS, GIT_SSH_COMMAND, CODER_*, git identity)
+      Object.assign(env, resolveHostCredentialEnv());
+
+      // Mount /.coder-agent/ so GIT_ASKPASS=/.coder-agent/coder resolves
+      const coderMount = resolveCoderAgentMount();
+      if (coderMount) mounts.push(coderMount);
+
+      // SSH agent socket
+      const ssh = resolveSshAgentForwarding("/tmp/ssh-agent.sock");
+      if (ssh) {
+        mounts.push({ source: ssh.hostSocketPath, target: ssh.targetSocketPath });
+        env.SSH_AUTH_SOCK = ssh.targetSocketPath;
+      }
+
+      // GH_TOKEN
+      const ghToken = resolveGhToken(runtimeEnv);
+      if (ghToken) env.GH_TOKEN = ghToken;
     }
 
-    const sshForwarding = resolveSshAgentForwarding("/tmp/ssh-agent.sock");
-    if (sshForwarding) {
-      additionalMounts.push(
-        `type=bind,source=${sshForwarding.hostSocketPath},target=${sshForwarding.targetSocketPath}`
-      );
-      remoteEnv.SSH_AUTH_SOCK = sshForwarding.targetSocketPath;
-    }
+    this.containerMounts = mounts;
+    this.containerEnv = env;
+  }
 
-    const ghToken = resolveGhToken(env);
-    if (ghToken) {
-      remoteEnv.GH_TOKEN = ghToken;
-    }
-
-    return { additionalMounts, remoteEnv };
+  /**
+   * Env vars that should be forwarded into devcontainer processes.
+   * Consumed by ptyService for terminal sessions.
+   */
+  getContainerEnv(): Record<string, string> {
+    return this.containerEnv;
   }
 
   private mapContainerPathToHost(containerPath: string): string | null {
@@ -442,7 +475,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     initLogger.logStep("Building devcontainer...");
 
     this.lastCredentialEnv = env;
-    const { additionalMounts, remoteEnv } = this.buildCredentialForwarding(env);
+    this.computeContainerRequirements(workspacePath, env);
 
     try {
       const result = await devcontainerUp({
@@ -450,8 +483,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         configPath: this.configPath,
         initLogger,
         abortSignal,
-        additionalMounts: additionalMounts.length > 0 ? additionalMounts : undefined,
-        remoteEnv: Object.keys(remoteEnv).length > 0 ? remoteEnv : undefined,
+        additionalMounts: this.containerMounts.length > 0 ? this.containerMounts : undefined,
+        remoteEnv: Object.keys(this.containerEnv).length > 0 ? this.containerEnv : undefined,
       });
 
       // Cache container info
@@ -528,8 +561,9 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       args.push("--config", this.configPath);
     }
 
-    // Add environment variables
-    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
+    // Merge cached container credential env + caller env + non-interactive vars.
+    // Spread order: container env (lowest) < caller env < NON_INTERACTIVE (highest).
+    const envVars = { ...this.containerEnv, ...options.env, ...NON_INTERACTIVE_ENV_VARS };
     for (const [key, value] of Object.entries(envVars)) {
       args.push("--remote-env", `${key}=${value}`);
     }
@@ -745,16 +779,14 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         },
       };
 
-      const { additionalMounts, remoteEnv } = this.buildCredentialForwarding(
-        this.lastCredentialEnv
-      );
+      this.computeContainerRequirements(this.currentWorkspacePath, this.lastCredentialEnv);
       const result = await devcontainerUp({
         workspaceFolder: this.currentWorkspacePath,
         configPath: this.configPath,
         initLogger: silentLogger,
         abortSignal: options?.signal,
-        additionalMounts: additionalMounts.length > 0 ? additionalMounts : undefined,
-        remoteEnv: Object.keys(remoteEnv).length > 0 ? remoteEnv : undefined,
+        additionalMounts: this.containerMounts.length > 0 ? this.containerMounts : undefined,
+        remoteEnv: Object.keys(this.containerEnv).length > 0 ? this.containerEnv : undefined,
       });
 
       // Update cached info (container may have been rebuilt)
