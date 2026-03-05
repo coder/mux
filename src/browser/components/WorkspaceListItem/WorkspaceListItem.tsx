@@ -146,7 +146,7 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
         "block h-3 w-3",
         props.state === "active" &&
           "bg-content-success border-surface-green workspace-status-dot-active",
-        props.state === "idle" && "bg-muted-foreground border-surface-tertiary",
+        props.state === "idle" && "bg-surface-invert-secondary border-surface-tertiary",
         props.state === "error" && "bg-content-destructive border-surface-destructive",
         props.state === "question" && "bg-border-pending border-surface-sky",
         "rounded-full border-[3.5px]"

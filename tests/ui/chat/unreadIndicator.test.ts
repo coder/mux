@@ -58,7 +58,7 @@ function getWorkspaceUnreadIndicator(
 
   // The unread indicator is a StatusDot span with the idle/unread styling
   const statusDot = workspaceEl.querySelector(
-    'span[class*="bg-muted-foreground"]'
+    'span[class*="bg-surface-invert-secondary"]'
   ) as HTMLElement | null;
 
   return {
