@@ -234,9 +234,7 @@ export const markdownComponents = {
       typeof href === "string" && typeof window !== "undefined"
         ? normalizeLocalhostProxyUrl({
             url: href,
-            localhostProxyTemplate:
-              (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string })
-                .__MUX_PROXY_URI_TEMPLATE__ ?? null,
+            localhostProxyTemplate: window.__MUX_PROXY_URI_TEMPLATE__ ?? null,
             browserHost: window.location.host,
           })
         : href;

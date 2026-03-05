@@ -22,7 +22,7 @@ export function installWindowOpenLocalhostProxyNormalization(): void {
         : normalizeLocalhostProxyUrl({
             url: urlString,
             localhostProxyTemplate: window.__MUX_PROXY_URI_TEMPLATE__,
-            browserHost: window.location.hostname,
+            browserHost: window.location.host,
           });
 
     return originalWindowOpen(normalizedUrl, target, features);
