@@ -5,10 +5,14 @@
  * Each workspace can have multiple terminal windows open simultaneously.
  */
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import * as path from "path";
+import { normalizeLocalhostProxyUrl } from "@/common/utils/localhostProxyUrl";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
+
+// MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI for localhost external-link rewrites.
+const localhostProxyTemplate = process.env.MUX_PROXY_URI ?? process.env.VSCODE_PROXY_URI;
 
 export class TerminalWindowManager {
   private windows = new Map<string, Set<BrowserWindow>>(); // workspaceId -> Set of windows
@@ -51,6 +55,28 @@ export class TerminalWindowManager {
         preload: path.join(__dirname, "../preload.js"),
       },
       backgroundColor: "#1e1e1e",
+    });
+
+    const normalizeExternalUrl = (url: string): string =>
+      normalizeLocalhostProxyUrl({
+        url,
+        localhostProxyTemplate,
+      });
+
+    // Open all external links in default browser.
+    terminalWindow.webContents.setWindowOpenHandler(({ url }) => {
+      void shell.openExternal(normalizeExternalUrl(url));
+      return { action: "deny" };
+    });
+
+    terminalWindow.webContents.on("will-navigate", (event, url) => {
+      const currentOrigin = new URL(terminalWindow.webContents.getURL()).origin;
+      const targetOrigin = new URL(url).origin;
+      // Prevent navigation away from app origin, open externally instead.
+      if (targetOrigin !== currentOrigin) {
+        event.preventDefault();
+        void shell.openExternal(normalizeExternalUrl(url));
+      }
     });
 
     // Track the window

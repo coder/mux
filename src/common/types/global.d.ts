@@ -59,6 +59,11 @@ declare global {
     process?: {
       env?: Record<string, string | undefined>;
     };
+    /**
+     * Optional localhost proxy URI template injected into browser-mode SPA HTML.
+     * Uses VS Code/Coder-style placeholders (e.g. "{{port}}", "{{host}}").
+     */
+    __MUX_PROXY_URI_TEMPLATE__?: string | null;
   }
 
   /**

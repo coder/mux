@@ -7,6 +7,7 @@ import { highlightCode } from "@/browser/utils/highlighting/highlightWorkerClien
 import { extractShikiLines } from "@/browser/utils/highlighting/shiki-shared";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { CopyButton } from "@/browser/components/CopyButton/CopyButton";
+import { normalizeLocalhostProxyUrl } from "@/common/utils/localhostProxyUrl";
 
 interface CodeProps {
   node?: unknown;
@@ -228,11 +229,24 @@ export const markdownComponents = {
   pre: ({ children }: PreProps) => <>{children}</>,
 
   // Custom anchor to open links externally
-  a: ({ href, children }: AnchorProps) => (
-    <a href={href} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ),
+  a: ({ href, children }: AnchorProps) => {
+    const normalizedHref =
+      typeof href === "string" && typeof window !== "undefined"
+        ? normalizeLocalhostProxyUrl({
+            url: href,
+            localhostProxyTemplate:
+              (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string })
+                .__MUX_PROXY_URI_TEMPLATE__ ?? null,
+            browserHost: window.location.host,
+          })
+        : href;
+
+    return (
+      <a href={normalizedHref} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    );
+  },
 
   // Custom details/summary for collapsible sections
   details: ({ children, open }: DetailsProps) => (

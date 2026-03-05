@@ -9,6 +9,7 @@ import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView/TerminalView";
 import { APIProvider, useAPI } from "@/browser/contexts/API";
 import { TerminalRouterProvider } from "@/browser/terminal/TerminalRouterContext";
+import { installWindowOpenLocalhostProxyNormalization } from "@/browser/utils/windowOpenLocalhostProxy";
 import "./styles/globals.css";
 
 function TerminalWindowContent(props: { workspaceId: string; sessionId: string }) {
@@ -27,6 +28,8 @@ function TerminalWindowContent(props: { workspaceId: string; sessionId: string }
     />
   );
 }
+
+installWindowOpenLocalhostProxyNormalization();
 
 // Get workspace ID from query parameter
 const params = new URLSearchParams(window.location.search);

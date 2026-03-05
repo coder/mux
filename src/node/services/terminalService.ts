@@ -79,6 +79,21 @@ export class TerminalService {
     return !!this.terminalWindowManager;
   }
 
+  private getProxyUriEnv(): Record<string, string> {
+    const vscodeProxyUri = process.env.VSCODE_PROXY_URI;
+    const muxProxyUri = process.env.MUX_PROXY_URI ?? vscodeProxyUri;
+
+    const proxyUriEnv: Record<string, string> = {};
+    if (vscodeProxyUri != null) {
+      proxyUriEnv.VSCODE_PROXY_URI = vscodeProxyUri;
+    }
+    if (muxProxyUri != null) {
+      proxyUriEnv.MUX_PROXY_URI = muxProxyUri;
+    }
+
+    return proxyUriEnv;
+  }
+
   async create(params: TerminalCreateParams): Promise<TerminalSession> {
     try {
       // 1. Resolve workspace
@@ -135,7 +150,9 @@ export class TerminalService {
           : {};
 
       // Any process launched from this terminal inherits these variables.
-      const terminalEnv = muxEnv ? { ...muxEnv, ...secrets } : undefined;
+      // Proxy URI propagation allows terminal tools to construct externally reachable links.
+      // MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI, and falls back to it when unset.
+      const terminalEnv = muxEnv ? { ...muxEnv, ...this.getProxyUriEnv(), ...secrets } : undefined;
 
       // 4. Setup emitters and buffer
       // We don't know the sessionId yet (PTYService generates it), but PTYService uses a callback.

@@ -112,6 +112,56 @@ describe("TerminalService", () => {
     openTerminalWindowMock.mockClear();
   });
 
+  function getCreateSessionEnvFromFirstCall(): NodeJS.ProcessEnv {
+    const call = createSessionMock.mock.calls[0];
+    if (!call) {
+      throw new Error("Expected createSession to be called");
+    }
+
+    const options = call[6] as { env?: NodeJS.ProcessEnv } | undefined;
+    if (!options?.env) {
+      throw new Error("Expected createSession to receive terminal env");
+    }
+
+    return options.env;
+  }
+
+  async function withProxyEnv<T>(
+    env: { vscodeProxyUri?: string; muxProxyUri?: string },
+    run: () => Promise<T>
+  ): Promise<T> {
+    const previousVscodeProxyUri = process.env.VSCODE_PROXY_URI;
+    const previousMuxProxyUri = process.env.MUX_PROXY_URI;
+
+    if (env.vscodeProxyUri === undefined) {
+      delete process.env.VSCODE_PROXY_URI;
+    } else {
+      process.env.VSCODE_PROXY_URI = env.vscodeProxyUri;
+    }
+
+    if (env.muxProxyUri === undefined) {
+      delete process.env.MUX_PROXY_URI;
+    } else {
+      process.env.MUX_PROXY_URI = env.muxProxyUri;
+    }
+
+    try {
+      return await run();
+    } finally {
+      if (previousVscodeProxyUri === undefined) {
+        delete process.env.VSCODE_PROXY_URI;
+      } else {
+        process.env.VSCODE_PROXY_URI = previousVscodeProxyUri;
+      }
+
+      if (previousMuxProxyUri === undefined) {
+        delete process.env.MUX_PROXY_URI;
+      } else {
+        process.env.MUX_PROXY_URI = previousMuxProxyUri;
+      }
+    }
+  }
+
   it("should create a session", async () => {
     const session = await service.create({
       workspaceId: "ws-1",
@@ -124,20 +174,109 @@ describe("TerminalService", () => {
     expect(createSessionMock).toHaveBeenCalled();
     expect(getEffectiveSecretsMock).toHaveBeenCalledWith("/tmp/project");
 
-    const call = createSessionMock.mock.calls[0];
-    if (!call) {
-      throw new Error("Expected createSession to be called");
-    }
+    const env = getCreateSessionEnvFromFirstCall();
 
-    const options = call[6] as { env?: NodeJS.ProcessEnv } | undefined;
-    if (!options?.env) {
-      throw new Error("Expected createSession to receive terminal env");
-    }
+    expect(env.MUX_PROJECT_PATH).toBe("/tmp/project");
+    expect(env.MUX_RUNTIME).toBe("worktree");
+    expect(env.MUX_WORKSPACE_NAME).toBe("main");
+    expect(env.TEST_SECRET).toBe("secret-value");
+  });
 
-    expect(options.env.MUX_PROJECT_PATH).toBe("/tmp/project");
-    expect(options.env.MUX_RUNTIME).toBe("worktree");
-    expect(options.env.MUX_WORKSPACE_NAME).toBe("main");
-    expect(options.env.TEST_SECRET).toBe("secret-value");
+  it("propagates VSCODE_PROXY_URI and falls back MUX_PROXY_URI to it", async () => {
+    const vscodeProxyUri = "https://coder.example/proxy/{{port}}/";
+
+    await withProxyEnv({ vscodeProxyUri }, async () => {
+      await service.create({
+        workspaceId: "ws-1",
+        cols: 80,
+        rows: 24,
+      });
+    });
+
+    const env = getCreateSessionEnvFromFirstCall();
+    expect(env.VSCODE_PROXY_URI).toBe(vscodeProxyUri);
+    expect(env.MUX_PROXY_URI).toBe(vscodeProxyUri);
+  });
+
+  it("prefers MUX_PROXY_URI over VSCODE_PROXY_URI when both are set", async () => {
+    const vscodeProxyUri = "https://coder.example/proxy/{{port}}/";
+    const muxProxyUri = "https://mux.example/proxy/{{port}}/";
+
+    await withProxyEnv({ vscodeProxyUri, muxProxyUri }, async () => {
+      await service.create({
+        workspaceId: "ws-1",
+        cols: 80,
+        rows: 24,
+      });
+    });
+
+    const env = getCreateSessionEnvFromFirstCall();
+    expect(env.VSCODE_PROXY_URI).toBe(vscodeProxyUri);
+    expect(env.MUX_PROXY_URI).toBe(muxProxyUri);
+  });
+
+  it("omits proxy URI variables when neither source variable is set", async () => {
+    await withProxyEnv({}, async () => {
+      await service.create({
+        workspaceId: "ws-1",
+        cols: 80,
+        rows: 24,
+      });
+    });
+
+    const env = getCreateSessionEnvFromFirstCall();
+    expect(env.VSCODE_PROXY_URI).toBeUndefined();
+    expect(env.MUX_PROXY_URI).toBeUndefined();
+  });
+
+  it("keeps proxy env injection scoped to local/worktree runtimes", async () => {
+    const configRef = mockConfig as unknown as {
+      getAllWorkspaceMetadata: typeof mockConfig.getAllWorkspaceMetadata;
+    };
+    const originalGetAllWorkspaceMetadata = configRef.getAllWorkspaceMetadata;
+    configRef.getAllWorkspaceMetadata = mock(() =>
+      Promise.resolve([
+        {
+          id: "ws-ssh",
+          projectPath: "/tmp/project",
+          name: "main",
+          runtimeConfig: {
+            type: "ssh",
+            host: "example.com",
+            srcBaseDir: "~/mux",
+            username: "coder",
+            identityFile: "~/.ssh/id_rsa",
+          },
+        },
+      ])
+    ) as unknown as typeof configRef.getAllWorkspaceMetadata;
+
+    try {
+      await withProxyEnv(
+        {
+          vscodeProxyUri: "https://coder.example/proxy/{{port}}/",
+          muxProxyUri: "https://mux.example/proxy/{{port}}/",
+        },
+        async () => {
+          await service.create({
+            workspaceId: "ws-ssh",
+            cols: 80,
+            rows: 24,
+          });
+        }
+      );
+
+      const call = createSessionMock.mock.calls[0];
+      if (!call) {
+        throw new Error("Expected createSession to be called");
+      }
+
+      const options = call[6] as { env?: NodeJS.ProcessEnv } | undefined;
+      expect(options?.env).toBeUndefined();
+      expect(getEffectiveSecretsMock).not.toHaveBeenCalled();
+    } finally {
+      configRef.getAllWorkspaceMetadata = originalGetAllWorkspaceMetadata;
+    }
   });
 
   it("should handle resizing", () => {
