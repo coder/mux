@@ -1,0 +1,188 @@
+---
+title: Chat with Mux
+description: Ask questions about Mux, configure settings, install skills, and explore usage analytics
+---
+
+**Chat with Mux** is a built-in workspace where you can ask questions about Mux and manage your
+installation through conversation. Think of it as a help desk that can also make changes for you —
+it knows the docs, can update your settings, install skills, and show you usage analytics.
+
+## Opening Chat with Mux
+
+| Method           | Details                                               |
+| ---------------- | ----------------------------------------------------- |
+| **Sidebar**      | Click the help icon at the top of the project sidebar |
+| **Landing page** | Click the **Chat with Mux** card                      |
+| **Keyboard**     | Press `F1`                                            |
+
+## What you can do
+
+- **Get help** — ask questions about any Mux feature (workspaces, runtimes, agents, models, hooks, keybinds, etc.)
+- **Edit settings** — read and update `~/.mux/config.json` and `~/.mux/providers.jsonc`
+- **Install skills** — search, preview, and install community skills from [skills.sh](https://skills.sh/)
+- **Edit global instructions** — update `~/.mux/AGENTS.md` (your global agent instruction file)
+- **Explore analytics** — query your usage data (costs, tokens, latency) with charts and tables
+- **Set model parameters** — configure per-model defaults like temperature or max output tokens
+
+Every write operation follows a **confirm-before-write** flow: the agent reads the current state, proposes
+changes, asks for your explicit approval, and only writes after you confirm.
+
+## Get help
+
+Chat with Mux has access to a built-in snapshot of the Mux documentation, so answers are accurate to
+your installed version. Ask it anything about how Mux works — it will look up the relevant docs pages
+on demand rather than relying on training data alone.
+
+### Example prompts
+
+- _"How do workspaces work?"_
+- _"What's the difference between Plan and Exec mode?"_
+- _"How do I set up SSH runtimes?"_
+- _"What keyboard shortcuts are available?"_
+- _"Help me troubleshoot why my Anthropic key isn't working"_
+
+<Tip>
+  If you're using **Auto mode** in a project workspace, you don't need to navigate to Chat with Mux
+  manually. The Auto agent can route Mux-related questions there automatically.
+</Tip>
+
+## Managing settings
+
+Chat with Mux can read and write two configuration files:
+
+| File                     | Purpose                                                                     |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `~/.mux/config.json`     | App settings (default model, update channel, runtimes, feature flags, etc.) |
+| `~/.mux/providers.jsonc` | Provider settings (API keys, base URLs, model parameters, etc.)             |
+
+**Secrets are always redacted.** API keys, tokens, and passwords are replaced with `[REDACTED]` before
+the model sees them. The agent also refuses to write `[REDACTED]` back, so your secrets can't be
+accidentally overwritten.
+
+Changes take effect immediately — no restart needed.
+
+### Example prompts
+
+- _"Show me my provider config"_
+- _"Set my default model to claude-sonnet-4-5"_
+- _"Switch to the nightly update channel"_
+- _"Enable the Mux Gateway"_
+- _"Change my Anthropic base URL to a custom endpoint"_
+
+<Info>
+  For the full list of provider settings and environment variables, see
+  [Providers](/config/providers). For model selection and thinking levels, see
+  [Models](/config/models).
+</Info>
+
+## Model parameter overrides
+
+Chat with Mux can set per-model defaults for parameters like `temperature`, `max_output_tokens`, and
+`top_p`. Try asking _"set temperature to 0.7 for claude-sonnet-4-5"_ or _"set max output tokens to
+16384 for all Anthropic models"_.
+
+<Info>
+  For the full list of supported parameters, resolution order, and configuration format, see [Model
+  Parameter Overrides](/config/providers#model-parameter-overrides).
+</Info>
+
+## Installing skills
+
+Chat with Mux can search the [skills.sh](https://skills.sh/) community catalog, preview skills,
+and install them — all through conversation.
+
+### Install flow
+
+1. **Search** — _"Find me a skill for Docker"_
+2. **Preview** — the agent clones the skill repo, reads the `SKILL.md`, and shows you the full content
+3. **Confirm** — you review and approve the install
+4. **Install** — the skill is written to `~/.mux/skills/<name>/SKILL.md`
+
+Installed skills are available globally across all your workspaces.
+
+### Managing skills
+
+Beyond installing, Chat with Mux can:
+
+- **List** your installed global skills
+- **Update** a skill by re-writing its `SKILL.md`
+- **Delete** a skill file or entire skill directory (with confirmation)
+
+Built-in skills that ship with Mux cannot be deleted.
+
+<Info>
+  For details on skill discovery, the `SKILL.md` format, and authoring your own skills, see [Agent
+  Skills](/agents/agent-skills).
+</Info>
+
+## Editing global instructions
+
+Chat with Mux can read and write `~/.mux/AGENTS.md` — the global instruction file that applies to
+all agents across all your projects.
+
+The agent always reads the current file, shows you a diff of proposed changes, and asks for
+confirmation before writing.
+
+### Example prompts
+
+- _"What does my AGENTS.md say?"_
+- _"Add a rule: always write tests for new functions"_
+- _"Help me write global instructions for code reviews"_
+
+<Info>
+  For more on instruction files (global, project-level, and workspace-level), see [Instruction
+  Files](/agents/instruction-files).
+</Info>
+
+## Usage analytics
+
+Chat with Mux can query your local usage data — costs, token counts, latency, model usage — and
+render the results as charts or tables.
+
+### Available data
+
+| Table                | Contains                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `events`             | Per-LLM-call telemetry: model, tokens (input/output/reasoning/cached), costs, latency (TTFT, streaming, tool execution), project, workspace |
+| `delegation_rollups` | Aggregated sub-agent cost summaries per workspace                                                                                           |
+
+### Visualization
+
+The agent can render results as **bar**, **line**, **area**, **pie**, **stacked bar** charts, or
+plain **tables**.
+
+### Example prompts
+
+- _"How much have I spent this week?"_
+- _"Show me a chart of token usage by model over the last 30 days"_
+- _"Which model has the fastest time-to-first-token?"_
+- _"Break down my costs by project"_
+
+## Security model
+
+Chat with Mux is intentionally sandboxed:
+
+- **No shell access** — cannot run arbitrary commands
+- **No file system access** — cannot read or edit arbitrary files
+- **No web access** — cannot browse the internet
+- **No sub-agents** — cannot spawn or delegate to other agents
+- **Secrets redacted** — API keys and tokens are never visible to the model
+- **Confirm-before-write** — every write requires explicit user approval
+- **Schema validation** — writes are validated against the config schema before being applied
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Models" icon="cpu" href="/config/models">
+    Select models, configure thinking levels, and use one-shot overrides.
+  </Card>
+  <Card title="Providers" icon="key" href="/config/providers">
+    Set up API keys and advanced provider options.
+  </Card>
+  <Card title="Agent Skills" icon="graduation-cap" href="/agents/agent-skills">
+    Learn about skill discovery, the SKILL.md format, and authoring your own.
+  </Card>
+  <Card title="Instruction Files" icon="file-text" href="/agents/instruction-files">
+    Configure global, project, and workspace-level agent instructions.
+  </Card>
+</Columns>
