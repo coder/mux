@@ -32,20 +32,20 @@ describe("getEffectiveContextLimit", () => {
       },
     };
 
-    // 1M context is a provider-level capability (Anthropic/Gemini), not
-    // inherited through model mapping. ollama:custom should use the mapped
-    // model's base context limit, not 1M.
+    // 1M context is an Anthropic runtime capability, not inherited through
+    // model mapping. ollama:custom should use the mapped model's base context
+    // limit, not 1M.
     const mappedStats = getModelStats(KNOWN_MODELS.SONNET.id);
     const limit = getEffectiveContextLimit("ollama:custom", true, config);
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
-  test("enables 1M limit for GPT-5.4 when 1M mode is on", () => {
+  test("uses GPT-5.4's native 1.05M context without the 1M toggle", () => {
     const baseLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, false, null);
-    const expandedLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, true, null);
+    const toggledLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, true, null);
 
-    expect(baseLimit).toBe(272_000);
-    expect(expandedLimit).toBe(1_000_000);
+    expect(baseLimit).toBe(1_050_000);
+    expect(toggledLimit).toBe(1_050_000);
   });
 
   test("prefers custom context overrides over mapped model stats", () => {

@@ -80,7 +80,9 @@ export function getModelProvider(modelString: string): string {
  *
  * Supported model families:
  * - Anthropic Claude Sonnet 4/4.5/4.6 and Opus 4.6
- * - OpenAI GPT-5.4 and GPT-5.4 Pro
+ *
+ * GPT-5.4's 1.05M window is exposed as the model's native context limit, so it
+ * should not appear behind this Anthropic-style opt-in toggle.
  *
  * @param modelString - Full model string in format "provider:model-name"
  * @returns True if the model supports 1M context window mode
@@ -90,19 +92,13 @@ export function supports1MContext(modelString: string): boolean {
   const [provider, modelName] = normalized.split(":", 2);
   const lowerModelName = modelName?.toLowerCase() ?? "";
 
-  if (provider === "anthropic") {
-    // Sonnet 4, Sonnet 4.5, Sonnet 4.6, and Opus 4.6 support 1M context (beta)
-    return (
-      (lowerModelName.includes("claude-sonnet-4") && !lowerModelName.includes("claude-sonnet-3")) ||
-      lowerModelName.includes("claude-opus-4-6")
-    );
+  if (provider !== "anthropic") {
+    return false;
   }
 
-  if (provider === "openai") {
-    // GPT-5.4 family supports extended context mode. Allow dated suffixes
-    // (e.g., gpt-5.4-2026-03-05, gpt-5.4-pro-2026-03-05).
-    return /^gpt-5\.4(?:-pro)?(?:$|-[0-9])/.test(lowerModelName);
-  }
-
-  return false;
+  // Sonnet 4, Sonnet 4.5, Sonnet 4.6, and Opus 4.6 support 1M context (beta)
+  return (
+    (lowerModelName.includes("claude-sonnet-4") && !lowerModelName.includes("claude-sonnet-3")) ||
+    lowerModelName.includes("claude-opus-4-6")
+  );
 }

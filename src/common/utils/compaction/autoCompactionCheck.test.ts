@@ -217,12 +217,12 @@ describe("checkAutoCompaction", () => {
       expect(result.shouldShowWarning).toBe(true);
     });
 
-    test("uses 1M tokens for GPT-5.4 when use1M=true", () => {
+    test("uses GPT-5.4's native 1.05M limit without relying on the 1M toggle", () => {
       const usage = createMockUsage(600_000, undefined, KNOWN_MODELS.GPT.id);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT.id, true);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT.id, false);
 
-      expect(result.usagePercentage).toBe(60);
-      expect(result.shouldShowWarning).toBe(true);
+      expect(result.usagePercentage).toBeCloseTo(57.14, 2);
+      expect(result.shouldShowWarning).toBe(false);
     });
 
     test("ignores use1M for models that don't support it (GPT)", () => {
