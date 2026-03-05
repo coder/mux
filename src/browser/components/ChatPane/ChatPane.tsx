@@ -1019,7 +1019,11 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
 
   return (
-    <>
+    <div className="flex flex-col gap-2">
+      {/*
+        Keep optional banners/warnings on one shared stack so spacing above the chat input
+        stays consistent as background bash, review, and queue UI appear or disappear.
+      */}
       {props.shouldShowCompactionWarning && (
         <CompactionWarning
           usagePercentage={props.autoCompactionResult.usagePercentage}
@@ -1044,7 +1048,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         />
       )}
       {props.isQueuedAgentTask && (
-        <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
+        <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
           This agent task is queued and will start automatically when a parallel slot is available.
         </div>
       )}
@@ -1077,6 +1081,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onDeleteReview={reviews.removeReview}
         onUpdateReviewNote={reviews.updateReviewNote}
       />
-    </>
+    </div>
   );
 };
