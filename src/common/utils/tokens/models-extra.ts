@@ -84,6 +84,44 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
+  // GPT-5.4 - Released March 5, 2026
+  // Base tier: 272K context, 128K max output; 1M mode available via Mux's 1M context toggle.
+  // $2/M input, $16/M output, $0.25/M cached input.
+  // OpenAI applies 2x input/output rates above 272K when extended context is used.
+  "gpt-5.4": {
+    max_input_tokens: 272000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000002, // $2 per million input tokens
+    output_cost_per_token: 0.000016, // $16 per million output tokens
+    cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-08-31",
+  },
+
+  // GPT-5.4 Pro - Released March 5, 2026
+  // Base tier: 272K context, 128K max output; 1M mode available via Mux's 1M context toggle.
+  // $25/M input, $200/M output, no cached input pricing published.
+  // OpenAI applies 2x input/output rates above 272K when extended context is used.
+  "gpt-5.4-pro": {
+    max_input_tokens: 272000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000025, // $25 per million input tokens
+    output_cost_per_token: 0.0002, // $200 per million output tokens
+    knowledge_cutoff: "2025-08-31",
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
+  },
+
   // GPT-5.2 / GPT-5.2 Codex - keep aligned
   // LiteLLM reports 400k context for Codex, but it should match GPT-5.2 (272k)
   // $1.75/M input, $14/M output

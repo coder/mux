@@ -217,6 +217,14 @@ describe("checkAutoCompaction", () => {
       expect(result.shouldShowWarning).toBe(true);
     });
 
+    test("uses 1M tokens for GPT-5.4 when use1M=true", () => {
+      const usage = createMockUsage(600_000, undefined, KNOWN_MODELS.GPT.id);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT.id, true);
+
+      expect(result.usagePercentage).toBe(60);
+      expect(result.shouldShowWarning).toBe(true);
+    });
+
     test("ignores use1M for models that don't support it (GPT)", () => {
       const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.GPT_MINI.id);
       // GPT Mini has 272k context, so 100k = 36.76%

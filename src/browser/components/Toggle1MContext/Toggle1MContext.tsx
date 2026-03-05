@@ -11,15 +11,15 @@ interface Toggle1MContextProps {
 }
 
 /**
- * Compact toggle for Anthropic 1M context (beta).
+ * Compact toggle for model-level 1M context mode (beta UI).
  * Only renders when the model supports 1M context.
  * State is synced across all instances via ProviderOptionsContext.
  */
 export const Toggle1MContext: React.FC<Toggle1MContextProps> = (props) => {
   const { has1MContext, toggle1MContext } = useProviderOptions();
 
-  // 1M context is a provider-level capability (Anthropic/Gemini), gated on
-  // the runtime model — not inherited through "Treat as" model mapping.
+  // 1M context is a runtime model capability, gated on the runtime model —
+  // not inherited through "Treat as" model mapping.
   if (!supports1MContext(props.model)) return null;
 
   const label = props.label ?? "1M context";

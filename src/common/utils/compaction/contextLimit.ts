@@ -32,8 +32,9 @@ export function getEffectiveContextLimit(
   const baseLimit = customOverride ?? stats?.max_input_tokens ?? null;
   if (!baseLimit) return null;
 
-  // 1M context is a provider-level capability (Anthropic header, Gemini native)
-  // so it must be gated on the runtime model, not the mapped metadata model.
+  // 1M context is a runtime model capability (e.g., Anthropic beta header,
+  // OpenAI GPT-5.4 extended context mode), so it must be gated on the runtime
+  // model, not the mapped metadata model.
   // A custom model mapped to Sonnet should NOT inherit 1M context unless
   // the runtime model itself supports it.
   if (supports1MContext(model) && use1M) return 1_000_000;

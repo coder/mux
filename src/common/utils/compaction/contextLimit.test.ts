@@ -40,6 +40,14 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
+  test("enables 1M limit for GPT-5.4 when 1M mode is on", () => {
+    const baseLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, false, null);
+    const expandedLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, true, null);
+
+    expect(baseLimit).toBe(272_000);
+    expect(expandedLimit).toBe(1_000_000);
+  });
+
   test("prefers custom context overrides over mapped model stats", () => {
     const config: ProvidersConfigMap = {
       ollama: {
