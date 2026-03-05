@@ -14,7 +14,12 @@
 
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import type { GitHubPRLink, GitHubPRStatus, GitHubPRLinkWithStatus } from "@/common/types/links";
+import type {
+  GitHubPRLink,
+  GitHubPRStatus,
+  GitHubPRLinkWithStatus,
+  MergeQueueEntry,
+} from "@/common/types/links";
 import { createLRUCache } from "@/browser/utils/lruCache";
 /**
  * Parse a GitHub PR URL to extract owner, repo, and number.
@@ -34,6 +39,10 @@ const STATUS_CACHE_TTL_MS = 5 * 1000;
 
 // How long to wait before retrying after an error
 const ERROR_RETRY_DELAY_MS = 5 * 1000;
+
+// GraphQL query for merge queue data (not available in `gh pr view --json`).
+const MERGE_QUEUE_QUERY =
+  "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){mergeQueueEntry{state position}}}}";
 
 /**
  * Persisted PR status for localStorage LRU cache.
@@ -98,6 +107,25 @@ function summarizeStatusCheckRollup(raw: unknown): {
   }
 
   return { hasPendingChecks, hasFailedChecks };
+}
+
+/**
+ * Parse merge queue entry data from GitHub GraphQL response payloads.
+ */
+export function parseMergeQueueEntry(raw: unknown): MergeQueueEntry | null {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const state = typeof record.state === "string" ? record.state : "QUEUED";
+  const positionRaw = record.position;
+  const position =
+    typeof positionRaw === "number" && Number.isInteger(positionRaw) && positionRaw >= 0
+      ? positionRaw
+      : null;
+
+  return { state, position };
 }
 
 /**
@@ -288,6 +316,7 @@ export class PRStatusStore {
             const { hasPendingChecks, hasFailedChecks } = summarizeStatusCheckRollup(
               parsed.statusCheckRollup
             );
+            const mergeQueueEntry = await this.fetchMergeQueueEntry(workspaceId, prLinkBase);
 
             const status: GitHubPRStatus = {
               state: (parsed.state as GitHubPRStatus["state"]) ?? "OPEN",
@@ -300,6 +329,7 @@ export class PRStatusStore {
               baseRefName: (parsed.baseRefName as string) ?? "",
               hasPendingChecks,
               hasFailedChecks,
+              mergeQueueEntry,
               fetchedAt: Date.now(),
             };
 
@@ -342,6 +372,62 @@ export class PRStatusStore {
         fetchedAt: Date.now(),
       });
       this.workspacePRSubscriptions.bump(workspaceId);
+    }
+  }
+
+  /**
+   * Fetch merge queue details via GraphQL.
+   * Best-effort only: failures should not block normal PR status updates.
+   */
+  private async fetchMergeQueueEntry(
+    workspaceId: string,
+    prLink: { owner: string; repo: string; number: number }
+  ): Promise<MergeQueueEntry | null> {
+    if (!this.client || !this.isActive) {
+      return null;
+    }
+
+    try {
+      const result = await this.client.workspace.executeBash({
+        workspaceId,
+        script: [
+          "gh api graphql",
+          `-f query='${MERGE_QUEUE_QUERY}'`,
+          `-f owner='${prLink.owner}'`,
+          `-f repo='${prLink.repo}'`,
+          `-F number=${prLink.number}`,
+          "2>/dev/null",
+        ].join(" "),
+        options: { timeout_secs: 10 },
+      });
+
+      if (!this.isActive || !result.success || !result.data.success) {
+        return null;
+      }
+
+      if (!result.data.output) {
+        return null;
+      }
+
+      const parsed = JSON.parse(result.data.output) as Record<string, unknown>;
+      const data = parsed.data;
+      if (typeof data !== "object" || data === null) {
+        return null;
+      }
+
+      const repository = (data as Record<string, unknown>).repository;
+      if (typeof repository !== "object" || repository === null) {
+        return null;
+      }
+
+      const pullRequest = (repository as Record<string, unknown>).pullRequest;
+      if (typeof pullRequest !== "object" || pullRequest === null) {
+        return null;
+      }
+
+      return parseMergeQueueEntry((pullRequest as Record<string, unknown>).mergeQueueEntry);
+    } catch {
+      return null;
     }
   }
 

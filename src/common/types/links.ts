@@ -24,6 +24,17 @@ export interface GitHubPRLink extends BaseLinkMetadata {
 }
 
 /**
+ * Merge queue entry info from GitHub GraphQL API.
+ * Present only when the PR is currently enqueued in a merge queue.
+ */
+export interface MergeQueueEntry {
+  /** Queue state: QUEUED, MERGEABLE, AWAITING_CHECKS, LOCKED, UNMERGEABLE */
+  state: string;
+  /** 0-based position in the queue, null when unavailable */
+  position: number | null;
+}
+
+/**
  * PR status information fetched from GitHub via gh CLI.
  */
 export interface GitHubPRStatus {
@@ -61,6 +72,9 @@ export interface GitHubPRStatus {
    * Optional: not all gh versions/API payloads include check rollup data.
    */
   hasFailedChecks?: boolean;
+
+  /** Merge queue entry, present when PR is currently in merge queue */
+  mergeQueueEntry?: MergeQueueEntry | null;
 
   /** Last fetched timestamp */
   fetchedAt: number;
