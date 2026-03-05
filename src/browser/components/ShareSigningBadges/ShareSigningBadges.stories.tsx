@@ -1,97 +1,59 @@
-import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
-import { setupSimpleChatStory } from "@/browser/stories/storyHelpers.js";
-import {
-  STABLE_TIMESTAMP,
-  createAssistantMessage,
-  createUserMessage,
-} from "@/browser/stories/mockFactory";
-import { within, userEvent, waitFor } from "@storybook/test";
-import { warmHashCache, setShareData } from "@/browser/utils/sharedUrlCache";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { userEvent, waitFor, within } from "@storybook/test";
+import { lightweightMeta } from "@/browser/stories/meta.js";
+import { SigningBadge } from "./ShareSigningBadges.js";
 
 const meta = {
-  ...appMeta,
+  ...lightweightMeta,
   title: "App/Chat/Components/ShareSigningBadges",
-};
+  component: SigningBadge,
+} satisfies Meta<typeof SigningBadge>;
 
 export default meta;
 
-// Message content used in SigningBadgePassphraseWarning story
-const SIGNING_WARNING_MESSAGE_CONTENT = "Hello! How can I help you today?";
+type Story = StoryObj<typeof meta>;
+
 /**
  * Story showing the signing badge in warning state when key requires passphrase.
  * The signing badge displays yellow when a compatible key exists but is passphrase-protected.
  */
-export const SigningBadgePassphraseWarning: AppStory = {
-  // Use loaders to pre-warm hash cache before component mounts (fixes race condition)
-  loaders: [
-    async () => {
-      // Warm the hash cache to ensure consistent hashing
-      await warmHashCache(SIGNING_WARNING_MESSAGE_CONTENT);
-      // Now set share data with the warmed hash
-      setShareData(SIGNING_WARNING_MESSAGE_CONTENT, {
-        url: "https://mux.md/story-test#fake-key",
-        id: "story-share-id",
-        mutateKey: "story-mutate-key",
-        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
-        signed: false,
-      });
-      return {};
+export const SigningBadgePassphraseWarning: Story = {
+  args: {
+    signed: false,
+    signingEnabled: true,
+    capabilities: {
+      publicKey: null,
+      githubUser: null,
+      error: {
+        message:
+          "Signing key requires a passphrase. Create an unencrypted key at ~/.mux/message_signing_key or use ssh-add.",
+        hasEncryptedKey: true,
+      },
     },
-  ],
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-signing-warning",
-          messages: [
-            createUserMessage("msg-1", "Hello", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 300000,
-            }),
-            createAssistantMessage("msg-2", SIGNING_WARNING_MESSAGE_CONTENT, {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 290000,
-            }),
-          ],
-          signingCapabilities: {
-            publicKey: null,
-            githubUser: null,
-            error: {
-              message:
-                "Signing key requires a passphrase. Create an unencrypted key at ~/.mux/message_signing_key or use ssh-add.",
-              hasEncryptedKey: true,
-            },
-          },
-        })
-      }
-    />
+  },
+  render: (args) => (
+    <div className="bg-background flex min-h-[180px] items-start p-6">
+      <SigningBadge {...args} />
+    </div>
   ),
   play: async ({ canvasElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    const canvas = within(storyRoot);
+    const canvas = within(canvasElement);
+    const badge = await canvas.findByRole("button", { name: /disable signing/i });
 
-    // Wait for the assistant message to appear
-    await canvas.findByText(SIGNING_WARNING_MESSAGE_CONTENT);
+    await userEvent.hover(badge);
 
-    // Wait for React to finish any pending updates after rendering
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-    // Find and click the Share button (should show "Already shared" due to loader)
-    const shareButton = await canvas.findByLabelText("Already shared");
-
-    // Wait a bit for button to be fully interactive
-    await new Promise((r) => setTimeout(r, 100));
-    await userEvent.click(shareButton);
-
-    // Wait for the popover to open (renders in a portal, so search document)
-    await waitFor(() => {
-      const popover = document.querySelector('[role="dialog"]');
-      if (!popover) throw new Error("Share popover not found");
-    });
-
-    // Allow the signing badge to render with its warning state
-    await new Promise((r) => setTimeout(r, 200));
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!(tooltip instanceof HTMLElement)) {
+          throw new Error("Signing warning tooltip not visible");
+        }
+        if (!tooltip.textContent?.includes("Key requires passphrase")) {
+          throw new Error("Expected passphrase warning content in tooltip");
+        }
+      },
+      { interval: 50, timeout: 5000 }
+    );
   },
   parameters: {
     docs: {

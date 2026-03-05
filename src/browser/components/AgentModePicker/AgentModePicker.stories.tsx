@@ -1,6 +1,6 @@
-import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, StoryUiShell } from "@/browser/stories/meta.js";
-import { within, userEvent, waitFor } from "@storybook/test";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { userEvent, waitFor, within } from "@storybook/test";
+import { lightweightMeta } from "@/browser/stories/meta.js";
 import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
@@ -11,11 +11,14 @@ import {
 } from "@/browser/components/Tooltip/Tooltip";
 
 const meta = {
-  ...appMeta,
+  ...lightweightMeta,
   title: "App/Chat/Components/AgentModePicker",
-};
+  component: HelpIndicator,
+} satisfies Meta<typeof HelpIndicator>;
 
 export default meta;
+
+type Story = StoryObj<typeof meta>;
 
 /**
  * Mode selector with HelpIndicator tooltip - verifies props forwarding for Radix asChild.
@@ -27,37 +30,35 @@ export default meta;
  * Radix TooltipTrigger needs when using asChild. Without the fix, the tooltip
  * would never appear on hover/focus.
  */
-export const ModeHelpTooltip: AppStory = {
+export const ModeHelpTooltip: Story = {
   render: () => (
-    <StoryUiShell>
-      <div className="bg-background flex min-h-[180px] items-start p-6">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <HelpIndicator data-testid="mode-help-indicator">?</HelpIndicator>
-          </TooltipTrigger>
-          <TooltipContent align="start" className="max-w-80 whitespace-normal">
-            <strong>Click to edit</strong>
-            <br />
-            <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
-            <br />
-            <br />
-            <strong>Abbreviations:</strong>
-            {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
-              <span key={ex.abbrev}>
-                <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
-              </span>
-            ))}
-            <br />
-            <br />
-            <strong>Full format:</strong>
-            <br />
-            <code>/model provider:model-name</code>
-            <br />
-            (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
-          </TooltipContent>
-        </Tooltip>
-      </div>
-    </StoryUiShell>
+    <div className="bg-background flex min-h-[180px] items-start p-6">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <HelpIndicator data-testid="mode-help-indicator">?</HelpIndicator>
+        </TooltipTrigger>
+        <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          <strong>Click to edit</strong>
+          <br />
+          <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
+          <br />
+          <br />
+          <strong>Abbreviations:</strong>
+          {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
+            <span key={ex.abbrev}>
+              <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
+            </span>
+          ))}
+          <br />
+          <br />
+          <strong>Full format:</strong>
+          <br />
+          <code>/model provider:model-name</code>
+          <br />
+          (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
+        </TooltipContent>
+      </Tooltip>
+    </div>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);

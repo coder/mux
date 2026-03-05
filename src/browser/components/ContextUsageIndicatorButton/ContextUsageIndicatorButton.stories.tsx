@@ -1,68 +1,79 @@
-import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
-import { setupSimpleChatStory } from "@/browser/stories/storyHelpers.js";
-import {
-  STABLE_TIMESTAMP,
-  createAssistantMessage,
-  createFileReadTool,
-  createUserMessage,
-} from "@/browser/stories/mockFactory";
-import { within, userEvent, waitFor } from "@storybook/test";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { fn, userEvent, waitFor, within } from "@storybook/test";
+import { lightweightMeta } from "@/browser/stories/meta.js";
+import { TOKEN_COMPONENT_COLORS, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
+import { ContextUsageIndicatorButton } from "./ContextUsageIndicatorButton.js";
 
-const meta = {
-  ...appMeta,
-  title: "App/Chat/Components/ContextUsageIndicator",
+const CONTEXT_METER_DATA: TokenMeterData = {
+  totalTokens: 130000,
+  maxTokens: 200000,
+  totalPercentage: 65,
+  segments: [
+    {
+      type: "input",
+      tokens: 124000,
+      percentage: 62,
+      color: TOKEN_COMPONENT_COLORS.input,
+    },
+    {
+      type: "output",
+      tokens: 6000,
+      percentage: 3,
+      color: TOKEN_COMPONENT_COLORS.output,
+    },
+  ],
 };
 
+const HOVER_SUMMARY_DATA: TokenMeterData = {
+  totalTokens: 130500,
+  maxTokens: 200000,
+  totalPercentage: 65.25,
+  segments: [
+    {
+      type: "input",
+      tokens: 128000,
+      percentage: 64,
+      color: TOKEN_COMPONENT_COLORS.input,
+    },
+    {
+      type: "output",
+      tokens: 2500,
+      percentage: 1.25,
+      color: TOKEN_COMPONENT_COLORS.output,
+    },
+  ],
+};
+
+const meta = {
+  ...lightweightMeta,
+  title: "App/Chat/Components/ContextUsageIndicator",
+  component: ContextUsageIndicatorButton,
+} satisfies Meta<typeof ContextUsageIndicatorButton>;
+
 export default meta;
+
+type Story = StoryObj<typeof meta>;
 
 /**
  * Context meter with high usage and idle compaction enabled.
  * Shows the context usage indicator badge in the chat input area with the
  * hourglass badge indicating idle compaction is configured.
  */
-export const ContextMeterWithIdleCompaction: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-context-meter",
-          workspaceName: "feature/auth",
-          projectName: "my-app",
-          idleCompactionHours: 4,
-          messages: [
-            createUserMessage("msg-1", "Help me refactor the authentication module", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 300000,
-            }),
-            createAssistantMessage(
-              "msg-2",
-              "I'll help you refactor the authentication module. Let me first review the current implementation.",
-              {
-                historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 290000,
-                // High context usage to show the meter prominently (65% of 200k = 130k tokens)
-                contextUsage: { inputTokens: 130000, outputTokens: 2000 },
-                toolCalls: [
-                  createFileReadTool(
-                    "call-1",
-                    "src/auth/index.ts",
-                    'export { login, logout, verifyToken } from "./handlers";'
-                  ),
-                ],
-              }
-            ),
-          ],
-        })
-      }
-    />
+export const ContextMeterWithIdleCompaction: Story = {
+  args: {
+    data: CONTEXT_METER_DATA,
+    autoCompaction: { threshold: 80, setThreshold: fn() },
+    idleCompaction: { hours: 4, setHours: fn() },
+  },
+  render: (args) => (
+    <div className="bg-background flex min-h-[180px] items-end p-6">
+      <ContextUsageIndicatorButton {...args} />
+    </div>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    // Wait for the context meter to appear (it shows token usage)
     await waitFor(() => {
-      // Look for the context meter button which shows token counts
-      canvas.getByRole("button", { name: /context/i });
+      canvas.getByRole("button", { name: /context usage/i });
     });
   },
   parameters: {
@@ -82,33 +93,16 @@ export const ContextMeterWithIdleCompaction: AppStory = {
  * Captures the non-interactive one-line tooltip shown on hover so the quick
  * compaction stats remain visible even after controls moved to click-to-open.
  */
-export const ContextMeterHoverSummaryTooltip: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-context-meter-hover",
-          workspaceName: "feature/context-meter-hover",
-          projectName: "my-app",
-          idleCompactionHours: 4,
-          messages: [
-            createUserMessage("msg-1", "Can you keep an eye on context usage?", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 240000,
-            }),
-            createAssistantMessage(
-              "msg-2",
-              "Sure — I’ll keep compaction settings tuned as usage grows.",
-              {
-                historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 230000,
-                contextUsage: { inputTokens: 128000, outputTokens: 2500 },
-              }
-            ),
-          ],
-        })
-      }
-    />
+export const ContextMeterHoverSummaryTooltip: Story = {
+  args: {
+    data: HOVER_SUMMARY_DATA,
+    autoCompaction: { threshold: 80, setThreshold: fn() },
+    idleCompaction: { hours: 4, setHours: fn() },
+  },
+  render: (args) => (
+    <div className="bg-background flex min-h-[180px] items-end p-6">
+      <ContextUsageIndicatorButton {...args} />
+    </div>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
