@@ -12,7 +12,9 @@ import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 
 // MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI for localhost external-link rewrites.
-const localhostProxyTemplate = process.env.MUX_PROXY_URI ?? process.env.VSCODE_PROXY_URI;
+const localhostProxyTemplate =
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+  process.env.MUX_PROXY_URI?.trim() || process.env.VSCODE_PROXY_URI?.trim() || undefined;
 
 export class TerminalWindowManager {
   private windows = new Map<string, Set<BrowserWindow>>(); // workspaceId -> Set of windows

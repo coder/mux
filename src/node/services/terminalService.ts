@@ -80,8 +80,10 @@ export class TerminalService {
   }
 
   private getProxyUriEnv(): Record<string, string> {
-    const vscodeProxyUri = process.env.VSCODE_PROXY_URI;
-    const muxProxyUri = process.env.MUX_PROXY_URI ?? vscodeProxyUri;
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+    const vscodeProxyUri = process.env.VSCODE_PROXY_URI?.trim() || undefined;
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+    const muxProxyUri = process.env.MUX_PROXY_URI?.trim() || vscodeProxyUri;
 
     const proxyUriEnv: Record<string, string> = {};
     if (vscodeProxyUri != null) {
