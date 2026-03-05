@@ -14,6 +14,7 @@ import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
 import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToolMediaAsUserMessages";
 import { sanitizeAnthropicPdfFilenames } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
+import { convertDataUriFilePartsForSdk } from "@/node/utils/messages/convertDataUriFilePartsForSdk";
 import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
@@ -77,11 +78,12 @@ export interface PrepareMessagesOptions {
  * 7. Inlining SVG attachments as text
  * 8. Sanitizing PDF filenames for Anthropic
  * 9. Extracting tool-result media as user message attachments
- * 10. Converting to Vercel AI SDK ModelMessage format
- * 11. Self-healing: filtering empty/whitespace assistant messages
- * 12. Applying provider-specific message transforms
- * 13. Applying cache control headers
- * 14. Validating Anthropic compliance (logs warnings only)
+ * 10. Rewriting data-URI file parts to SDK-safe inline base64
+ * 11. Converting to Vercel AI SDK ModelMessage format
+ * 12. Self-healing: filtering empty/whitespace assistant messages
+ * 13. Applying provider-specific message transforms
+ * 14. Applying cache control headers
+ * 15. Validating Anthropic compliance (logs warnings only)
  */
 export async function prepareMessagesForProvider(
   opts: PrepareMessagesOptions
@@ -161,11 +163,18 @@ export async function prepareMessagesForProvider(
   // Prevents providers from treating large base64 payloads as text/JSON context.
   const messagesWithToolMediaExtracted = extractToolMediaAsUserMessages(messagesWithSanitizedPdf);
 
+  // Rewrite user file-part data URIs to raw base64 payloads before SDK conversion.
+  // convertToModelMessages maps FileUIPart.url -> FilePart.data; keeping data: URLs here
+  // can trigger URL-download validation in downstream provider utilities.
+  const messagesWithSdkSafeFileParts = convertDataUriFilePartsForSdk(
+    messagesWithToolMediaExtracted
+  );
+
   // --- Convert to ModelMessage format ---
 
   // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-  const rawModelMessages = await convertToModelMessages(messagesWithToolMediaExtracted as any, {
+  const rawModelMessages = await convertToModelMessages(messagesWithSdkSafeFileParts as any, {
     // Drop unfinished tool calls (input-streaming/input-available) so downstream
     // transforms only see tool calls that actually produced outputs.
     ignoreIncompleteToolCalls: true,
