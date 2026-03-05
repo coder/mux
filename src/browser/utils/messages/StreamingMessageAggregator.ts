@@ -1877,7 +1877,12 @@ export class StreamingMessageAggregator {
   ): void {
     // Update TODO state if this was a successful todo_write
     // TODOs are session-scoped: update during both live streaming and historical reload
-    if (toolName === "todo_write" && hasSuccessResult(output)) {
+    if (
+      toolName === "todo_write" &&
+      hasSuccessResult(output) &&
+      input != null &&
+      typeof input === "object"
+    ) {
       const args = input as { todos: TodoItem[] };
       // Guard against malformed historical data - skip silently for self-healing
       if (Array.isArray(args.todos) && !this.todosEqual(this.currentTodos, args.todos)) {
