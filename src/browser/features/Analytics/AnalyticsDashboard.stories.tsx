@@ -18,7 +18,7 @@ import { lightweightMeta } from "@/browser/stories/meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mockFactory";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import assert from "@/common/utils/assert";
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { waitFor, within } from "@storybook/test";
 import React from "react";
 import { AnalyticsDashboard } from "./AnalyticsDashboard.js";
@@ -951,7 +951,9 @@ function AnalyticsDashboardStory() {
         <ProjectProvider>
           <AnalyticsDashboard
             leftSidebarCollapsed={false}
-            onToggleLeftSidebarCollapsed={() => {}}
+            onToggleLeftSidebarCollapsed={() => {
+              /* noop */
+            }}
           />
         </ProjectProvider>
       </RouterProvider>
