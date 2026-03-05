@@ -515,18 +515,35 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     }
   };
 
-  const handleDelete = async (workspaceId: string) => {
+  const handleDelete = async (workspaceId: string, options?: { bypassForceConfirm?: boolean }) => {
     setProcessingIds((prev) => new Set(prev).add(workspaceId));
     try {
       const result = await removeWorkspace(workspaceId);
       if (result.success) {
         onWorkspacesChanged?.();
-      } else {
+        return;
+      }
+
+      // Shift-click: skip force-delete confirmation, auto-force immediately.
+      if (options?.bypassForceConfirm) {
+        const forced = await removeWorkspace(workspaceId, { force: true });
+        if (forced.success) {
+          onWorkspacesChanged?.();
+          return;
+        }
+
+        // Force delete also failed — fall through to show modal with the error.
         setForceDeleteModal({
           workspaceId,
-          error: result.error ?? "Failed to remove workspace",
+          error: forced.error ?? result.error ?? "Failed to remove workspace",
         });
+        return;
       }
+
+      setForceDeleteModal({
+        workspaceId,
+        error: result.error ?? "Failed to remove workspace",
+      });
     } finally {
       setProcessingIds((prev) => {
         const next = new Set(prev);
@@ -763,7 +780,11 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <button
-                                  onClick={() => void handleDelete(workspace.id)}
+                                  onClick={(event) =>
+                                    void handleDelete(workspace.id, {
+                                      bypassForceConfirm: event.shiftKey,
+                                    })
+                                  }
                                   disabled={isProcessing}
                                   className="text-muted rounded p-1.5 transition-colors hover:bg-white/10 hover:text-red-400 disabled:opacity-50"
                                   aria-label={`Delete workspace ${displayTitle}`}
