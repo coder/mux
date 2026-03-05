@@ -1095,11 +1095,6 @@ export class WorkspaceService extends EventEmitter {
         ...(typeof result.url === "string" ? { url: result.url } : {}),
       };
     };
-    const extractTimestamp = (event: StreamEndEvent | { metadata?: { timestamp?: number } }) => {
-      const raw = event.metadata?.timestamp;
-      return typeof raw === "number" && Number.isFinite(raw) ? raw : Date.now();
-    };
-
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
@@ -1109,7 +1104,7 @@ export class WorkspaceService extends EventEmitter {
 
     this.aiService.on("stream-end", (data: unknown) => {
       if (isStreamEndEvent(data)) {
-        void this.handleStreamCompletion(data.workspaceId, extractTimestamp(data));
+        void this.handleStreamCompletion(data.workspaceId);
       }
     });
 
@@ -1234,8 +1229,14 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async handleStreamCompletion(workspaceId: string, timestamp: number): Promise<void> {
-    await this.updateRecencyTimestamp(workspaceId, timestamp);
+  private async handleStreamCompletion(workspaceId: string): Promise<void> {
+    // Always use Date.now() for stream-completion recency.
+    // extractTimestamp() returns the message-creation timestamp from stream
+    // metadata, which is effectively the same as the sendMessage recency and
+    // can lose the race against the frontend's lastRead (set via Date.now()
+    // after the IPC round-trip). Using a fresh timestamp here ensures the
+    // completion recency is strictly after any earlier lastRead write.
+    await this.updateRecencyTimestamp(workspaceId, Date.now());
     await this.updateStreamingStatus(workspaceId, false);
   }
 
