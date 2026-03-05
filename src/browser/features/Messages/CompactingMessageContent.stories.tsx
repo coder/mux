@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { fn } from "@storybook/test";
 import type { ReactNode } from "react";
 import { StreamingBarrierView } from "@/browser/features/Messages/ChatBarrier/StreamingBarrierView";
 import { CompactingMessageContent } from "@/browser/features/Messages/CompactingMessageContent";
@@ -67,7 +68,11 @@ export const StreamingCompactionWithConfigureHint: Story = {
         hintElement={
           <span className="text-muted text-[11px]">
             No compaction model set —{" "}
-            <button type="button" className="text-link cursor-pointer underline underline-offset-2">
+            <button
+              type="button"
+              className="text-link cursor-pointer underline underline-offset-2"
+              onClick={fn()}
+            >
               configure
             </button>
           </span>

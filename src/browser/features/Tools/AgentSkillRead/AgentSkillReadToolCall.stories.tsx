@@ -1,91 +1,133 @@
-import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { ReactNode } from "react";
-import { AgentSkillReadToolCall } from "@/browser/features/Tools/AgentSkillReadToolCall";
-import { lightweightMeta } from "@/browser/stories/meta.js";
-import type { AgentSkillReadToolResult } from "@/common/types/tools";
+import type { AppStory } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import {
+  STABLE_TIMESTAMP,
+  createAgentSkillReadTool,
+  createAssistantMessage,
+  createUserMessage,
+} from "@/browser/stories/mockFactory";
+import { setupSimpleChatStory } from "@/browser/stories/storyHelpers.js";
 
-const meta = {
-  ...lightweightMeta,
-  title: "App/Chat/Tools/AgentSkillRead",
-  component: AgentSkillReadToolCall,
-} satisfies Meta<typeof AgentSkillReadToolCall>;
-
+const meta = { ...appMeta, title: "App/Chat/Tools/AgentSkillRead" };
 export default meta;
 
-type Story = StoryObj<typeof meta>;
-
-const TESTS_SKILL_RESULT: AgentSkillReadToolResult = {
-  success: true,
-  skill: {
-    scope: "project",
-    directoryName: "tests",
-    frontmatter: {
-      name: "tests",
-      description: "Testing doctrine, commands, and test layout conventions",
-    },
-    body: `# tests
-
-Use this skill to align changes with project testing conventions.
-
-## Includes
-
-- Test file placement
-- Recommended test commands
-- Assertions and fixture patterns`,
-  },
-};
-
-const REACT_EFFECTS_SKILL_RESULT: AgentSkillReadToolResult = {
-  success: true,
-  skill: {
-    scope: "project",
-    directoryName: "react-effects",
-    frontmatter: {
-      name: "react-effects",
-      description: "Guidelines for when to use (and avoid) useEffect in React",
-    },
-    body: `# react-effects
-
-Prefer render-time derivation and explicit event handlers.
-
-## Avoid
-
-- Prop-to-state syncing effects
-- Timing-based coordination`,
-  },
-};
-
-function AgentSkillStoryShell(props: { children: ReactNode }) {
-  return (
-    <div className="bg-background flex min-h-screen items-start p-6">
-      <div className="w-full max-w-3xl space-y-3">{props.children}</div>
-    </div>
-  );
-}
-
 /** Chat showing loaded skills via agent_skill_read tool calls */
-export const WithLoadedSkills: Story = {
+export const WithLoadedSkills: AppStory = {
   render: () => (
-    <AgentSkillStoryShell>
-      <AgentSkillReadToolCall
-        args={{ name: "tests" }}
-        result={TESTS_SKILL_RESULT}
-        status="completed"
-      />
-      <AgentSkillReadToolCall
-        args={{ name: "react-effects" }}
-        result={REACT_EFFECTS_SKILL_RESULT}
-        status="completed"
-      />
-    </AgentSkillStoryShell>
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skills-loaded",
+          messages: [
+            createUserMessage("msg-1", "Help me write tests for this component", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 120000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll load the testing skill to follow project conventions.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 115000,
+                toolCalls: [
+                  createAgentSkillReadTool("tc-1", "tests", {
+                    description: "Testing doctrine, commands, and test layout conventions",
+                    scope: "project",
+                  }),
+                ],
+              }
+            ),
+            createAssistantMessage(
+              "msg-3",
+              "I'll also load the React effects skill since this is a React component.",
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 110000,
+                toolCalls: [
+                  createAgentSkillReadTool("tc-2", "react-effects", {
+                    description: "Guidelines for when to use (and avoid) useEffect in React",
+                    scope: "project",
+                  }),
+                ],
+              }
+            ),
+            createAssistantMessage(
+              "msg-4",
+              "Now I can write tests that follow your project's testing patterns.",
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 100000,
+              }
+            ),
+          ],
+          // Available skills organized by scope: Project (3), Global (1), Built-in (1)
+          // Loaded: tests, react-effects
+          agentSkills: [
+            // Project skills
+            {
+              name: "tests",
+              description: "Testing doctrine, commands, and test layout conventions",
+              scope: "project",
+            },
+            {
+              name: "react-effects",
+              description: "Guidelines for when to use (and avoid) useEffect in React",
+              scope: "project",
+            },
+            {
+              name: "pull-requests",
+              description: "Guidelines for creating and managing Pull Requests",
+              scope: "project",
+            },
+            // Global skill
+            {
+              name: "my-company-style",
+              description: "Company-wide coding style and conventions",
+              scope: "global",
+            },
+            // Built-in skill
+            {
+              name: "init",
+              description: "Bootstrap an AGENTS.md file in a new or existing project",
+              scope: "built-in",
+            },
+          ],
+        })
+      }
+    />
   ),
 };
 
 /** Chat showing a skill invocation command on user messages */
-export const WithSkillCommand: Story = {
+export const WithSkillCommand: AppStory = {
   render: () => (
-    <AgentSkillStoryShell>
-      <AgentSkillReadToolCall args={{ name: "react-effects" }} status="executing" />
-    </AgentSkillStoryShell>
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skill",
+          messages: [
+            createUserMessage("msg-1", "/react-effects Audit this effect for stale closures", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 120000,
+              muxMetadata: {
+                type: "agent-skill",
+                rawCommand: "/react-effects Audit this effect for stale closures",
+                commandPrefix: "/react-effects",
+                skillName: "react-effects",
+                scope: "project",
+              },
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll review the effect with the react-effects skill and report any stale closure risks.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 110000,
+              }
+            ),
+          ],
+        })
+      }
+    />
   ),
 };
