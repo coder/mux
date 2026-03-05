@@ -1,15 +1,93 @@
-import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
-import { setupSimpleChatStory } from "@/browser/stories/storyHelpers.js";
-import {
-  STABLE_TIMESTAMP,
-  createUserMessage,
-  createAssistantMessage,
-  createFileEditTool,
-} from "@/browser/stories/mockFactory";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import type { ReactNode } from "react";
+import { FileEditToolCall } from "@/browser/features/Tools/FileEditToolCall";
+import { lightweightMeta } from "@/browser/stories/meta.js";
 
-const meta = { ...appMeta, title: "App/Chat/Tools/FileEdit" };
+const meta = {
+  ...lightweightMeta,
+  title: "App/Chat/Tools/FileEdit",
+  component: FileEditToolCall,
+} satisfies Meta<typeof FileEditToolCall>;
+
 export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+const ADDITION_FIRST_DIFF = [
+  "--- src/addition-first.ts",
+  "+++ src/addition-first.ts",
+  "@@ -1,3 +1,5 @@",
+  "+import { newModule } from './new';",
+  "+import { anotherNew } from './another';",
+  " export function existing() {",
+  "   return 'unchanged';",
+  " }",
+].join("\n");
+
+const DELETION_LAST_DIFF = [
+  "--- src/deletion-last.ts",
+  "+++ src/deletion-last.ts",
+  "@@ -1,6 +1,3 @@",
+  " export function keep() {",
+  "   return 'still here';",
+  " }",
+  "-export function remove() {",
+  "-  return 'goodbye';",
+  "-}",
+].join("\n");
+
+const CONTEXT_BOTH_DIFF = [
+  "--- src/context-both.ts",
+  "+++ src/context-both.ts",
+  "@@ -1,4 +1,4 @@",
+  " function before() {",
+  "+  console.log('added');",
+  "-  console.log('removed');",
+  " }",
+].join("\n");
+
+const ALIGNMENT_DIFF = [
+  "--- src/ppo/train/config.rs",
+  "+++ src/ppo/train/config.rs",
+  "@@ -374,7 +374,3 @@",
+  "             adj = LR_INCREASE_ADJ;",
+  "         }",
+  " ",
+  "-            // Slow down learning rate when we're too stale.",
+  "-            if last_metrics.stop_reason == metrics::StopReason::TooStale {",
+  "-                adj = LR_DECREASE_ADJ;",
+  "-            }",
+].join("\n");
+
+const LONG_LINE_DIFF = [
+  "--- src/config/longLines.ts",
+  "+++ src/config/longLines.ts",
+  "@@ -1,4 +1,4 @@",
+  " // Short context line",
+  "-export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: false };",
+  "+export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: true, enabled: true };",
+  " // Another short line",
+  " export const SHORT = 1;",
+].join("\n");
+
+function FileEditStoryShell(props: { children: ReactNode }) {
+  return (
+    <div className="bg-background flex min-h-screen items-start p-6">
+      <div className="w-full max-w-4xl space-y-4">{props.children}</div>
+    </div>
+  );
+}
+
+function FileEditCard(props: { path: string; diff: string }) {
+  return (
+    <FileEditToolCall
+      toolName="file_edit_replace_string"
+      args={{ path: props.path, old_string: "...", new_string: "..." }}
+      result={{ success: true, diff: props.diff, edits_applied: 1 }}
+      status="completed"
+    />
+  );
+}
 
 /**
  * Diff padding colors - verifies that the top/bottom padding of diff blocks
@@ -20,76 +98,13 @@ export default meta;
  * 2. Diff ending with deletion (red bottom padding)
  * 3. Diff with context lines at both ends (default padding)
  */
-export const DiffPaddingColors: AppStory = {
+export const DiffPaddingColors: Story = {
   render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-diff-padding",
-          messages: [
-            createUserMessage("msg-1", "Show me different diff edge cases", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage(
-              "msg-2",
-              "Here are diffs with different first/last line types:",
-              {
-                historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 90000,
-                toolCalls: [
-                  // Diff starting with addition - top padding should be green
-                  createFileEditTool(
-                    "call-1",
-                    "src/addition-first.ts",
-                    [
-                      "--- src/addition-first.ts",
-                      "+++ src/addition-first.ts",
-                      "@@ -1,3 +1,5 @@",
-                      "+import { newModule } from './new';",
-                      "+import { anotherNew } from './another';",
-                      " export function existing() {",
-                      "   return 'unchanged';",
-                      " }",
-                    ].join("\n")
-                  ),
-                  // Diff ending with deletion - bottom padding should be red
-                  createFileEditTool(
-                    "call-2",
-                    "src/deletion-last.ts",
-                    [
-                      "--- src/deletion-last.ts",
-                      "+++ src/deletion-last.ts",
-                      "@@ -1,6 +1,3 @@",
-                      " export function keep() {",
-                      "   return 'still here';",
-                      " }",
-                      "-export function remove() {",
-                      "-  return 'goodbye';",
-                      "-}",
-                    ].join("\n")
-                  ),
-                  // Diff with context at both ends - default padding
-                  createFileEditTool(
-                    "call-3",
-                    "src/context-both.ts",
-                    [
-                      "--- src/context-both.ts",
-                      "+++ src/context-both.ts",
-                      "@@ -1,4 +1,4 @@",
-                      " function before() {",
-                      "+  console.log('added');",
-                      "-  console.log('removed');",
-                      " }",
-                    ].join("\n")
-                  ),
-                ],
-              }
-            ),
-          ],
-        })
-      }
-    />
+    <FileEditStoryShell>
+      <FileEditCard path="src/addition-first.ts" diff={ADDITION_FIRST_DIFF} />
+      <FileEditCard path="src/deletion-last.ts" diff={DELETION_LAST_DIFF} />
+      <FileEditCard path="src/context-both.ts" diff={CONTEXT_BOTH_DIFF} />
+    </FileEditStoryShell>
   ),
   parameters: {
     docs: {
@@ -109,49 +124,11 @@ export const DiffPaddingColors: AppStory = {
  * The ch unit misalignment bug is more visible with 3-digit line numbers.
  * The colored padding strip should align perfectly with the gutter edge.
  */
-export const DiffPaddingAlignment: AppStory = {
+export const DiffPaddingAlignment: Story = {
   render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-diff-alignment",
-          messages: [
-            createUserMessage("msg-1", "Show me a diff with high line numbers", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage(
-              "msg-2",
-              "Here's a diff ending with deletions at high line numbers:",
-              {
-                historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 90000,
-                toolCalls: [
-                  // Diff with 3-digit line numbers ending in deletions
-                  // Replicates the alignment issue from code review diffs
-                  createFileEditTool(
-                    "call-1",
-                    "src/ppo/train/config.rs",
-                    [
-                      "--- src/ppo/train/config.rs",
-                      "+++ src/ppo/train/config.rs",
-                      "@@ -374,7 +374,3 @@",
-                      "             adj = LR_INCREASE_ADJ;",
-                      "         }",
-                      " ",
-                      "-            // Slow down learning rate when we're too stale.",
-                      "-            if last_metrics.stop_reason == metrics::StopReason::TooStale {",
-                      "-                adj = LR_DECREASE_ADJ;",
-                      "-            }",
-                    ].join("\n")
-                  ),
-                ],
-              }
-            ),
-          ],
-        })
-      }
-    />
+    <FileEditStoryShell>
+      <FileEditCard path="src/ppo/train/config.rs" diff={ALIGNMENT_DIFF} />
+    </FileEditStoryShell>
   ),
   parameters: {
     docs: {
@@ -172,45 +149,11 @@ export const DiffPaddingAlignment: AppStory = {
  * rather than overflow outside its container. The background colors for
  * additions/deletions should span the full scrollable width.
  */
-export const DiffHorizontalScroll: AppStory = {
+export const DiffHorizontalScroll: Story = {
   render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-diff-scroll",
-          messages: [
-            createUserMessage("msg-1", "Show me a diff with very long lines", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage(
-              "msg-2",
-              "Here's a diff with lines that require horizontal scrolling:",
-              {
-                historySequence: 2,
-                timestamp: STABLE_TIMESTAMP - 90000,
-                toolCalls: [
-                  createFileEditTool(
-                    "call-1",
-                    "src/config/longLines.ts",
-                    [
-                      "--- src/config/longLines.ts",
-                      "+++ src/config/longLines.ts",
-                      "@@ -1,4 +1,4 @@",
-                      " // Short context line",
-                      "-export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: false };",
-                      "+export const VERY_LONG_CONFIG_OPTION_NAME_THAT_EXCEEDS_NORMAL_WIDTH = { description: 'This is an extremely long configuration value that should definitely cause horizontal scrolling in the diff viewer component', defaultValue: true, enabled: true };",
-                      " // Another short line",
-                      " export const SHORT = 1;",
-                    ].join("\n")
-                  ),
-                ],
-              }
-            ),
-          ],
-        })
-      }
-    />
+    <FileEditStoryShell>
+      <FileEditCard path="src/config/longLines.ts" diff={LONG_LINE_DIFF} />
+    </FileEditStoryShell>
   ),
   parameters: {
     docs: {
