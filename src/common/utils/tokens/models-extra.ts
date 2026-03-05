@@ -88,13 +88,13 @@ export const modelsExtra: Record<string, ModelData> = {
   // Native 1.05M context, 128K max output; OpenAI's model page exposes the larger
   // window directly and does not document an extra API flag for it, so Mux should
   // present the published limit instead of routing this through the Anthropic-only toggle.
-  // Base pricing: $2/M input, $16/M output, $0.25/M cached input.
+  // Base pricing: $2.50/M input, $15/M output, $0.25/M cached input.
   // OpenAI publishes higher prompt/output rates above 272K tokens.
   "gpt-5.4": {
     max_input_tokens: 1050000,
     max_output_tokens: 128000,
-    input_cost_per_token: 0.000002, // $2 per million input tokens
-    output_cost_per_token: 0.000016, // $16 per million output tokens
+    input_cost_per_token: 0.0000025, // $2.50 per million input tokens
+    output_cost_per_token: 0.000015, // $15 per million output tokens
     cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens
     litellm_provider: "openai",
     mode: "chat",
@@ -107,13 +107,13 @@ export const modelsExtra: Record<string, ModelData> = {
 
   // GPT-5.4 Pro - Released March 5, 2026
   // Native 1.05M context, 128K max output; same rationale as GPT-5.4 above.
-  // Base pricing: $25/M input, $200/M output; OpenAI has not published cached-input pricing.
+  // Base pricing: $30/M input, $180/M output; OpenAI has not published cached-input pricing.
   // OpenAI publishes higher prompt/output rates above 272K tokens.
   "gpt-5.4-pro": {
     max_input_tokens: 1050000,
     max_output_tokens: 128000,
-    input_cost_per_token: 0.000025, // $25 per million input tokens
-    output_cost_per_token: 0.0002, // $200 per million output tokens
+    input_cost_per_token: 0.00003, // $30 per million input tokens
+    output_cost_per_token: 0.00018, // $180 per million output tokens
     knowledge_cutoff: "2025-08-31",
     litellm_provider: "openai",
     mode: "chat",

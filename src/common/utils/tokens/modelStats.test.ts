@@ -44,6 +44,22 @@ describe("getModelStats", () => {
       expect(stats).not.toBeNull();
       expect(stats?.max_input_tokens).toBe(272000);
     });
+
+    test("should find gpt-5.4 with correct 1.05M context window", () => {
+      const stats = getModelStats("openai:gpt-5.4");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1050000);
+      expect(stats?.input_cost_per_token).toBe(0.0000025);
+      expect(stats?.output_cost_per_token).toBe(0.000015);
+    });
+
+    test("should find gpt-5.4-pro with correct 1.05M context and pricing", () => {
+      const stats = getModelStats("openai:gpt-5.4-pro");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1050000);
+      expect(stats?.input_cost_per_token).toBe(0.00003);
+      expect(stats?.output_cost_per_token).toBe(0.00018);
+    });
   });
 
   describe("ollama model lookups with cloud suffix", () => {
