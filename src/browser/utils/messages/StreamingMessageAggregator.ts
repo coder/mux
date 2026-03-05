@@ -1879,8 +1879,9 @@ export class StreamingMessageAggregator {
     // TODOs are session-scoped: update during both live streaming and historical reload
     if (toolName === "todo_write" && hasSuccessResult(output)) {
       const args = input as { todos: TodoItem[] };
-      // Only update if todos actually changed (prevents flickering from reference changes)
-      if (!this.todosEqual(this.currentTodos, args.todos)) {
+      // Guard against malformed historical data - skip silently for self-healing
+      if (Array.isArray(args.todos) && !this.todosEqual(this.currentTodos, args.todos)) {
+        // Only update if todos actually changed (prevents flickering from reference changes)
         this.currentTodos = args.todos;
       }
     }
