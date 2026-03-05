@@ -11,6 +11,7 @@ import { spawn } from "child_process";
 import type { BindMount } from "./credentialForwarding";
 import type { InitLogger } from "./Runtime";
 import { LineBuffer } from "./initHook";
+import { redactDevcontainerArgsForLog } from "./devcontainerLogRedaction";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
@@ -164,26 +165,6 @@ export interface DevcontainerExecOptions {
   timeoutMs?: number;
 }
 
-const SENSITIVE_REMOTE_ENV_KEYS = new Set([
-  "GH_TOKEN",
-  "GITHUB_TOKEN",
-  "GH_ENTERPRISE_TOKEN",
-  "GITHUB_ENTERPRISE_TOKEN",
-  "CODER_AGENT_TOKEN",
-]);
-
-function redactRemoteEnvArgs(args: string[]): string[] {
-  const redacted = [...args];
-  for (let i = 0; i < redacted.length - 1; i += 1) {
-    if (redacted[i] !== "--remote-env") continue;
-    const entry = redacted[i + 1] ?? "";
-    const [key] = entry.split("=");
-    if (SENSITIVE_REMOTE_ENV_KEYS.has(key)) {
-      redacted[i + 1] = `${key}=<redacted>`;
-    }
-  }
-  return redacted;
-}
 const DEFAULT_UP_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_STDERR_BUFFER_LENGTH = 8_000; // 8KB cap for error summaries
 const DEFAULT_CLEANUP_TIMEOUT_MS = 60_000; // 1 minute
@@ -274,7 +255,7 @@ export async function devcontainerUp(
   }
 
   const runUp = (args: string[]): Promise<DevcontainerUpResult> => {
-    const logArgs = redactRemoteEnvArgs(args);
+    const logArgs = redactDevcontainerArgsForLog(args);
     initLogger.logStep(`Running: devcontainer ${logArgs.join(" ")}`);
 
     return new Promise((resolve, reject) => {

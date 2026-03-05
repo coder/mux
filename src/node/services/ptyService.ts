@@ -20,6 +20,7 @@ import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
+import { redactDevcontainerArgsForLog } from "@/node/runtime/devcontainerLogRedaction";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { access } from "fs/promises";
 import { constants } from "fs";
@@ -128,9 +129,8 @@ export class PTYService {
 
       devcontainerArgs.push("--", "/bin/sh");
       runtimeLabel = "Devcontainer";
-      log.info(
-        `[PTY] Devcontainer terminal for ${sessionId}: devcontainer ${devcontainerArgs.join(" ")}`
-      );
+      const logArgs = redactDevcontainerArgsForLog(devcontainerArgs);
+      log.info(`[PTY] Devcontainer terminal for ${sessionId}: devcontainer ${logArgs.join(" ")}`);
 
       ptyProcess = spawnPtyProcess({
         runtimeLabel,
