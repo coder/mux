@@ -521,7 +521,7 @@ check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
 	# Workaround: katex@0.16.34 ships broken ESM with unreplaced __VERSION__ placeholder.
 	# Remove this NODE_OPTIONS prefix once katex publishes a fixed build.
-	@cd docs && NODE_OPTIONS='--import data:text/javascript,globalThis.__VERSION__=%220.16.34%22' bun x mintlify broken-links
+	@cd docs && NODE_OPTIONS="$${NODE_OPTIONS:+$$NODE_OPTIONS }--import data:text/javascript,globalThis.__VERSION__=%220.16.34%22" bun x mintlify broken-links
 
 check-code-docs-links: ## Validate code references to docs paths
 	@./scripts/check-code-docs-links.sh
