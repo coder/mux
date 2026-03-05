@@ -47,16 +47,18 @@ const MODEL_DEFINITIONS = {
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
   },
+  // GPT alias tracks the latest stable GPT-5 tier.
   GPT: {
     provider: "openai",
-    providerModelId: "gpt-5.2",
+    providerModelId: "gpt-5.4",
     aliases: ["gpt"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
+  // GPT Pro alias tracks the latest GPT-5 Pro tier.
   GPT_PRO: {
     provider: "openai",
-    providerModelId: "gpt-5.2-pro",
+    providerModelId: "gpt-5.4-pro",
     aliases: ["gpt-pro"],
   },
   GPT_52_CODEX: {

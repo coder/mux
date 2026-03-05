@@ -84,6 +84,46 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
+  // GPT-5.4 - Released March 5, 2026
+  // Native 1.05M context, 128K max output; OpenAI's model page exposes the larger
+  // window directly and does not document an extra API flag for it, so Mux should
+  // present the published limit instead of routing this through the Anthropic-only toggle.
+  // Base pricing: $2/M input, $16/M output, $0.25/M cached input.
+  // OpenAI publishes higher prompt/output rates above 272K tokens.
+  "gpt-5.4": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000002, // $2 per million input tokens
+    output_cost_per_token: 0.000016, // $16 per million output tokens
+    cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-08-31",
+  },
+
+  // GPT-5.4 Pro - Released March 5, 2026
+  // Native 1.05M context, 128K max output; same rationale as GPT-5.4 above.
+  // Base pricing: $25/M input, $200/M output; OpenAI has not published cached-input pricing.
+  // OpenAI publishes higher prompt/output rates above 272K tokens.
+  "gpt-5.4-pro": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000025, // $25 per million input tokens
+    output_cost_per_token: 0.0002, // $200 per million output tokens
+    knowledge_cutoff: "2025-08-31",
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
+  },
+
   // GPT-5.2 / GPT-5.2 Codex - keep aligned
   // LiteLLM reports 400k context for Codex, but it should match GPT-5.2 (272k)
   // $1.75/M input, $14/M output

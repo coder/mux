@@ -76,20 +76,29 @@ export function getModelProvider(modelString: string): string {
 }
 
 /**
- * Check if a model supports the 1M context window.
- * The 1M context window is available for Claude Sonnet 4/4.5/4.6 and Opus 4.6.
+ * Check if a model supports the optional 1M context mode used by Mux's context toggle.
+ *
+ * Supported model families:
+ * - Anthropic Claude Sonnet 4/4.5/4.6 and Opus 4.6
+ *
+ * GPT-5.4's 1.05M window is exposed as the model's native context limit, so it
+ * should not appear behind this Anthropic-style opt-in toggle.
+ *
  * @param modelString - Full model string in format "provider:model-name"
- * @returns True if the model supports 1M context window
+ * @returns True if the model supports 1M context window mode
  */
 export function supports1MContext(modelString: string): boolean {
   const normalized = normalizeGatewayModel(modelString);
-  const [provider, modelName] = normalized.split(":");
+  const [provider, modelName] = normalized.split(":", 2);
+  const lowerModelName = modelName?.toLowerCase() ?? "";
+
   if (provider !== "anthropic") {
     return false;
   }
+
   // Sonnet 4, Sonnet 4.5, Sonnet 4.6, and Opus 4.6 support 1M context (beta)
   return (
-    (modelName?.includes("claude-sonnet-4") && !modelName.includes("claude-sonnet-3")) ||
-    modelName?.includes("claude-opus-4-6") === true
+    (lowerModelName.includes("claude-sonnet-4") && !lowerModelName.includes("claude-sonnet-3")) ||
+    lowerModelName.includes("claude-opus-4-6")
   );
 }
