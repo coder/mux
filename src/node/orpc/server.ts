@@ -569,9 +569,13 @@ export async function createOrpcServer({
       log.error("Failed to read index.html for SPA fallback:", error);
     }
 
-    // Serve JS/CSS assets directly but route HTML shell requests through SPA fallback
-    // so injected base href + browser-mode globals stay consistent on both "/" and deep links.
-    app.use(express.static(staticDir, { index: false }));
+    // Serve JS/CSS/assets from disk, but never serve index.html — the SPA fallback
+    // (below all API routes) serves the injected version with base href + proxy template.
+    const serveStaticAssets = express.static(staticDir, { index: false });
+    app.use((req, res, next) => {
+      if (req.path === "/index.html") return next();
+      serveStaticAssets(req, res, next);
+    });
   }
 
   // Health check endpoint
