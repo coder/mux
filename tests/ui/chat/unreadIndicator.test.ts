@@ -56,14 +56,14 @@ function getWorkspaceUnreadIndicator(
 
   if (!workspaceEl) return null;
 
-  // The unread bar is a span with the unread styling
-  const unreadBar = workspaceEl.querySelector(
+  // The unread indicator is a StatusDot span with the idle/unread styling
+  const statusDot = workspaceEl.querySelector(
     'span[class*="bg-muted-foreground"]'
   ) as HTMLElement | null;
 
   return {
     element: workspaceEl,
-    hasUnreadBar: unreadBar !== null && unreadBar.getAttribute("aria-hidden") !== "true",
+    hasUnreadBar: statusDot !== null && !statusDot.className.includes("opacity-0"),
   };
 }
 
