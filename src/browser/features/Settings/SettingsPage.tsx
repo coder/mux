@@ -187,9 +187,11 @@ export function SettingsPage(props: SettingsPageProps) {
         - On touch layouts, the left sidebar is often off-canvas by default.
         Without back + menu actions here, /settings/:section can trap users in-pane.
       */}
-      <div className="bg-surface-primary border-border-light flex shrink-0 items-center 
+      <div
+        className="bg-surface-primary border-border-light flex shrink-0 items-center 
         justify-between border-b px-2 md:hidden [@media(max-width:768px)]:h-auto 
-        [@media(max-width:768px)]:py-2">
+        [@media(max-width:768px)]:py-2"
+      >
         <div className="flex min-w-0 items-center gap-2">
           {props.leftSidebarCollapsed && (
             <Button
