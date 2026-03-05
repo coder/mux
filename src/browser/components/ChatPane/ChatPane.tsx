@@ -924,8 +924,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   scroll container so it never overlaps the browser-painted scrollbar. */}
               <div
                 aria-hidden="true"
-                className="pointer-events-none sticky bottom-[-15px] -mx-[15px] -mb-[15px]
-                  mt-[-2rem] h-8 bg-linear-to-t from-surface-primary to-transparent"
+                className="from-surface-primary pointer-events-none sticky bottom-[-15px]
+                  mx-[-15px] mt-[-2rem] mb-[-15px] h-8 bg-linear-to-t to-transparent"
               />
             </div>
             <PositionedMenu
