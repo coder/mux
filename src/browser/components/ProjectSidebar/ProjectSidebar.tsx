@@ -680,7 +680,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const projectRemoveError = usePopoverError();
   const sectionRemoveError = usePopoverError();
 
-  const getProjectName = (path: string) => {
+  const getProjectName = (path: string, configuredName?: string) => {
+    if (typeof configuredName === "string" && configuredName.trim().length > 0) {
+      // Prefer persisted metadata so project renames show up immediately in the sidebar.
+      return configuredName.trim();
+    }
     if (!path || typeof path !== "string") {
       return "Unknown";
     }
@@ -1270,7 +1274,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     const projectId = projectStorage.projectId;
                     const projectStorageId = projectStorage.projectStorageId;
                     const projectStorageLookupIds = projectStorage.projectStorageLookupIds;
-                    const projectName = getProjectName(projectPath);
+                    const projectName = getProjectName(projectPath, config.name);
                     const sanitizedProjectId =
                       projectPath.replace(/[^a-zA-Z0-9_-]/g, "-") || "root";
                     const workspaceListId = `workspace-list-${sanitizedProjectId}`;
@@ -1321,15 +1325,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <div className="text-muted-dark flex gap-2 truncate text-sm">
-                                  {(() => {
-                                    const abbrevPath = PlatformPaths.abbreviate(projectPath);
-                                    const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
-                                    return (
-                                      <span className="text-foreground truncate font-medium">
-                                        {basename}
-                                      </span>
-                                    );
-                                  })()}
+                                  <span className="text-foreground truncate font-medium">
+                                    {projectName}
+                                  </span>
                                 </div>
                               </TooltipTrigger>
                               <TooltipContent align="start">{projectPath}</TooltipContent>
