@@ -81,11 +81,18 @@ function createHttpClient(baseUrl: string): RouterClient<AppRouter> {
 function createFakeAnalyticsApiClient(
   overrides: {
     getSavedQueries?: () => Promise<{ queries: SavedQuery[] }>;
+    updateSavedQuery?: (input: {
+      id: string;
+      label?: string;
+      sql?: string;
+      chartType?: string | null;
+      order?: number;
+    }) => Promise<SavedQuery>;
   } = {}
 ): RouterClient<AppRouter> {
   // Regression guard: getAnalyticsNamespace validates a full analytics namespace before exposing
   // saved-query helpers, so this fake includes the required surface even though these tests only
-  // exercise getSavedQueries.
+  // exercise saved-query loading/update flows.
   const analyticsNamespace = {
     getSummary: () => Promise.resolve(summaryFixture),
     getSpendOverTime: () => Promise.resolve([]),
@@ -324,6 +331,41 @@ describe("useAnalytics hooks", () => {
 
     expect(getSavedQueriesMock).toHaveBeenCalledTimes(1);
     expect(result.current.queries).toEqual(savedQueriesFixture);
+  });
+
+  test("useSavedQueries forwards SQL updates and refreshes the saved-query list", async () => {
+    const updatedQuery: SavedQuery = {
+      ...savedQueriesFixture[0],
+      sql: "SELECT 2",
+    };
+    let loadCount = 0;
+    const getSavedQueriesMock = mock(() => {
+      loadCount += 1;
+      return Promise.resolve({
+        queries: loadCount === 1 ? savedQueriesFixture : [updatedQuery],
+      });
+    });
+    const updateSavedQueryMock = mock(() => Promise.resolve(updatedQuery));
+    currentApiClient = createFakeAnalyticsApiClient({
+      getSavedQueries: getSavedQueriesMock,
+      updateSavedQuery: updateSavedQueryMock,
+    });
+
+    const { result } = renderHook(() => useSavedQueries());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.queries).toEqual(savedQueriesFixture);
+
+    await act(async () => {
+      await result.current.update({ id: updatedQuery.id, sql: updatedQuery.sql });
+    });
+
+    expect(updateSavedQueryMock).toHaveBeenCalledWith({
+      id: updatedQuery.id,
+      sql: updatedQuery.sql,
+    });
+    await waitFor(() => expect(getSavedQueriesMock).toHaveBeenCalledTimes(2));
+    expect(result.current.queries).toEqual([updatedQuery]);
   });
 
   test("executeRawQuery surfaces backend error message instead of generic 500", async () => {
