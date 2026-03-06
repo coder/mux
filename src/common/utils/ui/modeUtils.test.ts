@@ -9,6 +9,18 @@ describe("getPlanModeInstruction", () => {
     expect(instruction).toContain("file_edit_* tools");
   });
 
+  it("routes ambiguous Explore reports to another narrow Explore task", () => {
+    const instruction = getPlanModeInstruction("/tmp/plan.md", false);
+
+    expect(instruction).toContain("Anti-pattern: using `file_read` or `bash` in Plan Mode");
+    expect(instruction).toContain("spawn another narrowly focused Explore task instead");
+    expect(instruction).toContain("plan file itself");
+    expect(instruction).toContain("user-provided text already in this conversation");
+    expect(instruction).not.toContain(
+      "only re-check if the report is ambiguous or contradicts other evidence"
+    );
+  });
+
   it("indicates when plan file already exists", () => {
     const instruction = getPlanModeInstruction("/tmp/existing-plan.md", true);
 

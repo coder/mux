@@ -130,6 +130,25 @@ describe("buildSystemMessage", () => {
     mockHomedir?.mockRestore();
   });
 
+  test("includes anti-reverification guidance in the subagent report prelude", async () => {
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
+
+    expect(systemMessage).toContain("<subagent-reports>");
+    expect(systemMessage).toContain("spawn a narrower Explore task instead");
+    expect(systemMessage).toContain("Such reports count as having read the referenced files.");
+    expect(systemMessage).not.toContain(
+      "Do not redo the same investigation unless the report is ambiguous or contradicts other evidence"
+    );
+  });
+
   test("includes general instructions in custom-instructions", async () => {
     await fs.writeFile(
       path.join(projectDir, "AGENTS.md"),

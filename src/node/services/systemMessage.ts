@@ -70,7 +70,7 @@ Before finishing, apply strict completion discipline:
 </completion-discipline>
 
 <subagent-reports>
-Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). Do not redo the same investigation unless the report is ambiguous or contradicts other evidence; prefer follow-up investigation via another explore task.
+Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). In planning workflows, do not re-verify those reports yourself; if one is ambiguous, incomplete, or conflicts with another report, spawn a narrower Explore task instead. Such reports count as having read the referenced files.
 </subagent-reports>
 </prelude>
 `;

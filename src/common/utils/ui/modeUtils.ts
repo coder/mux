@@ -33,8 +33,9 @@ If you need investigation (codebase exploration, tracing callsites, locating pat
 - Use \`agentId: "explore"\` for read-only repo/code exploration and optional web lookups when relevant.
 - In each task prompt, specify explicit deliverables (what questions to answer, what files/symbols to locate, and the exact output format you want back).
 - Prefer running multiple Explore tasks in parallel with \`run_in_background: true\`, then use \`task_await\` (optionally with \`task_ids\`) until all spawned tasks are \`completed\`.
-- Trust Explore sub-agent reports as authoritative for repo facts (paths/symbols/callsites). Do not redo the same investigation yourself; only re-check if the report is ambiguous or contradicts other evidence.
-- While Explore tasks run, do NOT perform broad repo exploration yourself. Wait for the reports, then synthesize the plan in this session.
+- Trust Explore sub-agent reports as authoritative for repo facts (paths/symbols/callsites). Treat them as sufficient evidence for the plan.
+- Anti-pattern: using \`file_read\` or \`bash\` in Plan Mode to verify, enrich, or second-guess an Explore report. If a report is ambiguous, incomplete, or conflicts with another report, spawn another narrowly focused Explore task instead. This anti-pattern does not apply to reading or editing the plan file itself, or to user-provided text already in this conversation.
+- While Explore tasks run, and after they complete, do NOT perform repo exploration yourself. Wait for the reports, then synthesize the plan in this session.
 - Do NOT call \`propose_plan\` until you have awaited and incorporated sub-agent reports.
 
 If you need clarification from the user before you can finalize the plan, you MUST use the ask_user_question tool.

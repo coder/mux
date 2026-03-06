@@ -28,6 +28,52 @@ class TestRuntime extends LocalRuntime {
 }
 
 describe("buildPlanInstructions", () => {
+  test("injects anti-reverification guidance when building plan mode instructions", async () => {
+    using tempRoot = new DisposableTempDir("stream-context-builder");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata: WorkspaceMetadata = {
+      id: "ws-1",
+      name: "workspace-1",
+      projectName: "project-1",
+      projectPath,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const runtime = new TestRuntime(projectPath, muxHome);
+    const requestPayloadMessages = [createMuxMessage("u1", "user", "plan the fix")];
+
+    const result = await buildPlanInstructions({
+      runtime,
+      metadata,
+      workspaceId: metadata.id,
+      workspacePath: projectPath,
+      effectiveMode: "plan",
+      effectiveAgentId: "plan",
+      agentIsPlanLike: true,
+      agentDiscoveryPath: projectPath,
+      additionalSystemInstructions: undefined,
+      shouldDisableTaskToolsForDepth: false,
+      taskDepth: 0,
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      requestPayloadMessages,
+    });
+
+    expect(result.effectiveAdditionalInstructions).toContain(
+      "Anti-pattern: using `file_read` or `bash` in Plan Mode"
+    );
+    expect(result.effectiveAdditionalInstructions).toContain(
+      "spawn another narrowly focused Explore task instead"
+    );
+    expect(result.effectiveAdditionalInstructions).not.toContain(
+      "only re-check if the report is ambiguous or contradicts other evidence"
+    );
+  });
+
   test("uses request payload history for Start Here detection", async () => {
     using tempRoot = new DisposableTempDir("stream-context-builder");
 

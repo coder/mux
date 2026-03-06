@@ -22,6 +22,20 @@ describe("built-in agent definitions", () => {
     expect(orchestrator?.body).toContain("counts as having read the referenced files");
   });
 
+  test("plan delegates repo investigation to Explore sub-agents", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const plan = byId.get("plan");
+    expect(plan).toBeTruthy();
+    expect(plan?.body).toContain("delegate repo investigation to Explore");
+    expect(plan?.body).toContain(
+      "Do not inspect repo files yourself to verify, enrich, or second-guess an Explore report."
+    );
+    expect(plan?.body).toContain("Reserve `file_read` for the plan file itself");
+    expect(plan?.body).not.toContain("sub-agents are optional");
+  });
+
   test("includes auto router built-in", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
