@@ -182,6 +182,9 @@ void mock.module("@/browser/contexts/ProjectContext", () => ({
 }));
 
 const TEST_PROJECT_PATH = "/projects/demo";
+const TEST_PROJECT_ID = "proj-demo";
+const TEST_ROOT_WORKING_DIRECTORY_ID = "wd-root";
+const TEST_NON_ROOT_WORKING_DIRECTORY_ID = "wd-packages";
 const FALLBACK_BRANCH = "main";
 const TEST_WORKSPACE_ID = "ws-created";
 type BranchListResult = Awaited<ReturnType<APIClient["projects"]["listBranches"]>>;
@@ -567,7 +570,23 @@ describe("useCreationWorkspace", () => {
           data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
         } as NameGenerationResult)
     );
+
+    const projectConfig: ProjectConfig = {
+      workspaces: [],
+      trusted: true,
+      projectId: TEST_PROJECT_ID,
+      workingDirectories: [
+        { id: TEST_ROOT_WORKING_DIRECTORY_ID, path: TEST_PROJECT_PATH },
+        { id: TEST_NON_ROOT_WORKING_DIRECTORY_ID, path: `${TEST_PROJECT_PATH}/packages` },
+      ],
+    };
+    mockProjectConfigMap = new Map([[TEST_PROJECT_PATH, projectConfig]]);
+    const listProjectsMock = mock<() => Promise<ProjectListResult>>(() =>
+      Promise.resolve([[TEST_PROJECT_PATH, projectConfig]])
+    );
+
     const { workspaceApi, nameGenerationApi } = setupWindow({
+      listProjects: listProjectsMock,
       listBranches: listBranchesMock,
       sendMessage: sendMessageMock,
       create: createMock,
@@ -612,6 +631,11 @@ describe("useCreationWorkspace", () => {
     const [createRequest] = createCall;
     expect(createRequest?.branchName).toBe("generated-name");
     expect(createRequest?.trunkBranch).toBe("dev");
+    expect(createRequest?.projectId).toBe(TEST_PROJECT_ID);
+    expect(createRequest?.workingDirectoryIds).toEqual([
+      TEST_ROOT_WORKING_DIRECTORY_ID,
+      TEST_NON_ROOT_WORKING_DIRECTORY_ID,
+    ]);
     expect(createRequest?.runtimeConfig).toEqual({
       type: "ssh",
       host: "example.com",
@@ -637,6 +661,85 @@ describe("useCreationWorkspace", () => {
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
+  });
+
+  test("handleSend omits workingDirectoryIds when project has only root working directory", async () => {
+    const projectConfig: ProjectConfig = {
+      workspaces: [],
+      trusted: true,
+      projectId: TEST_PROJECT_ID,
+      workingDirectories: [{ id: TEST_ROOT_WORKING_DIRECTORY_ID, path: TEST_PROJECT_PATH }],
+    };
+    mockProjectConfigMap = new Map([[TEST_PROJECT_PATH, projectConfig]]);
+    const listProjectsMock = mock<() => Promise<ProjectListResult>>(() =>
+      Promise.resolve([[TEST_PROJECT_PATH, projectConfig]])
+    );
+
+    const { workspaceApi, nameGenerationApi } = setupWindow({ listProjects: listProjectsMock });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "root only workspace",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+    await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("root only workspace");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+
+    const createCall = workspaceApi.create.mock.calls[0];
+    if (!createCall) {
+      throw new Error("Expected workspace.create to be called at least once");
+    }
+    const [createRequest] = createCall;
+    expect(createRequest?.projectId).toBe(TEST_PROJECT_ID);
+    expect(createRequest).not.toHaveProperty("workingDirectoryIds");
+  });
+
+  test("handleSend omits workingDirectoryIds for legacy projects without workingDirectories", async () => {
+    const projectConfig: ProjectConfig = {
+      workspaces: [],
+      trusted: true,
+      projectId: TEST_PROJECT_ID,
+    };
+    mockProjectConfigMap = new Map([[TEST_PROJECT_PATH, projectConfig]]);
+    const listProjectsMock = mock<() => Promise<ProjectListResult>>(() =>
+      Promise.resolve([[TEST_PROJECT_PATH, projectConfig]])
+    );
+
+    const { workspaceApi, nameGenerationApi } = setupWindow({ listProjects: listProjectsMock });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "legacy workspace",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+    await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("legacy workspace");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+
+    const createCall = workspaceApi.create.mock.calls[0];
+    if (!createCall) {
+      throw new Error("Expected workspace.create to be called at least once");
+    }
+    const [createRequest] = createCall;
+    expect(createRequest?.projectId).toBe(TEST_PROJECT_ID);
+    expect(createRequest).not.toHaveProperty("workingDirectoryIds");
   });
 
   test("handleSend shows trust dialog for untrusted projects", async () => {

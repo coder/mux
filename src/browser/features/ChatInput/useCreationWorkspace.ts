@@ -471,9 +471,11 @@ export function useCreationWorkspace({
           }
         }
 
+        const projectConfig = getProjectConfig(projectPath);
+
         // Gate: untrusted projects must be confirmed before workspace creation.
         // Skip while projects are still loading — the backend gate catches untrusted projects.
-        if (!projectsLoading && !getProjectConfig(projectPath)?.trusted) {
+        if (!projectsLoading && !projectConfig?.trusted) {
           const userConfirmed = await new Promise<boolean>((resolve) => {
             setTrustPrompt({ resolve, projectPath });
           });
@@ -486,6 +488,25 @@ export function useCreationWorkspace({
           // Trust was confirmed and set, continue with creation
         }
 
+        const projectId =
+          typeof projectConfig?.projectId === "string" && projectConfig.projectId.trim().length > 0
+            ? projectConfig.projectId
+            : undefined;
+        const normalizedProjectPath = projectPath.trim().replace(/[\\/]+$/, "");
+        const hasNonRootWorkingDirectory =
+          Array.isArray(projectConfig?.workingDirectories) &&
+          projectConfig.workingDirectories.some(
+            (workingDirectory) =>
+              workingDirectory.path.trim().replace(/[\\/]+$/, "") !== normalizedProjectPath
+          );
+
+        // Preserve historical behavior for root-only/legacy projects by omitting workingDirectoryIds.
+        const workingDirectoryIds = hasNonRootWorkingDirectory
+          ? projectConfig?.workingDirectories
+              ?.map((workingDirectory) => workingDirectory.id)
+              .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+          : undefined;
+
         // Create the workspace with the generated name and title
         const createResult = await api.workspace.create({
           projectPath,
@@ -494,6 +515,8 @@ export function useCreationWorkspace({
           title: createTitle,
           runtimeConfig,
           sectionId: sectionId ?? undefined,
+          ...(projectId ? { projectId } : {}),
+          ...(workingDirectoryIds && workingDirectoryIds.length > 0 ? { workingDirectoryIds } : {}),
         });
 
         if (!createResult.success) {
