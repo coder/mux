@@ -45,7 +45,10 @@ export class ContainerManager {
     }
 
     const containerPath = this.getContainerPath(workspaceName);
-    await fs.mkdir(containerPath, { recursive: true });
+    await fs.mkdir(this.containerBase, { recursive: true });
+    // Do not use recursive mkdir here: callers need EEXIST to mean a prior workspace already
+    // owns this container name so cleanup never deletes someone else's container.
+    await fs.mkdir(containerPath);
 
     for (const projectWorkspace of projectWorkspaces) {
       const linkPath = path.join(containerPath, projectWorkspace.projectName);

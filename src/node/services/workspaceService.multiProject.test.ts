@@ -256,6 +256,143 @@ describe("WorkspaceService multi-project lifecycle", () => {
     });
   });
 
+  test("createMultiProject preserves a pre-existing container when branchName collides", async () => {
+    await withTempMuxRoot(async (rootDir) => {
+      const workspaceId = "ws-multi-existing-container";
+      const branchName = "feature-existing-container";
+      const projectAPath = path.join(rootDir, "project-a");
+      const projectBPath = path.join(rootDir, "project-b");
+      const srcDir = path.join(rootDir, "src");
+      const originalProjectAWorkspacePath = path.join(rootDir, "existing-project-a-workspace");
+      await fsPromises.mkdir(originalProjectAWorkspacePath, { recursive: true });
+      await fsPromises.writeFile(
+        path.join(originalProjectAWorkspacePath, "marker.txt"),
+        "pre-existing marker",
+        "utf8"
+      );
+
+      const containerManager = new ContainerManager(srcDir);
+      const existingContainerPath = await containerManager.createContainer(branchName, [
+        {
+          projectName: "project-a",
+          workspacePath: originalProjectAWorkspacePath,
+        },
+      ]);
+
+      const configState: ProjectsConfig = {
+        projects: new Map([
+          [projectAPath, { workspaces: [], trusted: true }],
+          [projectBPath, { workspaces: [], trusted: true }],
+        ]),
+      };
+
+      const mockConfig: Partial<Config> = {
+        rootDir,
+        srcDir,
+        generateStableId: mock(() => workspaceId),
+        loadConfigOrDefault: mock(() => configState),
+        getEffectiveSecrets: mock(() => []),
+        getSessionDir: mock((workspace: string) => path.join(rootDir, "sessions", workspace)),
+        findWorkspace: mock(() => null),
+      };
+
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService;
+
+      const createWorkspaceAMock = mock(() =>
+        Promise.resolve({
+          success: true as const,
+          workspacePath: path.join(srcDir, "project-a", branchName),
+        })
+      );
+      const createWorkspaceBMock = mock(() =>
+        Promise.resolve({
+          success: true as const,
+          workspacePath: path.join(srcDir, "project-b", branchName),
+        })
+      );
+      const deleteWorkspaceAMock = mock(() =>
+        Promise.resolve({ success: true as const, deletedPath: "/tmp/deleted-a" })
+      );
+      const deleteWorkspaceBMock = mock(() =>
+        Promise.resolve({ success: true as const, deletedPath: "/tmp/deleted-b" })
+      );
+      const initWorkspaceMock = mock(() => Promise.resolve({ success: true as const }));
+
+      const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+        (_runtimeConfig, options) => {
+          if (options?.projectPath === projectAPath) {
+            return {
+              createWorkspace: createWorkspaceAMock,
+              deleteWorkspace: deleteWorkspaceAMock,
+              initWorkspace: initWorkspaceMock,
+              resolvePath: mock(() => Promise.resolve(srcDir)),
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          if (options?.projectPath === projectBPath) {
+            return {
+              createWorkspace: createWorkspaceBMock,
+              deleteWorkspace: deleteWorkspaceBMock,
+              initWorkspace: initWorkspaceMock,
+              resolvePath: mock(() => Promise.resolve(srcDir)),
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
+        }
+      );
+
+      const removeContainerSpy = spyOn(ContainerManager.prototype, "removeContainer");
+
+      try {
+        const workspaceService = new WorkspaceService(
+          mockConfig as Config,
+          historyService,
+          mockAIService,
+          createMockInitStateManager(),
+          mockExtensionMetadataService as ExtensionMetadataService,
+          mockBackgroundProcessManager as BackgroundProcessManager
+        );
+
+        const result = await workspaceService.createMultiProject(
+          [
+            { projectPath: projectAPath, projectName: "project-a" },
+            { projectPath: projectBPath, projectName: "project-b" },
+          ],
+          branchName,
+          "main"
+        );
+
+        expect(result.success).toBe(false);
+        if (result.success) {
+          return;
+        }
+
+        expect(result.error).toContain("already exists");
+        expect(deleteWorkspaceAMock).toHaveBeenCalledTimes(1);
+        expect(deleteWorkspaceBMock).toHaveBeenCalledTimes(1);
+        expect(initWorkspaceMock).not.toHaveBeenCalled();
+        expect(removeContainerSpy).not.toHaveBeenCalled();
+
+        await fsPromises.access(existingContainerPath);
+        expect(await fsPromises.realpath(path.join(existingContainerPath, "project-a"))).toBe(
+          await fsPromises.realpath(originalProjectAWorkspacePath)
+        );
+        expect(
+          await fsPromises.readFile(
+            path.join(existingContainerPath, "project-a", "marker.txt"),
+            "utf8"
+          )
+        ).toBe("pre-existing marker");
+      } finally {
+        removeContainerSpy.mockRestore();
+        createRuntimeSpy.mockRestore();
+      }
+    });
+  });
+
   test("createMultiProject resolves trunk branch per project when requested branch is missing", async () => {
     await withTempMuxRoot(async (rootDir) => {
       const workspaceId = "ws-multi-project-trunk-resolution";

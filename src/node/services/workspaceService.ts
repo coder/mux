@@ -2136,16 +2136,22 @@ export class WorkspaceService extends EventEmitter {
         );
       } catch (error) {
         await rollbackCreatedWorkspaces();
-        try {
-          await containerManager.removeContainer(branchName);
-        } catch (cleanupError: unknown) {
-          log.error("Failed to clean up multi-project container after create failure", {
-            workspaceId,
-            branchName,
-            error: getErrorMessage(cleanupError),
-          });
+        const containerAlreadyExists = isErrnoWithCode(error, "EEXIST");
+        if (!containerAlreadyExists) {
+          try {
+            await containerManager.removeContainer(branchName);
+          } catch (cleanupError: unknown) {
+            log.error("Failed to clean up multi-project container after create failure", {
+              workspaceId,
+              branchName,
+              error: getErrorMessage(cleanupError),
+            });
+          }
         }
         initLogger.logComplete(-1);
+        if (containerAlreadyExists) {
+          return Err(`Failed to create multi-project container: ${branchName} already exists`);
+        }
         return Err(`Failed to create multi-project container: ${getErrorMessage(error)}`);
       }
 
