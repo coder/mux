@@ -14,7 +14,11 @@ import { upsertSubagentReportArtifact } from "@/node/services/subagentReportArti
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
+import { ContainerManager } from "@/node/multiProject/containerManager";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { defaultModel } from "@/common/utils/ai/models";
 import type { PlanSubagentExecutorRouting } from "@/common/types/tasks";
@@ -673,6 +677,155 @@ describe("TaskService", () => {
         srcBaseDir: forkedSrcBaseDir,
       });
     } finally {
+      forkSpy.mockRestore();
+    }
+  }, 20_000);
+
+  test("configures MultiProjectRuntime envResolver before queued task background init", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const primaryProjectPath = await createTestProject(rootDir, "repo-primary");
+    const secondaryProjectPath = await createTestProject(rootDir, "repo-secondary");
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath: primaryProjectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath: primaryProjectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_exec_task-queued";
+    const projects = [
+      {
+        projectPath: primaryProjectPath,
+        projectName: path.basename(primaryProjectPath),
+      },
+      {
+        projectPath: secondaryProjectPath,
+        projectName: path.basename(secondaryProjectPath),
+      },
+    ];
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          primaryProjectPath,
+          {
+            trusted: true,
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                projects,
+              },
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, queuedWorkspaceName),
+                id: queuedTaskId,
+                name: queuedWorkspaceName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                parentWorkspaceId: parentId,
+                taskStatus: "queued",
+                taskPrompt: "start queued task",
+                taskTrunkBranch: "main",
+                projects,
+              },
+            ],
+          },
+        ],
+        [secondaryProjectPath, { trusted: true, workspaces: [] }],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    await config.updateProjectSecrets(primaryProjectPath, [
+      { key: "PRIMARY_SECRET", value: "primary-secret" },
+    ]);
+    await config.updateProjectSecrets(secondaryProjectPath, [
+      { key: "SECONDARY_SECRET", value: "secondary-secret" },
+    ]);
+
+    const targetRuntime = new MultiProjectRuntime(
+      new ContainerManager(config.srcDir),
+      [
+        {
+          projectPath: primaryProjectPath,
+          projectName: path.basename(primaryProjectPath),
+          runtime: {
+            getWorkspacePath: mock(() => path.join(primaryProjectPath, queuedWorkspaceName)),
+            initWorkspace: mock(async () => ({ success: true })),
+          } as unknown as WorktreeRuntime,
+        },
+        {
+          projectPath: secondaryProjectPath,
+          projectName: path.basename(secondaryProjectPath),
+          runtime: {
+            getWorkspacePath: mock(() => path.join(secondaryProjectPath, queuedWorkspaceName)),
+            initWorkspace: mock(async () => ({ success: true })),
+          } as unknown as WorktreeRuntime,
+        },
+      ],
+      queuedWorkspaceName
+    );
+
+    const forkSpy = spyOn(forkOrchestrator, "orchestrateFork").mockResolvedValue({
+      success: true,
+      data: {
+        workspacePath: path.join(config.srcDir, "_workspaces", queuedWorkspaceName),
+        trunkBranch: "main",
+        forkedRuntimeConfig: runtimeConfig,
+        targetRuntime,
+        forkedFromSource: true,
+        sourceRuntimeConfigUpdated: false,
+        projects,
+      },
+    });
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+
+    try {
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+      await taskService.initialize();
+
+      expect(forkSpy).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith(
+        queuedTaskId,
+        "start queued task",
+        expect.anything(),
+        expect.objectContaining({ allowQueuedAgentTask: true })
+      );
+      expect(runBackgroundInitSpy).toHaveBeenCalledTimes(1);
+
+      const [runtimeArg, initParams] = runBackgroundInitSpy.mock.calls[0]!;
+      expect(runtimeArg).toBe(targetRuntime);
+      expect(initParams.env).toEqual({ PRIMARY_SECRET: "primary-secret" });
+      assert(
+        runtimeArg instanceof MultiProjectRuntime,
+        "Expected queued task runtime to be multi-project"
+      );
+      assert(runtimeArg.envResolver, "Expected MultiProjectRuntime.envResolver to be configured");
+      await expect(runtimeArg.envResolver(primaryProjectPath)).resolves.toEqual({
+        PRIMARY_SECRET: "primary-secret",
+      });
+      await expect(runtimeArg.envResolver(secondaryProjectPath)).resolves.toEqual({
+        SECONDARY_SECRET: "secondary-secret",
+      });
+    } finally {
+      runBackgroundInitSpy.mockRestore();
       forkSpy.mockRestore();
     }
   }, 20_000);

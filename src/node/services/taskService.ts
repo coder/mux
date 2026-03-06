@@ -701,6 +701,28 @@ export class TaskService {
     this.workspaceService.emit("metadata", { workspaceId, metadata });
   }
 
+  private configureMultiProjectRuntimeEnvResolver(runtime: Runtime): void {
+    if (!(runtime instanceof MultiProjectRuntime)) {
+      return;
+    }
+
+    const projectEnvCache = new Map<string, Record<string, string>>();
+    runtime.envResolver = async (runtimeProjectPath: string) => {
+      const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
+      const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
+      if (cachedEnv) {
+        return cachedEnv;
+      }
+
+      const projectEnv = await secretsToRecord(
+        this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
+        this.opResolver
+      );
+      projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
+      return projectEnv;
+    };
+  }
+
   private async editWorkspaceEntry(
     workspaceId: string,
     updater: (workspace: WorkspaceConfigEntry) => void,
@@ -1174,23 +1196,7 @@ export class TaskService {
     } = forkResult.data;
 
     // Multi-project forks need per-project secrets for each runtime's init hook.
-    if (runtimeForTaskWorkspace instanceof MultiProjectRuntime) {
-      const projectEnvCache = new Map<string, Record<string, string>>();
-      runtimeForTaskWorkspace.envResolver = async (runtimeProjectPath: string) => {
-        const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
-        const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
-        if (cachedEnv) {
-          return cachedEnv;
-        }
-
-        const projectEnv = await secretsToRecord(
-          this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
-          this.opResolver
-        );
-        projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
-        return projectEnv;
-      };
-    }
+    this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
 
     const taskBaseCommitSha = await tryReadGitHeadCommitSha(runtimeForTaskWorkspace, workspacePath);
 
@@ -2600,6 +2606,8 @@ export class TaskService {
           workspacePath,
           trunkBranch,
         });
+        // Multi-project forks need per-project secrets for each runtime's init hook.
+        this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
         const secrets = await secretsToRecord(
           this.config.getEffectiveSecrets(taskEntry.projectPath),
           this.opResolver
