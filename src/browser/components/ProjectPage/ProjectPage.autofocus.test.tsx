@@ -51,6 +51,14 @@ void mock.module("@/browser/contexts/ProjectContext", () => ({
   }),
 }));
 
+void mock.module("@/browser/contexts/AgentContext", () => ({
+  AgentProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
+void mock.module("@/browser/contexts/ThinkingContext", () => ({
+  ThinkingProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 // Mock ChatInput to simulate the old (buggy) behavior where onReady can fire again
 // on unrelated re-renders (e.g. workspace list updates).
 void mock.module("@/browser/features/ChatInput/index", () => ({

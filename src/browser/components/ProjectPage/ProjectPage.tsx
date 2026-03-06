@@ -33,6 +33,12 @@ import {
 import { Button } from "@/browser/components/Button/Button";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import {
+  buildProjectUpdateEditableMetadataInput,
+  projectConfigToEditableMetadataDraft,
+  type EditableProjectMetadataDraft,
+} from "@/common/utils/projectEditableMetadata";
 
 interface ProjectPageProps {
   projectPath: string;
@@ -65,6 +71,27 @@ function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
   return Object.values(config).some((provider) => provider?.isConfigured);
 }
 
+function editableProjectMetadataDraftsEqual(
+  prev: EditableProjectMetadataDraft,
+  next: EditableProjectMetadataDraft
+): boolean {
+  if (prev.name !== next.name || prev.systemPrompt !== next.systemPrompt) {
+    return false;
+  }
+
+  if (prev.workingDirectories.length !== next.workingDirectories.length) {
+    return false;
+  }
+
+  return prev.workingDirectories.every((workingDirectory, index) => {
+    const nextWorkingDirectory = next.workingDirectories[index];
+    return (
+      workingDirectory.id === nextWorkingDirectory?.id &&
+      workingDirectory.path === nextWorkingDirectory?.path
+    );
+  });
+}
+
 /**
  * Project page shown when a project is selected but no workspace is active.
  * Combines workspace creation with archived workspaces view.
@@ -79,6 +106,24 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   onWorkspaceCreated,
 }) => {
   const { api } = useAPI();
+  const { getProjectConfig, refreshProjects } = useProjectContext();
+  const projectConfig = getProjectConfig(projectPath);
+  const [projectMetadataDraft, setProjectMetadataDraft] = useState<EditableProjectMetadataDraft>(
+    () => projectConfigToEditableMetadataDraft(projectPath, projectConfig)
+  );
+  const [projectMetadataError, setProjectMetadataError] = useState("");
+  const [isSavingProjectMetadata, setIsSavingProjectMetadata] = useState(false);
+  const projectMetadataDraftRef = useRef(projectMetadataDraft);
+  const setProjectMetadataDraftWithRef = useCallback(
+    (updater: (prev: EditableProjectMetadataDraft) => EditableProjectMetadataDraft) => {
+      setProjectMetadataDraft((prev) => {
+        const next = updater(prev);
+        projectMetadataDraftRef.current = next;
+        return next;
+      });
+    },
+    []
+  );
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const pendingAgentsInitSendRef = useRef(false);
   // Initialize from localStorage cache to avoid flash when archived workspaces appear
@@ -93,6 +138,15 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const hasProviders = hasConfiguredProvider(providersConfig);
   const shouldShowAgentsInitBanner = !providersLoading && hasProviders && showAgentsInitNudge;
+
+  useEffect(() => {
+    const nextDraft = projectConfigToEditableMetadataDraft(projectPath, projectConfig);
+
+    setProjectMetadataDraftWithRef((prev) =>
+      editableProjectMetadataDraftsEqual(prev, nextDraft) ? prev : nextDraft
+    );
+    setProjectMetadataError((prev) => (prev.length === 0 ? prev : ""));
+  }, [projectConfig, projectPath, setProjectMetadataDraftWithRef]);
 
   // Git repository state for the banner
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -134,6 +188,92 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const handleGitInitSuccess = useCallback(() => {
     setBranchRefreshKey((k) => k + 1);
   }, []);
+
+  const addProjectWorkingDirectoryRow = useCallback(() => {
+    setProjectMetadataDraftWithRef((prev) => ({
+      ...prev,
+      workingDirectories: [...prev.workingDirectories, { path: "" }],
+    }));
+    setProjectMetadataError("");
+  }, [setProjectMetadataDraftWithRef]);
+
+  const updateProjectWorkingDirectoryRow = useCallback(
+    (index: number, nextPath: string) => {
+      setProjectMetadataDraftWithRef((prev) => {
+        const nextWorkingDirectories = [...prev.workingDirectories];
+        const current = nextWorkingDirectories[index];
+        if (!current) {
+          return prev;
+        }
+
+        nextWorkingDirectories[index] = {
+          ...current,
+          path: nextPath,
+        };
+
+        return {
+          ...prev,
+          workingDirectories: nextWorkingDirectories,
+        };
+      });
+      setProjectMetadataError("");
+    },
+    [setProjectMetadataDraftWithRef]
+  );
+
+  const removeProjectWorkingDirectoryRow = useCallback(
+    (index: number) => {
+      setProjectMetadataDraftWithRef((prev) => ({
+        ...prev,
+        workingDirectories: prev.workingDirectories.filter((_, rowIndex) => rowIndex !== index),
+      }));
+      setProjectMetadataError("");
+    },
+    [setProjectMetadataDraftWithRef]
+  );
+
+  const handleSaveProjectMetadata = useCallback(async () => {
+    if (!api || isSavingProjectMetadata) {
+      return;
+    }
+
+    setProjectMetadataError("");
+    setIsSavingProjectMetadata(true);
+
+    try {
+      const result = await api.projects.update(
+        buildProjectUpdateEditableMetadataInput({
+          projectPath,
+          projectId: projectConfig?.projectId,
+          draft: projectMetadataDraftRef.current,
+        })
+      );
+
+      if (!result.success) {
+        const errorMessage =
+          typeof result.error === "string" ? result.error : "Failed to save project metadata";
+        setProjectMetadataError(errorMessage);
+        return;
+      }
+
+      setProjectMetadataDraftWithRef(() =>
+        projectConfigToEditableMetadataDraft(projectPath, result.data)
+      );
+      await refreshProjects();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
+      setProjectMetadataError(`Failed to save project metadata: ${errorMessage}`);
+    } finally {
+      setIsSavingProjectMetadata(false);
+    }
+  }, [
+    api,
+    isSavingProjectMetadata,
+    projectConfig?.projectId,
+    projectPath,
+    refreshProjects,
+    setProjectMetadataDraftWithRef,
+  ]);
 
   // Track archived workspaces in a ref; only update state when the list actually changes
   const archivedMapRef = useRef<Map<string, FrontendWorkspaceMetadata>>(new Map());
@@ -292,6 +432,126 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             {/* Main content - vertically centered with reduced gaps */}
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
               <div className="flex w-full max-w-3xl flex-col gap-4">
+                <div className="bg-modal-bg border-border-medium space-y-3 rounded-md border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">Project metadata</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleSaveProjectMetadata()}
+                      disabled={!api || isSavingProjectMetadata}
+                    >
+                      {isSavingProjectMetadata ? "Saving…" : "Save metadata"}
+                    </Button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="project-page-name" className="text-muted text-xs">
+                      Project name
+                    </label>
+                    <input
+                      id="project-page-name"
+                      type="text"
+                      aria-label="Project name"
+                      value={projectMetadataDraft.name}
+                      onChange={(event) => {
+                        const nextName = event.target.value;
+                        setProjectMetadataDraftWithRef((prev) => ({
+                          ...prev,
+                          name: nextName,
+                        }));
+                        setProjectMetadataError("");
+                      }}
+                      disabled={isSavingProjectMetadata}
+                      className="border-border-medium bg-surface-primary text-foreground placeholder:text-muted focus:border-accent w-full rounded border px-3 py-2 text-sm focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="project-page-system-prompt" className="text-muted text-xs">
+                      System prompt
+                    </label>
+                    <textarea
+                      id="project-page-system-prompt"
+                      aria-label="System prompt"
+                      value={projectMetadataDraft.systemPrompt}
+                      onChange={(event) => {
+                        const nextSystemPrompt = event.target.value;
+                        setProjectMetadataDraftWithRef((prev) => ({
+                          ...prev,
+                          systemPrompt: nextSystemPrompt,
+                        }));
+                        setProjectMetadataError("");
+                      }}
+                      rows={3}
+                      disabled={isSavingProjectMetadata}
+                      className="border-border-medium bg-surface-primary text-foreground placeholder:text-muted focus:border-accent w-full resize-y rounded border px-3 py-2 text-sm focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-muted text-xs">Extra working directories</label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={addProjectWorkingDirectoryRow}
+                        disabled={isSavingProjectMetadata}
+                        aria-label="Add working directory"
+                      >
+                        Add working directory
+                      </Button>
+                    </div>
+
+                    {projectMetadataDraft.workingDirectories.length === 0 ? (
+                      <p className="text-muted text-xs">No extra working directories</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {projectMetadataDraft.workingDirectories.map((workingDirectory, index) => {
+                          const removeLabel =
+                            workingDirectory.path.trim().length > 0
+                              ? `Remove extra working directory ${workingDirectory.path.trim()}`
+                              : `Remove extra working directory ${index + 1}`;
+
+                          return (
+                            <div
+                              key={workingDirectory.id ?? `new-${index}`}
+                              className="flex items-center gap-2"
+                            >
+                              <input
+                                type="text"
+                                aria-label="Extra working directory"
+                                value={workingDirectory.path}
+                                onChange={(event) => {
+                                  updateProjectWorkingDirectoryRow(index, event.target.value);
+                                }}
+                                disabled={isSavingProjectMetadata}
+                                className="border-border-medium bg-surface-primary text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+                              />
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => removeProjectWorkingDirectoryRow(index)}
+                                disabled={isSavingProjectMetadata}
+                                aria-label={removeLabel}
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {projectMetadataError && (
+                    <p className="text-error text-xs">{projectMetadataError}</p>
+                  )}
+                </div>
+
                 {/* Git init banner - shown above ChatInput when not a git repo */}
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />

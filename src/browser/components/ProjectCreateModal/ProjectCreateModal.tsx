@@ -16,6 +16,10 @@ import {
 } from "@/browser/components/ToggleGroupPrimitive/ToggleGroupPrimitive";
 import type { ProjectConfig } from "@/node/config";
 import { useAPI } from "@/browser/contexts/API";
+import {
+  buildProjectCreateEditableMetadataInput,
+  type EditableWorkingDirectoryInput,
+} from "@/common/utils/projectEditableMetadata";
 
 type ApiClient = ReturnType<typeof useAPI>["api"];
 
@@ -117,6 +121,11 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
   ) {
     const { api } = useAPI();
     const [path, setPath] = useState("");
+    const [name, setName] = useState("");
+    const [systemPrompt, setSystemPrompt] = useState("");
+    const [workingDirectories, setWorkingDirectories] = useState<EditableWorkingDirectoryInput[]>(
+      []
+    );
     const [error, setError] = useState("");
     const [isCreating, setIsCreating] = useState(false);
 
@@ -130,6 +139,9 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
 
     const reset = useCallback(() => {
       setPath("");
+      setName("");
+      setSystemPrompt("");
+      setWorkingDirectories([]);
       setError("");
     }, []);
 
@@ -147,6 +159,30 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
       },
       errorLabel: "Failed to pick directory:",
     });
+
+    const addWorkingDirectoryRow = useCallback(() => {
+      setWorkingDirectories((prev) => [...prev, { path: "" }]);
+    }, []);
+
+    const updateWorkingDirectoryPath = useCallback((index: number, nextPath: string) => {
+      setWorkingDirectories((prev) => {
+        const next = [...prev];
+        const current = next[index];
+        if (!current) {
+          return prev;
+        }
+
+        next[index] = {
+          ...current,
+          path: nextPath,
+        };
+        return next;
+      });
+    }, []);
+
+    const removeWorkingDirectoryRow = useCallback((index: number) => {
+      setWorkingDirectories((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+    }, []);
 
     const handleSelect = useCallback(async (): Promise<boolean> => {
       const trimmedPath = path.trim();
@@ -171,8 +207,17 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
         const existingProjects = await api.projects.list();
         const existingPaths = new Map(existingProjects);
 
+        const metadataInput = buildProjectCreateEditableMetadataInput({
+          name,
+          systemPrompt,
+          workingDirectories,
+        });
+
         // Backend handles path resolution (bare names → ~/.mux/projects/name)
-        const result = await api.projects.create({ projectPath: trimmedPath });
+        const result = await api.projects.create({
+          projectPath: trimmedPath,
+          ...metadataInput,
+        });
 
         if (result.success) {
           // Check if duplicate (backend may normalize the path)
@@ -201,7 +246,18 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
       } finally {
         setCreating(false);
       }
-    }, [api, isCreating, onClose, onSuccess, path, reset, setCreating]);
+    }, [
+      api,
+      isCreating,
+      name,
+      onClose,
+      onSuccess,
+      path,
+      reset,
+      setCreating,
+      systemPrompt,
+      workingDirectories,
+    ]);
 
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent) => {
@@ -251,6 +307,101 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
               </Button>
             )}
           </div>
+        </div>
+
+        <div className="space-y-1">
+          <label htmlFor="project-create-name" className="text-muted text-xs">
+            Project name
+          </label>
+          <input
+            id="project-create-name"
+            type="text"
+            aria-label="Project name"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setError("");
+            }}
+            placeholder="Optional display name"
+            disabled={isCreating}
+            className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent w-full rounded border px-3 py-2 text-sm focus:outline-none disabled:opacity-50"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label htmlFor="project-create-system-prompt" className="text-muted text-xs">
+            System prompt
+          </label>
+          <textarea
+            id="project-create-system-prompt"
+            aria-label="System prompt"
+            value={systemPrompt}
+            onChange={(e) => {
+              setSystemPrompt(e.target.value);
+              setError("");
+            }}
+            rows={3}
+            placeholder="Optional default prompt for new workspaces"
+            disabled={isCreating}
+            className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent w-full resize-y rounded border px-3 py-2 text-sm focus:outline-none disabled:opacity-50"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-muted text-xs">Extra working directories</label>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              onClick={addWorkingDirectoryRow}
+              disabled={isCreating}
+              aria-label="Add working directory"
+            >
+              Add working directory
+            </Button>
+          </div>
+
+          {workingDirectories.length === 0 ? (
+            <p className="text-muted text-xs">No extra working directories</p>
+          ) : (
+            <div className="space-y-2">
+              {workingDirectories.map((workingDirectory, index) => {
+                const removeLabel =
+                  workingDirectory.path.trim().length > 0
+                    ? `Remove extra working directory ${workingDirectory.path.trim()}`
+                    : `Remove extra working directory ${index + 1}`;
+
+                return (
+                  <div key={`${workingDirectory.id ?? "new"}-${index}`} className="flex gap-2">
+                    <input
+                      type="text"
+                      aria-label="Extra working directory"
+                      value={workingDirectory.path}
+                      onChange={(e) => {
+                        updateWorkingDirectoryPath(index, e.target.value);
+                        setError("");
+                      }}
+                      onKeyDown={handleKeyDown}
+                      placeholder="/path/to/subdirectory"
+                      disabled={isCreating}
+                      className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => removeWorkingDirectoryRow(index)}
+                      disabled={isCreating}
+                      aria-label={removeLabel}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {error && <p className="text-error text-xs">{error}</p>}
