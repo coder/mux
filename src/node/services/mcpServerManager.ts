@@ -967,16 +967,21 @@ export class MCPServerManager {
         workspaceId,
       });
 
-      let leasedStats = existing.stats;
-      if (restartFailedNames.length > 0) {
-        const failedServerNames = [...existing.stats.failedServerNames, ...restartFailedNames];
-        leasedStats = {
-          ...existing.stats,
-          failedServerCount: failedServerNames.length,
-          failedServerNames,
-        };
-        existing.stats = leasedStats;
-      }
+      // Recompute failure stats from the currently enabled server set so stale failures
+      // from newly-disabled servers do not trigger warnings while a lease is active.
+      const enabledServerNames = new Set(Object.keys(enabledServers));
+      const failedServerNames = [
+        ...existing.stats.failedServerNames.filter((serverName) =>
+          enabledServerNames.has(serverName)
+        ),
+        ...restartFailedNames,
+      ];
+      const leasedStats: MCPWorkspaceStats = {
+        ...existing.stats,
+        failedServerCount: failedServerNames.length,
+        failedServerNames,
+      };
+      existing.stats = leasedStats;
 
       // Even while deferring restarts, ensure new tool lists reflect the latest enabled/disabled
       // server set. We cannot revoke tools already captured by an in-flight stream, but we
@@ -1315,13 +1320,61 @@ export class MCPServerManager {
   ): Promise<MCPServerInstance | null> {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const abortController = new AbortController();
+    let abortCleanupPromise: Promise<void> | null = null;
+
+    const registerAbortCleanup = (cleanupPromise: Promise<void>) => {
+      abortCleanupPromise ??= cleanupPromise;
+    };
+
+    let didTimeout = false;
+    const keepPendingAfterTimeout = () => new Promise<MCPServerInstance | null>(() => undefined);
+
+    const startup = this.startSingleServerImpl(
+      name,
+      info,
+      runtime,
+      projectPath,
+      workspacePath,
+      projectSecrets,
+      onActivity,
+      abortController.signal,
+      registerAbortCleanup
+    ).then(
+      (instance) => (didTimeout ? keepPendingAfterTimeout() : instance),
+      (error) => {
+        if (didTimeout) {
+          return keepPendingAfterTimeout();
+        }
+        throw error;
+      }
+    );
 
     const timeout = new Promise<never>((_resolve, reject) => {
       timeoutHandle = setTimeout(() => {
+        didTimeout = true;
+
         // Promise.race does not cancel the losing startup branch automatically.
         // Abort in-flight startup so stdio processes and partial MCP clients are cleaned up.
         abortController.abort();
-        reject(new Error(`MCP server '${name}' timed out after ${MCP_STARTUP_TIMEOUT_MS}ms`));
+
+        const timeoutError = new Error(
+          `MCP server '${name}' timed out after ${MCP_STARTUP_TIMEOUT_MS}ms`
+        );
+        if (!abortCleanupPromise) {
+          reject(timeoutError);
+          return;
+        }
+
+        abortCleanupPromise
+          .catch((error: unknown) => {
+            log.debug("[MCP] Error waiting for startup cleanup", {
+              name,
+              error: getErrorMessage(error),
+            });
+          })
+          .finally(() => {
+            reject(timeoutError);
+          });
       }, MCP_STARTUP_TIMEOUT_MS);
       // Don't keep the process alive just for this timer.
       if (
@@ -1335,19 +1388,7 @@ export class MCPServerManager {
     });
 
     try {
-      return await Promise.race([
-        this.startSingleServerImpl(
-          name,
-          info,
-          runtime,
-          projectPath,
-          workspacePath,
-          projectSecrets,
-          onActivity,
-          abortController.signal
-        ),
-        timeout,
-      ]);
+      return await Promise.race([startup, timeout]);
     } finally {
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
@@ -1363,7 +1404,8 @@ export class MCPServerManager {
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void,
-    signal: AbortSignal
+    signal: AbortSignal,
+    onAbortCleanup?: (cleanupPromise: Promise<void>) => void
   ): Promise<MCPServerInstance | null> {
     if (signal.aborted) {
       return null;
@@ -1426,7 +1468,8 @@ export class MCPServerManager {
 
       const onAbort = () => {
         log.debug("[MCP] Aborting stdio startup", { name });
-        void cleanupStartupResources();
+        const cleanupPromise = cleanupStartupResources();
+        onAbortCleanup?.(cleanupPromise);
       };
       signal.addEventListener("abort", onAbort, { once: true });
 
@@ -1585,7 +1628,8 @@ export class MCPServerManager {
 
     const onAbort = () => {
       log.debug("[MCP] Aborting network startup", { name, transport: info.transport });
-      void cleanupStartupClient();
+      const cleanupPromise = cleanupStartupClient();
+      onAbortCleanup?.(cleanupPromise);
     };
     signal.addEventListener("abort", onAbort, { once: true });
 

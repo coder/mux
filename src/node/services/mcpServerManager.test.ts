@@ -163,6 +163,79 @@ describe("MCPServerManager", () => {
     }
   });
 
+  test("startSingleServer waits for abort cleanup before surfacing timeout", async () => {
+    const cleanup = Promise.withResolvers<void>();
+    const startSingleServerImplMock = mock((...args: unknown[]) => {
+      const signal = args[7] as AbortSignal;
+      const registerAbortCleanup = args[8] as ((cleanupPromise: Promise<void>) => void) | undefined;
+
+      return new Promise<null>((resolve) => {
+        const onAbort = () => {
+          const cleanupPromise = cleanup.promise;
+          registerAbortCleanup?.(cleanupPromise);
+          cleanupPromise.then(
+            () => resolve(null),
+            () => resolve(null)
+          );
+        };
+
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    });
+    access.startSingleServerImpl = startSingleServerImplMock;
+
+    const originalSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    setTimeoutSpy.mockImplementation(((
+      callback: Parameters<typeof setTimeout>[0],
+      _delay?: Parameters<typeof setTimeout>[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(callback, 1, ...args)) as typeof setTimeout);
+
+    try {
+      let settled = false;
+      let caught: unknown;
+
+      const startPromise = access
+        .startSingleServer(
+          "cleanup-server",
+          { transport: "stdio", command: "never" },
+          {} as Runtime,
+          "/tmp/project",
+          "/tmp/workspace",
+          undefined,
+          () => undefined
+        )
+        .then(
+          () => {
+            settled = true;
+          },
+          (error) => {
+            settled = true;
+            caught = error;
+          }
+        );
+
+      await new Promise<void>((resolve) => originalSetTimeout(resolve, 5));
+      expect(settled).toBe(false);
+
+      cleanup.resolve();
+      await startPromise;
+
+      expect(startSingleServerImplMock).toHaveBeenCalledTimes(1);
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain("cleanup-server");
+      expect((caught as Error).message).toContain("timed out");
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   test("getToolsForWorkspace tracks failed server names in stats", async () => {
     const workspaceId = "ws-failed-names";
     const projectPath = "/tmp/project";
@@ -520,6 +593,68 @@ describe("MCPServerManager", () => {
     // Tool names are normalized to provider-safe keys (lowercase + underscore-delimited).
     expect(Object.keys(toolsResult.tools)).toContain("servera_tool");
     expect(Object.keys(toolsResult.tools)).not.toContain("serverb_tool");
+  });
+
+  test("getToolsForWorkspace filters disabled-server failures from leased stats", async () => {
+    const workspaceId = "ws-disable-failed-while-leased";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
+        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+      })
+    );
+
+    const dummyToolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+
+    const startServersMock = mock(() =>
+      Promise.resolve({
+        instances: new Map([
+          [
+            "serverA",
+            {
+              name: "serverA",
+              resolvedTransport: "stdio",
+              autoFallbackUsed: false,
+              tools: { tool: dummyToolA },
+              isClosed: false,
+              close: mock(() => Promise.resolve(undefined)),
+            },
+          ],
+        ]),
+        failedServerNames: ["serverB"],
+      })
+    );
+
+    access.startServers = startServersMock;
+
+    const initial = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    expect(initial.stats.failedServerCount).toBe(1);
+    expect(initial.stats.failedServerNames).toEqual(["serverB"]);
+
+    manager.acquireLease(workspaceId);
+
+    const leased = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+      overrides: {
+        disabledServers: ["serverB"],
+      },
+    });
+
+    expect(startServersMock).toHaveBeenCalledTimes(1);
+    expect(leased.stats.failedServerCount).toBe(0);
+    expect(leased.stats.failedServerNames).toEqual([]);
   });
 
   test("test() includes oauthChallenge when server responds 401 + WWW-Authenticate Bearer", async () => {
