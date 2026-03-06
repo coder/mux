@@ -453,6 +453,78 @@ describe("Config", () => {
     });
   });
 
+  describe("project resolution helpers", () => {
+    const projectPathOne = "/fake/project-one";
+    const projectPathTwo = "/fake/project-two";
+
+    async function seedProjects() {
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPathOne, {
+          workspaces: [],
+          projectId: "project-one-id",
+          name: "Project One",
+          workingDirectories: [
+            { id: "wd-one-packages", path: `${projectPathOne}/packages` },
+            { id: "wd-one-root", path: `${projectPathOne}/` },
+            { id: "wd-one-docs", path: `${projectPathOne}/docs` },
+          ],
+        });
+
+        cfg.projects.set(projectPathTwo, {
+          workspaces: [],
+          projectId: "project-two-id",
+          name: "Project Two",
+        });
+
+        return cfg;
+      });
+    }
+
+    it("resolves a project by projectId before compatibility projectPath", async () => {
+      await seedProjects();
+
+      const resolved = config.resolveProject({
+        projectId: "project-one-id",
+        projectPath: projectPathTwo,
+      });
+
+      expect(resolved).toBeDefined();
+      expect(resolved?.projectPath).toBe(projectPathOne);
+      expect(resolved?.projectConfig.projectId).toBe("project-one-id");
+    });
+
+    it("falls back to compatibility projectPath resolution when projectId misses", async () => {
+      await seedProjects();
+
+      const resolved = config.resolveProject({
+        projectId: "missing-project-id",
+        projectPath: `${projectPathTwo}/`,
+      });
+
+      expect(resolved).toBeDefined();
+      expect(resolved?.projectPath).toBe(projectPathTwo);
+      expect(resolved?.projectConfig.projectId).toBe("project-two-id");
+    });
+
+    it("returns root-first working directory paths plus primary compatibility path", async () => {
+      await seedProjects();
+
+      const resolved = config.resolveProjectWorkingDirectoryPaths({
+        projectId: "project-one-id",
+      });
+
+      expect(resolved).toEqual({
+        projectPath: projectPathOne,
+        primaryProjectPath: projectPathOne,
+        workingDirectoryPaths: [
+          projectPathOne,
+          `${projectPathOne}/packages`,
+          `${projectPathOne}/docs`,
+        ],
+      });
+    });
+  });
+
   describe("secrets", () => {
     it("supports global secrets stored under a sentinel key", async () => {
       await config.updateGlobalSecrets([{ key: "GLOBAL_A", value: "1" }]);

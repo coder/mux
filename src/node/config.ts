@@ -45,6 +45,22 @@ import { getContainerName as getDockerContainerName } from "@/node/runtime/Docke
 export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
 export type ProvidersConfig = CanonicalProvidersConfig | Record<string, ProviderConfig>;
 
+export interface ProjectSelector {
+  projectId?: string;
+  projectPath?: string;
+}
+
+export interface ResolvedProjectConfig {
+  projectPath: string;
+  projectConfig: ProjectConfig;
+}
+
+export interface ResolvedProjectWorkingDirectoryPaths {
+  projectPath: string;
+  primaryProjectPath: string;
+  workingDirectoryPaths: string[];
+}
+
 function parseOptionalNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -352,6 +368,78 @@ export class Config {
           normalizedProjectConfig.workingDirectories
         ),
       },
+    };
+  }
+
+  private resolveProjectFromConfig(
+    config: ProjectsConfig,
+    selector: ProjectSelector
+  ): ResolvedProjectConfig | null {
+    const projectId = parseOptionalNonEmptyString(selector.projectId);
+    const projectPath = parseOptionalNonEmptyString(selector.projectPath);
+    const normalizedProjectPath = projectPath ? this.normalizeProjectPath(projectPath) : undefined;
+
+    if (projectId) {
+      for (const [candidateProjectPath, projectConfig] of config.projects) {
+        if (projectConfig.projectId === projectId) {
+          return {
+            projectPath: candidateProjectPath,
+            projectConfig,
+          };
+        }
+      }
+    }
+
+    if (normalizedProjectPath) {
+      const projectConfig = config.projects.get(normalizedProjectPath);
+      if (projectConfig) {
+        return {
+          projectPath: normalizedProjectPath,
+          projectConfig,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  resolveProject(selector: ProjectSelector): ResolvedProjectConfig | null {
+    const config = this.loadConfigOrDefault();
+    return this.resolveProjectFromConfig(config, selector);
+  }
+
+  resolveProjectWorkingDirectoryPaths(
+    selector: ProjectSelector
+  ): ResolvedProjectWorkingDirectoryPaths | null {
+    const resolvedProject = this.resolveProject(selector);
+    if (!resolvedProject) {
+      return null;
+    }
+
+    // Keep the compatibility project path first so callers can continue using path-keyed APIs
+    // while projectId routing is rolled out incrementally.
+    const candidatePaths = [
+      resolvedProject.projectPath,
+      ...(resolvedProject.projectConfig.workingDirectories ?? []).map(
+        (workingDirectory) => workingDirectory.path
+      ),
+    ];
+
+    const workingDirectoryPaths: string[] = [];
+    const seenPaths = new Set<string>();
+    for (const candidatePath of candidatePaths) {
+      if (seenPaths.has(candidatePath)) {
+        continue;
+      }
+
+      seenPaths.add(candidatePath);
+      workingDirectoryPaths.push(candidatePath);
+    }
+
+    return {
+      projectPath: resolvedProject.projectPath,
+      primaryProjectPath: workingDirectoryPaths[0] ?? resolvedProject.projectPath,
+      workingDirectoryPaths,
     };
   }
 
