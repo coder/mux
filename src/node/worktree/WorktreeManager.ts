@@ -275,6 +275,93 @@ export class WorktreeManager {
     }
   }
 
+  async canDeleteWorkspaceWithoutForce(
+    projectPath: string,
+    workspaceName: string,
+    trusted?: boolean
+  ): Promise<{ success: true } | { success: false; error: string }> {
+    // Match deleteWorkspace() semantics so preflight stays idempotent and non-destructive.
+    cleanStaleLock(projectPath);
+
+    const noHooksEnv = trusted ? undefined : { env: GIT_NO_HOOKS_ENV };
+    const workspacePath = this.getWorkspacePath(projectPath, workspaceName);
+    const isInPlace = projectPath === workspaceName;
+
+    try {
+      await fsPromises.access(workspacePath);
+    } catch {
+      return { success: true };
+    }
+
+    if (isInPlace) {
+      return { success: true };
+    }
+
+    const resolvedWorkspacePath = path.resolve(workspacePath);
+
+    try {
+      using worktreeListProc = execFileAsync(
+        "git",
+        ["-C", projectPath, "worktree", "list", "--porcelain"],
+        noHooksEnv
+      );
+      const { stdout } = await worktreeListProc.result;
+      const workspaceBlock = stdout.split("\n\n").find((block) => {
+        return block.split("\n").some((line) => {
+          if (!line.startsWith("worktree ")) {
+            return false;
+          }
+          return path.resolve(line.slice("worktree ".length).trim()) === resolvedWorkspacePath;
+        });
+      });
+
+      if (!workspaceBlock) {
+        return {
+          success: false,
+          error: `Workspace is not registered as a git worktree: ${workspacePath}`,
+        };
+      }
+
+      const isLocked = workspaceBlock.split("\n").some((line) => {
+        const trimmed = line.trim();
+        return trimmed === "locked" || trimmed.startsWith("locked ");
+      });
+      if (isLocked) {
+        return {
+          success: false,
+          error: "Workspace is locked and requires force removal",
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to inspect worktree before deletion: ${getErrorMessage(error)}`,
+      };
+    }
+
+    try {
+      using statusProc = execFileAsync(
+        "git",
+        ["-C", workspacePath, "status", "--porcelain", "--untracked-files=all"],
+        noHooksEnv
+      );
+      const { stdout } = await statusProc.result;
+      if (stdout.trim().length > 0) {
+        return {
+          success: false,
+          error: "Workspace has uncommitted or untracked changes",
+        };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to inspect worktree before deletion: ${getErrorMessage(error)}`,
+      };
+    }
+
+    return { success: true };
+  }
+
   async deleteWorkspace(
     projectPath: string,
     workspaceName: string,

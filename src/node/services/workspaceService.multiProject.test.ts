@@ -786,6 +786,117 @@ describe("WorkspaceService multi-project lifecycle", () => {
     });
   });
 
+  test("remove() preflights all project workspaces before deleting any when force=false", async () => {
+    await withTempMuxRoot(async (rootDir) => {
+      const workspaceId = "ws-multi-remove-preflight";
+      const workspaceName = "feature-remove-preflight";
+      const projectAPath = path.join(rootDir, "project-a");
+      const projectBPath = path.join(rootDir, "project-b");
+
+      const removeWorkspaceMock = mock(() => Promise.resolve());
+
+      const mockConfig: Partial<Config> = {
+        srcDir: path.join(rootDir, "src"),
+        loadConfigOrDefault: mock(() => ({
+          projects: new Map([
+            [projectAPath, { workspaces: [], trusted: true }],
+            [projectBPath, { workspaces: [], trusted: true }],
+          ]),
+        })),
+        getSessionDir: mock((id: string) => path.join(rootDir, "sessions", id)),
+        removeWorkspace: removeWorkspaceMock,
+        findWorkspace: mock(() => null),
+      };
+
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        getWorkspaceMetadata: mock(() =>
+          Promise.resolve(
+            Ok({
+              id: workspaceId,
+              name: workspaceName,
+              projectPath: projectAPath,
+              projectName: "project-a+project-b",
+              projects: [
+                { projectPath: projectAPath, projectName: "project-a" },
+                { projectPath: projectBPath, projectName: "project-b" },
+              ],
+              runtimeConfig: { type: "worktree", srcBaseDir: path.join(rootDir, "src") },
+            })
+          )
+        ),
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService;
+
+      const preflightWorkspaceAMock = mock(() => Promise.resolve({ success: true as const }));
+      const preflightWorkspaceBMock = mock(() =>
+        Promise.resolve({ success: false as const, error: "Workspace has uncommitted changes" })
+      );
+      const deleteWorkspaceAMock = mock(() =>
+        Promise.resolve({ success: true as const, deletedPath: "/tmp/deleted-a" })
+      );
+      const deleteWorkspaceBMock = mock(() =>
+        Promise.resolve({ success: true as const, deletedPath: "/tmp/deleted-b" })
+      );
+
+      const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+        (_runtimeConfig, options) => {
+          if (options?.projectPath === projectAPath) {
+            return {
+              canDeleteWorkspaceWithoutForce: preflightWorkspaceAMock,
+              deleteWorkspace: deleteWorkspaceAMock,
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          if (options?.projectPath === projectBPath) {
+            return {
+              canDeleteWorkspaceWithoutForce: preflightWorkspaceBMock,
+              deleteWorkspace: deleteWorkspaceBMock,
+            } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+          }
+          throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
+        }
+      );
+
+      const removeContainerSpy = spyOn(
+        ContainerManager.prototype,
+        "removeContainer"
+      ).mockResolvedValue();
+
+      try {
+        const workspaceService = new WorkspaceService(
+          mockConfig as Config,
+          historyService,
+          mockAIService,
+          createMockInitStateManager(),
+          mockExtensionMetadataService as ExtensionMetadataService,
+          mockBackgroundProcessManager as BackgroundProcessManager
+        );
+
+        const result = await workspaceService.remove(workspaceId, false);
+
+        expect(result.success).toBe(false);
+        if (result.success) {
+          return;
+        }
+
+        expect(result.error).toContain(
+          "Failed to delete multi-project workspace from disk: [project-b] Workspace has uncommitted changes"
+        );
+        expect(preflightWorkspaceAMock).toHaveBeenCalledWith(projectAPath, workspaceName, true);
+        expect(preflightWorkspaceBMock).toHaveBeenCalledWith(projectBPath, workspaceName, true);
+        expect(deleteWorkspaceAMock).not.toHaveBeenCalled();
+        expect(deleteWorkspaceBMock).not.toHaveBeenCalled();
+        expect(removeContainerSpy).not.toHaveBeenCalled();
+        expect(removeWorkspaceMock).not.toHaveBeenCalled();
+      } finally {
+        removeContainerSpy.mockRestore();
+        createRuntimeSpy.mockRestore();
+      }
+    });
+  });
+
   test("rename() renames all project workspaces and recreates the shared container", async () => {
     await withTempMuxRoot(async (rootDir) => {
       const workspaceId = "ws-multi-rename";

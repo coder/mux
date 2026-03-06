@@ -2386,6 +2386,11 @@ export class WorkspaceService extends EventEmitter {
         if (isMultiProject(metadata)) {
           const projects = getProjects(metadata);
           const deleteErrors: string[] = [];
+          const projectRemovals: Array<{
+            project: (typeof projects)[number];
+            runtime: ReturnType<typeof createRuntime>;
+            trusted: boolean;
+          }> = [];
 
           for (const project of projects) {
             try {
@@ -2393,27 +2398,92 @@ export class WorkspaceService extends EventEmitter {
                 projectPath: project.projectPath,
                 workspaceName: metadata.name,
               });
-
               const trusted =
                 configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ??
                 false;
-              const deleteResult = await runtime.deleteWorkspace(
-                project.projectPath,
+              projectRemovals.push({ project, runtime, trusted });
+            } catch (error: unknown) {
+              deleteErrors.push(`[${project.projectName}] ${getErrorMessage(error)}`);
+            }
+          }
+
+          if (deleteErrors.length > 0 && !force) {
+            return Err(
+              `Failed to delete multi-project workspace from disk: ${deleteErrors.join("; ")}`
+            );
+          }
+
+          const requiresWorktreeDeletePreflight =
+            !force &&
+            (metadata.runtimeConfig.type === "worktree" ||
+              (metadata.runtimeConfig.type === "local" && hasSrcBaseDir(metadata.runtimeConfig)));
+          if (requiresWorktreeDeletePreflight) {
+            const preflightErrors: string[] = [];
+
+            for (const projectRemoval of projectRemovals) {
+              const preflightRuntime = projectRemoval.runtime as typeof projectRemoval.runtime & {
+                canDeleteWorkspaceWithoutForce?: (
+                  projectPath: string,
+                  workspaceName: string,
+                  trusted?: boolean
+                ) => Promise<{ success: true } | { success: false; error: string }>;
+              };
+
+              try {
+                if (typeof preflightRuntime.canDeleteWorkspaceWithoutForce !== "function") {
+                  preflightErrors.push(
+                    `[${projectRemoval.project.projectName}] Worktree delete preflight is unavailable for runtime type ${metadata.runtimeConfig.type}`
+                  );
+                  continue;
+                }
+
+                // Preflight every worktree before mutating disk so force=false cannot partially
+                // delete earlier projects when a later worktree still needs force.
+                const preflightResult = await preflightRuntime.canDeleteWorkspaceWithoutForce(
+                  projectRemoval.project.projectPath,
+                  metadata.name,
+                  projectRemoval.trusted
+                );
+                if (!preflightResult.success) {
+                  preflightErrors.push(
+                    `[${projectRemoval.project.projectName}] ${preflightResult.error}`
+                  );
+                }
+              } catch (error: unknown) {
+                preflightErrors.push(
+                  `[${projectRemoval.project.projectName}] ${getErrorMessage(error)}`
+                );
+              }
+            }
+
+            if (preflightErrors.length > 0) {
+              return Err(
+                `Failed to delete multi-project workspace from disk: ${preflightErrors.join("; ")}`
+              );
+            }
+          }
+
+          for (const projectRemoval of projectRemovals) {
+            try {
+              const deleteResult = await projectRemoval.runtime.deleteWorkspace(
+                projectRemoval.project.projectPath,
                 metadata.name,
                 force,
                 undefined,
-                trusted
+                projectRemoval.trusted
               );
 
               if (!deleteResult.success) {
                 deleteErrors.push(
-                  `[${project.projectName}] ${
+                  `[${projectRemoval.project.projectName}] ${
                     deleteResult.error ?? "Failed to delete workspace from disk"
                   }`
                 );
               }
             } catch (error: unknown) {
-              deleteErrors.push(`[${project.projectName}] ${getErrorMessage(error)}`);
+              deleteErrors.push(
+                `[${projectRemoval.project.projectName}] ${getErrorMessage(error)}`
+              );
             }
           }
 
