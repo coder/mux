@@ -155,10 +155,12 @@ async function rollbackCreatedProjectWorkspaces(
   for (const projectRuntime of [...createdProjectRuntimes].reverse()) {
     const projectTrusted = getProjectTrusted(projectRuntime.projectPath);
     try {
+      // Rollback should only clean up the new workspace path; forcing deletion could
+      // remove a pre-existing same-named branch in worktree runtimes.
       const deleteResult = await projectRuntime.runtime.deleteWorkspace(
         projectRuntime.projectPath,
         workspaceName,
-        true,
+        false,
         abortSignal,
         projectTrusted
       );

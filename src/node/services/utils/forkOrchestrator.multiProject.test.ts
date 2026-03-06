@@ -495,7 +495,7 @@ describe("orchestrateFork (multi-project)", () => {
     expect(projectOneRuntime.deleteWorkspace).toHaveBeenCalledWith(
       PROJECT_ONE_PATH,
       NEW_WORKSPACE_NAME,
-      true,
+      false,
       undefined,
       true
     );

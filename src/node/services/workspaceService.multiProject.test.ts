@@ -372,7 +372,21 @@ describe("WorkspaceService multi-project lifecycle", () => {
 
         expect(result.error).toContain("already exists");
         expect(deleteWorkspaceAMock).toHaveBeenCalledTimes(1);
+        expect(deleteWorkspaceAMock).toHaveBeenCalledWith(
+          projectAPath,
+          branchName,
+          false,
+          expect.any(AbortSignal),
+          true
+        );
         expect(deleteWorkspaceBMock).toHaveBeenCalledTimes(1);
+        expect(deleteWorkspaceBMock).toHaveBeenCalledWith(
+          projectBPath,
+          branchName,
+          false,
+          expect.any(AbortSignal),
+          true
+        );
         expect(initWorkspaceMock).not.toHaveBeenCalled();
         expect(removeContainerSpy).not.toHaveBeenCalled();
 

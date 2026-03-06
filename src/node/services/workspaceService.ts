@@ -2057,10 +2057,12 @@ export class WorkspaceService extends EventEmitter {
             configSnapshot.projects.get(stripTrailingSlashes(createdWorkspace.project.projectPath))
               ?.trusted ?? false;
           try {
+            // Rollback only removes the just-created workspace path; forcing deletion could
+            // also drop an older same-named branch in worktree runtimes.
             await createdWorkspace.runtime.deleteWorkspace(
               createdWorkspace.project.projectPath,
               branchName,
-              true,
+              false,
               initAbortController.signal,
               trusted
             );
