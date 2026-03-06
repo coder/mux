@@ -70,13 +70,17 @@ describe("ProjectContext", () => {
     expect(ctx().userProjects.has("/alpha")).toBe(false);
   });
 
-  test("exposes intent-based project resolvers for user/system project lookups", async () => {
+  test("exposes intent-based project resolvers for stable and legacy selectors", async () => {
     const systemProjectPath = "/path/to/system-project";
+    const systemProjectId = "proj_system_123";
     createMockAPI({
       list: () =>
         Promise.resolve([
-          ["/path/to/user-project", { workspaces: [] }],
-          [systemProjectPath, { workspaces: [], projectKind: "system" }],
+          ["/path/to/user-project", { workspaces: [], projectId: "proj_user_123" }],
+          [
+            systemProjectPath,
+            { workspaces: [], projectKind: "system", projectId: systemProjectId },
+          ],
         ]),
       remove: () => Promise.resolve({ success: true as const, data: undefined }),
       listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
@@ -99,8 +103,14 @@ describe("ProjectContext", () => {
     expect(ctx().resolveProjectPath({ type: "path", value: `${systemProjectPath}/` })).toBe(
       systemProjectPath
     );
+    expect(ctx().resolveProjectPath({ type: "projectId", value: systemProjectId })).toBe(
+      systemProjectPath
+    );
     expect(
-      ctx().resolveProjectPath({ type: "routeId", value: getProjectRouteId(systemProjectPath) })
+      ctx().resolveProjectPath({
+        type: "legacyRouteId",
+        value: getProjectRouteId(systemProjectPath),
+      })
     ).toBe(systemProjectPath);
     expect(ctx().resolveProjectPath({ type: "fuzzy", value: "system-project" })).toBe(
       systemProjectPath
@@ -484,6 +494,58 @@ describe("ProjectContext", () => {
     expect(state.branches).toEqual(["main-b"]);
     expect(state.defaultTrunkBranch).toBe("main-b");
   });
+  test("resolveNewChatProjectPath prioritizes stable projectId before legacy route IDs", async () => {
+    const legacyTargetPath = "/projects/legacy-target";
+    const stableIdCollisionPath = "/projects/stable-id-collision";
+    const legacyRouteId = getProjectRouteId(legacyTargetPath);
+
+    createMockAPI({
+      list: () =>
+        Promise.resolve([
+          [legacyTargetPath, { workspaces: [], projectId: "proj_legacy_target" }],
+          [stableIdCollisionPath, { workspaces: [], projectId: legacyRouteId }],
+        ]),
+    });
+
+    const ctx = await setup();
+    await waitFor(() => expect(ctx().userProjects.size).toBe(2));
+
+    const result = ctx().resolveNewChatProjectPath({ projectId: legacyRouteId });
+    expect(result).toBe(stableIdCollisionPath);
+  });
+
+  test("resolveNewChatProjectPath falls back from projectId to legacy route ID", async () => {
+    const legacyOnlyPath = "/projects/legacy-only";
+    const legacyRouteId = getProjectRouteId(legacyOnlyPath);
+
+    createMockAPI({
+      list: () =>
+        Promise.resolve([[legacyOnlyPath, { workspaces: [], projectId: "proj_stable_only" }]]),
+    });
+
+    const ctx = await setup();
+    await waitFor(() => expect(ctx().userProjects.size).toBe(1));
+
+    const result = ctx().resolveNewChatProjectPath({ projectId: legacyRouteId });
+    expect(result).toBe(legacyOnlyPath);
+  });
+
+  test("resolveNewChatProjectPath accepts explicit legacyRouteId selector", async () => {
+    const projectPath = "/projects/legacy-selector";
+    const legacyRouteId = getProjectRouteId(projectPath);
+
+    createMockAPI({
+      list: () =>
+        Promise.resolve([[projectPath, { workspaces: [], projectId: "proj_legacy_selector" }]]),
+    });
+
+    const ctx = await setup();
+    await waitFor(() => expect(ctx().userProjects.size).toBe(1));
+
+    const result = ctx().resolveNewChatProjectPath({ legacyRouteId });
+    expect(result).toBe(projectPath);
+  });
+
   test("resolveNewChatProjectPath prefers user project when both exist", async () => {
     createMockAPI({
       list: () =>

@@ -19,7 +19,18 @@ import { getProjectRouteId } from "@/common/utils/projectRouteId";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
-  navigateToProject: (projectPath: string, sectionId?: string, draftId?: string) => void;
+  navigateToProject: (
+    projectPath: string,
+    sectionId?: string,
+    draftId?: string,
+    projectId?: string | null
+  ) => void;
+  replaceProjectSelector: (params: {
+    projectPath: string;
+    projectId?: string | null;
+    sectionId?: string | null;
+    draftId?: string | null;
+  }) => void;
   navigateToHome: () => void;
   navigateToSettings: (section?: string) => void;
   navigateFromSettings: () => void;
@@ -112,6 +123,11 @@ function useUrlSync(): void {
   }, [location.pathname, location.search]);
 }
 
+function toNonEmptyTrimmed(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
 function RouterContextInner(props: { children: ReactNode }) {
   function getProjectPathFromLocationState(state: unknown): string | null {
     if (!state || typeof state !== "object") return null;
@@ -174,8 +190,50 @@ function RouterContextInner(props: { children: ReactNode }) {
     }
   }, [location.pathname, location.search, location.state]);
 
+  const buildProjectUrl = useCallback(
+    (params: {
+      projectPath: string;
+      projectId?: string | null;
+      sectionId?: string | null;
+      draftId?: string | null;
+    }): string => {
+      const selector = toNonEmptyTrimmed(params.projectId) ?? getProjectRouteId(params.projectPath);
+      const nextParams = new URLSearchParams();
+      nextParams.set("project", selector);
+
+      const sectionId = toNonEmptyTrimmed(params.sectionId);
+      if (sectionId) {
+        nextParams.set("section", sectionId);
+      }
+
+      const draftId = toNonEmptyTrimmed(params.draftId);
+      if (draftId) {
+        nextParams.set("draft", draftId);
+      }
+
+      return `/project?${nextParams.toString()}`;
+    },
+    []
+  );
+
+  const replaceProjectSelector = useCallback(
+    (params: {
+      projectPath: string;
+      projectId?: string | null;
+      sectionId?: string | null;
+      draftId?: string | null;
+    }) => {
+      const url = buildProjectUrl(params);
+      void navigateRef.current(url, {
+        replace: true,
+        state: { projectPath: params.projectPath },
+      });
+    },
+    [buildProjectUrl]
+  );
+
   // Back-compat: if we ever land on a legacy deep link (/project?path=<full path>),
-  // immediately replace it with the non-path project id URL.
+  // immediately replace it with the non-path project selector URL.
   useEffect(() => {
     if (location.pathname !== "/project") return;
 
@@ -183,21 +241,13 @@ function RouterContextInner(props: { children: ReactNode }) {
     const legacyPath = params.get("path");
     const projectParam = params.get("project");
     if (!projectParam && legacyPath) {
-      const section = params.get("section");
-      const draft = params.get("draft");
-      const projectId = getProjectRouteId(legacyPath);
-      const nextParams = new URLSearchParams();
-      nextParams.set("project", projectId);
-      if (section) {
-        nextParams.set("section", section);
-      }
-      if (draft) {
-        nextParams.set("draft", draft);
-      }
-      const url = `/project?${nextParams.toString()}`;
-      void navigateRef.current(url, { replace: true, state: { projectPath: legacyPath } });
+      replaceProjectSelector({
+        projectPath: legacyPath,
+        sectionId: params.get("section"),
+        draftId: params.get("draft"),
+      });
     }
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, replaceProjectSelector]);
   const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
   const pendingDraftId = location.pathname === "/project" ? searchParams.get("draft") : null;
 
@@ -207,19 +257,13 @@ function RouterContextInner(props: { children: ReactNode }) {
     void navigateRef.current(`/workspace/${encodeURIComponent(id)}`);
   }, []);
 
-  const navigateToProject = useCallback((path: string, sectionId?: string, draftId?: string) => {
-    const projectId = getProjectRouteId(path);
-    const params = new URLSearchParams();
-    params.set("project", projectId);
-    if (sectionId) {
-      params.set("section", sectionId);
-    }
-    if (draftId) {
-      params.set("draft", draftId);
-    }
-    const url = `/project?${params.toString()}`;
-    void navigateRef.current(url, { state: { projectPath: path } });
-  }, []);
+  const navigateToProject = useCallback(
+    (path: string, sectionId?: string, draftId?: string, projectId?: string | null) => {
+      const url = buildProjectUrl({ projectPath: path, projectId, sectionId, draftId });
+      void navigateRef.current(url, { state: { projectPath: path } });
+    },
+    [buildProjectUrl]
+  );
 
   const navigateToHome = useCallback(() => {
     void navigateRef.current("/");
@@ -260,6 +304,7 @@ function RouterContextInner(props: { children: ReactNode }) {
     () => ({
       navigateToWorkspace,
       navigateToProject,
+      replaceProjectSelector,
       navigateToHome,
       navigateToSettings,
       navigateFromSettings,
@@ -276,6 +321,7 @@ function RouterContextInner(props: { children: ReactNode }) {
     [
       navigateToHome,
       navigateToProject,
+      replaceProjectSelector,
       navigateToSettings,
       navigateFromSettings,
       navigateToAnalytics,

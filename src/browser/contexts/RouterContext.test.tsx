@@ -2,6 +2,7 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { useLocation } from "react-router-dom";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { RouterProvider, useRouter, type RouterContext } from "./RouterContext";
 
 describe("navigateFromSettings", () => {
@@ -79,6 +80,142 @@ describe("navigateFromSettings", () => {
 
     await waitFor(() => {
       expect(view.getByTestId("pathname").textContent).toBe("/project");
+      expect(view.getByTestId("projectPathFromState").textContent).toBe(projectPath);
+    });
+  });
+});
+
+function parseSearchParam(search: string | null, key: string): string | null {
+  return new URLSearchParams(search ?? "").get(key);
+}
+
+describe("project selector routing", () => {
+  beforeEach(() => {
+    const happyWindow = new GlobalWindow({ url: "https://mux.example.com/workspace/test" });
+    globalThis.window = happyWindow as unknown as Window & typeof globalThis;
+    globalThis.document = happyWindow.document as unknown as Document;
+    globalThis.window.localStorage.clear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+  });
+
+  function renderObserver() {
+    let latestRouter: RouterContext | null = null;
+
+    function Observer() {
+      const router = useRouter();
+      const location = useLocation();
+      latestRouter = router;
+
+      return (
+        <div>
+          <div data-testid="pathname">{location.pathname}</div>
+          <div data-testid="search">{location.search}</div>
+          <div data-testid="currentProjectId">{router.currentProjectId ?? ""}</div>
+          <div data-testid="projectPathFromState">{router.currentProjectPathFromState ?? ""}</div>
+        </div>
+      );
+    }
+
+    const view = render(
+      <RouterProvider>
+        <Observer />
+      </RouterProvider>
+    );
+
+    return { view, getRouter: () => latestRouter };
+  }
+
+  test("navigateToProject writes stable project selectors when provided", async () => {
+    const { view, getRouter } = renderObserver();
+
+    await waitFor(() => {
+      expect(getRouter()).not.toBeNull();
+    });
+
+    const projectPath = "/tmp/stable-project";
+    const stableProjectId = "proj_stable_123";
+
+    act(() => {
+      getRouter()!.navigateToProject(projectPath, "section-a", "draft-a", stableProjectId);
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/project");
+      expect(parseSearchParam(view.getByTestId("search").textContent, "project")).toBe(
+        stableProjectId
+      );
+      expect(parseSearchParam(view.getByTestId("search").textContent, "section")).toBe("section-a");
+      expect(parseSearchParam(view.getByTestId("search").textContent, "draft")).toBe("draft-a");
+      expect(view.getByTestId("currentProjectId").textContent).toBe(stableProjectId);
+      expect(view.getByTestId("projectPathFromState").textContent).toBe(projectPath);
+    });
+  });
+
+  test("navigateToProject falls back to legacy route ID selectors", async () => {
+    const { view, getRouter } = renderObserver();
+
+    await waitFor(() => {
+      expect(getRouter()).not.toBeNull();
+    });
+
+    const projectPath = "/tmp/legacy-project";
+    const legacyRouteId = getProjectRouteId(projectPath);
+
+    act(() => {
+      getRouter()!.navigateToProject(projectPath);
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/project");
+      expect(parseSearchParam(view.getByTestId("search").textContent, "project")).toBe(
+        legacyRouteId
+      );
+      expect(view.getByTestId("currentProjectId").textContent).toBe(legacyRouteId);
+      expect(view.getByTestId("projectPathFromState").textContent).toBe(projectPath);
+    });
+  });
+
+  test("replaceProjectSelector canonicalizes the selector in-place", async () => {
+    const { view, getRouter } = renderObserver();
+
+    await waitFor(() => {
+      expect(getRouter()).not.toBeNull();
+    });
+
+    const projectPath = "/tmp/canonicalize-project";
+    const legacyRouteId = getProjectRouteId(projectPath);
+
+    act(() => {
+      getRouter()!.navigateToProject(projectPath, "section-1", "draft-1");
+    });
+
+    await waitFor(() => {
+      expect(parseSearchParam(view.getByTestId("search").textContent, "project")).toBe(
+        legacyRouteId
+      );
+    });
+
+    act(() => {
+      getRouter()!.replaceProjectSelector({
+        projectPath,
+        projectId: "proj_canonical_123",
+        sectionId: "section-1",
+        draftId: "draft-1",
+      });
+    });
+
+    await waitFor(() => {
+      expect(parseSearchParam(view.getByTestId("search").textContent, "project")).toBe(
+        "proj_canonical_123"
+      );
+      expect(parseSearchParam(view.getByTestId("search").textContent, "section")).toBe("section-1");
+      expect(parseSearchParam(view.getByTestId("search").textContent, "draft")).toBe("draft-1");
+      expect(view.getByTestId("currentProjectId").textContent).toBe("proj_canonical_123");
       expect(view.getByTestId("projectPathFromState").textContent).toBe(projectPath);
     });
   });

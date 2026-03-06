@@ -49,13 +49,19 @@ type ProjectRemoveResult =
 
 export type ProjectQuery =
   | { type: "path"; value: string }
+  | { type: "projectId"; value: string }
+  | { type: "legacyRouteId"; value: string }
+  // Back-compat alias while callers migrate to `legacyRouteId`.
   | { type: "routeId"; value: string }
   | { type: "fuzzy"; value: string };
 
 /** Selector fields from a deep-link payload for resolving which project to open a new chat in. */
 export interface NewChatProjectSelector {
   projectPath?: string | null;
+  /** Stable project entity identifier. */
   projectId?: string | null;
+  /** Legacy `/project?project=` hash selector for back-compat deep links. */
+  legacyRouteId?: string | null;
   project?: string | null;
 }
 
@@ -64,7 +70,7 @@ export interface ProjectContext {
   userProjects: Map<string, ProjectConfig>;
   /** Canonical system project path when configured (e.g. Chat with Mux), otherwise null. */
   systemProjectPath: string | null;
-  /** Resolve project path by caller intent (exact path, route ID, or fuzzy deep-link query). */
+  /** Resolve project path by caller intent (stable project ID, exact path, legacy route ID, or fuzzy deep-link query). */
   resolveProjectPath: (query: ProjectQuery) => string | null;
   /** Read project config from the full project map (includes system projects). */
   getProjectConfig: (projectPath: string) => ProjectConfig | undefined;
@@ -295,7 +301,17 @@ export function ProjectProvider(props: { children: ReactNode }) {
         return null;
       }
 
-      if (query.type === "routeId") {
+      if (query.type === "projectId") {
+        for (const [projectPath, projectConfig] of allProjectsInternal.entries()) {
+          if (projectConfig.projectId === query.value) {
+            return projectPath;
+          }
+        }
+
+        return null;
+      }
+
+      if (query.type === "legacyRouteId" || query.type === "routeId") {
         for (const projectPath of allProjectsInternal.keys()) {
           if (getProjectRouteId(projectPath) === query.value) {
             return projectPath;
@@ -331,19 +347,26 @@ export function ProjectProvider(props: { children: ReactNode }) {
   // Canonical resolver for new-chat deep links: explicit selectors first, default fallback last.
   const resolveNewChatProjectPath = useCallback(
     (selector: NewChatProjectSelector): string | null => {
+      const projectId = toNonEmptyTrimmed(selector.projectId);
+      if (projectId) {
+        const byProjectId = resolveProjectPath({ type: "projectId", value: projectId });
+        if (byProjectId) return byProjectId;
+      }
+
       const exactPath = toNonEmptyTrimmed(selector.projectPath);
       if (exactPath) {
         const byPath = resolveProjectPath({ type: "path", value: exactPath });
         if (byPath) return byPath;
       }
 
-      const routeId = toNonEmptyTrimmed(selector.projectId);
-      if (routeId) {
-        const byRoute = resolveProjectPath({ type: "routeId", value: routeId });
-        if (byRoute) return byRoute;
+      // Back-compat: older links can still pass legacy route IDs via either selector field.
+      const legacyRouteId = toNonEmptyTrimmed(selector.legacyRouteId) ?? projectId;
+      if (legacyRouteId) {
+        const byLegacyRoute = resolveProjectPath({ type: "legacyRouteId", value: legacyRouteId });
+        if (byLegacyRoute) return byLegacyRoute;
       }
 
-      // Back-compat: if projectPath didn't match exactly, try fuzzy matching by path segment.
+      // Back-compat: if precise selectors didn't match, try fuzzy matching by path segment.
       const projectQuery = toNonEmptyTrimmed(selector.project);
       const fuzzy = projectQuery ?? exactPath;
       if (fuzzy) {
