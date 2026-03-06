@@ -2810,6 +2810,8 @@ export class WorkspaceService extends EventEmitter {
 
       if (isMultiProject(oldMetadata)) {
         const projects = getProjects(oldMetadata);
+        const primaryProject = projects[0];
+        assert(primaryProject, "Multi-project workspace requires a primary project");
         const renamedProjectWorkspaces: Array<{
           projectName: string;
           projectPath: string;
@@ -2888,6 +2890,16 @@ export class WorkspaceService extends EventEmitter {
         const containerManager = new ContainerManager(
           getSrcBaseDir(oldMetadata.runtimeConfig) ?? this.config.srcDir
         );
+        const oldContainerPath = containerManager.getContainerPath(oldName);
+        const newContainerPath = containerManager.getContainerPath(newName);
+
+        let newContainerExistedBeforeRename = false;
+        try {
+          await fsPromises.access(newContainerPath);
+          newContainerExistedBeforeRename = true;
+        } catch {
+          newContainerExistedBeforeRename = false;
+        }
 
         try {
           await containerManager.removeContainer(oldName);
@@ -2900,6 +2912,18 @@ export class WorkspaceService extends EventEmitter {
           );
         } catch (containerError: unknown) {
           await rollbackRenamedProjects();
+
+          if (!newContainerExistedBeforeRename) {
+            try {
+              await containerManager.removeContainer(newName);
+            } catch (cleanupErr: unknown) {
+              log.error("Failed to remove partially created new container after rename failure", {
+                workspaceId,
+                workspaceName: newName,
+                error: getErrorMessage(cleanupErr),
+              });
+            }
+          }
 
           // Recreate the old container from the per-project paths returned by the rename
           // calls so rollback never reuses the primary project's runtime for sibling links.
@@ -2918,7 +2942,6 @@ export class WorkspaceService extends EventEmitter {
                 workspacePath: renamedWorkspaceEntry.oldWorkspacePath,
               };
             });
-            const oldContainerPath = containerManager.getContainerPath(oldName);
             await fsPromises.mkdir(oldContainerPath, { recursive: true });
             for (const workspaceEntry of originalWorkspaces) {
               const linkPath = path.join(oldContainerPath, workspaceEntry.projectName);
@@ -2932,11 +2955,24 @@ export class WorkspaceService extends EventEmitter {
           return Err(`Failed to recreate container: ${getErrorMessage(containerError)}`);
         }
 
-        oldPath = containerManager.getContainerPath(oldName);
-        newPath = containerManager.getContainerPath(newName);
+        // Multi-project tasks/forks stored under a real project must keep their git-root path in
+        // config so downstream artifact collection can resolve the owning repo after rename.
+        const persistedWorkspacePath =
+          configProjectPath === MULTI_PROJECT_CONFIG_KEY
+            ? undefined
+            : (renamedProjectWorkspaces.find(
+                (workspaceEntry) => workspaceEntry.projectPath === configProjectPath
+              ) ??
+              renamedProjectWorkspaces.find(
+                (workspaceEntry) => workspaceEntry.projectPath === primaryProject.projectPath
+              ));
+        assert(
+          configProjectPath === MULTI_PROJECT_CONFIG_KEY || persistedWorkspacePath,
+          "Expected multi-project rename to preserve the config project's workspace path"
+        );
+        oldPath = persistedWorkspacePath?.oldWorkspacePath ?? oldContainerPath;
+        newPath = persistedWorkspacePath?.newWorkspacePath ?? newContainerPath;
 
-        const primaryProject = projects[0];
-        assert(primaryProject, "Multi-project workspace requires a primary project");
         runtimeForPlanFile = createRuntime(oldMetadata.runtimeConfig, {
           projectPath: primaryProject.projectPath,
           workspaceName: newName,
