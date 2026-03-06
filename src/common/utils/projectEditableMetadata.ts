@@ -35,7 +35,7 @@ function toTrimmedNonEmpty(value: string | null | undefined): string | undefined
 }
 
 export function normalizeEditableWorkingDirectories(
-  workingDirectories: ReadonlyArray<EditableWorkingDirectoryInput>
+  workingDirectories: readonly EditableWorkingDirectoryInput[]
 ): EditableWorkingDirectoryInput[] {
   const normalizedWorkingDirectories: EditableWorkingDirectoryInput[] = [];
 
@@ -64,9 +64,9 @@ export function normalizeEditableWorkingDirectories(
 
 function getNonRootWorkingDirectories(
   projectPath: string,
-  workingDirectories: ReadonlyArray<WorkingDirectoryConfig> | undefined
+  workingDirectories: readonly WorkingDirectoryConfig[] | undefined
 ): EditableWorkingDirectoryInput[] {
-  if (!Array.isArray(workingDirectories)) {
+  if (!workingDirectories) {
     return [];
   }
 

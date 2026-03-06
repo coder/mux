@@ -16,7 +16,11 @@
  */
 export function getProjectStorageId(projectPath: string, projectId?: string | null): string {
   const normalizedProjectId = projectId?.trim();
-  return normalizedProjectId ? normalizedProjectId : projectPath;
+  if (normalizedProjectId == null || normalizedProjectId.length === 0) {
+    return projectPath;
+  }
+
+  return normalizedProjectId;
 }
 
 /**

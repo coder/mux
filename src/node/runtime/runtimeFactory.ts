@@ -300,7 +300,7 @@ const DEVCONTAINER_CLI_MISSING_REASON =
 const DEVCONTAINER_CONFIG_MISSING_REASON = "No devcontainer.json found";
 
 function normalizeWorkingDirectories(input: RuntimeAvailabilityInput): string[] {
-  const projectPaths = Array.isArray(input) ? input : [input];
+  const projectPaths = typeof input === "string" ? [input] : [...input];
   return Array.from(new Set(projectPaths.filter((projectPath) => projectPath.length > 0)));
 }
 

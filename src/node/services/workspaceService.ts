@@ -1643,7 +1643,7 @@ export class WorkspaceService extends EventEmitter {
     const projectConfig =
       resolvedProject?.projectConfig ??
       this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath));
-    if (!projectConfig || !projectConfig.trusted) {
+    if (!projectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
       );

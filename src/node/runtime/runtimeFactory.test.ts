@@ -99,16 +99,17 @@ describe("checkRuntimeAvailability", () => {
   const createDependencies = (
     overrides: Partial<RuntimeAvailabilityDependencies> = {}
   ): RuntimeAvailabilityDependencies => ({
-    isGitRepository: async () => true,
-    isDockerAvailable: async () => true,
-    checkDevcontainerCliVersion: async () => ({ available: true, version: "0.81.1" }),
-    scanDevcontainerConfigs: async () => [],
+    isGitRepository: () => Promise.resolve(true),
+    isDockerAvailable: () => Promise.resolve(true),
+    checkDevcontainerCliVersion: () =>
+      Promise.resolve({ available: true as const, version: "0.81.1" }),
+    scanDevcontainerConfigs: () => Promise.resolve([]),
     ...overrides,
   });
 
   it("enables git-dependent runtimes when every working directory is a git repository", async () => {
     const workingDirectories = ["/tmp/project-a", "/tmp/project-b"];
-    const isGitRepository = mock(async () => true);
+    const isGitRepository = mock(() => Promise.resolve(true));
 
     const availability = await checkRuntimeAvailability(workingDirectories, {
       dependencies: createDependencies({ isGitRepository }),
@@ -130,7 +131,7 @@ describe("checkRuntimeAvailability", () => {
 
     const availability = await checkRuntimeAvailability(workingDirectories, {
       dependencies: createDependencies({
-        isGitRepository: async (projectPath) => projectPath === workingDirectories[0],
+        isGitRepository: (projectPath) => Promise.resolve(projectPath === workingDirectories[0]),
       }),
     });
 
@@ -142,13 +143,17 @@ describe("checkRuntimeAvailability", () => {
   });
 
   it("returns an explicit reason when the working-directory set is empty", async () => {
-    const isGitRepository = mock(async () => true);
-    const isDockerAvailable = mock(async () => true);
-    const checkDevcontainerCliVersion = mock(async () => ({
-      available: true as const,
-      version: "0.81.1",
-    }));
-    const scanDevcontainerConfigs = mock(async () => [".devcontainer/devcontainer.json"]);
+    const isGitRepository = mock(() => Promise.resolve(true));
+    const isDockerAvailable = mock(() => Promise.resolve(true));
+    const checkDevcontainerCliVersion = mock(() =>
+      Promise.resolve({
+        available: true as const,
+        version: "0.81.1",
+      })
+    );
+    const scanDevcontainerConfigs = mock(() =>
+      Promise.resolve([".devcontainer/devcontainer.json"])
+    );
 
     const availability = await checkRuntimeAvailability([], {
       dependencies: {
@@ -172,12 +177,12 @@ describe("checkRuntimeAvailability", () => {
 
   it("aggregates devcontainer configs across every working directory", async () => {
     const workingDirectories = ["/tmp/project-a", "/tmp/project-b"];
-    const scanDevcontainerConfigs = mock(async (projectPath: string) => {
+    const scanDevcontainerConfigs = mock((projectPath: string) => {
       if (projectPath === workingDirectories[0]) {
-        return [".devcontainer/devcontainer.json"];
+        return Promise.resolve([".devcontainer/devcontainer.json"]);
       }
 
-      return [".devcontainer/backend/devcontainer.json"];
+      return Promise.resolve([".devcontainer/backend/devcontainer.json"]);
     });
 
     const availability = await checkRuntimeAvailability(workingDirectories, {

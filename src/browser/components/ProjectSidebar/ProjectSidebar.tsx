@@ -644,9 +644,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Use a plain array with .includes() instead of new Set() on every render —
   // the React Compiler cannot stabilize Set allocations (see AGENTS.md).
   // For typical sidebar sizes (< 20 projects) .includes() is equivalent perf.
-  const expandedProjectsPersisted = Array.isArray(expandedProjectsArray)
-    ? expandedProjectsArray
-    : [];
+  const expandedProjectsPersisted = React.useMemo(
+    () => (Array.isArray(expandedProjectsArray) ? expandedProjectsArray : []),
+    [expandedProjectsArray]
+  );
 
   // Track which projects have old workspaces expanded (per-project, per-tier)
   // Key format: getTierKey(projectStorageId, tierIndex) where tierIndex is 0, 1, 2 for 1/7/30 days
@@ -1103,7 +1104,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     "mux:projectOrder",
     []
   );
-  const persistedProjectOrder = Array.isArray(projectOrderStorage) ? projectOrderStorage : [];
+  const persistedProjectOrder = React.useMemo(
+    () => (Array.isArray(projectOrderStorage) ? projectOrderStorage : []),
+    [projectOrderStorage]
+  );
 
   // projectOrdering.ts intentionally stays path-based; translate persisted
   // storage IDs at the sidebar boundary during projectId migration.

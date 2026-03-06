@@ -79,10 +79,14 @@ void mock.module("@/browser/contexts/ProjectContext", () => ({
 
 import { ProjectPage } from "../ProjectPage/ProjectPage";
 
-function createEmptyMetadataIterator(): Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>> {
-  return (async function* () {
-    return;
-  })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>;
+type MetadataIterator = Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>;
+
+function createEmptyMetadataIterator(): MetadataIterator {
+  const iterator = (async function* () {
+    await Promise.resolve();
+    yield* [];
+  })();
+  return iterator as unknown as MetadataIterator;
 }
 
 const baseProps = {
