@@ -152,6 +152,12 @@ export const SecretsSection: React.FC = () => {
 
   const scopeLabel = scope === "global" ? "Global" : "Project";
   const showSourceColumn = scope === "project" || opAvailable;
+  const secretGridColumns =
+    scope === "global"
+      ? showSourceColumn
+        ? "grid-cols-[1fr_auto_1fr_auto_auto_auto]"
+        : "grid-cols-[1fr_1fr_auto_auto_auto]"
+      : "grid-cols-[1fr_auto_1fr_auto_auto]";
 
   // When re-opened with a new project hint (e.g., clicking the secrets button again
   // for a different project), sync the scope and clear the one-shot hint.
@@ -534,8 +540,14 @@ export const SecretsSection: React.FC = () => {
         if (!projectPath) {
           setInjectedGlobalSecretKeys([]);
         } else {
-          const injectedKeys = await api.secrets.getInjectedGlobals({ projectPath });
-          setInjectedGlobalSecretKeys(injectedKeys);
+          try {
+            const injectedKeys = await api.secrets.getInjectedGlobals({ projectPath });
+            setInjectedGlobalSecretKeys(injectedKeys);
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to refresh injected globals";
+            setError(`Secrets saved, but failed to refresh injected globals: ${message}`);
+          }
         }
       }
       setVisibleSecrets(new Set());
@@ -687,11 +699,7 @@ export const SecretsSection: React.FC = () => {
         </div>
       ) : (
         <div
-          className={`[&>label]:text-muted grid ${
-            showSourceColumn
-              ? "grid-cols-[1fr_auto_1fr_auto_auto]"
-              : "grid-cols-[1fr_1fr_auto_auto_auto]"
-          } items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]`}
+          className={`[&>label]:text-muted grid ${secretGridColumns} items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]`}
         >
           <label>Key</label>
           {showSourceColumn && <label>Source</label>}
