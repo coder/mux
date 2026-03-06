@@ -110,6 +110,20 @@ function summarizeStatusCheckRollup(raw: unknown): {
 }
 
 /**
+ * Detect the specific gh CLI stderr for branches that simply do not have a PR yet.
+ *
+ * `gh pr view` exits non-zero for this case, so we need to distinguish it from real
+ * failures before deciding whether section rules should be re-evaluated as `prState: "none"`.
+ */
+export function isGhNoPullRequestFoundOutput(output: unknown): boolean {
+  if (typeof output !== "string") {
+    return false;
+  }
+
+  return output.toLowerCase().includes("no pull requests found for branch");
+}
+
+/**
  * Parse merge queue entry data from GitHub GraphQL response payloads.
  */
 export function parseMergeQueueEntry(raw: unknown): MergeQueueEntry | null {
@@ -375,16 +389,19 @@ export class PRStatusStore {
     this.workspacePRSubscriptions.bump(workspaceId);
 
     try {
-      // Run gh pr view without URL - detects PR for current branch
+      // Run gh pr view without URL - detects PR for current branch.
+      // We inspect non-zero output in TypeScript so only the specific "no PR for branch"
+      // failure gets mapped to prState:none; all other gh failures stay on the error path.
       const result = await this.client.workspace.executeBash({
         workspaceId,
-        script: `gh pr view --json number,url,state,mergeable,mergeStateStatus,title,isDraft,headRefName,baseRefName,statusCheckRollup 2>/dev/null || echo '{"no_pr":true}'`,
+        script:
+          "gh pr view --json number,url,state,mergeable,mergeStateStatus,title,isDraft,headRefName,baseRefName,statusCheckRollup",
         options: { timeout_secs: 15 },
       });
 
       if (!this.isActive) return;
 
-      if (!result.success || !result.data.success) {
+      if (!result.success) {
         this.setWorkspacePRCacheEntry(workspaceId, {
           prLink: null,
           error: "Failed to run gh CLI",
@@ -395,68 +412,78 @@ export class PRStatusStore {
         return;
       }
 
-      const output = result.data.output;
-      if (output) {
-        const parsed = JSON.parse(output) as Record<string, unknown>;
-
-        if ("no_pr" in parsed) {
-          // No PR for this branch
+      if (!result.data.success) {
+        if (isGhNoPullRequestFoundOutput(result.data.output)) {
           this.setWorkspacePRCacheEntry(workspaceId, {
             prLink: null,
             loading: false,
             fetchedAt: Date.now(),
           });
         } else {
-          // Parse PR link from URL
-          const prUrl = parsed.url as string;
-          const prLinkBase = parseGitHubPRUrl(prUrl);
+          this.setWorkspacePRCacheEntry(workspaceId, {
+            prLink: null,
+            error: "Failed to run gh CLI",
+            loading: false,
+            fetchedAt: Date.now(),
+          });
+        }
+        this.workspacePRSubscriptions.bump(workspaceId);
+        return;
+      }
 
-          if (!prLinkBase) {
-            this.setWorkspacePRCacheEntry(workspaceId, {
-              prLink: null,
-              error: "Invalid PR URL from gh CLI",
-              loading: false,
-              fetchedAt: Date.now(),
-            });
-          } else {
-            const { hasPendingChecks, hasFailedChecks } = summarizeStatusCheckRollup(
-              parsed.statusCheckRollup
-            );
+      const output = result.data.output;
+      if (output) {
+        const parsed = JSON.parse(output) as Record<string, unknown>;
 
-            const status: GitHubPRStatus = {
-              state: (parsed.state as GitHubPRStatus["state"]) ?? "OPEN",
-              mergeable: (parsed.mergeable as GitHubPRStatus["mergeable"]) ?? "UNKNOWN",
-              mergeStateStatus:
-                (parsed.mergeStateStatus as GitHubPRStatus["mergeStateStatus"]) ?? "UNKNOWN",
-              title: (parsed.title as string) ?? "",
-              isDraft: (parsed.isDraft as boolean) ?? false,
-              headRefName: (parsed.headRefName as string) ?? "",
-              baseRefName: (parsed.baseRefName as string) ?? "",
-              hasPendingChecks,
-              hasFailedChecks,
-              fetchedAt: Date.now(),
-            };
+        // Parse PR link from URL
+        const prUrl = parsed.url as string;
+        const prLinkBase = parseGitHubPRUrl(prUrl);
 
-            const prLink: GitHubPRLink = {
-              type: "github-pr",
-              url: prUrl,
-              ...prLinkBase,
-              detectedAt: Date.now(),
-              occurrenceCount: 1,
-            };
+        if (!prLinkBase) {
+          this.setWorkspacePRCacheEntry(workspaceId, {
+            prLink: null,
+            error: "Invalid PR URL from gh CLI",
+            loading: false,
+            fetchedAt: Date.now(),
+          });
+        } else {
+          const { hasPendingChecks, hasFailedChecks } = summarizeStatusCheckRollup(
+            parsed.statusCheckRollup
+          );
 
-            this.setWorkspacePRCacheEntry(workspaceId, {
-              prLink,
-              status,
-              loading: false,
-              fetchedAt: Date.now(),
-            });
+          const status: GitHubPRStatus = {
+            state: (parsed.state as GitHubPRStatus["state"]) ?? "OPEN",
+            mergeable: (parsed.mergeable as GitHubPRStatus["mergeable"]) ?? "UNKNOWN",
+            mergeStateStatus:
+              (parsed.mergeStateStatus as GitHubPRStatus["mergeStateStatus"]) ?? "UNKNOWN",
+            title: (parsed.title as string) ?? "",
+            isDraft: (parsed.isDraft as boolean) ?? false,
+            headRefName: (parsed.headRefName as string) ?? "",
+            baseRefName: (parsed.baseRefName as string) ?? "",
+            hasPendingChecks,
+            hasFailedChecks,
+            fetchedAt: Date.now(),
+          };
 
-            // Persist to localStorage for instant display on app restart
-            prStatusLRU.set(workspaceId, { prLink, status });
+          const prLink: GitHubPRLink = {
+            type: "github-pr",
+            url: prUrl,
+            ...prLinkBase,
+            detectedAt: Date.now(),
+            occurrenceCount: 1,
+          };
 
-            this.scheduleMergeQueueRefresh(workspaceId, prLinkBase, prUrl, status.fetchedAt);
-          }
+          this.setWorkspacePRCacheEntry(workspaceId, {
+            prLink,
+            status,
+            loading: false,
+            fetchedAt: Date.now(),
+          });
+
+          // Persist to localStorage for instant display on app restart
+          prStatusLRU.set(workspaceId, { prLink, status });
+
+          this.scheduleMergeQueueRefresh(workspaceId, prLinkBase, prUrl, status.fetchedAt);
         }
       } else {
         this.setWorkspacePRCacheEntry(workspaceId, {
