@@ -70,15 +70,6 @@ const DISPLAY_LABEL_TO_LEVEL: Record<string, ThinkingLevel> = {
 };
 
 /**
- * Parse a thinking level from user input (display label or legacy value)
- * Returns undefined if not recognized
- */
-export function parseThinkingDisplayLabel(value: string): ThinkingLevel | undefined {
-  const normalized = value.trim().toLowerCase();
-  return DISPLAY_LABEL_TO_LEVEL[normalized];
-}
-
-/**
  * Result of parsing a thinking level input. Named levels resolve to a
  * ThinkingLevel string immediately; numeric indices are deferred and
  * resolved against the target model's thinking policy at send time
