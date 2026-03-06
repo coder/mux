@@ -1294,6 +1294,16 @@ describe("WorkspaceService multi-project lifecycle", () => {
       const projectBPath = path.join(rootDir, "project-b");
       const srcDir = path.join(rootDir, "src");
       const oldContainerPath = path.join(srcDir, "_workspaces", oldName);
+      const oldWorkspaceAPath = path.join(srcDir, "project-a", oldName);
+      const oldWorkspaceBPath = path.join(srcDir, "project-b", oldName);
+      const newWorkspaceAPath = path.join(srcDir, "project-a", newName);
+      const newWorkspaceBPath = path.join(srcDir, "project-b", newName);
+
+      await fsPromises.mkdir(oldWorkspaceAPath, { recursive: true });
+      await fsPromises.mkdir(oldWorkspaceBPath, { recursive: true });
+      await fsPromises.mkdir(oldContainerPath, { recursive: true });
+      await fsPromises.symlink(oldWorkspaceAPath, path.join(oldContainerPath, "project-a"));
+      await fsPromises.symlink(oldWorkspaceBPath, path.join(oldContainerPath, "project-b"));
 
       const configState: ProjectsConfig = {
         projects: new Map([
@@ -1387,8 +1397,8 @@ describe("WorkspaceService multi-project lifecycle", () => {
           ) {
             return Promise.resolve({
               success: true as const,
-              oldPath: path.join(srcDir, "project-a", sourceName),
-              newPath: path.join(srcDir, "project-a", targetName),
+              oldPath: sourceName === oldName ? oldWorkspaceAPath : newWorkspaceAPath,
+              newPath: targetName === oldName ? oldWorkspaceAPath : newWorkspaceAPath,
             });
           }
 
@@ -1412,8 +1422,8 @@ describe("WorkspaceService multi-project lifecycle", () => {
           ) {
             return Promise.resolve({
               success: true as const,
-              oldPath: path.join(srcDir, "project-b", sourceName),
-              newPath: path.join(srcDir, "project-b", targetName),
+              oldPath: sourceName === oldName ? oldWorkspaceBPath : newWorkspaceBPath,
+              newPath: targetName === oldName ? oldWorkspaceBPath : newWorkspaceBPath,
             });
           }
 
@@ -1429,11 +1439,13 @@ describe("WorkspaceService multi-project lifecycle", () => {
           if (options?.projectPath === projectAPath) {
             return {
               renameWorkspace: renameWorkspaceAMock,
+              getWorkspacePath: mock(() => oldWorkspaceAPath),
             } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
           }
           if (options?.projectPath === projectBPath) {
             return {
               renameWorkspace: renameWorkspaceBMock,
+              getWorkspacePath: mock(() => oldWorkspaceBPath),
             } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
           }
           throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
@@ -1443,7 +1455,12 @@ describe("WorkspaceService multi-project lifecycle", () => {
       const removeContainerSpy = spyOn(
         ContainerManager.prototype,
         "removeContainer"
-      ).mockResolvedValue();
+      ).mockImplementation(async (workspaceName: string) => {
+        await fsPromises.rm(path.join(srcDir, "_workspaces", workspaceName), {
+          recursive: true,
+          force: true,
+        });
+      });
       const createContainerSpy = spyOn(
         ContainerManager.prototype,
         "createContainer"
@@ -1509,6 +1526,16 @@ describe("WorkspaceService multi-project lifecycle", () => {
         const storedWorkspace = configState.projects.get(MULTI_PROJECT_CONFIG_KEY)?.workspaces[0];
         expect(storedWorkspace?.name).toBe(oldName);
         expect(storedWorkspace?.path).toBe(oldContainerPath);
+
+        const recreatedProjectALink = await fsPromises.readlink(
+          path.join(oldContainerPath, "project-a")
+        );
+        const recreatedProjectBLink = await fsPromises.readlink(
+          path.join(oldContainerPath, "project-b")
+        );
+        expect(recreatedProjectALink).toBe(oldWorkspaceAPath);
+        expect(recreatedProjectBLink).toBe(oldWorkspaceBPath);
+        expect(recreatedProjectBLink).not.toBe(oldWorkspaceAPath);
       } finally {
         createContainerSpy.mockRestore();
         removeContainerSpy.mockRestore();

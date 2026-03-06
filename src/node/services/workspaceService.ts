@@ -2813,7 +2813,8 @@ export class WorkspaceService extends EventEmitter {
         const renamedProjectWorkspaces: Array<{
           projectName: string;
           projectPath: string;
-          workspacePath: string;
+          oldWorkspacePath: string;
+          newWorkspacePath: string;
         }> = [];
 
         const rollbackRenamedProjects = async (): Promise<void> => {
@@ -2879,7 +2880,8 @@ export class WorkspaceService extends EventEmitter {
           renamedProjectWorkspaces.push({
             projectName: project.projectName,
             projectPath: project.projectPath,
-            workspacePath: renameResult.newPath,
+            oldWorkspacePath: renameResult.oldPath,
+            newWorkspacePath: renameResult.newPath,
           });
         }
 
@@ -2893,28 +2895,16 @@ export class WorkspaceService extends EventEmitter {
             newName,
             renamedProjectWorkspaces.map((workspaceEntry) => ({
               projectName: workspaceEntry.projectName,
-              workspacePath: workspaceEntry.workspacePath,
+              workspacePath: workspaceEntry.newWorkspacePath,
             }))
           );
         } catch (containerError: unknown) {
           await rollbackRenamedProjects();
 
-          // Recreate old container with original paths after rollback.
+          // Recreate the old container from the per-project paths returned by the rename
+          // calls so rollback never reuses the primary project's runtime for sibling links.
           try {
-            const primaryProject = projects[0];
-            assert(primaryProject, "Multi-project workspace requires a primary project");
-            const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
-              projectPath: primaryProject.projectPath,
-              workspaceName: oldName,
-            });
             const originalWorkspaces = projects.map((project) => {
-              if (typeof rollbackRuntime.getWorkspacePath === "function") {
-                return {
-                  projectName: project.projectName,
-                  workspacePath: rollbackRuntime.getWorkspacePath(project.projectPath, oldName),
-                };
-              }
-
               const renamedWorkspaceEntry = renamedProjectWorkspaces.find(
                 (workspaceEntry) => workspaceEntry.projectPath === project.projectPath
               );
@@ -2925,10 +2915,7 @@ export class WorkspaceService extends EventEmitter {
 
               return {
                 projectName: project.projectName,
-                workspacePath: path.join(
-                  path.dirname(renamedWorkspaceEntry.workspacePath),
-                  oldName
-                ),
+                workspacePath: renamedWorkspaceEntry.oldWorkspacePath,
               };
             });
             const oldContainerPath = containerManager.getContainerPath(oldName);
