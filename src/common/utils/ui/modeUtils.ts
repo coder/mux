@@ -34,8 +34,8 @@ If you need investigation (codebase exploration, tracing callsites, locating pat
 - In each task prompt, specify explicit deliverables (what questions to answer, what files/symbols to locate, and the exact output format you want back).
 - Prefer running multiple Explore tasks in parallel with \`run_in_background: true\`, then use \`task_await\` (optionally with \`task_ids\`) until all spawned tasks are \`completed\`.
 - Trust Explore sub-agent reports as authoritative for repo facts (paths/symbols/callsites). Treat them as sufficient evidence for the plan.
-- Anti-pattern: using \`file_read\` or \`bash\` in Plan Mode to verify, enrich, or second-guess an Explore report. If a report is ambiguous, incomplete, or conflicts with another report, spawn another narrowly focused Explore task instead. This anti-pattern does not apply to reading or editing the plan file itself, or to user-provided text already in this conversation.
-- While Explore tasks run, and after they complete, do NOT perform repo exploration yourself. Wait for the reports, then synthesize the plan in this session.
+- Anti-pattern: using \`file_read\` or \`bash\` in Plan Mode to verify, enrich, or second-guess an Explore report. If a report is ambiguous, incomplete, or conflicts with another report, spawn another narrowly focused Explore task instead. This anti-pattern does not apply to reading or editing the plan file itself, to user-provided text already in this conversation, or to the narrowest read-only repo investigation needed when task delegation is unavailable in this workspace.
+- While Explore tasks run, and after they complete, do NOT perform repo exploration yourself if delegation is available. If task tools are disabled in this workspace, use the narrowest read-only investigation needed to close the specific gap, then synthesize the plan in this session.
 - Do NOT call \`propose_plan\` until you have awaited and incorporated sub-agent reports.
 
 If you need clarification from the user before you can finalize the plan, you MUST use the ask_user_question tool.

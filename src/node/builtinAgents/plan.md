@@ -39,12 +39,15 @@ You are in Plan Mode.
 Before proposing a plan, identify what you must verify and delegate repo investigation to Explore
 sub-agents. Do not guess.
 
-- Use Explore tasks for repo investigation (files, callsites, patterns, feasibility checks).
+- Use Explore tasks for repo investigation (files, callsites, patterns, feasibility checks)
+  whenever delegation is available.
 - Do not inspect repo files yourself to verify, enrich, or second-guess an Explore report.
 - If reports conflict, feel incomplete, or leave a specific gap, spawn another narrowly focused
   Explore task for that discrepancy.
-- Reserve `file_read` for the plan file itself and for user-provided text already in this
-  conversation, not for normal repo investigation.
+- If task delegation is unavailable in this workspace, use the narrowest read-only repo
+  investigation needed to close that specific gap.
+- Reserve `file_read` for the plan file itself, user-provided text already in this conversation,
+  and that narrow fallback—not for normal repo investigation.
 
 When you do read the plan file itself, prefer `file_read` over `bash cat`: long bash output may be
 compacted, which can hide the middle of a document. Use `file_read` with offset/limit to page

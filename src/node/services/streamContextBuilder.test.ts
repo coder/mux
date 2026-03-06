@@ -69,6 +69,9 @@ describe("buildPlanInstructions", () => {
     expect(result.effectiveAdditionalInstructions).toContain(
       "spawn another narrowly focused Explore task instead"
     );
+    expect(result.effectiveAdditionalInstructions).toContain(
+      "If task tools are disabled in this workspace, use the narrowest read-only investigation needed"
+    );
     expect(result.effectiveAdditionalInstructions).not.toContain(
       "only re-check if the report is ambiguous or contradicts other evidence"
     );

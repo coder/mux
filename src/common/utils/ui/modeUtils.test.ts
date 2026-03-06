@@ -16,6 +16,8 @@ describe("getPlanModeInstruction", () => {
     expect(instruction).toContain("spawn another narrowly focused Explore task instead");
     expect(instruction).toContain("plan file itself");
     expect(instruction).toContain("user-provided text already in this conversation");
+    expect(instruction).toContain("task delegation is unavailable in this workspace");
+    expect(instruction).toContain("use the narrowest read-only investigation needed");
     expect(instruction).not.toContain(
       "only re-check if the report is ambiguous or contradicts other evidence"
     );

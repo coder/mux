@@ -143,6 +143,9 @@ describe("buildSystemMessage", () => {
 
     expect(systemMessage).toContain("<subagent-reports>");
     expect(systemMessage).toContain("spawn a narrower Explore task instead");
+    expect(systemMessage).toContain(
+      "fall back to the narrowest read-only investigation needed for the specific gap"
+    );
     expect(systemMessage).toContain("Such reports count as having read the referenced files.");
     expect(systemMessage).not.toContain(
       "Do not redo the same investigation unless the report is ambiguous or contradicts other evidence"
