@@ -248,7 +248,7 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
                 )}
 
                 {saveState.status === "error" && (
-                  <span className="text-[10px] text-danger" role="alert">
+                  <span className="text-danger text-[10px]" role="alert">
                     {saveState.message}
                   </span>
                 )}
