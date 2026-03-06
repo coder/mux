@@ -102,12 +102,12 @@ MODEL_METADATA = {
         "model_org_display_name": "Anthropic",
         "folder_name": "Claude-Opus-4.6",
     },
-    "openai/gpt-5.2": {
-        "model_name": "gpt-5.2",
+    "openai/gpt-5.4": {
+        "model_name": "gpt-5.4",
         "model_provider": "openai",
-        "model_display_name": "GPT-5.2",
+        "model_display_name": "GPT-5.4",
         "model_org_display_name": "OpenAI",
-        "folder_name": "GPT-5.2",
+        "folder_name": "GPT-5.4",
     },
     "openai/gpt-5-codex": {
         "model_name": "gpt-5-codex",
