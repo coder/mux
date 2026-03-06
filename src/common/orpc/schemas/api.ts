@@ -471,6 +471,16 @@ export const mcpOauth = {
   },
 };
 
+const ProjectSelectorInputSchema = z.object({
+  projectPath: z.string().meta({
+    description:
+      "Compatibility selector keyed by absolute path. Remains required until projectId routing is fully wired.",
+  }),
+  projectId: z.string().optional().meta({
+    description: "Stable project ID selector for entity-based project lookups.",
+  }),
+});
+
 // Projects
 export const projects = {
   create: {
@@ -526,7 +536,7 @@ export const projects = {
     output: z.string().nullable(),
   },
   remove: {
-    input: z.object({ projectPath: z.string(), force: z.boolean().nullish() }).passthrough(),
+    input: ProjectSelectorInputSchema.extend({ force: z.boolean().nullish() }).passthrough(),
     output: ResultSchema(z.void(), ProjectRemoveErrorSchema),
   },
   list: {
@@ -544,11 +554,11 @@ export const projects = {
     output: z.object({ paths: z.array(z.string()) }),
   },
   runtimeAvailability: {
-    input: z.object({ projectPath: z.string() }),
+    input: ProjectSelectorInputSchema,
     output: RuntimeAvailabilitySchema,
   },
   listBranches: {
-    input: z.object({ projectPath: z.string() }),
+    input: ProjectSelectorInputSchema,
     output: BranchListResultSchema,
   },
   gitInit: {
@@ -556,7 +566,7 @@ export const projects = {
     output: ResultSchema(z.void(), z.string()),
   },
   setTrust: {
-    input: z.object({ projectPath: z.string(), trusted: z.boolean() }),
+    input: ProjectSelectorInputSchema.extend({ trusted: z.boolean() }),
     output: z.void(),
   },
   mcp: {
@@ -844,8 +854,7 @@ export const workspace = {
     output: z.array(FrontendWorkspaceMetadataSchema),
   },
   create: {
-    input: z.object({
-      projectPath: z.string(),
+    input: ProjectSelectorInputSchema.extend({
       branchName: z.string(),
       /** Trunk branch to fork from - only required for worktree/SSH runtimes, ignored for local */
       trunkBranch: z.string().optional(),
@@ -904,7 +913,7 @@ export const workspace = {
     output: ResultSchema(z.void(), z.string()),
   },
   archiveMergedInProject: {
-    input: z.object({ projectPath: z.string() }),
+    input: ProjectSelectorInputSchema,
     output: ResultSchema(
       z.object({
         archivedWorkspaceIds: z.array(z.string()),

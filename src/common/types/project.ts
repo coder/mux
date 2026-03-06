@@ -8,6 +8,7 @@ import type { z } from "zod";
 import type {
   ProjectConfigSchema,
   SectionConfigSchema,
+  WorkingDirectoryConfigSchema,
   WorkspaceConfigSchema,
 } from "../orpc/schemas";
 import type { AgentAiDefaults } from "./agentAiDefaults";
@@ -18,6 +19,8 @@ import type { LayoutPresetsConfig } from "./uiLayouts";
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
 export type SectionConfig = z.infer<typeof SectionConfigSchema>;
+
+export type WorkingDirectoryConfig = z.infer<typeof WorkingDirectoryConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 

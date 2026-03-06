@@ -18,6 +18,10 @@ export const WorkspaceMetadataSchema = z.object({
   projectName: z
     .string()
     .meta({ description: "Project name extracted from project path (for display)" }),
+  projectId: z.string().optional().meta({
+    description:
+      "Stable project ID for this workspace. Optional while migrating legacy path-keyed project metadata.",
+  }),
   projectPath: z
     .string()
     .meta({ description: "Absolute path to the project (needed to compute workspace path)" }),

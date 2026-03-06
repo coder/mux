@@ -4,6 +4,8 @@ import {
   ProviderConfigInfoSchema,
   ProvidersConfigMapSchema,
   config,
+  projects,
+  workspace,
 } from "./api";
 import type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap } from "../types";
 
@@ -203,5 +205,40 @@ describe("config.saveConfig schema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+});
+
+describe("project selector schema compatibility", () => {
+  it("accepts legacy projectPath-only selectors", () => {
+    expect(projects.runtimeAvailability.input.safeParse({ projectPath: "/tmp/repo" }).success).toBe(
+      true
+    );
+    expect(projects.listBranches.input.safeParse({ projectPath: "/tmp/repo" }).success).toBe(true);
+    expect(projects.remove.input.safeParse({ projectPath: "/tmp/repo" }).success).toBe(true);
+    expect(
+      projects.setTrust.input.safeParse({ projectPath: "/tmp/repo", trusted: true }).success
+    ).toBe(true);
+    expect(
+      workspace.create.input.safeParse({
+        projectPath: "/tmp/repo",
+        branchName: "feature/one",
+      }).success
+    ).toBe(true);
+    expect(
+      workspace.archiveMergedInProject.input.safeParse({ projectPath: "/tmp/repo" }).success
+    ).toBe(true);
+  });
+
+  it("accepts projectId alongside compatibility projectPath", () => {
+    const selector = { projectPath: "/tmp/repo", projectId: "proj_123" };
+
+    expect(projects.runtimeAvailability.input.safeParse(selector).success).toBe(true);
+    expect(projects.listBranches.input.safeParse(selector).success).toBe(true);
+    expect(projects.remove.input.safeParse({ ...selector, force: true }).success).toBe(true);
+    expect(projects.setTrust.input.safeParse({ ...selector, trusted: false }).success).toBe(true);
+    expect(
+      workspace.create.input.safeParse({ ...selector, branchName: "feature/two" }).success
+    ).toBe(true);
+    expect(workspace.archiveMergedInProject.input.safeParse(selector).success).toBe(true);
   });
 });

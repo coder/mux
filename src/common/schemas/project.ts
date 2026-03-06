@@ -29,6 +29,15 @@ export const SectionConfigSchema = z.object({
   }),
 });
 
+export const WorkingDirectoryConfigSchema = z.object({
+  id: z.string().meta({
+    description: "Stable working-directory ID (10 hex chars for new entries)",
+  }),
+  path: z.string().meta({
+    description: "Absolute path to a selectable working directory in the project",
+  }),
+});
+
 export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({
     description: "Absolute path to workspace directory - REQUIRED for backward compatibility",
@@ -55,6 +64,10 @@ export const WorkspaceConfigSchema = z.object({
   }),
   aiSettings: WorkspaceAISettingsSchema.optional().meta({
     description: "Workspace-scoped AI settings (model + thinking level)",
+  }),
+  workingDirectoryIds: z.array(z.string()).optional().meta({
+    description:
+      "Optional IDs of project-level working directories selected for this workspace. Omitted for backward compatibility.",
   }),
   parentWorkspaceId: z.string().optional().meta({
     description:
@@ -124,6 +137,22 @@ export const WorkspaceConfigSchema = z.object({
 
 export const ProjectConfigSchema = z.object({
   workspaces: z.array(WorkspaceConfigSchema),
+  projectId: z.string().optional().meta({
+    description:
+      "Stable project ID (10 hex chars for new projects). Optional for backward compatibility.",
+  }),
+  name: z.string().optional().meta({
+    description:
+      "Display name for the project entity. Optional for backward compatibility with path-derived names.",
+  }),
+  systemPrompt: z.string().optional().meta({
+    description:
+      "Project-level default system prompt for new workspaces. Optional for backward compatibility.",
+  }),
+  workingDirectories: z.array(WorkingDirectoryConfigSchema).optional().meta({
+    description:
+      "Project-level selectable working directories. Optional while migrating from path-only projects.",
+  }),
   sections: z.array(SectionConfigSchema).optional().meta({
     description: "Sections for organizing workspaces within this project",
   }),
@@ -151,5 +180,6 @@ export const ProjectConfigSchema = z.object({
 });
 
 export type SectionConfig = z.infer<typeof SectionConfigSchema>;
+export type WorkingDirectoryConfig = z.infer<typeof WorkingDirectoryConfigSchema>;
 export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
