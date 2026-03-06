@@ -79,10 +79,10 @@ void mock.module("@/browser/contexts/ProjectContext", () => ({
 
 import { ProjectPage } from "../ProjectPage/ProjectPage";
 
-function createEmptyAsyncIterator<T>(): AsyncIterableIterator<T> {
+function createEmptyMetadataIterator(): Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>> {
   return (async function* () {
     return;
-  })();
+  })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>;
 }
 
 const baseProps = {
@@ -146,7 +146,7 @@ describe("ProjectPage metadata editor", () => {
       },
       workspace: {
         list: () => Promise.resolve([]),
-        onMetadata: () => Promise.resolve(createEmptyAsyncIterator()),
+        onMetadata: () => Promise.resolve(createEmptyMetadataIterator()),
       },
     };
 
@@ -182,19 +182,15 @@ describe("ProjectPage metadata editor", () => {
 
     await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1));
 
-    const updateInput = updateMock.mock.calls[0]?.[0];
-
-    expect(updateInput).toEqual(
+    expect(updateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         projectPath: "/projects/demo",
         projectId: "proj_demo",
         name: "Demo Project",
         systemPrompt: null,
+        workingDirectories: [{ id: "wd-packages", path: "/projects/demo/packages" }],
       })
     );
-    expect(updateInput?.workingDirectories).toEqual([
-      { id: "wd-packages", path: "/projects/demo/packages" },
-    ]);
 
     await waitFor(() => expect(refreshProjectsMock).toHaveBeenCalledTimes(1));
   });
@@ -231,7 +227,7 @@ describe("ProjectPage metadata editor", () => {
       },
       workspace: {
         list: () => Promise.resolve([]),
-        onMetadata: () => Promise.resolve(createEmptyAsyncIterator()),
+        onMetadata: () => Promise.resolve(createEmptyMetadataIterator()),
       },
     };
 
