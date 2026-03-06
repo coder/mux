@@ -1,20 +1,37 @@
-name: Publish to NPM (next)
+name: Publish to NPM
 
 # Publishes prerelease builds to npm on every main push.
-# Stable releases are published via release.yml → publish-npm.yml.
+# Also supports manual dispatch to publish any channel/ref.
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "Publish channel: 'latest' for stable, 'next' for prerelease"
+        type: string
+        required: false
+        default: "next"
+      ref:
+        description: "Git ref to checkout (tag, branch, SHA). Defaults to current SHA."
+        type: string
+        required: false
+        default: ""
+      release_tag:
+        description: "Release tag for traceability (e.g., v0.20.0)"
+        type: string
+        required: false
+        default: ""
 
 jobs:
-  publish-next:
+  publish:
     uses: ./.github/workflows/publish-npm.yml
     permissions:
       contents: read
       id-token: write
     with:
-      channel: next
-      ref: ${{ github.sha }}
+      channel: ${{ inputs.channel || 'next' }}
+      ref: ${{ inputs.ref || github.sha }}
+      release_tag: ${{ inputs.release_tag || '' }}
