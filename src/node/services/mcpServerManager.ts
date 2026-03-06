@@ -1492,17 +1492,10 @@ export class MCPServerManager {
 
       let client: Awaited<ReturnType<typeof createMCPClient>> | null = null;
       let cleanupPromise: Promise<void> | null = null;
-      const cleanupStartupResources = async () => {
-        cleanupPromise ??= (async () => {
-          if (client) {
-            try {
-              await client.close();
-            } catch (error) {
-              log.debug("[MCP] Error closing client during startup cleanup", { name, error });
-            }
-            client = null;
-          }
+      let transportCleanupPromise: Promise<void> | null = null;
 
+      const closeStartupTransport = async () => {
+        transportCleanupPromise ??= (async () => {
           try {
             await transport.close();
           } catch (error) {
@@ -1510,7 +1503,39 @@ export class MCPServerManager {
           }
         })();
 
-        await cleanupPromise;
+        await transportCleanupPromise;
+      };
+
+      const cleanupStartupResources = async () => {
+        const previousCleanup = cleanupPromise;
+        if (previousCleanup) {
+          await previousCleanup;
+        }
+
+        const currentCleanup = (async () => {
+          const startupClient = client;
+          client = null;
+
+          if (startupClient) {
+            try {
+              await startupClient.close();
+            } catch (error) {
+              log.debug("[MCP] Error closing client during startup cleanup", { name, error });
+            }
+          }
+
+          await closeStartupTransport();
+        })();
+
+        cleanupPromise = currentCleanup;
+
+        try {
+          await currentCleanup;
+        } finally {
+          if (cleanupPromise === currentCleanup) {
+            cleanupPromise = null;
+          }
+        }
       };
 
       const onAbort = () => {

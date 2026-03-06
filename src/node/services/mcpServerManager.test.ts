@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createServer } from "http";
 
+import * as mcpSdk from "@ai-sdk/mcp";
 import {
   MCPServerManager,
   isClosedClientError,
@@ -330,6 +331,62 @@ describe("MCPServerManager", () => {
     expect(stdinClose).toHaveBeenCalledTimes(1);
     expect(stdoutCancel).toHaveBeenCalledTimes(1);
     expect(stderrCancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("startSingleServerImpl cleans up client that resolves after abort", async () => {
+    const controller = new AbortController();
+    const stdinClose = mock(() => Promise.resolve(undefined));
+    const stdoutCancel = mock(() => Promise.resolve(undefined));
+    const lateClientClose = mock(() => Promise.resolve(undefined));
+    const createClient =
+      Promise.withResolvers<Awaited<ReturnType<typeof mcpSdk.createMCPClient>>>();
+
+    const createMCPClientSpy = spyOn(mcpSdk, "createMCPClient").mockImplementation(() => {
+      controller.abort();
+      return createClient.promise;
+    });
+
+    try {
+      const exec = mock((_command: string) =>
+        Promise.resolve({
+          stdin: new WritableStream<Uint8Array>({
+            close: stdinClose,
+          }),
+          stdout: new ReadableStream<Uint8Array>({
+            cancel: stdoutCancel,
+          }),
+          stderr: new ReadableStream<Uint8Array>(),
+          exitCode: Promise.resolve(0),
+          duration: Promise.resolve(0),
+        })
+      );
+
+      const startup = access.startSingleServerImpl(
+        "stdio-late-client-cleanup",
+        { transport: "stdio", command: "never" },
+        { exec } as unknown as Runtime,
+        "/tmp/project",
+        "/tmp/workspace",
+        undefined,
+        () => undefined,
+        controller.signal
+      );
+
+      createClient.resolve({
+        close: lateClientClose,
+        tools: mock(() => Promise.resolve({})),
+      } as unknown as Awaited<ReturnType<typeof mcpSdk.createMCPClient>>);
+
+      const result = await startup;
+
+      expect(result).toBeNull();
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(stdinClose).toHaveBeenCalledTimes(1);
+      expect(stdoutCancel).toHaveBeenCalledTimes(1);
+      expect(lateClientClose).toHaveBeenCalledTimes(1);
+    } finally {
+      createMCPClientSpy.mockRestore();
+    }
   });
 
   test("getToolsForWorkspace tracks failed server names in stats", async () => {
