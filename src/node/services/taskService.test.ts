@@ -764,7 +764,7 @@ describe("TaskService", () => {
           projectName: path.basename(primaryProjectPath),
           runtime: {
             getWorkspacePath: mock(() => path.join(primaryProjectPath, queuedWorkspaceName)),
-            initWorkspace: mock(async () => ({ success: true })),
+            initWorkspace: mock(() => Promise.resolve({ success: true })),
           } as unknown as WorktreeRuntime,
         },
         {
@@ -772,7 +772,7 @@ describe("TaskService", () => {
           projectName: path.basename(secondaryProjectPath),
           runtime: {
             getWorkspacePath: mock(() => path.join(secondaryProjectPath, queuedWorkspaceName)),
-            initWorkspace: mock(async () => ({ success: true })),
+            initWorkspace: mock(() => Promise.resolve({ success: true })),
           } as unknown as WorktreeRuntime,
         },
       ],
@@ -810,7 +810,9 @@ describe("TaskService", () => {
       );
       expect(runBackgroundInitSpy).toHaveBeenCalledTimes(1);
 
-      const [runtimeArg, initParams] = runBackgroundInitSpy.mock.calls[0]!;
+      const firstBackgroundInitCall = runBackgroundInitSpy.mock.calls[0];
+      assert(firstBackgroundInitCall, "Expected queued task to trigger background init");
+      const [runtimeArg, initParams] = firstBackgroundInitCall;
       expect(runtimeArg).toBe(targetRuntime);
       expect(initParams.env).toEqual({ PRIMARY_SECRET: "primary-secret" });
       assert(
@@ -818,10 +820,10 @@ describe("TaskService", () => {
         "Expected queued task runtime to be multi-project"
       );
       assert(runtimeArg.envResolver, "Expected MultiProjectRuntime.envResolver to be configured");
-      await expect(runtimeArg.envResolver(primaryProjectPath)).resolves.toEqual({
+      expect(await runtimeArg.envResolver(primaryProjectPath)).toEqual({
         PRIMARY_SECRET: "primary-secret",
       });
-      await expect(runtimeArg.envResolver(secondaryProjectPath)).resolves.toEqual({
+      expect(await runtimeArg.envResolver(secondaryProjectPath)).toEqual({
         SECONDARY_SECRET: "secondary-secret",
       });
     } finally {
