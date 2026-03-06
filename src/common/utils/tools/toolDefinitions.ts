@@ -815,7 +815,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_list: {
     description:
-      "List global skills from the global skills directory for management in Chat with Mux.",
+      "List available skills in the current workspace. Returns the effective flat skill list across project, global, and built-in scopes, with shadowing already applied. Use each descriptor's scope field to identify where the visible skill came from.",
     schema: z
       .object({
         includeUnadvertised: z
