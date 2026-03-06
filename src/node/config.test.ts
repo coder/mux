@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -7,6 +8,10 @@ import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/sec
 describe("Config", () => {
   let tempDir: string;
   let config: Config;
+
+  function deriveLegacyProjectId(projectPath: string): string {
+    return crypto.createHash("sha256").update(projectPath).digest("hex").slice(0, 10);
+  }
 
   beforeEach(() => {
     // Create a temporary directory for each test
@@ -44,6 +49,25 @@ describe("Config", () => {
       expect(projectPaths).not.toContain("/home/user/another//");
     });
 
+    it("derives stable projectIds for legacy records before persistence healing", () => {
+      const configFile = path.join(tempDir, "config.json");
+      const legacyConfig = {
+        projects: [["/home/user/project/", { workspaces: [] }]],
+      };
+      fs.writeFileSync(configFile, JSON.stringify(legacyConfig));
+
+      const firstLoad = config.loadConfigOrDefault();
+      const firstProjectId = firstLoad.projects.get("/home/user/project")?.projectId;
+      expect(firstProjectId).toBe(deriveLegacyProjectId("/home/user/project"));
+
+      // Simulate a caller observing the normalized project before the self-healing
+      // write lands by restoring the original legacy payload between reads.
+      fs.writeFileSync(configFile, JSON.stringify(legacyConfig));
+
+      const secondLoad = config.loadConfigOrDefault();
+      expect(secondLoad.projects.get("/home/user/project")?.projectId).toBe(firstProjectId);
+    });
+
     it("backfills legacy project records and persists seeded identity on load", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
@@ -70,7 +94,7 @@ describe("Config", () => {
       expect(seededProject).toBeDefined();
       expect(seededProject?.workspaces).toEqual([]);
       expect(seededProject?.name).toBe("project");
-      expect(seededProject?.projectId).toMatch(/^[0-9a-f]{10}$/);
+      expect(seededProject?.projectId).toBe(deriveLegacyProjectId("/home/user/project"));
       expect(seededProject?.workingDirectories?.[0]).toEqual({
         id: "wd-root",
         path: "/home/user/project",
@@ -101,6 +125,21 @@ describe("Config", () => {
         path: "/home/user/project",
       });
       expect(reloadedProject?.systemPrompt).toBe("Keep me");
+    });
+  });
+
+  describe("normalizeAndSeedProjectConfig", () => {
+    it("keeps filesystem roots valid when normalizing project paths", () => {
+      expect(
+        config.normalizeAndSeedProjectConfig("/", { workspaces: [] }).normalizedProjectPath
+      ).toBe("/");
+      expect(
+        config.normalizeAndSeedProjectConfig("C:\\", { workspaces: [] }).normalizedProjectPath
+      ).toBe("C:\\");
+      expect(
+        config.normalizeAndSeedProjectConfig("//server/share/", { workspaces: [] })
+          .normalizedProjectPath
+      ).toBe("//server/share/");
     });
   });
 

@@ -2,6 +2,9 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { PlatformPaths } from "./paths.main";
 
+const WINDOWS_DRIVE_ROOT_RE = /^([A-Za-z]:)([/\\]+)$/;
+const UNC_SHARE_ROOT_RE = /^([/\\]{2}[^/\\]+[/\\]+[^/\\]+)([/\\]+)$/;
+
 /**
  * Result of path validation
  */
@@ -38,6 +41,26 @@ export function expandTilde(inputPath: string): string {
  * stripTrailingSlashes("/home/user/project//") // => "/home/user/project"
  */
 export function stripTrailingSlashes(inputPath: string): string {
+  if (/^\/+$/u.test(inputPath)) {
+    return "/";
+  }
+
+  if (/^\\+$/u.test(inputPath)) {
+    return "\\";
+  }
+
+  const windowsDriveRootMatch = WINDOWS_DRIVE_ROOT_RE.exec(inputPath);
+  if (windowsDriveRootMatch) {
+    const [, drive, trailingSeparators] = windowsDriveRootMatch;
+    return `${drive}${trailingSeparators[0]}`;
+  }
+
+  const uncShareRootMatch = UNC_SHARE_ROOT_RE.exec(inputPath);
+  if (uncShareRootMatch) {
+    const [, uncRoot, trailingSeparators] = uncShareRootMatch;
+    return `${uncRoot}${trailingSeparators[0]}`;
+  }
+
   return inputPath.replace(/[/\\]+$/, "");
 }
 

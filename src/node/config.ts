@@ -331,7 +331,10 @@ export class Config {
   // entity to a complete persisted shape (projectId/name/root working directory).
   normalizeAndSeedProjectConfig(
     projectPath: string,
-    projectConfig?: ProjectConfig
+    projectConfig?: ProjectConfig,
+    options?: {
+      missingProjectIdStrategy?: "random" | "path-derived";
+    }
   ): {
     normalizedProjectPath: string;
     projectConfig: ProjectConfig;
@@ -357,12 +360,18 @@ export class Config {
         ? normalizedProjectConfig.name
         : undefined;
 
+    const missingProjectIdStrategy = options?.missingProjectIdStrategy ?? "random";
+
     return {
       normalizedProjectPath,
       projectConfig: {
         ...normalizedProjectConfig,
         workspaces: normalizedWorkspaces,
-        projectId: existingProjectId ?? this.generateStableId(),
+        projectId:
+          existingProjectId ??
+          (missingProjectIdStrategy === "path-derived"
+            ? this.generateDeterministicProjectId(normalizedProjectPath)
+            : this.generateStableId()),
         name: existingProjectName ?? this.getProjectName(normalizedProjectPath),
         workingDirectories: this.normalizeAndSeedWorkingDirectories(
           normalizedProjectPath,
@@ -648,7 +657,9 @@ export class Config {
             continue;
           }
 
-          const normalizedProject = this.normalizeAndSeedProjectConfig(projectPath, projectConfig);
+          const normalizedProject = this.normalizeAndSeedProjectConfig(projectPath, projectConfig, {
+            missingProjectIdStrategy: "path-derived",
+          });
           if (
             normalizedProject.normalizedProjectPath !== projectPath ||
             !isDeepStrictEqual(projectConfig, normalizedProject.projectConfig)
@@ -860,6 +871,13 @@ export class Config {
   }
   private getProjectName(projectPath: string): string {
     return PlatformPaths.getProjectName(projectPath);
+  }
+
+  private generateDeterministicProjectId(projectPath: string): string {
+    // Legacy project records may still be missing projectId on first load. Hash the
+    // normalized compatibility path so callers never observe a transient random ID
+    // before the healed config is written back to disk.
+    return crypto.createHash("sha256").update(projectPath).digest("hex").slice(0, 10);
   }
 
   /**

@@ -1,7 +1,12 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { expandTilde, validateProjectPath, isGitRepository } from "./pathUtils";
+import {
+  expandTilde,
+  stripTrailingSlashes,
+  validateProjectPath,
+  isGitRepository,
+} from "./pathUtils";
 
 describe("pathUtils", () => {
   describe("expandTilde", () => {
@@ -37,6 +42,23 @@ describe("pathUtils", () => {
     it("should handle empty string", () => {
       const result = expandTilde("");
       expect(result).toBe("");
+    });
+  });
+
+  describe("stripTrailingSlashes", () => {
+    it("preserves POSIX and Windows roots while trimming non-root paths", () => {
+      expect(stripTrailingSlashes("/")).toBe("/");
+      expect(stripTrailingSlashes("///")).toBe("/");
+      expect(stripTrailingSlashes("/tmp/project///")).toBe("/tmp/project");
+      expect(stripTrailingSlashes("C:\\")).toBe("C:\\");
+      expect(stripTrailingSlashes("C:/")).toBe("C:/");
+      expect(stripTrailingSlashes("C:\\workspace\\")).toBe("C:\\workspace");
+    });
+
+    it("preserves UNC share roots", () => {
+      expect(stripTrailingSlashes("\\\\server\\share\\")).toBe("\\\\server\\share\\");
+      expect(stripTrailingSlashes("//server/share/")).toBe("//server/share/");
+      expect(stripTrailingSlashes("//server/share/folder//")).toBe("//server/share/folder");
     });
   });
 
