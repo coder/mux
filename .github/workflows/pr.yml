@@ -269,6 +269,8 @@ jobs:
           ELECTRON_DISABLE_SANDBOX: 1
       - name: Run tests
         if: matrix.os == 'macos'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: make test-e2e PLAYWRIGHT_ARGS="tests/e2e/scenarios/windowLifecycle.spec.ts"
 
   test-windows:
@@ -397,6 +399,8 @@ jobs:
     needs: [changes]
     if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     runs-on: macos-15
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

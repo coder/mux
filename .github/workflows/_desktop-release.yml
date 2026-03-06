@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: write # Upload release assets
     env:
+      NODE_OPTIONS: --max-old-space-size=4096
       RELEASE_TAG: ${{ inputs.release_tag }}
       VERSION_OVERRIDE: ${{ inputs.version_override }}
     steps:
