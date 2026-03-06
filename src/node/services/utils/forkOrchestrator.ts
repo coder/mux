@@ -247,6 +247,7 @@ export async function orchestrateFork(
     let sourceRuntimeConfigUpdated = false;
     let trunkBranch: string | undefined;
     let forkedFromSource = true;
+    let primaryWorkspacePath: string | undefined;
 
     for (const [runtimeIndex, projectRuntime] of sourceProjectRuntimes.entries()) {
       const projectTrusted = getProjectTrusted(projectRuntime.projectPath);
@@ -299,6 +300,10 @@ export async function orchestrateFork(
               rollbackErrors
             )
           );
+        }
+
+        if (runtimeIndex === 0) {
+          primaryWorkspacePath = forkResult.workspacePath;
         }
 
         createdProjectRuntimes.push(projectRuntime);
@@ -386,6 +391,10 @@ export async function orchestrateFork(
         );
       }
 
+      if (runtimeIndex === 0) {
+        primaryWorkspacePath = createResult.workspacePath;
+      }
+
       forkedFromSource = false;
       createdProjectRuntimes.push(projectRuntime);
       projectWorkspaces.push({
@@ -395,10 +404,13 @@ export async function orchestrateFork(
     }
 
     assert(trunkBranch, "Expected trunkBranch to be resolved for multi-project fork");
+    assert(
+      primaryWorkspacePath,
+      "Expected primary project workspace path to be resolved for multi-project fork"
+    );
 
-    let containerPath: string;
     try {
-      containerPath = await containerManager.createContainer(newWorkspaceName, projectWorkspaces);
+      await containerManager.createContainer(newWorkspaceName, projectWorkspaces);
     } catch (error: unknown) {
       const rollbackErrors = await rollbackCreatedProjectWorkspaces(
         createdProjectRuntimes,
@@ -436,7 +448,9 @@ export async function orchestrateFork(
     );
 
     return Ok({
-      workspacePath: containerPath,
+      // Persist the primary project git root for downstream patch artifacts; the
+      // MultiProjectRuntime still targets the container path for command execution.
+      workspacePath: primaryWorkspacePath,
       trunkBranch,
       forkedRuntimeConfig: normalizedForkedRuntimeConfig,
       targetRuntime,

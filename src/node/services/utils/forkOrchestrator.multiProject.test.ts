@@ -210,7 +210,7 @@ describe("orchestrateFork (multi-project)", () => {
     expect(result.success).toBe(true);
     if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
 
-    expect(result.data.workspacePath).toBe(CONTAINER_PATH);
+    expect(result.data.workspacePath).toBe("/tmp/child/project-one");
     expect(result.data.trunkBranch).toBe("main");
     expect(result.data.forkedFromSource).toBe(true);
     expect(result.data.targetRuntime).toBeInstanceOf(MultiProjectRuntime);
@@ -235,6 +235,45 @@ describe("orchestrateFork (multi-project)", () => {
     expect(removeContainerMock).not.toHaveBeenCalled();
 
     expect(createRuntimeMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("returns the primary project git root when the primary project falls back to createWorkspace", async () => {
+    const projectOneRuntime = createProjectRuntimeMocks();
+    const projectTwoRuntime = createProjectRuntimeMocks();
+    mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
+
+    projectOneRuntime.forkWorkspace.mockResolvedValue({
+      success: false,
+      error: "fork unavailable",
+    } satisfies WorkspaceForkResult);
+    projectOneRuntime.createWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-one-created",
+    });
+    projectTwoRuntime.forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-two",
+    } satisfies WorkspaceForkResult);
+
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
+
+    expect(result.data.workspacePath).toBe("/tmp/child/project-one-created");
+    expect(result.data.forkedFromSource).toBe(false);
+    expect(projectOneRuntime.createWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: PROJECT_ONE_PATH,
+        trunkBranch: "main",
+      })
+    );
+    expect(createContainerMock).toHaveBeenCalledWith(NEW_WORKSPACE_NAME, [
+      { projectName: "project-one", workspacePath: "/tmp/child/project-one-created" },
+      { projectName: "project-two", workspacePath: "/tmp/child/project-two" },
+    ]);
   });
 
   it("resolves trust per project when forking multi-project workspaces", async () => {
@@ -265,6 +304,9 @@ describe("orchestrateFork (multi-project)", () => {
     });
 
     expect(result.success).toBe(true);
+    if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
+
+    expect(result.data.workspacePath).toBe("/tmp/child/project-one");
     expect(projectOneRuntime.forkWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({ trusted: true })
     );
