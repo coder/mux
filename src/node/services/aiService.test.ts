@@ -795,7 +795,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       const responseBody = {
         id: "resp_test",
         created_at: 0,
-        model: "gpt-5.2-codex",
+        model: "gpt-5.3-codex",
         output: [
           {
             type: "message",
@@ -850,7 +850,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
         }),
     } as CodexOauthService);
 
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    const modelResult = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(modelResult.success).toBe(true);
     if (!modelResult.success) return;
 
@@ -944,7 +944,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       const responseBody = {
         id: "resp_test",
         created_at: 0,
-        model: "gpt-5.2-codex",
+        model: "gpt-5.3-codex",
         output: [
           {
             type: "message",
@@ -992,7 +992,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
         }),
     } as CodexOauthService);
 
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    const modelResult = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(modelResult.success).toBe(true);
     if (!modelResult.success) return;
 

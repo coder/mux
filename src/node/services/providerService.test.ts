@@ -249,6 +249,21 @@ describe("ProviderService model normalization", () => {
 });
 
 describe("ProviderService.setConfig", () => {
+  it("seeds first-time mux-gateway defaults without GPT-5.2 Codex", () => {
+    withTempConfig((config, service) => {
+      const result = service.setConfig("mux-gateway", ["couponCode"], "gateway-token");
+      expect(result.success).toBe(true);
+
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.["mux-gateway"]?.models).toEqual([
+        "anthropic/claude-sonnet-4-6",
+        "anthropic/claude-opus-4-6",
+        "openai/gpt-5.4",
+      ]);
+      expect(providersConfig?.["mux-gateway"]?.models).not.toContain("openai/gpt-5.2-codex");
+    });
+  });
+
   it("stores enabled=false without deleting existing credentials", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
