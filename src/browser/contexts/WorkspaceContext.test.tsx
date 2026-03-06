@@ -9,7 +9,9 @@ import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   SELECTED_WORKSPACE_KEY,
+  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
   getModelKey,
+  getProjectStorageId,
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
   getThinkingLevelKey,
@@ -852,6 +854,133 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().loading).toBe(false));
     expect(ctx().pendingNewWorkspaceProject).toBe(systemProjectPath);
+  });
+
+  test("prefers stable project IDs over legacy selectors for pending workspace creation", async () => {
+    const legacyRoutePath = "/legacy-route";
+    const competingProjectPath = "/project-id-priority";
+    const sharedSelector = getProjectRouteId(legacyRoutePath);
+
+    createMockAPI({
+      locationPath: `/project?project=${encodeURIComponent(sharedSelector)}`,
+      projects: {
+        list: () =>
+          Promise.resolve([
+            [competingProjectPath, { workspaces: [], projectId: sharedSelector }],
+            [legacyRoutePath, { workspaces: [] }],
+          ]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().pendingNewWorkspaceProject).toBe(competingProjectPath);
+  });
+
+  test("canonicalizes legacy project selector URLs to stable project IDs", async () => {
+    const projectPath = "/canonical-project";
+    const projectId = "proj_canonical_123";
+    const legacyRouteId = getProjectRouteId(projectPath);
+
+    createMockAPI({
+      locationPath: `/project?project=${encodeURIComponent(legacyRouteId)}&section=planning&draft=draft-42`,
+      projects: {
+        list: () => Promise.resolve([[projectPath, { workspaces: [], projectId }]]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => {
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("project")).toBe(projectId);
+      expect(params.get("section")).toBe("planning");
+      expect(params.get("draft")).toBe("draft-42");
+    });
+    expect(ctx().pendingNewWorkspaceProject).toBe(projectPath);
+  });
+
+  test("projects legacy draft buckets to path-keyed context entries", async () => {
+    const projectPath = "/legacy-drafts";
+    const projectId = "proj_legacy_drafts";
+    const legacyDraft = {
+      draftId: "draft-legacy",
+      sectionId: null,
+      createdAt: 123,
+    };
+
+    createMockAPI({
+      localStorage: {
+        [WORKSPACE_DRAFTS_BY_PROJECT_KEY]: JSON.stringify({
+          [projectPath]: [legacyDraft],
+        }),
+      },
+      projects: {
+        list: () => Promise.resolve([[projectPath, { workspaces: [], projectId }]]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().workspaceDraftsByProject[projectPath]).toEqual([legacyDraft]);
+  });
+
+  test("stores draft buckets by stable project storage ID", async () => {
+    const projectPath = "/draft-storage";
+    const projectId = "proj_draft_storage";
+
+    createMockAPI({
+      projects: {
+        list: () => Promise.resolve([[projectPath, { workspaces: [], projectId }]]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    act(() => {
+      ctx().createWorkspaceDraft(projectPath);
+    });
+
+    await waitFor(() => expect(ctx().workspaceDraftsByProject[projectPath]?.length).toBe(1));
+
+    const persistedDrafts = readPersistedState<Record<string, unknown>>(
+      WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+      {}
+    );
+    const storageId = getProjectStorageId(projectPath, projectId);
+    expect(Object.keys(persistedDrafts)).toContain(storageId);
+    expect(Object.keys(persistedDrafts)).not.toContain(projectPath);
+  });
+
+  test("beginWorkspaceCreation navigates using stable project IDs", async () => {
+    const projectPath = "/stable-navigation";
+    const projectId = "proj_stable_navigation";
+
+    createMockAPI({
+      locationPath: "/",
+      projects: {
+        list: () => Promise.resolve([[projectPath, { workspaces: [], projectId }]]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    act(() => {
+      ctx().beginWorkspaceCreation(projectPath);
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/project");
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("project")).toBe(projectId);
+    });
   });
 
   test("launch project auto-selects workspace when no URL hash", async () => {

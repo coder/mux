@@ -25,6 +25,8 @@ import {
   getInputKey,
   getModelKey,
   getPendingScopeId,
+  getProjectStorageId,
+  getProjectStorageLookupIds,
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
   getThinkingLevelKey,
@@ -275,6 +277,8 @@ export interface WorkspaceDraft {
 
 type WorkspaceDraftsByProject = Record<string, WorkspaceDraft[]>;
 
+type WorkspaceDraftsByStorageId = Record<string, WorkspaceDraft[]>;
+
 type WorkspaceDraftPromotionsByProject = Record<string, Record<string, FrontendWorkspaceMetadata>>;
 
 function isWorkspaceDraft(value: unknown): value is WorkspaceDraft {
@@ -292,14 +296,14 @@ function isWorkspaceDraft(value: unknown): value is WorkspaceDraft {
   );
 }
 
-function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByProject {
+function normalizeWorkspaceDraftsByStorageId(value: unknown): WorkspaceDraftsByStorageId {
   if (!value || typeof value !== "object") {
     return {};
   }
 
-  const result: WorkspaceDraftsByProject = {};
+  const result: WorkspaceDraftsByStorageId = {};
 
-  for (const [projectPath, drafts] of Object.entries(value as Record<string, unknown>)) {
+  for (const [storageId, drafts] of Object.entries(value as Record<string, unknown>)) {
     if (!Array.isArray(drafts)) continue;
 
     const nextDrafts: WorkspaceDraft[] = [];
@@ -319,11 +323,76 @@ function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByPro
     }
 
     if (nextDrafts.length > 0) {
-      result[projectPath] = nextDrafts;
+      result[storageId] = nextDrafts;
     }
   }
 
   return result;
+}
+
+function mergeWorkspaceDraftLists(
+  existingDrafts: WorkspaceDraft[],
+  incomingDrafts: WorkspaceDraft[]
+): WorkspaceDraft[] {
+  if (incomingDrafts.length === 0) {
+    return existingDrafts;
+  }
+
+  const seenDraftIds = new Set(existingDrafts.map((draft) => draft.draftId));
+  const merged = [...existingDrafts];
+
+  for (const draft of incomingDrafts) {
+    if (seenDraftIds.has(draft.draftId)) {
+      continue;
+    }
+    seenDraftIds.add(draft.draftId);
+    merged.push(draft);
+  }
+
+  return merged;
+}
+
+function getWorkspaceDraftsForLookupIds(
+  draftsByStorageId: WorkspaceDraftsByStorageId,
+  lookupIds: string[]
+): WorkspaceDraft[] {
+  let mergedDrafts: WorkspaceDraft[] = [];
+
+  for (const lookupId of lookupIds) {
+    const bucket = draftsByStorageId[lookupId];
+    if (!bucket || bucket.length === 0) {
+      continue;
+    }
+
+    mergedDrafts = mergeWorkspaceDraftLists(mergedDrafts, bucket);
+  }
+
+  return mergedDrafts;
+}
+
+function replaceWorkspaceDraftBucket(
+  draftsByStorageId: WorkspaceDraftsByStorageId,
+  params: {
+    storageId: string;
+    lookupIds: string[];
+    drafts: WorkspaceDraft[];
+  }
+): WorkspaceDraftsByStorageId {
+  const next: WorkspaceDraftsByStorageId = { ...draftsByStorageId };
+
+  for (const lookupId of params.lookupIds) {
+    if (lookupId !== params.storageId) {
+      delete next[lookupId];
+    }
+  }
+
+  if (params.drafts.length === 0) {
+    delete next[params.storageId];
+  } else {
+    next[params.storageId] = params.drafts;
+  }
+
+  return next;
 }
 
 function createWorkspaceDraftId(): string {
@@ -529,6 +598,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Get project refresh function from ProjectContext
   const {
     resolveProjectPath,
+    getProjectConfig,
     resolveNewChatProjectPath,
     hasAnyProject,
     refreshProjects,
@@ -538,6 +608,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const {
     navigateToWorkspace,
     navigateToProject,
+    replaceProjectSelector,
     navigateToHome,
     currentWorkspaceId,
     currentProjectId,
@@ -550,6 +621,44 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const location = useLocation();
 
   const workspaceStore = useWorkspaceStoreRaw();
+
+  const getStableProjectId = useCallback(
+    (projectPath: string): string | null => {
+      const projectId = getProjectConfig(projectPath)?.projectId;
+      if (typeof projectId !== "string") {
+        return null;
+      }
+
+      const normalizedProjectId = projectId.trim();
+      return normalizedProjectId.length > 0 ? normalizedProjectId : null;
+    },
+    [getProjectConfig]
+  );
+
+  // Persist draft buckets by project storage ID (projectId when available) so
+  // drafts survive project-path changes during the projectId-first migration.
+  const getProjectDraftStorageInfo = useCallback(
+    (projectPath: string): { storageId: string; lookupIds: string[] } => {
+      const projectId = getStableProjectId(projectPath);
+      return {
+        storageId: getProjectStorageId(projectPath, projectId),
+        lookupIds: getProjectStorageLookupIds(projectPath, projectId),
+      };
+    },
+    [getStableProjectId]
+  );
+
+  const navigateToProjectWithStableSelector = useCallback(
+    (projectPath: string, sectionId?: string | null, draftId?: string | null) => {
+      navigateToProject(
+        projectPath,
+        sectionId ?? undefined,
+        draftId ?? undefined,
+        getStableProjectId(projectPath)
+      );
+    },
+    [getStableProjectId, navigateToProject]
+  );
 
   useLayoutEffect(() => {
     // When the user navigates to settings, currentWorkspaceId becomes null
@@ -587,17 +696,31 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const [workspaceDraftPromotionsByProject, setWorkspaceDraftPromotionsByProject] =
     useState<WorkspaceDraftPromotionsByProject>({});
-  const [workspaceDraftsByProjectState, setWorkspaceDraftsByProjectState] =
-    usePersistedState<WorkspaceDraftsByProject>(
+  const [workspaceDraftsByStorageIdState, setWorkspaceDraftsByStorageIdState] =
+    usePersistedState<WorkspaceDraftsByStorageId>(
       WORKSPACE_DRAFTS_BY_PROJECT_KEY,
       {},
       { listener: true }
     );
 
-  const workspaceDraftsByProject = useMemo(
-    () => normalizeWorkspaceDraftsByProject(workspaceDraftsByProjectState),
-    [workspaceDraftsByProjectState]
-  );
+  const workspaceDraftsByProject = useMemo(() => {
+    const normalizedByStorageId = normalizeWorkspaceDraftsByStorageId(
+      workspaceDraftsByStorageIdState
+    );
+    const projectedByPath: WorkspaceDraftsByProject = {};
+
+    for (const [storageId, drafts] of Object.entries(normalizedByStorageId)) {
+      const projectPath =
+        resolveProjectPath({ type: "projectId", value: storageId }) ??
+        resolveProjectPath({ type: "path", value: storageId });
+      if (!projectPath) continue;
+
+      const existing = projectedByPath[projectPath] ?? [];
+      projectedByPath[projectPath] = mergeWorkspaceDraftLists(existing, drafts);
+    }
+
+    return projectedByPath;
+  }, [workspaceDraftsByStorageIdState, resolveProjectPath]);
 
   const pendingDeepLinksRef = useRef<MuxDeepLinkPayload[]>([]);
 
@@ -639,14 +762,16 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       // is empty. This keeps deep-link navigations predictable and avoids surprising reuse.
       const draftId = createWorkspaceDraftId();
       const createdAt = Date.now();
+      const { storageId, lookupIds } = getProjectDraftStorageInfo(resolvedProjectPath);
 
-      setWorkspaceDraftsByProjectState((prev) => {
-        const current = normalizeWorkspaceDraftsByProject(prev);
-        const existing = current[resolvedProjectPath] ?? [];
+      setWorkspaceDraftsByStorageIdState((prev) => {
+        const current = normalizeWorkspaceDraftsByStorageId(prev);
+        const existing = getWorkspaceDraftsForLookupIds(current, lookupIds);
 
-        return {
-          ...current,
-          [resolvedProjectPath]: [
+        return replaceWorkspaceDraftBucket(current, {
+          storageId,
+          lookupIds,
+          drafts: [
             ...existing,
             {
               draftId,
@@ -654,7 +779,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               createdAt,
             },
           ],
-        };
+        });
       });
 
       const prompt =
@@ -666,15 +791,16 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         updatePersistedState(getInputKey(getDraftScopeId(resolvedProjectPath, draftId)), prompt);
       }
 
-      navigateToProject(resolvedProjectPath, normalizedSectionId ?? undefined, draftId);
+      navigateToProjectWithStableSelector(resolvedProjectPath, normalizedSectionId, draftId);
     },
     [
       api,
-      navigateToProject,
+      getProjectDraftStorageInfo,
+      navigateToProjectWithStableSelector,
       projectsLoading,
       resolveNewChatProjectPath,
       hasAnyProject,
-      setWorkspaceDraftsByProjectState,
+      setWorkspaceDraftsByStorageIdState,
     ]
   );
 
@@ -761,15 +887,39 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     });
   }, [loading, workspaceDraftsByProject, workspaceMetadata]);
 
+  // Resolve /project selectors in strict priority: in-memory path state, stable
+  // projectId, legacy route ID, then compatibility path selector.
   const currentProjectPath = useMemo(() => {
     if (currentProjectPathFromState) return currentProjectPathFromState;
     if (!currentProjectId) return null;
 
     return (
-      resolveProjectPath({ type: "path", value: currentProjectId }) ??
-      resolveProjectPath({ type: "routeId", value: currentProjectId })
+      resolveProjectPath({ type: "projectId", value: currentProjectId }) ??
+      resolveProjectPath({ type: "legacyRouteId", value: currentProjectId }) ??
+      resolveProjectPath({ type: "path", value: currentProjectId })
     );
   }, [currentProjectId, currentProjectPathFromState, resolveProjectPath]);
+
+  useEffect(() => {
+    if (!currentProjectId || !currentProjectPath) return;
+
+    const stableProjectId = getStableProjectId(currentProjectPath);
+    if (!stableProjectId || stableProjectId === currentProjectId) return;
+
+    replaceProjectSelector({
+      projectPath: currentProjectPath,
+      projectId: stableProjectId,
+      sectionId: pendingSectionId,
+      draftId: pendingDraftId,
+    });
+  }, [
+    currentProjectId,
+    currentProjectPath,
+    getStableProjectId,
+    pendingDraftId,
+    pendingSectionId,
+    replaceProjectSelector,
+  ]);
 
   // pendingNewWorkspaceProject is derived from current project in URL/state
   const pendingNewWorkspaceProject = currentProjectPath;
@@ -846,9 +996,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     (projectPath: string) => {
       selectedWorkspaceRef.current = null;
       updatePersistedState(SELECTED_WORKSPACE_KEY, null);
-      navigateToProject(projectPath);
+      navigateToProjectWithStableSelector(projectPath);
     },
-    [navigateToProject]
+    [navigateToProjectWithStableSelector]
   );
 
   // Used by async subscription handlers to safely access the most recent metadata map
@@ -1219,7 +1369,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // If the removed workspace was selected (URL was on this workspace),
           // navigate to its project page instead of going home
           if (wasSelected && projectPath) {
-            navigateToProject(projectPath);
+            navigateToProjectWithStableSelector(projectPath);
           }
           // If not selected, don't navigate at all - stay where we are
           return { success: true };
@@ -1235,7 +1385,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     },
     [
       currentWorkspaceId,
-      navigateToProject,
+      navigateToProjectWithStableSelector,
       refreshProjects,
       selectedWorkspace,
       api,
@@ -1388,9 +1538,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return;
       }
 
-      navigateToProject(projectPath, sectionId);
+      navigateToProjectWithStableSelector(projectPath, sectionId);
     },
-    [navigateToProject, navigateToWorkspace, workspaceMetadata]
+    [navigateToProjectWithStableSelector, navigateToWorkspace, workspaceMetadata]
   );
   // Persist section selection + URL updates so draft section switches stick across navigation.
   const updateWorkspaceDraftSection = useCallback(
@@ -1401,9 +1551,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const normalizedSectionId =
         typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : null;
 
-      setWorkspaceDraftsByProjectState((prev) => {
-        const current = normalizeWorkspaceDraftsByProject(prev);
-        const existing = current[projectPath] ?? [];
+      const { storageId, lookupIds } = getProjectDraftStorageInfo(projectPath);
+
+      setWorkspaceDraftsByStorageIdState((prev) => {
+        const current = normalizeWorkspaceDraftsByStorageId(prev);
+        const existing = getWorkspaceDraftsForLookupIds(current, lookupIds);
         if (existing.length === 0) {
           return prev;
         }
@@ -1427,31 +1579,38 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return prev;
         }
 
-        return {
-          ...current,
-          [projectPath]: nextDrafts,
-        };
+        return replaceWorkspaceDraftBucket(current, {
+          storageId,
+          lookupIds,
+          drafts: nextDrafts,
+        });
       });
 
-      navigateToProject(projectPath, normalizedSectionId ?? undefined, draftId);
+      navigateToProjectWithStableSelector(projectPath, normalizedSectionId, draftId);
     },
-    [navigateToProject, setWorkspaceDraftsByProjectState]
+    [
+      getProjectDraftStorageInfo,
+      navigateToProjectWithStableSelector,
+      setWorkspaceDraftsByStorageIdState,
+    ]
   );
 
   const createWorkspaceDraft = useCallback(
     (projectPath: string, sectionId?: string) => {
+      const { storageId, lookupIds } = getProjectDraftStorageInfo(projectPath);
+
       // Read directly from localStorage to get the freshest value, avoiding stale closure issues.
       // The React state (workspaceDraftsByProject) may be out of date if this is called rapidly.
-      const freshDrafts = normalizeWorkspaceDraftsByProject(
-        readPersistedState<WorkspaceDraftsByProject>(WORKSPACE_DRAFTS_BY_PROJECT_KEY, {})
+      const freshDraftsByStorageId = normalizeWorkspaceDraftsByStorageId(
+        readPersistedState<WorkspaceDraftsByStorageId>(WORKSPACE_DRAFTS_BY_PROJECT_KEY, {})
       );
-      const existingDrafts = freshDrafts[projectPath] ?? [];
+      const existingDrafts = getWorkspaceDraftsForLookupIds(freshDraftsByStorageId, lookupIds);
 
       // If there's an existing empty draft (optionally in the same section), reuse it
       // instead of creating yet another empty draft.
       const existingEmptyDraftId = findExistingEmptyDraft(existingDrafts, projectPath, sectionId);
       if (existingEmptyDraftId) {
-        navigateToProject(projectPath, sectionId, existingEmptyDraftId);
+        navigateToProjectWithStableSelector(projectPath, sectionId, existingEmptyDraftId);
         return;
       }
 
@@ -1463,9 +1622,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         createdAt,
       };
 
-      setWorkspaceDraftsByProjectState((prev) => {
-        const current = normalizeWorkspaceDraftsByProject(prev);
-        const existing = current[projectPath] ?? [];
+      setWorkspaceDraftsByStorageIdState((prev) => {
+        const current = normalizeWorkspaceDraftsByStorageId(prev);
+        const existing = getWorkspaceDraftsForLookupIds(current, lookupIds);
 
         // One-time migration: if the user has an old per-project pending draft, move it
         // into the first draft scope so it stays accessible.
@@ -1483,15 +1642,20 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           }
         }
 
-        return {
-          ...current,
-          [projectPath]: [...existing, draft],
-        };
+        return replaceWorkspaceDraftBucket(current, {
+          storageId,
+          lookupIds,
+          drafts: [...existing, draft],
+        });
       });
 
-      navigateToProject(projectPath, sectionId, draftId);
+      navigateToProjectWithStableSelector(projectPath, sectionId, draftId);
     },
-    [navigateToProject, setWorkspaceDraftsByProjectState]
+    [
+      getProjectDraftStorageInfo,
+      navigateToProjectWithStableSelector,
+      setWorkspaceDraftsByStorageIdState,
+    ]
   );
 
   useEffect(() => {
@@ -1556,9 +1720,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     (projectPath: string, draftId: string, sectionId?: string | null) => {
       const normalizedSectionId =
         typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : undefined;
-      navigateToProject(projectPath, normalizedSectionId, draftId);
+      navigateToProjectWithStableSelector(projectPath, normalizedSectionId, draftId);
     },
-    [navigateToProject]
+    [navigateToProjectWithStableSelector]
   );
 
   const deleteWorkspaceDraft = useCallback(
@@ -1583,21 +1747,25 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       deleteWorkspaceStorage(getDraftScopeId(projectPath, draftId));
 
-      setWorkspaceDraftsByProjectState((prev) => {
-        const current = normalizeWorkspaceDraftsByProject(prev);
-        const existing = current[projectPath] ?? [];
+      const { storageId, lookupIds } = getProjectDraftStorageInfo(projectPath);
+
+      setWorkspaceDraftsByStorageIdState((prev) => {
+        const current = normalizeWorkspaceDraftsByStorageId(prev);
+        const existing = getWorkspaceDraftsForLookupIds(current, lookupIds);
         const nextDrafts = existing.filter((draft) => draft.draftId !== draftId);
 
-        const next: WorkspaceDraftsByProject = { ...current };
-        if (nextDrafts.length === 0) {
-          delete next[projectPath];
-        } else {
-          next[projectPath] = nextDrafts;
-        }
-        return next;
+        return replaceWorkspaceDraftBucket(current, {
+          storageId,
+          lookupIds,
+          drafts: nextDrafts,
+        });
       });
     },
-    [setWorkspaceDraftPromotionsByProject, setWorkspaceDraftsByProjectState]
+    [
+      getProjectDraftStorageInfo,
+      setWorkspaceDraftPromotionsByProject,
+      setWorkspaceDraftsByStorageIdState,
+    ]
   );
 
   // Split into two context values so metadata-Map churn doesn't re-render
