@@ -1,266 +1,45 @@
-name: NPM Publish (Reusable)
+name: Publish to NPM
 
-# Reusable workflow for publishing npm packages with explicit channel routing.
-# Called by publish-npm-next.yml (next) and release.yml (latest).
+# Publishes prerelease builds on every main push, stable releases on tag push.
+# Also supports manual dispatch for ad-hoc publishes (e.g., republishing a
+# failed stable release without re-running the full release pipeline).
 #
-# OIDC TRUSTED PUBLISHING SETUP (on npmjs.com):
-#   For each package (mux, @coder/mux-chat-components):
-#   1. Go to package settings → Trusted Publisher → GitHub Actions
-#   2. Configure:
-#      - Owner: coder
-#      - Repository: mux
-#      - Workflow filename: publish-npm.yml
-#      - Environment: (leave blank)
+# IMPORTANT: This workflow's filename (publish-npm.yml) must match the OIDC
+# trusted publisher configured on npmjs.com. Do not rename without updating
+# the npm trusted publisher settings for both 'mux' and
+# '@coder/mux-chat-components'.
 
 on:
-  workflow_call:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
     inputs:
       channel:
-        description: "Publish channel: 'latest' for stable releases, 'next' for prerelease"
-        required: true
+        description: "Publish channel: 'latest' for stable, 'next' for prerelease"
         type: string
-      ref:
-        description: "Git ref to checkout (tag, branch, or SHA)"
-        required: true
-        type: string
-      release_tag:
-        description: "Release tag for traceability (e.g., v0.19.0)"
         required: false
+        default: "next"
+      ref:
+        description: "Git ref to checkout (tag, branch, SHA). Defaults to current SHA."
         type: string
+        required: false
         default: ""
-
-concurrency:
-  group: npm-publish-${{ inputs.channel }}-${{ inputs.ref }}
-  cancel-in-progress: false
+      release_tag:
+        description: "Release tag for traceability (e.g., v0.20.0)"
+        type: string
+        required: false
+        default: ""
 
 jobs:
   publish:
-    name: Publish to NPM
-    runs-on: ubuntu-latest
+    uses: ./.github/workflows/_npm-publish.yml
     permissions:
       contents: read
-      id-token: write # Required for OIDC trusted publishing
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0 # Required for git describe to find tags
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-mux
-
-      # Setup Node.js 24+ for npm v11+ required by OIDC trusted publishing.
-      # Node 22 ships with npm 10.x which does NOT support OIDC.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "24"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Generate unique version from git
-        id: version
-        env:
-          INPUT_CHANNEL: ${{ inputs.channel }}
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          # Get base version from package.json
-          BASE_VERSION=$(node -p "require('./package.json').version")
-
-          if [ -n "$INPUT_RELEASE_TAG" ]; then
-            echo "Release tag context: $INPUT_RELEASE_TAG"
-          fi
-
-          # Debug: git describe
-          git describe --tags --always --dirty 2>/dev/null || echo "unknown"
-
-          if [[ "$INPUT_CHANNEL" == "latest" ]]; then
-            # Stable release: use base version as-is
-            NPM_VERSION="${BASE_VERSION}"
-            NPM_TAG="latest"
-            echo "Publishing stable release: ${NPM_VERSION}"
-          else
-            # Prerelease: append git metadata
-            GIT_COMMIT=$(git rev-parse --short HEAD)
-            TAG_BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)
-            COMMITS_SINCE_TAG=$(git rev-list --count HEAD "^$TAG_BASE" 2>/dev/null || echo "0")
-            NPM_VERSION="${BASE_VERSION}-next.${COMMITS_SINCE_TAG}.g${GIT_COMMIT}"
-            NPM_TAG="next"
-            echo "Publishing pre-release: ${NPM_VERSION}"
-          fi
-
-          echo "version=${NPM_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
-
-          # Update package.json with the new version
-          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json')); pkg.version = '${NPM_VERSION}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
-
-          echo "Updated package.json to version ${NPM_VERSION}"
-
-      - name: Generate version file
-        run: ./scripts/generate-version.sh
-
-      - name: Generate npm shrinkwrap
-        run: ./scripts/generate-npm-shrinkwrap.sh
-
-      - name: Build application
-        run: make build
-
-      - name: Pack npm package for smoke test
-        run: npm pack
-
-      - name: Find package tarball
-        id: find-tarball
-        run: |
-          # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
-          TARBALL=$(ls mux-*.tgz | head -1)
-          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
-          echo "Found package: $TARBALL"
-
-      - name: Run smoke test
-        env:
-          PACKAGE_TARBALL: ${{ steps.find-tarball.outputs.tarball }}
-          SERVER_PORT: 3000
-          SERVER_HOST: localhost
-          STARTUP_TIMEOUT: 30
-        run: |
-          ./scripts/smoke-test.sh
-
-      - name: Upload server logs on smoke test failure
-        if: failure()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: smoke-test-logs
-          path: |
-            /tmp/mux-smoke-test-*/server.log
-          if-no-files-found: warn
-          retention-days: 7
-
-      # Run a second smoke test without npm-shrinkwrap.json to catch dependency
-      # resolution issues that affect `bun x mux@latest` and other tools that
-      # don't respect shrinkwrap. Uses a different port to avoid conflicts.
-      - name: Run smoke test (without shrinkwrap)
-        env:
-          PACKAGE_TARBALL: ${{ steps.find-tarball.outputs.tarball }}
-          SERVER_PORT: 3001
-          SERVER_HOST: localhost
-          STARTUP_TIMEOUT: 30
-          SKIP_SHRINKWRAP: "1"
-        run: |
-          ./scripts/smoke-test.sh
-
-      - name: Upload server logs on no-shrinkwrap smoke test failure
-        if: failure()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: smoke-test-no-shrinkwrap-logs
-          path: |
-            /tmp/mux-smoke-test-*/server.log
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Clean up tarball
-        if: always()
-        run: rm -f mux-*.tgz
-
-      - name: Check if version exists
-        id: check-exists
-        run: |
-          PACKAGE_NAME=$(node -p "require('./package.json').name")
-          VERSION="${STEPS_VERSION_OUTPUTS_VERSION}"
-
-          if npm view "${PACKAGE_NAME}@${VERSION}" version &>/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${VERSION} already exists on npm"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Version ${VERSION} does not exist, will publish"
-          fi
-        env:
-          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
-
-      - name: Publish to NPM
-        if: steps.check-exists.outputs.exists == 'false'
-        run: npm publish --tag "$STEPS_VERSION_OUTPUTS_TAG"
-        env:
-          STEPS_VERSION_OUTPUTS_TAG: ${{ steps.version.outputs.tag }}
-
-      - name: Skip (version already exists)
-        if: steps.check-exists.outputs.exists == 'true'
-        run: |
-          echo "Version ${STEPS_VERSION_OUTPUTS_VERSION} already exists on npm; skipping publish."
-        env:
-          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
-
-      - name: Generate chat-components version
-        id: chat-components-version
-        working-directory: packages/chat-components
-        env:
-          INPUT_CHANNEL: ${{ inputs.channel }}
-        run: |
-          # Get base version from package.json
-          BASE_VERSION=$(node -p "require('./package.json').version")
-
-          # Debug: git describe
-          git describe --tags --always --dirty 2>/dev/null || echo "unknown"
-
-          if [[ "$INPUT_CHANNEL" == "latest" ]]; then
-            # Stable release: use base version as-is
-            NPM_VERSION="${BASE_VERSION}"
-            NPM_TAG="latest"
-            echo "Publishing stable release: ${NPM_VERSION}"
-          else
-            # Prerelease: append git metadata
-            GIT_COMMIT=$(git rev-parse --short HEAD)
-            TAG_BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)
-            COMMITS_SINCE_TAG=$(git rev-list --count HEAD "^$TAG_BASE" 2>/dev/null || echo "0")
-            NPM_VERSION="${BASE_VERSION}-next.${COMMITS_SINCE_TAG}.g${GIT_COMMIT}"
-            NPM_TAG="next"
-            echo "Publishing pre-release: ${NPM_VERSION}"
-          fi
-
-          echo "version=${NPM_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
-
-          # Update package.json with the new version
-          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json')); pkg.version = '${NPM_VERSION}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
-
-          echo "Updated package.json to version ${NPM_VERSION}"
-
-      - name: Install chat-components deps
-        working-directory: packages/chat-components
-        run: bun install
-
-      - name: Build chat-components package
-        working-directory: packages/chat-components
-        run: bun run build
-
-      - name: Check if chat-components version exists
-        id: chat-components-check-exists
-        working-directory: packages/chat-components
-        run: |
-          PACKAGE_NAME=$(node -p "require('./package.json').name")
-          VERSION="${STEPS_CHAT_COMPONENTS_VERSION}"
-
-          if npm view "${PACKAGE_NAME}@${VERSION}" version &>/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${VERSION} already exists on npm"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Version ${VERSION} does not exist, will publish"
-          fi
-        env:
-          STEPS_CHAT_COMPONENTS_VERSION: ${{ steps.chat-components-version.outputs.version }}
-
-      - name: Publish chat-components to NPM
-        if: steps.chat-components-check-exists.outputs.exists == 'false'
-        working-directory: packages/chat-components
-        run: npm publish --tag "$STEPS_CHAT_COMPONENTS_TAG"
-        env:
-          STEPS_CHAT_COMPONENTS_TAG: ${{ steps.chat-components-version.outputs.tag }}
-
-      - name: Skip chat-components (version already exists)
-        if: steps.chat-components-check-exists.outputs.exists == 'true'
-        run: |
-          echo "Version ${STEPS_CHAT_COMPONENTS_VERSION} already exists on npm; skipping publish."
-        env:
-          STEPS_CHAT_COMPONENTS_VERSION: ${{ steps.chat-components-version.outputs.version }}
+      id-token: write
+    with:
+      channel: ${{ startsWith(github.ref, 'refs/tags/') && 'latest' || inputs.channel || 'next' }}
+      ref: ${{ inputs.ref || github.sha }}
+      release_tag: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
