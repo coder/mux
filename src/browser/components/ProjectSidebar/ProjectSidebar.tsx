@@ -19,6 +19,8 @@ import {
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
   getDraftScopeId,
   getInputKey,
+  getProjectStorageId,
+  getProjectStorageLookupIds,
   getWorkspaceNameStateKey,
 } from "@/common/constants/storage";
 import { getDisplayTitleFromPersistedState } from "@/browser/hooks/useWorkspaceName";
@@ -222,6 +224,39 @@ interface DraftWorkspaceListItemWrapperProps {
 // Debounce delay for sidebar preview updates during typing.
 // Prevents constant re-renders while still providing timely feedback.
 const DRAFT_PREVIEW_DEBOUNCE_MS = 1000;
+
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function readExpandedFlagWithFallback(
+  expandedFlags: Record<string, boolean>,
+  lookupKeys: string[],
+  defaultValue: boolean
+): boolean {
+  for (const key of lookupKeys) {
+    if (Object.prototype.hasOwnProperty.call(expandedFlags, key)) {
+      return expandedFlags[key] ?? defaultValue;
+    }
+  }
+  return defaultValue;
+}
+
+function rewriteExpandedFlagWithPrimaryKey(
+  expandedFlags: Record<string, boolean>,
+  lookupKeys: string[],
+  primaryKey: string,
+  nextValue: boolean
+): Record<string, boolean> {
+  const next = { ...expandedFlags };
+  for (const key of lookupKeys) {
+    if (key !== primaryKey) {
+      delete next[key];
+    }
+  }
+  next[primaryKey] = nextValue;
+  return next;
+}
 
 function DraftWorkspaceListItemWrapper(props: DraftWorkspaceListItemWrapperProps) {
   const scopeId = getDraftScopeId(props.projectPath, props.draftId);
@@ -600,7 +635,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, [onSelectWorkspace, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]);
   // Workspace-specific subscriptions moved to WorkspaceListItem component
 
-  // Store as array in localStorage, convert to Set for usage
+  // Store as array in localStorage.
   const [expandedProjectsArray, setExpandedProjectsArray] = usePersistedState<string[]>(
     EXPANDED_PROJECTS_KEY,
     []
@@ -609,10 +644,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Use a plain array with .includes() instead of new Set() on every render —
   // the React Compiler cannot stabilize Set allocations (see AGENTS.md).
   // For typical sidebar sizes (< 20 projects) .includes() is equivalent perf.
-  const expandedProjectsList = Array.isArray(expandedProjectsArray) ? expandedProjectsArray : [];
+  const expandedProjectsPersisted = Array.isArray(expandedProjectsArray)
+    ? expandedProjectsArray
+    : [];
 
   // Track which projects have old workspaces expanded (per-project, per-tier)
-  // Key format: getTierKey(projectPath, tierIndex) where tierIndex is 0, 1, 2 for 1/7/30 days
+  // Key format: getTierKey(projectStorageId, tierIndex) where tierIndex is 0, 1, 2 for 1/7/30 days
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
@@ -649,36 +686,68 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     return PlatformPaths.getProjectName(path);
   };
 
-  // Use functional update to avoid stale closure issues when clicking rapidly
+  // Use functional update to avoid stale closure issues when clicking rapidly.
   const toggleProject = useCallback(
-    (projectPath: string) => {
+    (projectPath: string, projectId?: string | null) => {
+      const projectStorageId = getProjectStorageId(projectPath, projectId);
+      const projectStorageLookupIds = getProjectStorageLookupIds(projectPath, projectId);
       setExpandedProjectsArray((prev) => {
-        const prevSet = new Set(Array.isArray(prev) ? prev : []);
-        if (prevSet.has(projectPath)) {
-          prevSet.delete(projectPath);
-        } else {
-          prevSet.add(projectPath);
+        const prevExpandedProjects = Array.isArray(prev) ? prev : [];
+        const isExpanded = projectStorageLookupIds.some((lookupId) =>
+          prevExpandedProjects.includes(lookupId)
+        );
+
+        // During projectId migration we may read legacy projectPath entries.
+        // Always rewrite this project's state to the primary storage ID.
+        const nextExpandedProjects = prevExpandedProjects.filter(
+          (lookupId) => !projectStorageLookupIds.includes(lookupId)
+        );
+
+        if (!isExpanded) {
+          nextExpandedProjects.push(projectStorageId);
         }
-        return Array.from(prevSet);
+
+        return nextExpandedProjects;
       });
     },
     [setExpandedProjectsArray]
   );
 
-  const toggleSection = (projectPath: string, sectionId: string) => {
-    const key = getSectionExpandedKey(projectPath, sectionId);
-    setExpandedSections((prev) => ({
-      ...prev,
-      [key]: !prev[key],
-    }));
+  const toggleSection = (
+    projectPath: string,
+    projectId: string | null | undefined,
+    sectionId: string
+  ) => {
+    const projectStorageId = getProjectStorageId(projectPath, projectId);
+    const sectionExpandedKey = getSectionExpandedKey(projectStorageId, sectionId);
+    const sectionExpandedLookupKeys = getProjectStorageLookupIds(projectPath, projectId).map(
+      (lookupId) => getSectionExpandedKey(lookupId, sectionId)
+    );
+
+    setExpandedSections((prev) => {
+      const nextExpanded = !readExpandedFlagWithFallback(prev, sectionExpandedLookupKeys, true);
+      return rewriteExpandedFlagWithPrimaryKey(
+        prev,
+        sectionExpandedLookupKeys,
+        sectionExpandedKey,
+        nextExpanded
+      );
+    });
   };
 
-  const handleCreateSection = async (projectPath: string, name: string) => {
+  const handleCreateSection = async (
+    projectPath: string,
+    projectId: string | null | undefined,
+    name: string
+  ) => {
     const result = await createSection(projectPath, name);
     if (result.success) {
-      // Auto-expand the new section
-      const key = getSectionExpandedKey(projectPath, result.data.id);
-      setExpandedSections((prev) => ({ ...prev, [key]: true }));
+      // Auto-expand the new section using the primary storage key.
+      const sectionExpandedKey = getSectionExpandedKey(
+        getProjectStorageId(projectPath, projectId),
+        result.data.id
+      );
+      setExpandedSections((prev) => ({ ...prev, [sectionExpandedKey]: true }));
     }
   };
 
@@ -924,7 +993,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
   };
 
-  const handleOpenSecrets = (projectPath: string) => {
+  const handleOpenSecrets = (projectPath: string, projectId?: string | null) => {
     // Collapse the off-canvas sidebar on mobile before navigating so the
     // settings page is immediately accessible without a backdrop blocking it.
     if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
@@ -932,43 +1001,158 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       onToggleCollapsed();
     }
     // Navigate to Settings → Secrets with the project pre-selected.
-    settings.open("secrets", { secretsProjectPath: projectPath });
+    settings.open("secrets", {
+      secretsProjectPath: projectPath,
+      secretsProjectId: projectId ?? undefined,
+    });
   };
 
-  // UI preference: project order persists in localStorage
-  const [projectOrder, setProjectOrder] = usePersistedState<string[]>("mux:projectOrder", []);
+  // Build a stable signature of project storage IDs so migration effects can
+  // rewrite localStorage once without depending on Map identity churn.
+  const projectStorageSignature = React.useMemo(() => {
+    const storageEntries = Array.from(userProjects.entries())
+      .map(([projectPath, config]) => {
+        const projectStorageId = getProjectStorageId(projectPath, config.projectId);
+        return `${projectPath}\u0002${projectStorageId}`;
+      })
+      .sort();
+    return storageEntries.join("\u0001");
+  }, [userProjects]);
 
-  // Build a stable signature of the project keys so effects don't fire on Map identity churn
+  const { projectStorageByPath, projectPathByStorageLookupId } = React.useMemo(() => {
+    const projectStorageByPath = new Map<
+      string,
+      {
+        projectId: string | null;
+        projectStorageId: string;
+        projectStorageLookupIds: string[];
+      }
+    >();
+    const projectPathByStorageLookupId = new Map<string, string>();
+
+    for (const [projectPath, config] of userProjects) {
+      const projectId = config.projectId ?? null;
+      const projectStorageId = getProjectStorageId(projectPath, projectId);
+      const projectStorageLookupIds = getProjectStorageLookupIds(projectPath, projectId);
+
+      projectStorageByPath.set(projectPath, {
+        projectId,
+        projectStorageId,
+        projectStorageLookupIds,
+      });
+
+      for (const lookupId of projectStorageLookupIds) {
+        if (!projectPathByStorageLookupId.has(lookupId)) {
+          projectPathByStorageLookupId.set(lookupId, projectPath);
+        }
+      }
+    }
+
+    return { projectStorageByPath, projectPathByStorageLookupId };
+    // projectStorageSignature captures projectPath + storage-id changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectStorageSignature]);
+
+  // Build a stable signature of the project keys so effects don't fire on Map identity churn.
   const projectPathsSignature = React.useMemo(() => {
-    // sort to avoid order-related churn
+    // Sort to avoid order-related churn.
     const keys = Array.from(userProjects.keys()).sort();
     return keys.join("\u0001"); // use non-printable separator
   }, [userProjects]);
 
-  // Normalize order when the set of projects changes (not on every parent render)
+  const expandedProjectsList = React.useMemo(() => {
+    const normalizedExpandedProjects: string[] = [];
+    const seenProjects = new Set<string>();
+
+    for (const persistedStorageId of expandedProjectsPersisted) {
+      const projectPath = projectPathByStorageLookupId.get(persistedStorageId);
+      if (!projectPath || seenProjects.has(projectPath)) {
+        continue;
+      }
+
+      seenProjects.add(projectPath);
+      const projectStorage = projectStorageByPath.get(projectPath);
+      if (projectStorage) {
+        normalizedExpandedProjects.push(projectStorage.projectStorageId);
+      }
+    }
+
+    return normalizedExpandedProjects;
+  }, [expandedProjectsPersisted, projectPathByStorageLookupId, projectStorageByPath]);
+
   useEffect(() => {
-    // Skip normalization if projects haven't loaded yet (empty Map on initial render)
-    // This prevents clearing projectOrder before projects load from backend
+    // Avoid rewriting before projects are loaded.
+    if (userProjects.size === 0) {
+      return;
+    }
+
+    // Keep expandedProjects persisted with stable storage IDs while still honoring
+    // legacy path-backed entries during migration reads.
+    if (!areStringArraysEqual(expandedProjectsList, expandedProjectsPersisted)) {
+      setExpandedProjectsArray(expandedProjectsList);
+    }
+  }, [
+    expandedProjectsList,
+    expandedProjectsPersisted,
+    setExpandedProjectsArray,
+    userProjects.size,
+  ]);
+
+  // UI preference: project order persists in localStorage.
+  const [projectOrderStorage, setProjectOrderStorage] = usePersistedState<string[]>(
+    "mux:projectOrder",
+    []
+  );
+  const persistedProjectOrder = Array.isArray(projectOrderStorage) ? projectOrderStorage : [];
+
+  // projectOrdering.ts intentionally stays path-based; translate persisted
+  // storage IDs at the sidebar boundary during projectId migration.
+  const projectOrder = React.useMemo(() => {
+    const normalizedOrder: string[] = [];
+    const seenProjects = new Set<string>();
+
+    for (const persistedStorageId of persistedProjectOrder) {
+      const projectPath = projectPathByStorageLookupId.get(persistedStorageId);
+      if (!projectPath || seenProjects.has(projectPath)) {
+        continue;
+      }
+
+      seenProjects.add(projectPath);
+      normalizedOrder.push(projectPath);
+    }
+
+    return normalizedOrder;
+  }, [persistedProjectOrder, projectPathByStorageLookupId]);
+
+  // Normalize order when the set of projects changes (not on every parent render).
+  useEffect(() => {
+    // Skip normalization if projects haven't loaded yet (empty Map on initial render).
+    // This prevents clearing projectOrder before projects load from backend.
     if (userProjects.size === 0) {
       return;
     }
 
     const normalized = normalizeOrder(projectOrder, userProjects);
-    if (
-      normalized.length !== projectOrder.length ||
-      normalized.some((p, i) => p !== projectOrder[i])
-    ) {
-      setProjectOrder(normalized);
+    const normalizedStorageOrder = normalized
+      .map((projectPath) => projectStorageByPath.get(projectPath)?.projectStorageId)
+      .filter((projectStorageId): projectStorageId is string => projectStorageId != null);
+
+    if (!areStringArraysEqual(normalizedStorageOrder, persistedProjectOrder)) {
+      setProjectOrderStorage(normalizedStorageOrder);
     }
-    // Only re-run when project keys change (projectPathsSignature captures projects Map keys)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectPathsSignature]);
+  }, [
+    persistedProjectOrder,
+    projectOrder,
+    projectStorageByPath,
+    setProjectOrderStorage,
+    userProjects,
+  ]);
 
   // Memoize sorted project PATHS (not entries) to avoid capturing stale config objects.
   // Sorting depends only on keys + order; we read configs from the live Map during render.
   const sortedProjectPaths = React.useMemo(
     () => sortProjectsByOrder(userProjects, projectOrder).map(([p]) => p),
-    // projectPathsSignature captures projects Map keys
+    // projectPathsSignature captures projects Map keys.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectPathsSignature, projectOrder]
   );
@@ -976,9 +1160,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleReorder = useCallback(
     (draggedPath: string, targetPath: string) => {
       const next = reorderProjects(projectOrder, userProjects, draggedPath, targetPath);
-      setProjectOrder(next);
+      const nextStorageOrder = next
+        .map((projectPath) => projectStorageByPath.get(projectPath)?.projectStorageId)
+        .filter((projectStorageId): projectStorageId is string => projectStorageId != null);
+      setProjectOrderStorage(nextStorageOrder);
     },
-    [projectOrder, userProjects, setProjectOrder]
+    [projectOrder, projectStorageByPath, setProjectOrderStorage, userProjects]
   );
 
   // Handle keyboard shortcuts
@@ -1074,12 +1261,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 ) : (
                   sortedProjectPaths.map((projectPath) => {
                     const config = userProjects.get(projectPath);
-                    if (!config) return null;
+                    const projectStorage = projectStorageByPath.get(projectPath);
+                    if (!config || !projectStorage) return null;
+                    const projectId = projectStorage.projectId;
+                    const projectStorageId = projectStorage.projectStorageId;
+                    const projectStorageLookupIds = projectStorage.projectStorageLookupIds;
                     const projectName = getProjectName(projectPath);
                     const sanitizedProjectId =
                       projectPath.replace(/[^a-zA-Z0-9_-]/g, "-") || "root";
                     const workspaceListId = `workspace-list-${sanitizedProjectId}`;
-                    const isExpanded = expandedProjectsList.includes(projectPath);
+                    const isExpanded = expandedProjectsList.includes(projectStorageId);
                     const counts = getProjectWorkspaceCounts(config.workspaces);
                     const removeTooltip = "Remove project";
 
@@ -1110,7 +1301,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           <button
                             onClick={(event) => {
                               event.stopPropagation();
-                              toggleProject(projectPath);
+                              toggleProject(projectPath, projectId);
                             }}
                             aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                             data-project-path={projectPath}
@@ -1145,7 +1336,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  handleOpenSecrets(projectPath);
+                                  handleOpenSecrets(projectPath, projectId);
                                 }}
                                 aria-label={`Manage secrets for ${projectName}`}
                                 data-project-path={projectPath}
@@ -1356,7 +1547,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                             normalizeDraftSectionId(fallback)
                                           );
                                         } else {
-                                          navigateToProject(projectPath, sectionId ?? undefined);
+                                          navigateToProject(
+                                            projectPath,
+                                            sectionId ?? undefined,
+                                            undefined,
+                                            projectId
+                                          );
                                         }
                                       }
 
@@ -1366,10 +1562,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 );
                               };
 
-                              // Render age tiers for a list of workspaces
+                              // Render age tiers for a list of workspaces.
                               const renderAgeTiers = (
                                 workspaces: FrontendWorkspaceMetadata[],
-                                tierKeyPrefix: string,
+                                resolveTierKeys: (tierIndex: number) => {
+                                  primaryKey: string;
+                                  lookupKeys: string[];
+                                },
                                 sectionId?: string
                               ): React.ReactNode => {
                                 const { recent, buckets } = partitionWorkspacesByAge(
@@ -1385,8 +1584,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   if (remainingCount === 0) return null;
 
-                                  const tierKey = `${tierKeyPrefix}:${tierIndex}`;
-                                  const isTierExpanded = expandedOldWorkspaces[tierKey] ?? false;
+                                  const { primaryKey, lookupKeys } = resolveTierKeys(tierIndex);
+                                  const isTierExpanded = readExpandedFlagWithFallback(
+                                    expandedOldWorkspaces,
+                                    lookupKeys,
+                                    false
+                                  );
                                   const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
                                   const thresholdLabel = formatDaysThreshold(thresholdDays);
                                   const displayCount = isTierExpanded
@@ -1394,13 +1597,22 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     : remainingCount;
 
                                   return (
-                                    <React.Fragment key={tierKey}>
+                                    <React.Fragment key={primaryKey}>
                                       <button
                                         onClick={() => {
-                                          setExpandedOldWorkspaces((prev) => ({
-                                            ...prev,
-                                            [tierKey]: !prev[tierKey],
-                                          }));
+                                          setExpandedOldWorkspaces((prev) => {
+                                            const nextExpanded = !readExpandedFlagWithFallback(
+                                              prev,
+                                              lookupKeys,
+                                              false
+                                            );
+                                            return rewriteExpandedFlagWithPrimaryKey(
+                                              prev,
+                                              lookupKeys,
+                                              primaryKey,
+                                              nextExpanded
+                                            );
+                                          });
                                         }}
                                         aria-label={
                                           isTierExpanded
@@ -1505,12 +1717,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const sectionWorkspaces = bySectionId.get(section.id) ?? [];
                                 const sectionDrafts = draftsBySectionId.get(section.id) ?? [];
 
-                                const sectionExpandedKey = getSectionExpandedKey(
-                                  projectPath,
-                                  section.id
+                                const sectionExpandedLookupKeys = projectStorageLookupIds.map(
+                                  (projectStorageLookupId) =>
+                                    getSectionExpandedKey(projectStorageLookupId, section.id)
                                 );
-                                const isSectionExpanded =
-                                  expandedSections[sectionExpandedKey] ?? true;
+                                const isSectionExpanded = readExpandedFlagWithFallback(
+                                  expandedSections,
+                                  sectionExpandedLookupKeys,
+                                  true
+                                );
 
                                 return (
                                   <DraggableSection
@@ -1532,7 +1747,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           sectionWorkspaces.length + sectionDrafts.length
                                         }
                                         onToggleExpand={() =>
-                                          toggleSection(projectPath, section.id)
+                                          toggleSection(projectPath, projectId, section.id)
                                         }
                                         onAddWorkspace={() => {
                                           // Create workspace in this section
@@ -1558,10 +1773,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           {sectionWorkspaces.length > 0 ? (
                                             renderAgeTiers(
                                               sectionWorkspaces,
-                                              getSectionTierKey(projectPath, section.id, 0).replace(
-                                                ":tier:0",
-                                                ":tier"
-                                              ),
+                                              (tierIndex) => ({
+                                                primaryKey: getSectionTierKey(
+                                                  projectStorageId,
+                                                  section.id,
+                                                  tierIndex
+                                                ),
+                                                lookupKeys: projectStorageLookupIds.map(
+                                                  (projectStorageLookupId) =>
+                                                    getSectionTierKey(
+                                                      projectStorageLookupId,
+                                                      section.id,
+                                                      tierIndex
+                                                    )
+                                                ),
+                                              }),
                                               section.id
                                             )
                                           ) : sectionDrafts.length === 0 ? (
@@ -1588,10 +1814,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     >
                                       {unsectionedDrafts.map((draft) => renderDraft(draft))}
                                       {unsectioned.length > 0 ? (
-                                        renderAgeTiers(
-                                          unsectioned,
-                                          getTierKey(projectPath, 0).replace(":0", "")
-                                        )
+                                        renderAgeTiers(unsectioned, (tierIndex) => ({
+                                          primaryKey: getTierKey(projectStorageId, tierIndex),
+                                          lookupKeys: projectStorageLookupIds.map(
+                                            (projectStorageLookupId) =>
+                                              getTierKey(projectStorageLookupId, tierIndex)
+                                          ),
+                                        }))
                                       ) : unsectionedDrafts.length === 0 ? (
                                         <div className="text-muted px-3 py-2 text-center text-xs italic">
                                           No unsectioned workspaces
@@ -1602,10 +1831,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     <>
                                       {unsectionedDrafts.map((draft) => renderDraft(draft))}
                                       {unsectioned.length > 0 &&
-                                        renderAgeTiers(
-                                          unsectioned,
-                                          getTierKey(projectPath, 0).replace(":0", "")
-                                        )}
+                                        renderAgeTiers(unsectioned, (tierIndex) => ({
+                                          primaryKey: getTierKey(projectStorageId, tierIndex),
+                                          lookupKeys: projectStorageLookupIds.map(
+                                            (projectStorageLookupId) =>
+                                              getTierKey(projectStorageLookupId, tierIndex)
+                                          ),
+                                        }))}
                                     </>
                                   )}
 
@@ -1615,7 +1847,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   {/* Add Section button */}
                                   <AddSectionButton
                                     onCreateSection={(name) => {
-                                      void handleCreateSection(projectPath, name);
+                                      void handleCreateSection(projectPath, projectId, name);
                                     }}
                                   />
                                 </>
