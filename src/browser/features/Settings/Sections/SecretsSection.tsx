@@ -146,6 +146,10 @@ export const SecretsSection: React.FC = () => {
   // "Value" restores the user's input instead of clearing it.
   const lastLiteralValuesRef = useRef<Map<number, string>>(new Map());
 
+  // Ignore stale async loads after the user switches projects or scope so older
+  // responses cannot overwrite state for the latest selection.
+  const loadSecretsRequestVersionRef = useRef(0);
+
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -197,6 +201,11 @@ export const SecretsSection: React.FC = () => {
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
   const loadSecrets = useCallback(async () => {
+    const requestVersion = loadSecretsRequestVersionRef.current + 1;
+    loadSecretsRequestVersionRef.current = requestVersion;
+
+    const isStaleRequest = () => loadSecretsRequestVersionRef.current !== requestVersion;
+
     if (!api) {
       setLoadedSecrets([]);
       setSecrets([]);
@@ -204,6 +213,7 @@ export const SecretsSection: React.FC = () => {
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
       setError(null);
+      setLoading(false);
       return;
     }
 
@@ -214,6 +224,7 @@ export const SecretsSection: React.FC = () => {
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
       setError(null);
+      setLoading(false);
       return;
     }
 
@@ -229,32 +240,51 @@ export const SecretsSection: React.FC = () => {
           setInjectedGlobalSecretKeys([]);
           setVisibleSecrets(new Set());
           setError(null);
+          setLoading(false);
           return;
         }
 
         const nextSecrets = await api.secrets.get({ projectPath });
+        if (isStaleRequest()) {
+          return;
+        }
         setLoadedSecrets(nextSecrets);
         setSecrets(nextSecrets);
 
         try {
           const injectedKeys = await api.secrets.getInjectedGlobals({ projectPath });
+          if (isStaleRequest()) {
+            return;
+          }
           setInjectedGlobalSecretKeys(injectedKeys);
         } catch (err) {
+          if (isStaleRequest()) {
+            return;
+          }
           const message = err instanceof Error ? err.message : "Failed to load injected globals";
           setInjectedGlobalSecretKeys([]);
           setError(`Secrets loaded, but failed to load injected globals: ${message}`);
         }
       } else {
         const nextSecrets = await api.secrets.get({});
+        if (isStaleRequest()) {
+          return;
+        }
         setLoadedSecrets(nextSecrets);
         setSecrets(nextSecrets);
         setInjectedGlobalSecretKeys([]);
       }
 
+      if (isStaleRequest()) {
+        return;
+      }
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
       lastLiteralValuesRef.current = new Map();
     } catch (err) {
+      if (isStaleRequest()) {
+        return;
+      }
       const message = err instanceof Error ? err.message : "Failed to load secrets";
       setLoadedSecrets([]);
       setSecrets([]);
@@ -264,7 +294,9 @@ export const SecretsSection: React.FC = () => {
       lastLiteralValuesRef.current = new Map();
       setError(message);
     } finally {
-      setLoading(false);
+      if (!isStaleRequest()) {
+        setLoading(false);
+      }
     }
   }, [api, currentProjectPath, scope]);
 
