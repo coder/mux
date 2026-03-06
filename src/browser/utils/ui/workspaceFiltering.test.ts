@@ -6,6 +6,9 @@ import {
   buildSortedWorkspacesByProject,
   partitionWorkspacesBySection,
   sortSectionsByLinkedList,
+  getTierKey,
+  getSectionExpandedKey,
+  getSectionTierKey,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
@@ -175,6 +178,27 @@ describe("formatDaysThreshold", () => {
   it("should format plural days correctly", () => {
     expect(formatDaysThreshold(7)).toBe("7 days");
     expect(formatDaysThreshold(30)).toBe("30 days");
+  });
+});
+
+describe("project storage key builders", () => {
+  it("builds project tier keys from projectStorageId", () => {
+    expect(getTierKey("project-123", 2)).toBe("project-123:2");
+  });
+
+  it("remains compatible with legacy path-based storage ids", () => {
+    const legacyProjectPath = "/Users/me/repo";
+    expect(getTierKey(legacyProjectPath, 0)).toBe("/Users/me/repo:0");
+    expect(getSectionExpandedKey(legacyProjectPath, "section-a")).toBe(
+      "section:/Users/me/repo:section-a"
+    );
+  });
+
+  it("builds section-scoped keys from projectStorageId", () => {
+    expect(getSectionExpandedKey("project-123", "section-a")).toBe("section:project-123:section-a");
+    expect(getSectionTierKey("project-123", "section-a", 1)).toBe(
+      "section:project-123:section-a:tier:1"
+    );
   });
 });
 

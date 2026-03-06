@@ -4,6 +4,8 @@ import {
   deleteWorkspaceStorage,
   getDraftScopeId,
   getInputAttachmentsKey,
+  getProjectStorageId,
+  getProjectStorageLookupIds,
 } from "@/common/constants/storage";
 
 class MemoryStorage implements Storage {
@@ -61,6 +63,30 @@ describe("storage workspace-scoped keys", () => {
 
   test("getInputAttachmentsKey formats key", () => {
     expect(getInputAttachmentsKey("ws-123")).toBe("inputAttachments:ws-123");
+  });
+
+  test("getProjectStorageId prefers projectId over legacy projectPath", () => {
+    expect(getProjectStorageId("/Users/me/repo", "proj_123")).toBe("proj_123");
+  });
+
+  test("getProjectStorageId falls back to projectPath when projectId is unset", () => {
+    expect(getProjectStorageId("/Users/me/repo", undefined)).toBe("/Users/me/repo");
+    expect(getProjectStorageId("/Users/me/repo", null)).toBe("/Users/me/repo");
+    expect(getProjectStorageId("/Users/me/repo", "   ")).toBe("/Users/me/repo");
+  });
+
+  test("getProjectStorageLookupIds returns projectId-first lookup with legacy fallback", () => {
+    expect(getProjectStorageLookupIds("/Users/me/repo", "proj_123")).toEqual([
+      "proj_123",
+      "/Users/me/repo",
+    ]);
+  });
+
+  test("getProjectStorageLookupIds avoids duplicate fallback entries", () => {
+    expect(getProjectStorageLookupIds("/Users/me/repo", undefined)).toEqual(["/Users/me/repo"]);
+    expect(getProjectStorageLookupIds("/Users/me/repo", "/Users/me/repo")).toEqual([
+      "/Users/me/repo",
+    ]);
   });
 
   test("copyWorkspaceStorage copies inputAttachments key", () => {

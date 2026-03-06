@@ -212,10 +212,13 @@ export interface AgePartitionResult {
 }
 
 /**
- * Build the storage key for a tier's expanded state.
+ * Build the storage key for a project's age tier expanded state.
+ *
+ * projectStorageId is a stable project ID when available and falls back to the
+ * legacy project path during migration.
  */
-export function getTierKey(projectPath: string, tierIndex: number): string {
-  return `${projectPath}:${tierIndex}`;
+export function getTierKey(projectStorageId: string, tierIndex: number): string {
+  return `${projectStorageId}:${tierIndex}`;
 }
 
 /**
@@ -358,19 +361,25 @@ export function partitionWorkspacesBySection(
 
 /**
  * Build the storage key for a section's expanded state.
+ *
+ * projectStorageId is a stable project ID when available and falls back to the
+ * legacy project path during migration.
  */
-export function getSectionExpandedKey(projectPath: string, sectionId: string): string {
-  return `section:${projectPath}:${sectionId}`;
+export function getSectionExpandedKey(projectStorageId: string, sectionId: string): string {
+  return `section:${projectStorageId}:${sectionId}`;
 }
 
 /**
  * Build the storage key for a section's age tier expanded state.
  * This is separate from project-level tiers to allow per-section age collapse.
+ *
+ * projectStorageId is a stable project ID when available and falls back to the
+ * legacy project path during migration.
  */
 export function getSectionTierKey(
-  projectPath: string,
+  projectStorageId: string,
   sectionId: string,
   tierIndex: number
 ): string {
-  return `section:${projectPath}:${sectionId}:tier:${tierIndex}`;
+  return `section:${projectStorageId}:${sectionId}:tier:${tierIndex}`;
 }

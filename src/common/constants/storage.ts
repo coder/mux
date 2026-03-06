@@ -9,6 +9,31 @@
  */
 
 /**
+ * Resolve the storage identifier for project-scoped persisted UI state.
+ *
+ * Prefer stable projectId when available, while preserving projectPath as a
+ * compatibility fallback during projectId-first migration.
+ */
+export function getProjectStorageId(projectPath: string, projectId?: string | null): string {
+  const normalizedProjectId = projectId?.trim();
+  return normalizedProjectId ? normalizedProjectId : projectPath;
+}
+
+/**
+ * Resolve lookup order for project-scoped storage reads.
+ *
+ * Reads should prefer the projectId-backed key first, then fall back to the
+ * legacy projectPath-backed key when needed.
+ */
+export function getProjectStorageLookupIds(
+  projectPath: string,
+  projectId?: string | null
+): string[] {
+  const projectStorageId = getProjectStorageId(projectPath, projectId);
+  return projectStorageId === projectPath ? [projectPath] : [projectStorageId, projectPath];
+}
+
+/**
  * Get project-scoped ID for storage keys (e.g., model preference before workspace creation)
  * Format: "__project__/{projectPath}"
  * Uses "/" delimiter to safely handle projectPath values containing special characters
