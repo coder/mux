@@ -134,9 +134,9 @@ describe("MCPServerManager", () => {
     const setTimeoutSpy = spyOn(globalThis, "setTimeout");
     setTimeoutSpy.mockImplementation(((
       callback: Parameters<typeof setTimeout>[0],
-      _delay?: Parameters<typeof setTimeout>[1],
+      delay?: Parameters<typeof setTimeout>[1],
       ...args: unknown[]
-    ) => originalSetTimeout(callback, 1, ...args)) as typeof setTimeout);
+    ) => originalSetTimeout(callback, delay === 60_000 ? 1 : delay, ...args)) as typeof setTimeout);
 
     try {
       let caught: unknown;
@@ -193,9 +193,9 @@ describe("MCPServerManager", () => {
     const setTimeoutSpy = spyOn(globalThis, "setTimeout");
     setTimeoutSpy.mockImplementation(((
       callback: Parameters<typeof setTimeout>[0],
-      _delay?: Parameters<typeof setTimeout>[1],
+      delay?: Parameters<typeof setTimeout>[1],
       ...args: unknown[]
-    ) => originalSetTimeout(callback, 1, ...args)) as typeof setTimeout);
+    ) => originalSetTimeout(callback, delay === 60_000 ? 1 : delay, ...args)) as typeof setTimeout);
 
     try {
       let settled = false;
@@ -234,6 +234,102 @@ describe("MCPServerManager", () => {
     } finally {
       setTimeoutSpy.mockRestore();
     }
+  });
+
+  test("startSingleServer still times out when abort cleanup hangs", async () => {
+    const startSingleServerImplMock = mock((...args: unknown[]) => {
+      const signal = args[7] as AbortSignal;
+      const registerAbortCleanup = args[8] as ((cleanupPromise: Promise<void>) => void) | undefined;
+      const cleanupNever = new Promise<void>(() => undefined);
+
+      return new Promise<null>(() => {
+        const onAbort = () => {
+          registerAbortCleanup?.(cleanupNever);
+        };
+
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    });
+    access.startSingleServerImpl = startSingleServerImplMock;
+
+    const originalSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    setTimeoutSpy.mockImplementation(((
+      callback: Parameters<typeof setTimeout>[0],
+      _delay?: Parameters<typeof setTimeout>[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(callback, 1, ...args)) as typeof setTimeout);
+
+    try {
+      let caught: unknown;
+      try {
+        await access.startSingleServer(
+          "cleanup-hang-server",
+          { transport: "stdio", command: "never" },
+          {} as Runtime,
+          "/tmp/project",
+          "/tmp/workspace",
+          undefined,
+          () => undefined
+        );
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(startSingleServerImplMock).toHaveBeenCalledTimes(1);
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain("cleanup-hang-server");
+      expect((caught as Error).message).toContain("timed out");
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  test("startSingleServerImpl closes spawned stdio stream when aborted after exec", async () => {
+    const controller = new AbortController();
+    const stdinClose = mock(() => Promise.resolve(undefined));
+    const stdoutCancel = mock(() => Promise.resolve(undefined));
+    const stderrCancel = mock(() => Promise.resolve(undefined));
+
+    const exec = mock((_command: string) => {
+      controller.abort();
+
+      return Promise.resolve({
+        stdin: new WritableStream<Uint8Array>({
+          close: stdinClose,
+        }),
+        stdout: new ReadableStream<Uint8Array>({
+          cancel: stdoutCancel,
+        }),
+        stderr: new ReadableStream<Uint8Array>({
+          cancel: stderrCancel,
+        }),
+        exitCode: Promise.resolve(0),
+        duration: Promise.resolve(0),
+      });
+    });
+
+    const result = await access.startSingleServerImpl(
+      "stdio-aborted-after-exec",
+      { transport: "stdio", command: "never" },
+      { exec } as unknown as Runtime,
+      "/tmp/project",
+      "/tmp/workspace",
+      undefined,
+      () => undefined,
+      controller.signal
+    );
+
+    expect(result).toBeNull();
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(stdinClose).toHaveBeenCalledTimes(1);
+    expect(stdoutCancel).toHaveBeenCalledTimes(1);
+    expect(stderrCancel).toHaveBeenCalledTimes(1);
   });
 
   test("getToolsForWorkspace tracks failed server names in stats", async () => {

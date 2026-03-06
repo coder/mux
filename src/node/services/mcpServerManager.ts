@@ -24,6 +24,7 @@ const TEST_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
 const MCP_STARTUP_TIMEOUT_MS = 60_000; // 60s — generous for npx package downloads
+const MCP_STARTUP_CLEANUP_WAIT_TIMEOUT_MS = 5_000; // fail-safe so timeout error cannot hang forever
 
 /** Detect errors from the @ai-sdk/mcp SDK indicating the client/transport is closed.
  *  MCPClientError is not exported from the SDK, so we match on known message patterns.
@@ -1365,16 +1366,39 @@ export class MCPServerManager {
           return;
         }
 
-        abortCleanupPromise
-          .catch((error: unknown) => {
-            log.debug("[MCP] Error waiting for startup cleanup", {
-              name,
-              error: getErrorMessage(error),
-            });
-          })
-          .finally(() => {
-            reject(timeoutError);
+        const cleanupWait = abortCleanupPromise.catch((error: unknown) => {
+          log.debug("[MCP] Error waiting for startup cleanup", {
+            name,
+            error: getErrorMessage(error),
           });
+        });
+
+        let cleanupWaitTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        const cleanupWaitTimeout = new Promise<void>((resolve) => {
+          cleanupWaitTimeoutHandle = setTimeout(() => {
+            log.debug("[MCP] Startup cleanup wait hit fallback deadline", {
+              name,
+              timeoutMs: MCP_STARTUP_CLEANUP_WAIT_TIMEOUT_MS,
+            });
+            resolve();
+          }, MCP_STARTUP_CLEANUP_WAIT_TIMEOUT_MS);
+
+          if (
+            cleanupWaitTimeoutHandle !== undefined &&
+            typeof cleanupWaitTimeoutHandle === "object" &&
+            "unref" in cleanupWaitTimeoutHandle &&
+            typeof cleanupWaitTimeoutHandle.unref === "function"
+          ) {
+            cleanupWaitTimeoutHandle.unref();
+          }
+        });
+
+        void Promise.race([cleanupWait, cleanupWaitTimeout]).finally(() => {
+          if (cleanupWaitTimeoutHandle) {
+            clearTimeout(cleanupWaitTimeoutHandle);
+          }
+          reject(timeoutError);
+        });
       }, MCP_STARTUP_TIMEOUT_MS);
       // Don't keep the process alive just for this timer.
       if (
@@ -1419,7 +1443,30 @@ export class MCPServerManager {
         abortSignal: signal,
       });
 
+      const cleanupSpawnedExecStream = async () => {
+        try {
+          await execStream.stdin.close();
+        } catch (error) {
+          log.debug("[MCP] Error closing stdin during startup abort cleanup", { name, error });
+        }
+
+        try {
+          await execStream.stdout.cancel();
+        } catch (error) {
+          log.debug("[MCP] Error canceling stdout during startup abort cleanup", { name, error });
+        }
+
+        try {
+          await execStream.stderr.cancel();
+        } catch (error) {
+          log.debug("[MCP] Error canceling stderr during startup abort cleanup", { name, error });
+        }
+      };
+
       if (signal.aborted) {
+        // runtime.exec() can return after abort when the process was already spawned.
+        // Explicitly close/cancel stdio so the spawned process is not left running.
+        await cleanupSpawnedExecStream();
         return null;
       }
 
