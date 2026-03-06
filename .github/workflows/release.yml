@@ -45,7 +45,7 @@ jobs:
     permissions:
       contents: read
       id-token: write # Required for OIDC trusted publishing
-    uses: ./.github/workflows/_npm-publish.yml
+    uses: ./.github/workflows/publish-npm.yml
     with:
       channel: latest
       ref: ${{ inputs.tag || github.ref }}

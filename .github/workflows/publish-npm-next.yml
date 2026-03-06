@@ -1,0 +1,20 @@
+name: Publish to NPM (next)
+
+# Publishes prerelease builds to npm on every main push.
+# Stable releases are published via release.yml → publish-npm.yml.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  publish-next:
+    uses: ./.github/workflows/publish-npm.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      channel: next
+      ref: ${{ github.sha }}
