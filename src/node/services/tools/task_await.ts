@@ -25,6 +25,17 @@ function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   return timeoutMs;
 }
 
+function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[]) {
+  return {
+    status: "error" as const,
+    taskId,
+    error:
+      "Do not call task_await in the same parallel tool-call batch as task or bash. " +
+      "Wait for the spawning tool result first, then call task_await in a later step. " +
+      `Use one of these returned task IDs instead: ${suggestedTaskIds.join(", ")}.`,
+  };
+}
+
 export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.task_await.description,
@@ -43,11 +54,13 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
       const activeDescendantAgentTaskIds =
         taskService.listActiveDescendantAgentTaskIds(workspaceId);
-      let candidateTaskIds: string[] = requestedIds ?? activeDescendantAgentTaskIds;
+      const listInScopeBackgroundBashTaskIds = async (): Promise<string[]> => {
+        if (!config.backgroundProcessManager) {
+          return [];
+        }
 
-      if (!requestedIds && config.backgroundProcessManager) {
-        const processes = await config.backgroundProcessManager.list();
         const bashTaskIds: string[] = [];
+        const processes = await config.backgroundProcessManager.list();
         for (const proc of processes) {
           if (proc.status !== "running") continue;
           const inScope =
@@ -57,10 +70,21 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           bashTaskIds.push(toBashTaskId(proc.id));
         }
 
-        candidateTaskIds = [...candidateTaskIds, ...bashTaskIds];
-      }
-
-      const uniqueTaskIds = dedupeStrings(candidateTaskIds);
+        return dedupeStrings(bashTaskIds);
+      };
+      const listInScopeAwaitableTaskIds = async (): Promise<string[]> => {
+        const awaitableTaskIds = [...activeDescendantAgentTaskIds];
+        awaitableTaskIds.push(...(await listInScopeBackgroundBashTaskIds()));
+        return dedupeStrings(awaitableTaskIds);
+      };
+      let suggestionBashTaskIdsPromise: Promise<string[]> | undefined;
+      const getSuggestionBashTaskIds = async (): Promise<string[]> => {
+        suggestionBashTaskIdsPromise ??= listInScopeBackgroundBashTaskIds().catch(() => []);
+        return await suggestionBashTaskIdsPromise;
+      };
+      const uniqueTaskIds = requestedIds
+        ? dedupeStrings(requestedIds)
+        : await listInScopeAwaitableTaskIds();
 
       const agentTaskIds = uniqueTaskIds.filter((taskId) => !taskId.startsWith("bash:"));
       const bulkFilter = (
@@ -172,6 +196,15 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             const lookup = rejectedAgentTaskStatuses.get(taskId);
             const activeTaskIds =
               activeDescendantAgentTaskIds.length > 0 ? activeDescendantAgentTaskIds : undefined;
+            if (requestedIds) {
+              const suggestedTaskIds = dedupeStrings([
+                ...activeDescendantAgentTaskIds,
+                ...(await getSuggestionBashTaskIds()),
+              ]);
+              if (suggestedTaskIds.length > 0) {
+                return buildTaskAwaitSequencingError(taskId, suggestedTaskIds);
+              }
+            }
             if (!lookup?.exists) {
               return { status: "not_found" as const, taskId, activeTaskIds };
             }
