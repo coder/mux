@@ -1255,6 +1255,16 @@ export class Config {
 
       // Check if workspace already exists (by ID)
       const existingIndex = project.workspaces.findIndex((w) => w.id === metadata.id);
+      const existingWorkspace = existingIndex >= 0 ? project.workspaces[existingIndex] : undefined;
+
+      // Snapshot the project's current working directory IDs when a workspace is first persisted.
+      // Existing workspaces keep their stored IDs so metadata updates don't silently retarget scope.
+      const projectWorkingDirectoryIds = (project.workingDirectories ?? []).map(
+        (workingDirectory) => workingDirectory.id
+      );
+      const workingDirectoryIds =
+        existingWorkspace?.workingDirectoryIds ??
+        (existingWorkspace ? undefined : projectWorkingDirectoryIds);
 
       // Use provided namedWorkspacePath if available (runtime-aware),
       // otherwise fall back to worktree-style path for legacy compatibility
@@ -1270,6 +1280,8 @@ export class Config {
         aiSettingsByAgent: metadata.aiSettingsByAgent,
         runtimeConfig: metadata.runtimeConfig,
         aiSettings: metadata.aiSettings,
+        workingDirectoryIds:
+          workingDirectoryIds != null ? [...workingDirectoryIds] : workingDirectoryIds,
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,

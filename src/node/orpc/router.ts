@@ -2128,14 +2128,22 @@ export const router = (authToken?: string) => {
       runtimeAvailability: t
         .input(schemas.projects.runtimeAvailability.input)
         .output(schemas.projects.runtimeAvailability.output)
-        .handler(async ({ input }) => {
-          return checkRuntimeAvailability(input.projectPath);
+        .handler(async ({ context, input }) => {
+          const resolvedProjectPaths = context.config.resolveProjectWorkingDirectoryPaths(input);
+          if (resolvedProjectPaths) {
+            return checkRuntimeAvailability(resolvedProjectPaths.workingDirectoryPaths);
+          }
+
+          return checkRuntimeAvailability(stripTrailingSlashes(input.projectPath));
         }),
       listBranches: t
         .input(schemas.projects.listBranches.input)
         .output(schemas.projects.listBranches.output)
         .handler(async ({ context, input }) => {
-          return context.projectService.listBranches(input.projectPath);
+          const projectPath =
+            context.config.resolveProject(input)?.projectPath ??
+            stripTrailingSlashes(input.projectPath);
+          return context.projectService.listBranches(projectPath);
         }),
       gitInit: t
         .input(schemas.projects.gitInit.input)
@@ -2147,11 +2155,14 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.setTrust.input)
         .output(schemas.projects.setTrust.output)
         .handler(async ({ context, input }) => {
+          const projectPath =
+            context.config.resolveProject(input)?.projectPath ??
+            stripTrailingSlashes(input.projectPath);
+
           await context.config.editConfig((config) => {
-            const normalizedPath = stripTrailingSlashes(input.projectPath);
             const normalizedProject = context.config.normalizeAndSeedProjectConfig(
-              normalizedPath,
-              config.projects.get(normalizedPath)
+              projectPath,
+              config.projects.get(projectPath)
             );
 
             const project = normalizedProject.projectConfig;
@@ -2164,7 +2175,10 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)
         .handler(async ({ context, input }) => {
-          return context.projectService.remove(input.projectPath, input.force ?? false);
+          const projectPath =
+            context.config.resolveProject(input)?.projectPath ??
+            stripTrailingSlashes(input.projectPath);
+          return context.projectService.remove(projectPath, input.force ?? false);
         }),
       secrets: {
         get: t
@@ -2686,7 +2700,10 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.create.output)
         .handler(async ({ context, input }) => {
           const result = await context.workspaceService.create(
-            stripTrailingSlashes(input.projectPath),
+            {
+              projectId: input.projectId,
+              projectPath: stripTrailingSlashes(input.projectPath),
+            },
             input.branchName,
             input.trunkBranch,
             input.title,
@@ -2765,7 +2782,10 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.archiveMergedInProject.input)
         .output(schemas.workspace.archiveMergedInProject.output)
         .handler(async ({ context, input }) => {
-          return context.workspaceService.archiveMergedInProject(input.projectPath);
+          const projectPath =
+            context.config.resolveProject(input)?.projectPath ??
+            stripTrailingSlashes(input.projectPath);
+          return context.workspaceService.archiveMergedInProject(projectPath);
         }),
       fork: t
         .input(schemas.workspace.fork.input)

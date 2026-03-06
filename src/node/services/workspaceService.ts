@@ -5,7 +5,7 @@ import assert from "@/common/utils/assert";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
-import type { Config } from "@/node/config";
+import type { Config, ProjectSelector } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
@@ -1605,13 +1605,26 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async create(
-    projectPath: string,
+    projectSelector: ProjectSelector,
     branchName: string,
     trunkBranch: string | undefined,
     title?: string,
     runtimeConfig?: RuntimeConfig,
     sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    const compatibilityProjectPath = projectSelector.projectPath
+      ? stripTrailingSlashes(projectSelector.projectPath)
+      : undefined;
+    const resolvedProject = this.config.resolveProject({
+      projectId: projectSelector.projectId,
+      projectPath: compatibilityProjectPath,
+    });
+    const projectPath = resolvedProject?.projectPath ?? compatibilityProjectPath;
+
+    if (!projectPath) {
+      return Err("Project path is required to create a workspace");
+    }
+
     // Chat with Mux is a built-in system workspace; it cannot host additional workspaces.
     if (projectPath === getMuxHelpChatProjectPath(this.config.rootDir)) {
       return Err("Cannot create workspaces in the Chat with Mux system project");
@@ -1626,10 +1639,10 @@ export class WorkspaceService extends EventEmitter {
     // Trust gate: block workspace creation for untrusted projects.
     // The frontend shows a confirmation dialog before reaching here,
     // but this guards secondary paths (slash commands, forking).
-    const projectConfig = this.config
-      .loadConfigOrDefault()
-      .projects.get(stripTrailingSlashes(projectPath));
-    if (!projectConfig?.trusted) {
+    const projectConfig =
+      resolvedProject?.projectConfig ??
+      this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath));
+    if (!projectConfig || !projectConfig.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
       );
@@ -1699,9 +1712,7 @@ export class WorkspaceService extends EventEmitter {
       // check against existing workspace names before createWorkspace.
       if (runtime.createFlags?.configLevelCollisionDetection) {
         const existingNames = new Set(
-          (this.config.loadConfigOrDefault().projects.get(projectPath)?.workspaces ?? []).map(
-            (w) => w.name
-          )
+          (projectConfig.workspaces ?? []).map((workspace) => workspace.name)
         );
         for (
           let i = 0;
@@ -1767,33 +1778,22 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const projectName =
-        projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "unknown";
+        projectConfig.name ??
+        projectPath.split("/").pop() ??
+        projectPath.split("\\").pop() ??
+        "unknown";
 
-      const metadata = {
+      await this.config.addWorkspace(projectPath, {
         id: workspaceId,
         name: finalBranchName,
         title,
         projectName,
+        projectId: projectConfig.projectId,
         projectPath,
         createdAt: new Date().toISOString(),
-      };
-
-      await this.config.editConfig((config) => {
-        let projectConfig = config.projects.get(projectPath);
-        if (!projectConfig) {
-          projectConfig = { workspaces: [] };
-          config.projects.set(projectPath, projectConfig);
-        }
-        projectConfig.workspaces.push({
-          path: createResult!.workspacePath!,
-          id: workspaceId,
-          name: finalBranchName,
-          title,
-          createdAt: metadata.createdAt,
-          runtimeConfig: finalRuntimeConfig,
-          sectionId,
-        });
-        return config;
+        runtimeConfig: finalRuntimeConfig,
+        sectionId,
+        namedWorkspacePath: createResult!.workspacePath,
       });
 
       const allMetadata = await this.config.getAllWorkspaceMetadata();

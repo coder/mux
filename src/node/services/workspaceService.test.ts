@@ -2441,6 +2441,7 @@ describe("WorkspaceService init cancellation", () => {
       getSessionDir: mock(() => "/tmp/test/sessions"),
       generateStableId: generateStableIdMock,
       findWorkspace: mock(() => null),
+      resolveProject: mock(() => null),
       loadConfigOrDefault: mock(() => ({
         projects: new Map([
           [
@@ -2468,9 +2469,18 @@ describe("WorkspaceService init cancellation", () => {
       mockBackgroundProcessManager as BackgroundProcessManager
     );
 
-    const result = await workspaceService.create(projectPath, "ws-branch", undefined, "title", {
-      type: "local",
-    });
+    const result = await workspaceService.create(
+      {
+        projectId: "missing-project-id",
+        projectPath: `${projectPath}/`,
+      },
+      "ws-branch",
+      undefined,
+      "title",
+      {
+        type: "local",
+      }
+    );
 
     expect(result).toEqual(
       Err(
@@ -2478,6 +2488,134 @@ describe("WorkspaceService init cancellation", () => {
       )
     );
     expect(generateStableIdMock).not.toHaveBeenCalled();
+  });
+
+  test("create() prefers projectId selector resolution and persists via addWorkspace", async () => {
+    const workspaceId = "ws-project-id";
+    const projectId = "project-id-123";
+    const compatibilityProjectPath = "/tmp/stale-proj";
+    const resolvedProjectPath = "/tmp/resolved-proj";
+    const branchName = "ws-branch";
+    const workspacePath = "/tmp/resolved-proj/ws-branch";
+
+    const resolveProjectMock = mock(() => ({
+      projectPath: resolvedProjectPath,
+      projectConfig: {
+        workspaces: [],
+        trusted: true,
+        projectId,
+        name: "Stored project name",
+        workingDirectories: [
+          { id: "wd-root", path: resolvedProjectPath },
+          { id: "wd-packages", path: `${resolvedProjectPath}/packages` },
+        ],
+      },
+    }));
+    const addWorkspaceMock = mock(() => Promise.resolve());
+
+    const mockMetadata: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: branchName,
+      title: "title",
+      projectName: "Stored project name",
+      projectId,
+      projectPath: resolvedProjectPath,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      namedWorkspacePath: workspacePath,
+      runtimeConfig: { type: "local" },
+    };
+
+    const mockConfig: Partial<Config> = {
+      rootDir: "/tmp/mux-root",
+      srcDir: "/tmp/src",
+      generateStableId: mock(() => workspaceId),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      findWorkspace: mock(() => null),
+      resolveProject: resolveProjectMock,
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+      addWorkspace: addWorkspaceMock,
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([mockMetadata])),
+      getEffectiveSecrets: mock(() => []),
+    };
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      startInit: mock(() => undefined),
+      getInitState: mock(() => undefined),
+      clearInMemoryState: mock(() => undefined),
+    };
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const createWorkspaceMock = mock(() =>
+      Promise.resolve({ success: true as const, workspacePath })
+    );
+
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      createWorkspace: createWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    try {
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        historyService,
+        mockAIService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+
+      const removingWorkspaces = (
+        workspaceService as unknown as { removingWorkspaces: Set<string> }
+      ).removingWorkspaces;
+      removingWorkspaces.add(workspaceId);
+
+      const result = await workspaceService.create(
+        {
+          projectId,
+          projectPath: `${compatibilityProjectPath}/`,
+        },
+        branchName,
+        undefined,
+        "title",
+        {
+          type: "local",
+        }
+      );
+
+      expect(result.success).toBe(true);
+      expect(resolveProjectMock).toHaveBeenCalledWith({
+        projectId,
+        projectPath: compatibilityProjectPath,
+      });
+      expect(createWorkspaceMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: resolvedProjectPath,
+          trusted: true,
+        })
+      );
+      expect(addWorkspaceMock).toHaveBeenCalledWith(
+        resolvedProjectPath,
+        expect.objectContaining({
+          id: workspaceId,
+          name: branchName,
+          title: "title",
+          projectName: "Stored project name",
+          projectId,
+          projectPath: resolvedProjectPath,
+          runtimeConfig: { type: "local" },
+          namedWorkspacePath: workspacePath,
+        })
+      );
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
   });
 
   test("archive() aborts init and still archives when init is running", async () => {
@@ -2680,7 +2818,7 @@ describe("WorkspaceService init cancellation", () => {
       clearInMemoryState: clearInMemoryStateMock,
     };
 
-    const configState: ProjectsConfig = { projects: new Map() };
+    const addWorkspaceMock = mock(() => Promise.resolve());
 
     const mockMetadata: FrontendWorkspaceMetadata = {
       id: workspaceId,
@@ -2697,25 +2835,22 @@ describe("WorkspaceService init cancellation", () => {
       rootDir: "/tmp/mux-root",
       srcDir: "/tmp/src",
       generateStableId: mock(() => workspaceId),
-      editConfig: mock((editFn: (config: ProjectsConfig) => ProjectsConfig) => {
-        editFn(configState);
-        return Promise.resolve();
-      }),
+      resolveProject: mock(() => ({
+        projectPath,
+        projectConfig: {
+          workspaces: [],
+          trusted: true,
+          projectId: "project-id",
+          name: "proj",
+          workingDirectories: [{ id: "wd-root", path: projectPath }],
+        },
+      })),
+      addWorkspace: addWorkspaceMock,
       getAllWorkspaceMetadata: mock(() => Promise.resolve([mockMetadata])),
       getEffectiveSecrets: mock(() => []),
       getSessionDir: mock(() => "/tmp/test/sessions"),
       findWorkspace: mock(() => null),
-      loadConfigOrDefault: mock(() => ({
-        projects: new Map([
-          [
-            projectPath,
-            {
-              workspaces: [],
-              trusted: true,
-            },
-          ],
-        ]),
-      })),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
     };
 
     const mockAIService = {
@@ -2778,9 +2913,17 @@ describe("WorkspaceService init cancellation", () => {
       ).removingWorkspaces;
       removingWorkspaces.add(workspaceId);
 
-      const result = await workspaceService.create(projectPath, branchName, undefined, "title", {
-        type: "local",
-      });
+      const result = await workspaceService.create(
+        {
+          projectPath,
+        },
+        branchName,
+        undefined,
+        "title",
+        {
+          type: "local",
+        }
+      );
 
       expect(result.success).toBe(true);
       if (!result.success) {
