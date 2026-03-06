@@ -15,8 +15,12 @@ interface OpenSettingsOptions {
   expandProvider?: string;
   /** When opening the Runtimes settings, pre-select this project scope. */
   runtimesProjectPath?: string;
+  /** Stable project identifier for Runtimes scope pre-selection. */
+  runtimesProjectId?: string;
   /** When opening the Secrets settings, pre-select this project scope. */
   secretsProjectPath?: string;
+  /** Stable project identifier for Secrets scope pre-selection. */
+  secretsProjectId?: string;
 }
 
 interface SettingsContextValue {
@@ -36,10 +40,14 @@ interface SettingsContextValue {
   /** One-shot hint for RuntimesSection to pre-select a project scope. */
   runtimesProjectPath: string | null;
   setRuntimesProjectPath: (path: string | null) => void;
+  runtimesProjectId: string | null;
+  setRuntimesProjectId: (projectId: string | null) => void;
 
   /** One-shot hint for SecretsSection to pre-select a project scope. */
   secretsProjectPath: string | null;
   setSecretsProjectPath: (path: string | null) => void;
+  secretsProjectId: string | null;
+  setSecretsProjectId: (projectId: string | null) => void;
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -56,7 +64,9 @@ export function SettingsProvider(props: { children: ReactNode }) {
   const router = useRouter();
   const [providersExpandedProvider, setProvidersExpandedProvider] = useState<string | null>(null);
   const [runtimesProjectPath, setRuntimesProjectPath] = useState<string | null>(null);
+  const [runtimesProjectId, setRuntimesProjectId] = useState<string | null>(null);
   const [secretsProjectPath, setSecretsProjectPath] = useState<string | null>(null);
+  const [secretsProjectId, setSecretsProjectId] = useState<string | null>(null);
 
   const closeCallbacksRef = useRef(new Set<() => void>());
 
@@ -73,13 +83,17 @@ export function SettingsProvider(props: { children: ReactNode }) {
       }
       if (nextSection === "runtimes") {
         setRuntimesProjectPath(options?.runtimesProjectPath ?? null);
+        setRuntimesProjectId(options?.runtimesProjectId ?? null);
       } else {
         setRuntimesProjectPath(null);
+        setRuntimesProjectId(null);
       }
       if (nextSection === "secrets") {
         setSecretsProjectPath(options?.secretsProjectPath ?? null);
+        setSecretsProjectId(options?.secretsProjectId ?? null);
       } else {
         setSecretsProjectPath(null);
+        setSecretsProjectId(null);
       }
       router.navigateToSettings(nextSection);
     },
@@ -100,7 +114,9 @@ export function SettingsProvider(props: { children: ReactNode }) {
     if (wasOpenRef.current && !isOpen) {
       setProvidersExpandedProvider(null);
       setRuntimesProjectPath(null);
+      setRuntimesProjectId(null);
       setSecretsProjectPath(null);
+      setSecretsProjectId(null);
       for (const callback of closeCallbacksRef.current) {
         callback();
       }
@@ -111,7 +127,9 @@ export function SettingsProvider(props: { children: ReactNode }) {
   const close = useCallback(() => {
     setProvidersExpandedProvider(null);
     setRuntimesProjectPath(null);
+    setRuntimesProjectId(null);
     setSecretsProjectPath(null);
+    setSecretsProjectId(null);
     router.navigateFromSettings();
   }, [router]);
 
@@ -123,9 +141,11 @@ export function SettingsProvider(props: { children: ReactNode }) {
       if (section !== "runtimes") {
         // Runtime scope hints are one-shot and should not persist across section changes.
         setRuntimesProjectPath(null);
+        setRuntimesProjectId(null);
       }
       if (section !== "secrets") {
         setSecretsProjectPath(null);
+        setSecretsProjectId(null);
       }
       router.navigateToSettings(section);
     },
@@ -144,8 +164,12 @@ export function SettingsProvider(props: { children: ReactNode }) {
       setProvidersExpandedProvider,
       runtimesProjectPath,
       setRuntimesProjectPath,
+      runtimesProjectId,
+      setRuntimesProjectId,
       secretsProjectPath,
       setSecretsProjectPath,
+      secretsProjectId,
+      setSecretsProjectId,
     }),
     [
       isOpen,
@@ -156,7 +180,9 @@ export function SettingsProvider(props: { children: ReactNode }) {
       registerOnClose,
       providersExpandedProvider,
       runtimesProjectPath,
+      runtimesProjectId,
       secretsProjectPath,
+      secretsProjectId,
     ]
   );
 

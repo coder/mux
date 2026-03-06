@@ -75,6 +75,26 @@ function getProjectLabel(path: string) {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
+function resolveHintedProjectPath(
+  projects: Map<string, ProjectConfig>,
+  projectId: string | null,
+  projectPath: string | null
+): string | null {
+  if (projectId) {
+    for (const [candidatePath, projectConfig] of projects) {
+      if (projectConfig.projectId === projectId) {
+        return candidatePath;
+      }
+    }
+  }
+
+  if (projectPath && projects.has(projectPath)) {
+    return projectPath;
+  }
+
+  return null;
+}
+
 function getFallbackRuntime(enablement: RuntimeEnablement): RuntimeEnablementId | null {
   return RUNTIME_ROWS.find((runtime) => enablement[runtime.id])?.id ?? null;
 }
@@ -139,15 +159,19 @@ export function RuntimesSection() {
   const { userProjects, refreshProjects } = useProjectContext();
   const { enablement, setRuntimeEnabled, defaultRuntime, setDefaultRuntime } =
     useRuntimeEnablement();
-  const { runtimesProjectPath, setRuntimesProjectPath } = useSettings();
+  const { runtimesProjectPath, setRuntimesProjectPath, runtimesProjectId, setRuntimesProjectId } =
+    useSettings();
 
   const projectList = Array.from(userProjects.keys());
 
   // Consume one-shot project scope hint from "set defaults" button in creation controls.
-  const initialScope =
-    runtimesProjectPath && userProjects.has(runtimesProjectPath)
-      ? runtimesProjectPath
-      : ALL_SCOPE_VALUE;
+  // Prefer stable projectId first, then fall back to projectPath.
+  const hintedProjectPath = resolveHintedProjectPath(
+    userProjects,
+    runtimesProjectId,
+    runtimesProjectPath
+  );
+  const initialScope = hintedProjectPath ?? ALL_SCOPE_VALUE;
   const [selectedScope, setSelectedScope] = useState(initialScope);
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "idle" });
@@ -160,11 +184,11 @@ export function RuntimesSection() {
   // Only clear the hint once the project is actually found in the project list;
   // projects load asynchronously, so we must keep the hint alive until then.
   useEffect(() => {
-    if (!runtimesProjectPath) return;
-    if (!userProjects.has(runtimesProjectPath)) return;
-    setSelectedScope(runtimesProjectPath);
+    if (!hintedProjectPath) return;
+    setSelectedScope(hintedProjectPath);
+    setRuntimesProjectId(null);
     setRuntimesProjectPath(null);
-  }, [runtimesProjectPath, userProjects, setRuntimesProjectPath]);
+  }, [hintedProjectPath, setRuntimesProjectId, setRuntimesProjectPath]);
 
   // Derive scope during render so stale selections self-heal without effect-driven state sync.
   const effectiveScope =

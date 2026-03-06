@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { KeyRound, Loader2, Trash2 } from "lucide-react";
 import { isOpSecretValue, type Secret } from "@/common/types/secrets";
+import type { ProjectConfig } from "@/common/types/project";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -114,16 +115,42 @@ function secretsEqual(a: Secret[], b: Secret[]): boolean {
   return true;
 }
 
+function resolveHintedProjectPath(
+  projects: Map<string, ProjectConfig>,
+  projectId: string | null,
+  projectPath: string | null
+): string | null {
+  if (projectId) {
+    for (const [candidatePath, projectConfig] of projects) {
+      if (projectConfig.projectId === projectId) {
+        return candidatePath;
+      }
+    }
+  }
+
+  if (projectPath && projects.has(projectPath)) {
+    return projectPath;
+  }
+
+  return null;
+}
+
 export const SecretsSection: React.FC = () => {
   const { api } = useAPI();
   const { userProjects } = useProjectContext();
-  const { secretsProjectPath, setSecretsProjectPath } = useSettings();
+  const { secretsProjectPath, setSecretsProjectPath, secretsProjectId, setSecretsProjectId } =
+    useSettings();
   const projectList = Array.from(userProjects.keys());
 
   // Consume one-shot project scope hint from the sidebar secrets button.
-  const initialScope: SecretsScope =
-    secretsProjectPath && userProjects.has(secretsProjectPath) ? "project" : "global";
-  const initialProject = initialScope === "project" ? secretsProjectPath! : "";
+  // Prefer stable projectId first, then fall back to projectPath.
+  const hintedProjectPath = resolveHintedProjectPath(
+    userProjects,
+    secretsProjectId,
+    secretsProjectPath
+  );
+  const initialScope: SecretsScope = hintedProjectPath ? "project" : "global";
+  const initialProject = hintedProjectPath ?? "";
 
   const [scope, setScope] = useState<SecretsScope>(initialScope);
   const [selectedProject, setSelectedProject] = useState<string>(initialProject);
@@ -155,12 +182,12 @@ export const SecretsSection: React.FC = () => {
   // Only clear the hint once the project is actually found in the project list;
   // projects load asynchronously, so we must keep the hint alive until then.
   useEffect(() => {
-    if (!secretsProjectPath) return;
-    if (!userProjects.has(secretsProjectPath)) return;
+    if (!hintedProjectPath) return;
     setScope("project");
-    setSelectedProject(secretsProjectPath);
+    setSelectedProject(hintedProjectPath);
+    setSecretsProjectId(null);
     setSecretsProjectPath(null);
-  }, [secretsProjectPath, userProjects, setSecretsProjectPath]);
+  }, [hintedProjectPath, setSecretsProjectId, setSecretsProjectPath]);
 
   // Default to the first project when switching into Project scope.
   useEffect(() => {
