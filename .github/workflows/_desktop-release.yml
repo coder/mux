@@ -20,7 +20,7 @@ on:
 jobs:
   build-macos:
     name: Build and Release macOS
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    runs-on: macos-15
     permissions:
       contents: write # Upload release assets
     env:
