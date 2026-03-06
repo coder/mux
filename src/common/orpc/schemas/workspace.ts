@@ -38,6 +38,10 @@ export const WorkspaceMetadataSchema = z.object({
   aiSettings: WorkspaceAISettingsSchema.optional().meta({
     description: "Workspace-scoped AI settings (model + thinking level) persisted in config",
   }),
+  workingDirectoryIds: z.array(z.string()).optional().meta({
+    description:
+      "Optional IDs of project-level working directories selected for this workspace. Omitted for backward compatibility.",
+  }),
   parentWorkspaceId: z.string().optional().meta({
     description:
       "If set, this workspace is a child workspace spawned from the parent workspaceId (enables nesting in UI and backend orchestration).",

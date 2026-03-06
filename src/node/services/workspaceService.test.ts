@@ -2497,6 +2497,7 @@ describe("WorkspaceService init cancellation", () => {
     const resolvedProjectPath = "/tmp/resolved-proj";
     const branchName = "ws-branch";
     const workspacePath = "/tmp/resolved-proj/ws-branch";
+    const selectedWorkingDirectoryIds = ["wd-packages"];
 
     const resolveProjectMock = mock(() => ({
       projectPath: resolvedProjectPath,
@@ -2586,7 +2587,9 @@ describe("WorkspaceService init cancellation", () => {
         "title",
         {
           type: "local",
-        }
+        },
+        undefined,
+        selectedWorkingDirectoryIds
       );
 
       expect(result.success).toBe(true);
@@ -2610,6 +2613,7 @@ describe("WorkspaceService init cancellation", () => {
           projectId,
           projectPath: resolvedProjectPath,
           runtimeConfig: { type: "local" },
+          workingDirectoryIds: selectedWorkingDirectoryIds,
           namedWorkspacePath: workspacePath,
         })
       );

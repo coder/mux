@@ -1010,6 +1010,7 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              workingDirectoryIds: workspace.workingDirectoryIds,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1104,6 +1105,7 @@ export class Config {
                   }
                 : undefined);
             metadata.aiSettings ??= workspace.aiSettings;
+            metadata.workingDirectoryIds ??= workspace.workingDirectoryIds;
 
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
@@ -1123,6 +1125,11 @@ export class Config {
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
+              configModified = true;
+            }
+
+            if (!workspace.workingDirectoryIds && metadata.workingDirectoryIds) {
+              workspace.workingDirectoryIds = [...metadata.workingDirectoryIds];
               configModified = true;
             }
 
@@ -1151,6 +1158,7 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              workingDirectoryIds: workspace.workingDirectoryIds,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1197,6 +1205,7 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
+            workingDirectoryIds: workspace.workingDirectoryIds,
             aiSettingsByAgent:
               workspace.aiSettingsByAgent ??
               (workspace.aiSettings
@@ -1262,7 +1271,10 @@ export class Config {
       const projectWorkingDirectoryIds = (project.workingDirectories ?? []).map(
         (workingDirectory) => workingDirectory.id
       );
+      const explicitWorkingDirectoryIds =
+        metadata.workingDirectoryIds != null ? [...metadata.workingDirectoryIds] : undefined;
       const workingDirectoryIds =
+        explicitWorkingDirectoryIds ??
         existingWorkspace?.workingDirectoryIds ??
         (existingWorkspace ? undefined : projectWorkingDirectoryIds);
 

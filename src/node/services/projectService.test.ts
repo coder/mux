@@ -200,6 +200,107 @@ describe("ProjectService", () => {
         result.data.projectConfig.workingDirectories?.[0]
       );
     });
+
+    it("persists optional editable fields when provided", async () => {
+      const expectedProjectPath = path.join(tempDir, "created-project-with-overrides");
+      const packagesPath = path.join(expectedProjectPath, "packages");
+
+      const result = await service.create(expectedProjectPath, {
+        name: "Custom Project Name",
+        systemPrompt: "Always include implementation notes",
+        workingDirectories: [{ path: packagesPath }],
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+
+      expect(result.data.projectConfig.name).toBe("Custom Project Name");
+      expect(result.data.projectConfig.systemPrompt).toBe("Always include implementation notes");
+      expect(
+        result.data.projectConfig.workingDirectories?.map(
+          (workingDirectory) => workingDirectory.path
+        )
+      ).toEqual([path.resolve(expectedProjectPath), path.resolve(packagesPath)]);
+      expect(
+        result.data.projectConfig.workingDirectories?.every((workingDirectory) =>
+          /^[0-9a-f]{10}$/.test(workingDirectory.id)
+        )
+      ).toBe(true);
+    });
+  });
+
+  describe("update", () => {
+    it("applies provided edits only and clears systemPrompt when null", async () => {
+      const projectPath = path.join(tempDir, "project-to-update");
+      const createResult = await service.create(projectPath, {
+        name: "Original Name",
+        systemPrompt: "Original prompt",
+        workingDirectories: [{ path: path.join(projectPath, "packages") }],
+      });
+
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected success");
+
+      const projectId = createResult.data.projectConfig.projectId;
+      const originalWorkingDirectories = createResult.data.projectConfig.workingDirectories;
+
+      const updateResult = await service.update(
+        {
+          projectId,
+          projectPath: "/tmp/stale-path",
+        },
+        {
+          systemPrompt: null,
+        }
+      );
+
+      expect(updateResult.success).toBe(true);
+      if (!updateResult.success) throw new Error("Expected success");
+
+      expect(updateResult.data.projectId).toBe(projectId);
+      expect(updateResult.data.name).toBe("Original Name");
+      expect(updateResult.data.systemPrompt).toBeUndefined();
+      expect(updateResult.data.workingDirectories).toEqual(originalWorkingDirectories);
+
+      const persistedProject = config.loadConfigOrDefault().projects.get(path.resolve(projectPath));
+      expect(persistedProject?.name).toBe("Original Name");
+      expect(persistedProject?.systemPrompt).toBeUndefined();
+      expect(persistedProject?.workingDirectories).toEqual(originalWorkingDirectories);
+    });
+
+    it("updates editable fields and seeds working-directory IDs when omitted", async () => {
+      const projectPath = path.join(tempDir, "project-update-fields");
+      const createResult = await service.create(projectPath);
+
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) throw new Error("Expected success");
+
+      const appsPath = path.join(projectPath, "apps");
+      const updateResult = await service.update(
+        {
+          projectPath,
+        },
+        {
+          name: "Renamed Project",
+          systemPrompt: "New prompt",
+          workingDirectories: [{ path: appsPath }],
+        }
+      );
+
+      expect(updateResult.success).toBe(true);
+      if (!updateResult.success) throw new Error("Expected success");
+
+      expect(updateResult.data.name).toBe("Renamed Project");
+      expect(updateResult.data.systemPrompt).toBe("New prompt");
+      expect(
+        updateResult.data.workingDirectories?.map((workingDirectory) => workingDirectory.path)
+      ).toEqual([path.resolve(projectPath), path.resolve(appsPath)]);
+      expect(
+        updateResult.data.workingDirectories?.every((workingDirectory) =>
+          /^[0-9a-f]{10}$/.test(workingDirectory.id)
+        )
+      ).toBe(true);
+    });
   });
 
   describe("clone", () => {

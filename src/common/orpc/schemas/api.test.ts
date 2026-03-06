@@ -210,6 +210,8 @@ describe("config.saveConfig schema", () => {
 
 describe("project selector schema compatibility", () => {
   it("accepts legacy projectPath-only selectors", () => {
+    expect(projects.create.input.safeParse({ projectPath: "/tmp/repo" }).success).toBe(true);
+    expect(projects.update.input.safeParse({ projectPath: "/tmp/repo" }).success).toBe(true);
     expect(projects.runtimeAvailability.input.safeParse({ projectPath: "/tmp/repo" }).success).toBe(
       true
     );
@@ -229,15 +231,51 @@ describe("project selector schema compatibility", () => {
     ).toBe(true);
   });
 
+  it("accepts additive project fields and optional workspace workingDirectoryIds", () => {
+    expect(
+      projects.create.input.safeParse({
+        projectPath: "/tmp/repo",
+        name: "Repo",
+        systemPrompt: "Use concise responses",
+        workingDirectories: [
+          { path: "/tmp/repo" },
+          { id: "wd-packages", path: "/tmp/repo/packages" },
+        ],
+      }).success
+    ).toBe(true);
+
+    expect(
+      projects.update.input.safeParse({
+        projectPath: "/tmp/repo",
+        name: "Renamed repo",
+        systemPrompt: null,
+        workingDirectories: [{ path: "/tmp/repo/apps" }],
+      }).success
+    ).toBe(true);
+
+    expect(
+      workspace.create.input.safeParse({
+        projectPath: "/tmp/repo",
+        branchName: "feature/two",
+        workingDirectoryIds: ["wd-root", "wd-packages"],
+      }).success
+    ).toBe(true);
+  });
+
   it("accepts projectId alongside compatibility projectPath", () => {
     const selector = { projectPath: "/tmp/repo", projectId: "proj_123" };
 
+    expect(projects.update.input.safeParse(selector).success).toBe(true);
     expect(projects.runtimeAvailability.input.safeParse(selector).success).toBe(true);
     expect(projects.listBranches.input.safeParse(selector).success).toBe(true);
     expect(projects.remove.input.safeParse({ ...selector, force: true }).success).toBe(true);
     expect(projects.setTrust.input.safeParse({ ...selector, trusted: false }).success).toBe(true);
     expect(
-      workspace.create.input.safeParse({ ...selector, branchName: "feature/two" }).success
+      workspace.create.input.safeParse({
+        ...selector,
+        branchName: "feature/two",
+        workingDirectoryIds: ["wd-root"],
+      }).success
     ).toBe(true);
     expect(workspace.archiveMergedInProject.input.safeParse(selector).success).toBe(true);
   });

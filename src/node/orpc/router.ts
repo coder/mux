@@ -2089,7 +2089,27 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.create.input)
         .output(schemas.projects.create.output)
         .handler(async ({ context, input }) => {
-          return context.projectService.create(input.projectPath);
+          return context.projectService.create(input.projectPath, {
+            name: input.name,
+            systemPrompt: input.systemPrompt,
+            workingDirectories: input.workingDirectories,
+          });
+        }),
+      update: t
+        .input(schemas.projects.update.input)
+        .output(schemas.projects.update.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.update(
+            {
+              projectId: input.projectId,
+              projectPath: stripTrailingSlashes(input.projectPath),
+            },
+            {
+              name: input.name,
+              systemPrompt: input.systemPrompt,
+              workingDirectories: input.workingDirectories,
+            }
+          );
         }),
       getDefaultProjectDir: t
         .input(schemas.projects.getDefaultProjectDir.input)
@@ -2708,7 +2728,8 @@ export const router = (authToken?: string) => {
             input.trunkBranch,
             input.title,
             input.runtimeConfig,
-            input.sectionId
+            input.sectionId,
+            input.workingDirectoryIds
           );
           if (!result.success) {
             return { success: false, error: result.error };

@@ -481,10 +481,44 @@ const ProjectSelectorInputSchema = z.object({
   }),
 });
 
+const EditableWorkingDirectoryInputSchema = z.object({
+  id: z.string().optional().meta({
+    description: "Optional stable working-directory ID. Seeded when omitted.",
+  }),
+  path: z.string().meta({
+    description: "Absolute path to a selectable working directory in the project.",
+  }),
+});
+
+const ProjectCreateEditableFieldsInputSchema = z.object({
+  name: z.string().optional().meta({
+    description: "Optional display name for the project.",
+  }),
+  systemPrompt: z.string().optional().meta({
+    description: "Optional project-level default system prompt for new workspaces.",
+  }),
+  workingDirectories: z.array(EditableWorkingDirectoryInputSchema).optional().meta({
+    description:
+      "Optional project-level selectable working directories. Missing IDs are seeded on persistence.",
+  }),
+});
+
+const ProjectUpdateEditableFieldsInputSchema = ProjectCreateEditableFieldsInputSchema.extend({
+  systemPrompt: z.string().nullable().optional().meta({
+    description:
+      "Project-level default system prompt. Pass null to clear the stored prompt; omit to keep existing.",
+  }),
+});
+
 // Projects
 export const projects = {
   create: {
-    input: z.object({ projectPath: z.string() }),
+    input: z.object({
+      projectPath: z.string(),
+      name: ProjectCreateEditableFieldsInputSchema.shape.name,
+      systemPrompt: ProjectCreateEditableFieldsInputSchema.shape.systemPrompt,
+      workingDirectories: ProjectCreateEditableFieldsInputSchema.shape.workingDirectories,
+    }),
     output: ResultSchema(
       z.object({
         projectConfig: ProjectConfigSchema,
@@ -492,6 +526,14 @@ export const projects = {
       }),
       z.string()
     ),
+  },
+  update: {
+    input: ProjectSelectorInputSchema.extend({
+      name: ProjectUpdateEditableFieldsInputSchema.shape.name,
+      systemPrompt: ProjectUpdateEditableFieldsInputSchema.shape.systemPrompt,
+      workingDirectories: ProjectUpdateEditableFieldsInputSchema.shape.workingDirectories,
+    }),
+    output: ResultSchema(ProjectConfigSchema, z.string()),
   },
   getDefaultProjectDir: {
     input: z.void(),
@@ -863,6 +905,8 @@ export const workspace = {
       runtimeConfig: RuntimeConfigSchema.optional(),
       /** Section ID to assign the new workspace to (optional) */
       sectionId: z.string().optional(),
+      /** Optional IDs of project working directories selected for this workspace */
+      workingDirectoryIds: z.array(z.string()).optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),

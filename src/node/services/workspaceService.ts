@@ -1610,7 +1610,8 @@ export class WorkspaceService extends EventEmitter {
     trunkBranch: string | undefined,
     title?: string,
     runtimeConfig?: RuntimeConfig,
-    sectionId?: string
+    sectionId?: string,
+    workingDirectoryIds?: string[]
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
     const compatibilityProjectPath = projectSelector.projectPath
       ? stripTrailingSlashes(projectSelector.projectPath)
@@ -1792,6 +1793,7 @@ export class WorkspaceService extends EventEmitter {
         projectPath,
         createdAt: new Date().toISOString(),
         runtimeConfig: finalRuntimeConfig,
+        workingDirectoryIds,
         sectionId,
         namedWorkspacePath: createResult!.workspacePath,
       });

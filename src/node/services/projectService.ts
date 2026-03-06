@@ -1,4 +1,4 @@
-import type { Config, ProjectConfig } from "@/node/config";
+import type { Config, ProjectConfig, ProjectSelector } from "@/node/config";
 import type { SectionConfig } from "@/common/types/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
@@ -93,6 +93,82 @@ type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
 
 interface WorkspaceRemover {
   remove(workspaceId: string, force?: boolean): Promise<Result<void>>;
+}
+
+interface EditableWorkingDirectoryInput {
+  id?: string;
+  path: string;
+}
+
+export interface ProjectCreateOptions {
+  name?: string;
+  systemPrompt?: string;
+  workingDirectories?: EditableWorkingDirectoryInput[];
+}
+
+export interface ProjectUpdateOptions {
+  name?: string;
+  systemPrompt?: string | null;
+  workingDirectories?: EditableWorkingDirectoryInput[];
+}
+
+function normalizeWorkingDirectoriesForPersistence(
+  workingDirectories: EditableWorkingDirectoryInput[] | undefined
+): ProjectConfig["workingDirectories"] | undefined {
+  if (workingDirectories === undefined) {
+    return undefined;
+  }
+
+  return workingDirectories.map((workingDirectory) => ({
+    // normalizeAndSeedProjectConfig seeds IDs when this placeholder is empty.
+    id: workingDirectory.id ?? "",
+    path: workingDirectory.path,
+  }));
+}
+
+function buildProjectCreateConfig(options?: ProjectCreateOptions): ProjectConfig {
+  const projectConfig: ProjectConfig = { workspaces: [] };
+
+  if (options?.name !== undefined) {
+    projectConfig.name = options.name;
+  }
+
+  if (options?.systemPrompt !== undefined) {
+    projectConfig.systemPrompt = options.systemPrompt;
+  }
+
+  const workingDirectories = normalizeWorkingDirectoriesForPersistence(options?.workingDirectories);
+  if (workingDirectories !== undefined) {
+    projectConfig.workingDirectories = workingDirectories;
+  }
+
+  return projectConfig;
+}
+
+function applyProjectUpdates(
+  projectConfig: ProjectConfig,
+  updates: ProjectUpdateOptions
+): ProjectConfig {
+  const updatedProjectConfig: ProjectConfig = { ...projectConfig };
+
+  if (updates.name !== undefined) {
+    updatedProjectConfig.name = updates.name;
+  }
+
+  if (updates.systemPrompt !== undefined) {
+    if (updates.systemPrompt === null) {
+      delete updatedProjectConfig.systemPrompt;
+    } else {
+      updatedProjectConfig.systemPrompt = updates.systemPrompt;
+    }
+  }
+
+  const workingDirectories = normalizeWorkingDirectoriesForPersistence(updates.workingDirectories);
+  if (workingDirectories !== undefined) {
+    updatedProjectConfig.workingDirectories = workingDirectories;
+  }
+
+  return updatedProjectConfig;
 }
 
 function isTildePrefixedPath(value: string): boolean {
@@ -343,7 +419,8 @@ export class ProjectService {
   }
 
   async create(
-    projectPath: string
+    projectPath: string,
+    options?: ProjectCreateOptions
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
     try {
       // Validate input
@@ -399,7 +476,10 @@ export class ProjectService {
       // Create the directory if it doesn't exist (like mkdir -p)
       await fsPromises.mkdir(normalizedPath, { recursive: true });
 
-      const normalizedProject = this.config.normalizeAndSeedProjectConfig(normalizedPath);
+      const normalizedProject = this.config.normalizeAndSeedProjectConfig(
+        normalizedPath,
+        buildProjectCreateConfig(options)
+      );
       const projectConfig = normalizedProject.projectConfig;
       config.projects.set(normalizedProject.normalizedProjectPath, projectConfig);
       await this.config.saveConfig(config);
@@ -411,6 +491,41 @@ export class ProjectService {
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to create project: ${message}`);
+    }
+  }
+
+  async update(
+    selector: ProjectSelector,
+    updates: ProjectUpdateOptions
+  ): Promise<Result<ProjectConfig>> {
+    try {
+      const resolvedProject = this.config.resolveProject(selector);
+      if (!resolvedProject) {
+        return Err("Project not found");
+      }
+
+      const config = this.config.loadConfigOrDefault();
+      const currentProjectConfig = config.projects.get(resolvedProject.projectPath);
+      if (!currentProjectConfig) {
+        return Err("Project not found");
+      }
+
+      const updatedProjectConfig = applyProjectUpdates(currentProjectConfig, updates);
+      const normalizedProject = this.config.normalizeAndSeedProjectConfig(
+        resolvedProject.projectPath,
+        updatedProjectConfig
+      );
+
+      if (resolvedProject.projectPath !== normalizedProject.normalizedProjectPath) {
+        config.projects.delete(resolvedProject.projectPath);
+      }
+      config.projects.set(normalizedProject.normalizedProjectPath, normalizedProject.projectConfig);
+      await this.config.saveConfig(config);
+
+      return Ok(normalizedProject.projectConfig);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to update project: ${message}`);
     }
   }
 

@@ -451,8 +451,73 @@ describe("Config", () => {
       expect(projectConfig?.workingDirectories?.[0]?.path).toBe(normalizedProjectPath);
       expect(projectConfig?.workingDirectories?.[0]?.id).toMatch(/^[0-9a-f]{10}$/);
     });
-  });
 
+    it("persists explicit workingDirectoryIds when provided", async () => {
+      const projectPath = "/fake/explicit-working-directory-project";
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [],
+          workingDirectories: [
+            { id: "wd-root", path: projectPath },
+            { id: "wd-docs", path: `${projectPath}/docs` },
+          ],
+        });
+        return cfg;
+      });
+
+      await config.addWorkspace(projectPath, {
+        id: "workspace-explicit",
+        name: "explicit-branch",
+        projectName: "ignored",
+        projectPath,
+        runtimeConfig: { type: "local" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+        workingDirectoryIds: ["wd-docs"],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get(projectPath)?.workspaces[0]?.workingDirectoryIds).toEqual([
+        "wd-docs",
+      ]);
+
+      const allMetadata = await config.getAllWorkspaceMetadata();
+      const workspaceMetadata = allMetadata.find(
+        (metadata) => metadata.id === "workspace-explicit"
+      );
+      expect(workspaceMetadata?.workingDirectoryIds).toEqual(["wd-docs"]);
+    });
+
+    it("snapshots project workingDirectoryIds when not explicitly provided", async () => {
+      const projectPath = "/fake/default-working-directory-project";
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [],
+          workingDirectories: [
+            { id: "wd-root", path: projectPath },
+            { id: "wd-apps", path: `${projectPath}/apps` },
+          ],
+        });
+        return cfg;
+      });
+
+      await config.addWorkspace(projectPath, {
+        id: "workspace-default-snapshot",
+        name: "default-branch",
+        projectName: "ignored",
+        projectPath,
+        runtimeConfig: { type: "local" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get(projectPath)?.workspaces[0]?.workingDirectoryIds).toEqual([
+        "wd-root",
+        "wd-apps",
+      ]);
+    });
+  });
   describe("project resolution helpers", () => {
     const projectPathOne = "/fake/project-one";
     const projectPathTwo = "/fake/project-two";
