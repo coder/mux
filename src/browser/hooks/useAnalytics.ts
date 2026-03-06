@@ -479,18 +479,36 @@ async function loadSavedQueries(
   }
 }
 
-export function useSavedQueries() {
+interface UseSavedQueriesOptions {
+  // Rationale: chat analytics cards may only need save(), so skipping the mount load avoids
+  // one getSavedQueries IPC round-trip per card until the caller explicitly refreshes.
+  skipLoad?: boolean;
+}
+
+export function useSavedQueries(options: UseSavedQueriesOptions = {}) {
+  const skipLoadOption = options.skipLoad;
+  assert(
+    skipLoadOption == null || typeof skipLoadOption === "boolean",
+    "useSavedQueries skipLoad must be a boolean when provided"
+  );
+
+  const skipLoad = skipLoadOption ?? false;
   const { api } = useAPI();
   const [queries, setQueries] = useState<SavedQuery[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!skipLoad);
 
   const refresh = async () => {
     await loadSavedQueries(api, setQueries, setLoading);
   };
 
   useEffect(() => {
+    if (skipLoad) {
+      setLoading(false);
+      return;
+    }
+
     void loadSavedQueries(api, setQueries, setLoading);
-  }, [api]);
+  }, [api, skipLoad]);
 
   const save = async (input: { label: string; sql: string; chartType?: string | null }) => {
     if (!api) {

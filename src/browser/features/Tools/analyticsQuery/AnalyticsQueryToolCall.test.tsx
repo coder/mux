@@ -44,16 +44,17 @@ const saveMock = mock((_input: SaveInput) => {
 });
 
 const navigateToAnalyticsMock = mock(() => undefined);
+const useSavedQueriesMock = mock((_options?: { skipLoad?: boolean }) => ({
+  queries: [],
+  loading: false,
+  save: saveMock,
+  update: () => Promise.resolve(null),
+  remove: () => Promise.resolve(undefined),
+  refresh: () => Promise.resolve(undefined),
+}));
 
 void mock.module("@/browser/hooks/useAnalytics", () => ({
-  useSavedQueries: () => ({
-    queries: [],
-    loading: false,
-    save: saveMock,
-    update: () => Promise.resolve(null),
-    remove: () => Promise.resolve(undefined),
-    refresh: () => Promise.resolve(undefined),
-  }),
+  useSavedQueries: useSavedQueriesMock,
 }));
 
 void mock.module("@/browser/contexts/RouterContext", () => ({
@@ -127,6 +128,7 @@ describe("AnalyticsQueryToolCall", () => {
     };
     saveMock.mockClear();
     navigateToAnalyticsMock.mockClear();
+    useSavedQueriesMock.mockClear();
   });
 
   afterEach(() => {
@@ -151,6 +153,18 @@ describe("AnalyticsQueryToolCall", () => {
     );
 
     expect(view.getByText("Spend by model")).toBeTruthy();
+  });
+
+  test("opts into the save-only saved-query hook path", () => {
+    renderWithTooltip(
+      <AnalyticsQueryToolCall
+        args={{ sql: "SELECT model, total_cost_usd FROM events" }}
+        result={createSuccessResult()}
+        status="completed"
+      />
+    );
+
+    expect(useSavedQueriesMock).toHaveBeenCalledWith({ skipLoad: true });
   });
 
   test("displays row count and query duration", () => {

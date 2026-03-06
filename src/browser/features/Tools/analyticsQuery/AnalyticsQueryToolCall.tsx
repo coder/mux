@@ -94,7 +94,8 @@ function escapeDoubleQuotes(value: string): string {
 
 export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.Element {
   const { expanded, toggleExpanded } = useToolExpansion(true);
-  const { save } = useSavedQueries();
+  // Rationale: chat cards only use save(), so skip the saved-query preload until the user opts in.
+  const { save } = useSavedQueries({ skipLoad: true });
   const { navigateToAnalytics } = useRouter();
   const [chartTypeOverride, setChartTypeOverride] = useState<ChartType | null>(null);
   const [showSql, setShowSql] = useState(false);
