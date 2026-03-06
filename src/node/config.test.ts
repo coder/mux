@@ -43,6 +43,54 @@ describe("Config", () => {
       expect(projectPaths).not.toContain("/home/user/project/");
       expect(projectPaths).not.toContain("/home/user/another//");
     });
+
+    it("backfills legacy project records and keeps seeded identity stable", async () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              "/home/user/project/",
+              {
+                workspaces: [],
+                systemPrompt: "Keep me",
+                workingDirectories: [
+                  { id: "wd-subdir", path: "/home/user/project/subdir" },
+                  { id: "wd-root", path: "/home/user/project//" },
+                ],
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      const seededProject = loaded.projects.get("/home/user/project");
+      expect(seededProject).toBeDefined();
+      expect(seededProject?.workspaces).toEqual([]);
+      expect(seededProject?.name).toBe("project");
+      expect(seededProject?.projectId).toMatch(/^[0-9a-f]{10}$/);
+      expect(seededProject?.workingDirectories?.[0]).toEqual({
+        id: "wd-root",
+        path: "/home/user/project",
+      });
+      expect(seededProject?.systemPrompt).toBe("Keep me");
+
+      const seededProjectId = seededProject?.projectId;
+      await config.saveConfig(loaded);
+
+      const reloaded = config.loadConfigOrDefault();
+      const reloadedProject = reloaded.projects.get("/home/user/project");
+      expect(reloadedProject).toBeDefined();
+      expect(reloadedProject?.projectId).toBe(seededProjectId);
+      expect(reloadedProject?.name).toBe("project");
+      expect(reloadedProject?.workingDirectories?.[0]).toEqual({
+        id: "wd-root",
+        path: "/home/user/project",
+      });
+      expect(reloadedProject?.systemPrompt).toBe("Keep me");
+    });
   });
 
   describe("api server settings", () => {
@@ -348,6 +396,60 @@ describe("Config", () => {
       expect(workspace.id).toBe(legacyId);
       expect(workspace.name).toBe(workspaceName);
       expect(workspace.createdAt).toBe("2025-01-01T00:00:00.000Z");
+    });
+
+    it("uses stored project identity when returning workspace metadata", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "identity-workspace");
+      fs.mkdirSync(workspacePath, { recursive: true });
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-id",
+              name: "identity-workspace",
+            },
+          ],
+          projectId: "project-id-123",
+          name: "Stored project name",
+          workingDirectories: [{ id: "wd-root", path: projectPath }],
+        });
+        return cfg;
+      });
+
+      const allMetadata = await config.getAllWorkspaceMetadata();
+      expect(allMetadata).toHaveLength(1);
+      expect(allMetadata[0]?.projectName).toBe("Stored project name");
+      expect(allMetadata[0]?.projectId).toBe("project-id-123");
+    });
+  });
+
+  describe("addWorkspace", () => {
+    it("seeds missing project entries with persisted identity fields", async () => {
+      const projectPathWithSlash = "/fake/seeded-project/";
+      const normalizedProjectPath = "/fake/seeded-project";
+
+      await config.addWorkspace(projectPathWithSlash, {
+        id: "workspace-id",
+        name: "feature-branch",
+        projectName: "ignored",
+        projectPath: normalizedProjectPath,
+        runtimeConfig: { type: "local" },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.has(projectPathWithSlash)).toBe(false);
+
+      const projectConfig = loaded.projects.get(normalizedProjectPath);
+      expect(projectConfig).toBeDefined();
+      expect(projectConfig?.projectId).toMatch(/^[0-9a-f]{10}$/);
+      expect(projectConfig?.name).toBe("seeded-project");
+      expect(projectConfig?.workspaces).toHaveLength(1);
+      expect(projectConfig?.workingDirectories?.[0]?.path).toBe(normalizedProjectPath);
+      expect(projectConfig?.workingDirectories?.[0]?.id).toMatch(/^[0-9a-f]{10}$/);
     });
   });
 

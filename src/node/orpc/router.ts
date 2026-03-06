@@ -2149,14 +2149,14 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
             const normalizedPath = stripTrailingSlashes(input.projectPath);
-            let project = config.projects.get(normalizedPath);
-            if (!project) {
-              // Create a minimal project entry so trust can be set before
-              // the first workspace.create (which normally adds the project)
-              project = { workspaces: [] };
-              config.projects.set(normalizedPath, project);
-            }
+            const normalizedProject = context.config.normalizeAndSeedProjectConfig(
+              normalizedPath,
+              config.projects.get(normalizedPath)
+            );
+
+            const project = normalizedProject.projectConfig;
             project.trusted = input.trusted;
+            config.projects.set(normalizedProject.normalizedProjectPath, project);
             return config;
           });
         }),

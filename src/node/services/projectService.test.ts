@@ -172,6 +172,36 @@ describe("ProjectService", () => {
     });
   });
 
+  describe("create", () => {
+    it("creates and registers projects with seeded identity fields", async () => {
+      const expectedProjectPath = path.join(tempDir, "created-project");
+
+      const result = await service.create(expectedProjectPath);
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+      expect(result.data.normalizedPath).toBe(path.resolve(expectedProjectPath));
+
+      expect(result.data.projectConfig.workspaces).toEqual([]);
+      expect(result.data.projectConfig.projectId).toMatch(/^[0-9a-f]{10}$/);
+      expect(result.data.projectConfig.name).toBe("created-project");
+      expect(result.data.projectConfig.workingDirectories?.[0]?.path).toBe(
+        path.resolve(expectedProjectPath)
+      );
+      expect(result.data.projectConfig.workingDirectories?.[0]?.id).toMatch(/^[0-9a-f]{10}$/);
+
+      const persistedProject = config
+        .loadConfigOrDefault()
+        .projects.get(path.resolve(expectedProjectPath));
+      expect(persistedProject?.workspaces).toEqual([]);
+      expect(persistedProject?.projectId).toBe(result.data.projectConfig.projectId);
+      expect(persistedProject?.name).toBe("created-project");
+      expect(persistedProject?.workingDirectories?.[0]).toEqual(
+        result.data.projectConfig.workingDirectories?.[0]
+      );
+    });
+  });
+
   describe("clone", () => {
     it("clones a local repository and registers it as a project", async () => {
       const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
@@ -187,13 +217,23 @@ describe("ProjectService", () => {
 
       const expectedProjectPath = path.resolve(cloneParentDir, "source-repo");
       expect(result.data.normalizedPath).toBe(expectedProjectPath);
-      expect(result.data.projectConfig).toEqual({ workspaces: [] });
+      expect(result.data.projectConfig.workspaces).toEqual([]);
+      expect(result.data.projectConfig.projectId).toMatch(/^[0-9a-f]{10}$/);
+      expect(result.data.projectConfig.name).toBe("source-repo");
+      expect(result.data.projectConfig.workingDirectories?.[0]?.path).toBe(expectedProjectPath);
+      expect(result.data.projectConfig.workingDirectories?.[0]?.id).toMatch(/^[0-9a-f]{10}$/);
 
       const gitDir = await fs.stat(path.join(expectedProjectPath, ".git"));
       expect(gitDir.isDirectory()).toBe(true);
 
       const loadedConfig = config.loadConfigOrDefault();
-      expect(loadedConfig.projects.has(expectedProjectPath)).toBe(true);
+      const persistedProject = loadedConfig.projects.get(expectedProjectPath);
+      expect(persistedProject?.workspaces).toEqual([]);
+      expect(persistedProject?.projectId).toBe(result.data.projectConfig.projectId);
+      expect(persistedProject?.name).toBe("source-repo");
+      expect(persistedProject?.workingDirectories?.[0]).toEqual(
+        result.data.projectConfig.workingDirectories?.[0]
+      );
       expect(loadedConfig.defaultProjectDir).toBeUndefined();
     });
 

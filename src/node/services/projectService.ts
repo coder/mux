@@ -399,11 +399,15 @@ export class ProjectService {
       // Create the directory if it doesn't exist (like mkdir -p)
       await fsPromises.mkdir(normalizedPath, { recursive: true });
 
-      const projectConfig: ProjectConfig = { workspaces: [] };
-      config.projects.set(normalizedPath, projectConfig);
+      const normalizedProject = this.config.normalizeAndSeedProjectConfig(normalizedPath);
+      const projectConfig = normalizedProject.projectConfig;
+      config.projects.set(normalizedProject.normalizedProjectPath, projectConfig);
       await this.config.saveConfig(config);
 
-      return Ok({ projectConfig, normalizedPath });
+      return Ok({
+        projectConfig,
+        normalizedPath: normalizedProject.normalizedProjectPath,
+      });
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to create project: ${message}`);
@@ -764,17 +768,20 @@ export class ProjectService {
         return;
       }
 
-      const projectConfig: ProjectConfig = { workspaces: [] };
+      const normalizedProject = this.config.normalizeAndSeedProjectConfig(normalizedPath);
+      const projectConfig = normalizedProject.projectConfig;
+      const persistedProjectPath = normalizedProject.normalizedProjectPath;
+
       await this.config.editConfig((freshConfig) => {
-        if (freshConfig.projects.has(normalizedPath)) {
+        if (freshConfig.projects.has(persistedProjectPath)) {
           return freshConfig;
         }
         const updatedProjects = new Map(freshConfig.projects);
-        updatedProjects.set(normalizedPath, projectConfig);
+        updatedProjects.set(persistedProjectPath, projectConfig);
         return { ...freshConfig, projects: updatedProjects };
       });
 
-      if (!this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
+      if (!this.config.loadConfigOrDefault().projects.has(persistedProjectPath)) {
         // Config.saveConfig logs-and-continues on write failures, so verify persistence
         // explicitly before reporting success.
         try {
@@ -791,7 +798,11 @@ export class ProjectService {
       }
 
       cloneSucceeded = true;
-      yield { type: "success", projectConfig, normalizedPath };
+      yield {
+        type: "success",
+        projectConfig,
+        normalizedPath: persistedProjectPath,
+      };
     } catch (error) {
       const message = getErrorMessage(error);
       yield {

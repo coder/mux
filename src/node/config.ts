@@ -15,6 +15,7 @@ import type {
   Workspace,
   ProjectConfig,
   ProjectsConfig,
+  WorkingDirectoryConfig,
   FeatureFlagOverride,
   UpdateChannel,
 } from "@/common/types/project";
@@ -256,6 +257,104 @@ export class Config {
     this.secretsFile = path.join(this.rootDir, "secrets.json");
   }
 
+  private normalizeProjectPath(projectPath: string): string {
+    return stripTrailingSlashes(projectPath);
+  }
+
+  private normalizeAndSeedWorkingDirectories(
+    projectPath: string,
+    workingDirectories: unknown
+  ): WorkingDirectoryConfig[] {
+    const normalizedEntries: WorkingDirectoryConfig[] = [];
+
+    if (Array.isArray(workingDirectories)) {
+      for (const workingDirectory of workingDirectories) {
+        if (!workingDirectory || typeof workingDirectory !== "object") {
+          continue;
+        }
+
+        const record = workingDirectory as {
+          id?: unknown;
+          path?: unknown;
+        };
+
+        if (typeof record.path !== "string") {
+          continue;
+        }
+
+        const normalizedPath = stripTrailingSlashes(record.path);
+        const existingId =
+          typeof record.id === "string" && record.id.trim().length > 0 ? record.id : undefined;
+        normalizedEntries.push({
+          id: existingId ?? this.generateStableId(),
+          path: normalizedPath,
+        });
+      }
+    }
+
+    const rootIndex = normalizedEntries.findIndex(
+      (workingDirectory) => workingDirectory.path === projectPath
+    );
+    const rootWorkingDirectory =
+      rootIndex >= 0
+        ? normalizedEntries[rootIndex]
+        : {
+            id: this.generateStableId(),
+            path: projectPath,
+          };
+
+    const nonRootWorkingDirectories = normalizedEntries.filter(
+      (workingDirectory, index) => index !== rootIndex && workingDirectory.path !== projectPath
+    );
+
+    return [{ id: rootWorkingDirectory.id, path: projectPath }, ...nonRootWorkingDirectories];
+  }
+
+  // Keep the projects map keyed by compatibility path while self-healing each project
+  // entity to a complete persisted shape (projectId/name/root working directory).
+  normalizeAndSeedProjectConfig(
+    projectPath: string,
+    projectConfig?: ProjectConfig
+  ): {
+    normalizedProjectPath: string;
+    projectConfig: ProjectConfig;
+  } {
+    const normalizedProjectPath = this.normalizeProjectPath(projectPath);
+    const normalizedProjectConfig = normalizeProjectRuntimeSettings(
+      projectConfig ?? { workspaces: [] }
+    );
+
+    const normalizedWorkspaces = Array.isArray(normalizedProjectConfig.workspaces)
+      ? normalizedProjectConfig.workspaces
+      : [];
+
+    const existingProjectId =
+      typeof normalizedProjectConfig.projectId === "string" &&
+      normalizedProjectConfig.projectId.trim().length > 0
+        ? normalizedProjectConfig.projectId
+        : undefined;
+
+    const existingProjectName =
+      typeof normalizedProjectConfig.name === "string" &&
+      normalizedProjectConfig.name.trim().length > 0
+        ? normalizedProjectConfig.name
+        : undefined;
+
+    return {
+      normalizedProjectPath,
+      projectConfig: {
+        ...normalizedProjectConfig,
+        workspaces: normalizedWorkspaces,
+        projectId: existingProjectId ?? this.generateStableId(),
+        name: existingProjectName ?? this.getProjectName(normalizedProjectPath),
+        workingDirectories: this.normalizeAndSeedWorkingDirectories(
+          normalizedProjectPath,
+          normalizedProjectConfig.workingDirectories
+        ),
+      },
+    };
+  }
+
   loadConfigOrDefault(): ProjectsConfig {
     try {
       if (fs.existsSync(this.configFile)) {
@@ -266,25 +365,23 @@ export class Config {
         // Older/newer files may omit `projects`; treat missing/invalid values as an empty map
         // so top-level settings (provider/runtime/server preferences) still load.
         const rawPairs = Array.isArray(parsed.projects) ? parsed.projects : [];
-        // Migrate: normalize project paths by stripping trailing slashes
-        // This fixes configs created with paths like "/home/user/project/"
-        // Also filter out any malformed entries (null/undefined paths)
-        const normalizedPairs = rawPairs
-          .filter(([projectPath]) => {
-            if (!projectPath || typeof projectPath !== "string") {
-              log.warn("Filtering out project with invalid path", { projectPath });
-              return false;
-            }
-            return true;
-          })
-          .map(([projectPath, projectConfig]) => {
-            const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
-            return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
-              string,
-              ProjectConfig,
-            ];
-          });
-        const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
+        const projectsMap = new Map<string, ProjectConfig>();
+
+        for (const entry of rawPairs) {
+          if (!Array.isArray(entry) || entry.length !== 2) {
+            log.warn("Filtering out malformed project config entry", { entry });
+            continue;
+          }
+
+          const [projectPath, projectConfig] = entry;
+          if (typeof projectPath !== "string" || projectPath.length === 0) {
+            log.warn("Filtering out project with invalid path", { projectPath });
+            continue;
+          }
+
+          const normalizedProject = this.normalizeAndSeedProjectConfig(projectPath, projectConfig);
+          projectsMap.set(normalizedProject.normalizedProjectPath, normalizedProject.projectConfig);
+        }
 
         const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
@@ -365,13 +462,19 @@ export class Config {
         ensurePrivateDirSync(this.rootDir);
       }
 
+      const normalizedProjects = new Map<string, ProjectConfig>();
+      for (const [projectPath, projectConfig] of config.projects.entries()) {
+        const normalizedProject = this.normalizeAndSeedProjectConfig(projectPath, projectConfig);
+        normalizedProjects.set(
+          normalizedProject.normalizedProjectPath,
+          normalizedProject.projectConfig
+        );
+      }
+
       const data: Partial<Record<keyof AppConfigOnDisk, unknown>> & {
         projects: Array<[string, ProjectConfig]>;
       } = {
-        projects: Array.from(config.projects.entries()).map(
-          ([projectPath, projectConfig]) =>
-            [projectPath, normalizeProjectRuntimeSettings(projectConfig)] as [string, ProjectConfig]
-        ),
+        projects: Array.from(normalizedProjects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
 
@@ -796,7 +899,8 @@ export class Config {
         continue;
       }
 
-      const projectName = this.getProjectName(projectPath);
+      const projectName = projectConfig.name ?? this.getProjectName(projectPath);
+      const projectId = projectConfig.projectId;
 
       for (const workspace of projectConfig.workspaces) {
         // Extract workspace basename from path (could be stable ID or legacy name)
@@ -811,6 +915,7 @@ export class Config {
               name: workspace.name,
               title: workspace.title,
               projectName,
+              projectId,
               projectPath,
               // GUARANTEE: All workspaces must have createdAt (assign now if missing)
               createdAt: workspace.createdAt ?? new Date().toISOString(),
@@ -893,6 +998,7 @@ export class Config {
             if (!metadata.name) metadata.name = workspaceBasename;
             if (!metadata.projectPath) metadata.projectPath = projectPath;
             if (!metadata.projectName) metadata.projectName = projectName;
+            metadata.projectId = projectId;
 
             // GUARANTEE: All workspaces must have createdAt
             metadata.createdAt ??= new Date().toISOString();
@@ -950,6 +1056,7 @@ export class Config {
               id: legacyId,
               name: workspaceBasename,
               projectName,
+              projectId,
               projectPath,
               // GUARANTEE: All workspaces must have createdAt
               createdAt: new Date().toISOString(),
@@ -995,6 +1102,7 @@ export class Config {
             id: legacyId,
             name: workspaceBasename,
             projectName,
+            projectId,
             projectPath,
             // GUARANTEE: All workspaces must have createdAt (even in error cases)
             createdAt: new Date().toISOString(),
@@ -1046,19 +1154,23 @@ export class Config {
     metadata: WorkspaceMetadata & { namedWorkspacePath?: string }
   ): Promise<void> {
     await this.editConfig((config) => {
-      let project = config.projects.get(projectPath);
-
-      if (!project) {
-        project = { workspaces: [] };
-        config.projects.set(projectPath, project);
+      const normalizedProject = this.normalizeAndSeedProjectConfig(
+        projectPath,
+        config.projects.get(this.normalizeProjectPath(projectPath))
+      );
+      const normalizedProjectPath = normalizedProject.normalizedProjectPath;
+      if (projectPath !== normalizedProjectPath) {
+        config.projects.delete(projectPath);
       }
+      const project = normalizedProject.projectConfig;
+      config.projects.set(normalizedProjectPath, project);
 
       // Check if workspace already exists (by ID)
       const existingIndex = project.workspaces.findIndex((w) => w.id === metadata.id);
 
       // Use provided namedWorkspacePath if available (runtime-aware),
       // otherwise fall back to worktree-style path for legacy compatibility
-      const projectName = this.getProjectName(projectPath);
+      const projectName = this.getProjectName(normalizedProjectPath);
       const workspacePath =
         metadata.namedWorkspacePath ?? path.join(this.srcDir, projectName, metadata.name);
       const workspaceEntry: Workspace = {
