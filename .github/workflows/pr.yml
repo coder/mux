@@ -249,7 +249,7 @@ jobs:
           - os: linux
             runner: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
           - os: macos
-            runner: ${{ github.repository_owner == 'coder' && 'depot-macos-latest' || 'macos-latest' }}
+            runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -269,6 +269,8 @@ jobs:
           ELECTRON_DISABLE_SANDBOX: 1
       - name: Run tests
         if: matrix.os == 'macos'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: make test-e2e PLAYWRIGHT_ARGS="tests/e2e/scenarios/windowLifecycle.spec.ts"
 
   test-windows:
@@ -396,7 +398,9 @@ jobs:
     name: Build / macOS
     needs: [changes]
     if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    runs-on: macos-15
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
