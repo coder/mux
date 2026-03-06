@@ -232,13 +232,18 @@ export const SecretsSection: React.FC = () => {
           return;
         }
 
-        const [nextSecrets, injectedKeys] = await Promise.all([
-          api.secrets.get({ projectPath }),
-          api.secrets.getInjectedGlobals({ projectPath }),
-        ]);
+        const nextSecrets = await api.secrets.get({ projectPath });
         setLoadedSecrets(nextSecrets);
         setSecrets(nextSecrets);
-        setInjectedGlobalSecretKeys(injectedKeys);
+
+        try {
+          const injectedKeys = await api.secrets.getInjectedGlobals({ projectPath });
+          setInjectedGlobalSecretKeys(injectedKeys);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to load injected globals";
+          setInjectedGlobalSecretKeys([]);
+          setError(`Secrets loaded, but failed to load injected globals: ${message}`);
+        }
       } else {
         const nextSecrets = await api.secrets.get({});
         setLoadedSecrets(nextSecrets);
