@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { Config } from "./config";
+import { Config, type ProjectConfig } from "./config";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
@@ -44,7 +44,7 @@ describe("Config", () => {
       expect(projectPaths).not.toContain("/home/user/another//");
     });
 
-    it("backfills legacy project records and keeps seeded identity stable", async () => {
+    it("backfills legacy project records and persists seeded identity on load", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
         configFile,
@@ -78,7 +78,18 @@ describe("Config", () => {
       expect(seededProject?.systemPrompt).toBe("Keep me");
 
       const seededProjectId = seededProject?.projectId;
-      await config.saveConfig(loaded);
+
+      const persistedConfig = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        projects?: Array<[string, ProjectConfig]>;
+      };
+      const persistedProject = new Map(persistedConfig.projects ?? []).get("/home/user/project");
+      expect(persistedProject?.projectId).toBe(seededProjectId);
+      expect(persistedProject?.name).toBe("project");
+      expect(persistedProject?.workingDirectories?.[0]).toEqual({
+        id: "wd-root",
+        path: "/home/user/project",
+      });
+      expect(persistedProject?.systemPrompt).toBe("Keep me");
 
       const reloaded = config.loadConfigOrDefault();
       const reloadedProject = reloaded.projects.get("/home/user/project");

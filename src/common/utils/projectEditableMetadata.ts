@@ -122,7 +122,9 @@ export function buildProjectUpdateEditableMetadataInput(params: {
   return {
     projectPath: params.projectPath,
     ...(normalizedProjectId ? { projectId: normalizedProjectId } : {}),
-    ...(normalizedName ? { name: normalizedName } : {}),
+    // Keep an explicit clear signal so ProjectService.update can drop a custom
+    // project name and fall back to the default path-derived label.
+    name: normalizedName ?? "",
     systemPrompt: normalizedSystemPrompt ?? null,
     workingDirectories: normalizeEditableWorkingDirectories(params.draft.workingDirectories),
   };

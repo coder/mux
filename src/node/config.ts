@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import * as jsonc from "jsonc-parser";
+import { isDeepStrictEqual } from "node:util";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -443,6 +444,183 @@ export class Config {
     };
   }
 
+  private buildConfigOnDisk(config: ProjectsConfig): Partial<
+    Record<keyof AppConfigOnDisk, unknown>
+  > & {
+    projects: Array<[string, ProjectConfig]>;
+  } {
+    const normalizedProjects = new Map<string, ProjectConfig>();
+    for (const [projectPath, projectConfig] of config.projects.entries()) {
+      const normalizedProject = this.normalizeAndSeedProjectConfig(projectPath, projectConfig);
+      normalizedProjects.set(
+        normalizedProject.normalizedProjectPath,
+        normalizedProject.projectConfig
+      );
+    }
+
+    const data: Partial<Record<keyof AppConfigOnDisk, unknown>> & {
+      projects: Array<[string, ProjectConfig]>;
+    } = {
+      projects: Array.from(normalizedProjects.entries()),
+      taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
+    };
+
+    const muxGatewayEnabled = parseOptionalBoolean(config.muxGatewayEnabled);
+    if (muxGatewayEnabled !== undefined) {
+      data.muxGatewayEnabled = muxGatewayEnabled;
+    }
+
+    const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);
+    if (llmDebugLogs !== undefined) {
+      data.llmDebugLogs = llmDebugLogs;
+    }
+
+    const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);
+    if (muxGatewayModels !== undefined) {
+      data.muxGatewayModels = muxGatewayModels;
+    }
+
+    const defaultModel = normalizeOptionalModelString(config.defaultModel);
+    if (defaultModel !== undefined) {
+      data.defaultModel = defaultModel;
+    }
+
+    const hiddenModels = normalizeOptionalModelStringArray(config.hiddenModels);
+    if (hiddenModels !== undefined) {
+      data.hiddenModels = hiddenModels;
+    }
+
+    const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
+    if (apiServerBindHost) {
+      data.apiServerBindHost = apiServerBindHost;
+    }
+
+    const apiServerServeWebUi = parseOptionalBoolean(config.apiServerServeWebUi);
+    if (apiServerServeWebUi) {
+      data.apiServerServeWebUi = true;
+    }
+
+    const apiServerPort = parseOptionalPort(config.apiServerPort);
+    if (apiServerPort !== undefined) {
+      data.apiServerPort = apiServerPort;
+    }
+
+    const mdnsAdvertisementEnabled = parseOptionalBoolean(config.mdnsAdvertisementEnabled);
+    if (mdnsAdvertisementEnabled !== undefined) {
+      data.mdnsAdvertisementEnabled = mdnsAdvertisementEnabled;
+    }
+
+    const mdnsServiceName = parseOptionalNonEmptyString(config.mdnsServiceName);
+    if (mdnsServiceName) {
+      data.mdnsServiceName = mdnsServiceName;
+    }
+
+    if (config.serverSshHost) {
+      data.serverSshHost = config.serverSshHost;
+    }
+    const serverAuthGithubOwner = parseOptionalNonEmptyString(config.serverAuthGithubOwner);
+    if (serverAuthGithubOwner) {
+      data.serverAuthGithubOwner = serverAuthGithubOwner;
+    }
+    const defaultProjectDir = parseOptionalNonEmptyString(config.defaultProjectDir);
+    if (defaultProjectDir) {
+      data.defaultProjectDir = defaultProjectDir;
+    }
+    if (config.featureFlagOverrides) {
+      data.featureFlagOverrides = config.featureFlagOverrides;
+    }
+    if (config.layoutPresets) {
+      const normalized = normalizeLayoutPresetsConfig(config.layoutPresets);
+      if (!isLayoutPresetsConfigEmpty(normalized)) {
+        data.layoutPresets = normalized;
+      }
+    }
+    if (config.viewedSplashScreens) {
+      data.viewedSplashScreens = config.viewedSplashScreens;
+    }
+    if (config.agentAiDefaults && Object.keys(config.agentAiDefaults).length > 0) {
+      data.agentAiDefaults = config.agentAiDefaults;
+
+      const legacySubagent: Record<string, unknown> = {};
+      for (const [id, entry] of Object.entries(config.agentAiDefaults)) {
+        if (id === "plan" || id === "exec" || id === "compact") continue;
+        legacySubagent[id] = entry;
+      }
+      if (Object.keys(legacySubagent).length > 0) {
+        data.subagentAiDefaults = legacySubagent as ProjectsConfig["subagentAiDefaults"];
+      }
+    } else {
+      // Legacy only.
+      if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
+        data.subagentAiDefaults = config.subagentAiDefaults;
+      }
+    }
+
+    if (config.useSSH2Transport !== undefined) {
+      data.useSSH2Transport = config.useSSH2Transport;
+    }
+
+    const muxGovernorUrl = parseOptionalNonEmptyString(config.muxGovernorUrl);
+    if (muxGovernorUrl) {
+      data.muxGovernorUrl = muxGovernorUrl;
+    }
+
+    const muxGovernorToken = parseOptionalNonEmptyString(config.muxGovernorToken);
+    if (muxGovernorToken) {
+      data.muxGovernorToken = muxGovernorToken;
+    }
+
+    // Default ON: persist `false` only.
+    if (config.stopCoderWorkspaceOnArchive === false) {
+      data.stopCoderWorkspaceOnArchive = false;
+    }
+
+    const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);
+    if (terminalDefaultShell) {
+      data.terminalDefaultShell = terminalDefaultShell;
+    }
+
+    const updateChannel = parseUpdateChannel(config.updateChannel);
+    if (updateChannel) {
+      data.updateChannel = updateChannel;
+    }
+
+    const runtimeEnablement = normalizeRuntimeEnablementOverrides(config.runtimeEnablement);
+    if (runtimeEnablement) {
+      data.runtimeEnablement = runtimeEnablement;
+    }
+
+    const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
+    if (defaultRuntime !== undefined) {
+      data.defaultRuntime = defaultRuntime;
+    }
+
+    const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
+    if (onePasswordAccountName) {
+      data.onePasswordAccountName = onePasswordAccountName;
+    }
+
+    return data;
+  }
+
+  private persistConfigSync(config: ProjectsConfig): void {
+    try {
+      if (!fs.existsSync(this.rootDir)) {
+        ensurePrivateDirSync(this.rootDir);
+      }
+
+      writeFileAtomic.sync(
+        this.configFile,
+        JSON.stringify(this.buildConfigOnDisk(config), null, 2),
+        {
+          encoding: "utf-8",
+        }
+      );
+    } catch (error) {
+      log.error("Error persisting normalized config:", error);
+    }
+  }
+
   loadConfigOrDefault(): ProjectsConfig {
     try {
       if (fs.existsSync(this.configFile)) {
@@ -454,20 +632,30 @@ export class Config {
         // so top-level settings (provider/runtime/server preferences) still load.
         const rawPairs = Array.isArray(parsed.projects) ? parsed.projects : [];
         const projectsMap = new Map<string, ProjectConfig>();
+        let shouldPersistNormalizedProjects = false;
 
         for (const entry of rawPairs) {
           if (!Array.isArray(entry) || entry.length !== 2) {
             log.warn("Filtering out malformed project config entry", { entry });
+            shouldPersistNormalizedProjects = true;
             continue;
           }
 
           const [projectPath, projectConfig] = entry;
           if (typeof projectPath !== "string" || projectPath.length === 0) {
             log.warn("Filtering out project with invalid path", { projectPath });
+            shouldPersistNormalizedProjects = true;
             continue;
           }
 
           const normalizedProject = this.normalizeAndSeedProjectConfig(projectPath, projectConfig);
+          if (
+            normalizedProject.normalizedProjectPath !== projectPath ||
+            !isDeepStrictEqual(projectConfig, normalizedProject.projectConfig)
+          ) {
+            shouldPersistNormalizedProjects = true;
+          }
+
           projectsMap.set(normalizedProject.normalizedProjectPath, normalizedProject.projectConfig);
         }
 
@@ -498,7 +686,7 @@ export class Config {
           ? undefined
           : layoutPresetsRaw;
 
-        return {
+        const config = {
           projects: projectsMap,
           apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
           apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi) ? true : undefined,
@@ -529,7 +717,15 @@ export class Config {
           defaultRuntime,
           runtimeEnablement,
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
-        };
+        } satisfies ProjectsConfig;
+
+        if (shouldPersistNormalizedProjects) {
+          // Persist one-time seeding for legacy project records during the read so
+          // generated project IDs stay stable across later reloads.
+          this.persistConfigSync(config);
+        }
+
+        return config;
       }
     } catch (error) {
       log.error("Error loading config:", error);
@@ -550,158 +746,13 @@ export class Config {
         ensurePrivateDirSync(this.rootDir);
       }
 
-      const normalizedProjects = new Map<string, ProjectConfig>();
-      for (const [projectPath, projectConfig] of config.projects.entries()) {
-        const normalizedProject = this.normalizeAndSeedProjectConfig(projectPath, projectConfig);
-        normalizedProjects.set(
-          normalizedProject.normalizedProjectPath,
-          normalizedProject.projectConfig
-        );
-      }
-
-      const data: Partial<Record<keyof AppConfigOnDisk, unknown>> & {
-        projects: Array<[string, ProjectConfig]>;
-      } = {
-        projects: Array.from(normalizedProjects.entries()),
-        taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
-      };
-
-      const muxGatewayEnabled = parseOptionalBoolean(config.muxGatewayEnabled);
-      if (muxGatewayEnabled !== undefined) {
-        data.muxGatewayEnabled = muxGatewayEnabled;
-      }
-
-      const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);
-      if (llmDebugLogs !== undefined) {
-        data.llmDebugLogs = llmDebugLogs;
-      }
-
-      const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);
-      if (muxGatewayModels !== undefined) {
-        data.muxGatewayModels = muxGatewayModels;
-      }
-
-      const defaultModel = normalizeOptionalModelString(config.defaultModel);
-      if (defaultModel !== undefined) {
-        data.defaultModel = defaultModel;
-      }
-
-      const hiddenModels = normalizeOptionalModelStringArray(config.hiddenModels);
-      if (hiddenModels !== undefined) {
-        data.hiddenModels = hiddenModels;
-      }
-
-      const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
-      if (apiServerBindHost) {
-        data.apiServerBindHost = apiServerBindHost;
-      }
-
-      const apiServerServeWebUi = parseOptionalBoolean(config.apiServerServeWebUi);
-      if (apiServerServeWebUi) {
-        data.apiServerServeWebUi = true;
-      }
-
-      const apiServerPort = parseOptionalPort(config.apiServerPort);
-      if (apiServerPort !== undefined) {
-        data.apiServerPort = apiServerPort;
-      }
-
-      const mdnsAdvertisementEnabled = parseOptionalBoolean(config.mdnsAdvertisementEnabled);
-      if (mdnsAdvertisementEnabled !== undefined) {
-        data.mdnsAdvertisementEnabled = mdnsAdvertisementEnabled;
-      }
-
-      const mdnsServiceName = parseOptionalNonEmptyString(config.mdnsServiceName);
-      if (mdnsServiceName) {
-        data.mdnsServiceName = mdnsServiceName;
-      }
-
-      if (config.serverSshHost) {
-        data.serverSshHost = config.serverSshHost;
-      }
-      const serverAuthGithubOwner = parseOptionalNonEmptyString(config.serverAuthGithubOwner);
-      if (serverAuthGithubOwner) {
-        data.serverAuthGithubOwner = serverAuthGithubOwner;
-      }
-      const defaultProjectDir = parseOptionalNonEmptyString(config.defaultProjectDir);
-      if (defaultProjectDir) {
-        data.defaultProjectDir = defaultProjectDir;
-      }
-      if (config.featureFlagOverrides) {
-        data.featureFlagOverrides = config.featureFlagOverrides;
-      }
-      if (config.layoutPresets) {
-        const normalized = normalizeLayoutPresetsConfig(config.layoutPresets);
-        if (!isLayoutPresetsConfigEmpty(normalized)) {
-          data.layoutPresets = normalized;
+      await writeFileAtomic(
+        this.configFile,
+        JSON.stringify(this.buildConfigOnDisk(config), null, 2),
+        {
+          encoding: "utf-8",
         }
-      }
-      if (config.viewedSplashScreens) {
-        data.viewedSplashScreens = config.viewedSplashScreens;
-      }
-      if (config.agentAiDefaults && Object.keys(config.agentAiDefaults).length > 0) {
-        data.agentAiDefaults = config.agentAiDefaults;
-
-        const legacySubagent: Record<string, unknown> = {};
-        for (const [id, entry] of Object.entries(config.agentAiDefaults)) {
-          if (id === "plan" || id === "exec" || id === "compact") continue;
-          legacySubagent[id] = entry;
-        }
-        if (Object.keys(legacySubagent).length > 0) {
-          data.subagentAiDefaults = legacySubagent as ProjectsConfig["subagentAiDefaults"];
-        }
-      } else {
-        // Legacy only.
-        if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
-          data.subagentAiDefaults = config.subagentAiDefaults;
-        }
-      }
-
-      if (config.useSSH2Transport !== undefined) {
-        data.useSSH2Transport = config.useSSH2Transport;
-      }
-
-      const muxGovernorUrl = parseOptionalNonEmptyString(config.muxGovernorUrl);
-      if (muxGovernorUrl) {
-        data.muxGovernorUrl = muxGovernorUrl;
-      }
-
-      const muxGovernorToken = parseOptionalNonEmptyString(config.muxGovernorToken);
-      if (muxGovernorToken) {
-        data.muxGovernorToken = muxGovernorToken;
-      }
-
-      // Default ON: persist `false` only.
-      if (config.stopCoderWorkspaceOnArchive === false) {
-        data.stopCoderWorkspaceOnArchive = false;
-      }
-
-      const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);
-      if (terminalDefaultShell) {
-        data.terminalDefaultShell = terminalDefaultShell;
-      }
-
-      const updateChannel = parseUpdateChannel(config.updateChannel);
-      if (updateChannel) {
-        data.updateChannel = updateChannel;
-      }
-
-      const runtimeEnablement = normalizeRuntimeEnablementOverrides(config.runtimeEnablement);
-      if (runtimeEnablement) {
-        data.runtimeEnablement = runtimeEnablement;
-      }
-
-      const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
-      if (defaultRuntime !== undefined) {
-        data.defaultRuntime = defaultRuntime;
-      }
-
-      const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
-      if (onePasswordAccountName) {
-        data.onePasswordAccountName = onePasswordAccountName;
-      }
-
-      await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
+      );
     } catch (error) {
       log.error("Error saving config:", error);
     }
