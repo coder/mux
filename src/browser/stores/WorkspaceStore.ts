@@ -402,7 +402,10 @@ function repriceSessionUsage(
   for (const [model, entry] of Object.entries(usage.byModel)) {
     if (!model.includes(":") || isCostsIncludedEntry(entry, model, config)) continue;
     const resolved = resolveModelForMetadata(model, config);
-    usage.byModel[model] = recomputeUsageCosts(entry, resolved);
+    // `byModel` is a session-long aggregate, so tiered models cannot be safely repriced from
+    // the summed token totals alone. recomputeUsageCosts() preserves those stored costs and marks
+    // them approximate when the effective model has non-linear pricing.
+    usage.byModel[model] = recomputeUsageCosts(entry, resolved, { aggregatedUsage: true });
   }
   if (
     usage.lastRequest &&

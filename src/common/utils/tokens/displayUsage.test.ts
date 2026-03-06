@@ -237,6 +237,26 @@ describe("createDisplayUsage", () => {
       expect(result!.output.cost_usd).toBeCloseTo(0.018);
     });
 
+    test("preserves aggregate GPT-5.4 totals during repricing and flags them as approximate", () => {
+      const aggregate = {
+        input: { tokens: 200000, cost_usd: 0.5 },
+        cached: { tokens: 100000, cost_usd: 0.025 },
+        cacheCreate: { tokens: 0, cost_usd: 0 },
+        output: { tokens: 1000, cost_usd: 0.015 },
+        reasoning: { tokens: 0, cost_usd: 0 },
+        model: "openai:gpt-5.4",
+      };
+
+      const result = recomputeUsageCosts(aggregate, "openai:gpt-5.4", {
+        aggregatedUsage: true,
+      });
+
+      expect(result).toEqual({
+        ...aggregate,
+        hasUnknownCosts: true,
+      });
+    });
+
     test("recomputes persisted GPT-5.4 Pro usage with the higher long-context tier", () => {
       const result = recomputeUsageCosts(
         {

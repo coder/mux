@@ -17,6 +17,10 @@ interface UsageCostInputs {
   reasoningTokens: number;
 }
 
+interface RecomputeUsageCostsOptions {
+  aggregatedUsage?: boolean;
+}
+
 interface UsageCosts {
   inputCost: number;
   cachedCost: number;
@@ -40,6 +44,15 @@ function selectCostRate(
   }
 
   return baseRate;
+}
+
+function hasTieredPricing(modelStats: ModelStats): boolean {
+  return (
+    modelStats.input_cost_per_token_above_200k_tokens != null ||
+    modelStats.output_cost_per_token_above_200k_tokens != null ||
+    modelStats.cache_creation_input_token_cost_above_200k_tokens != null ||
+    modelStats.cache_read_input_token_cost_above_200k_tokens != null
+  );
 }
 
 function calculateUsageCosts(modelStats: ModelStats, usage: UsageCostInputs): UsageCosts {
@@ -189,10 +202,15 @@ export function createDisplayUsage(
  *
  * Used when provider config changes (e.g., model mapping updated) to refresh
  * persisted session cost aggregates without discarding the raw token counts.
+ *
+ * Pass `{ aggregatedUsage: true }` for buckets like session `byModel` totals that may span
+ * many requests. Tiered pricing is non-linear, so those aggregates cannot be safely repriced
+ * from summed tokens alone.
  */
 export function recomputeUsageCosts(
   usage: ChatUsageDisplay,
-  metadataModel: string
+  metadataModel: string,
+  options?: RecomputeUsageCostsOptions
 ): ChatUsageDisplay {
   const modelStats = getModelStats(metadataModel);
 
@@ -205,6 +223,17 @@ export function recomputeUsageCosts(
       output: { tokens: usage.output.tokens },
       reasoning: { tokens: usage.reasoning.tokens },
       model: usage.model,
+      hasUnknownCosts: true,
+    };
+  }
+
+  if (options?.aggregatedUsage === true && hasTieredPricing(modelStats)) {
+    // Aggregated `byModel` totals collapse many requests into one bucket. Tiered pricing is
+    // non-linear, so choosing a single tier from the sum can inflate costs once multiple
+    // sub-threshold requests add up past the long-context boundary. Preserve the stored costs
+    // and surface uncertainty instead of fabricating a repriced total.
+    return {
+      ...usage,
       hasUnknownCosts: true,
     };
   }
