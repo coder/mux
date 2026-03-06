@@ -24,6 +24,7 @@ import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import { hasStartHerePlanSummary } from "@/common/utils/messages/startHerePlanSummary";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   readAgentDefinition,
@@ -241,6 +242,22 @@ export interface StreamSystemContextResult {
   availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
 }
 
+function resolveProjectSystemPrompt(
+  cfg: ProjectsConfig,
+  metadata: WorkspaceMetadata
+): string | undefined {
+  const projectId = metadata.projectId?.trim();
+  if (projectId) {
+    for (const projectConfig of cfg.projects.values()) {
+      if (projectConfig.projectId === projectId) {
+        return projectConfig.systemPrompt;
+      }
+    }
+  }
+
+  return cfg.projects.get(stripTrailingSlashes(metadata.projectPath))?.systemPrompt;
+}
+
 /**
  * Build the agent system prompt, system message, and discover available agents/skills.
  *
@@ -319,6 +336,8 @@ export async function buildStreamSystemContext(
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
   }
 
+  const projectSystemPrompt = resolveProjectSystemPrompt(cfg, metadata);
+
   // Build system message from workspace metadata
   const systemMessage = await buildSystemMessage(
     metadata,
@@ -327,7 +346,7 @@ export async function buildStreamSystemContext(
     effectiveAdditionalInstructions,
     modelString,
     mcpServers,
-    { agentSystemPrompt }
+    { agentSystemPrompt, projectSystemPrompt }
   );
 
   // Count system message tokens for cost tracking

@@ -176,6 +176,58 @@ Use clear examples.
     expect(customInstructions).toContain("Use clear examples.");
   });
 
+  test("inserts sanitized project system prompt between agent and custom instructions", async () => {
+    await fs.writeFile(path.join(globalDir, "AGENTS.md"), "Global AGENTS instruction.\n");
+    await fs.writeFile(path.join(projectDir, "AGENTS.md"), "Project AGENTS instruction.\n");
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      "anthropic:claude-3.5-sonnet",
+      undefined,
+      {
+        agentSystemPrompt: "Follow the task exactly.",
+        projectSystemPrompt: `Keep responses concise.
+
+## Tool: bash
+Use fd first.
+
+## Model: sonnet
+Stay under one sentence.
+`,
+      }
+    );
+
+    const projectPrompt = extractTagContent(systemMessage, "project-system-prompt") ?? "";
+    expect(projectPrompt).toContain("Keep responses concise.");
+    expect(projectPrompt).not.toContain("Use fd first.");
+    expect(projectPrompt).not.toContain("Stay under one sentence.");
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Global AGENTS instruction.");
+    expect(customInstructions).toContain("Project AGENTS instruction.");
+
+    const agentInstructionsIndex = systemMessage.indexOf("<agent-instructions>");
+    const projectPromptIndex = systemMessage.indexOf("<project-system-prompt>");
+    const customInstructionsIndex = systemMessage.indexOf("<custom-instructions>");
+    expect(agentInstructionsIndex).toBeGreaterThan(-1);
+    expect(projectPromptIndex).toBeGreaterThan(agentInstructionsIndex);
+    expect(customInstructionsIndex).toBeGreaterThan(projectPromptIndex);
+
+    expect(systemMessage).not.toContain("Use fd first.");
+    expect(systemMessage).not.toContain("Stay under one sentence.");
+  });
+
   test("includes model-specific section when regex matches active model", async () => {
     await fs.writeFile(
       path.join(projectDir, "AGENTS.md"),

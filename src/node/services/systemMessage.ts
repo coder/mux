@@ -315,6 +315,7 @@ async function readInstructionSources(
  * @param additionalSystemInstructions - Optional instructions appended last
  * @param modelString - Active model identifier used for Model-specific sections
  * @param mcpServers - Optional MCP server configuration (name -> command)
+ * @param options - Optional agent/project prompt content sourced outside AGENTS.md
  * @throws Error if metadata or workspacePath invalid
  */
 export async function buildSystemMessage(
@@ -326,6 +327,7 @@ export async function buildSystemMessage(
   mcpServers?: MCPServerMap,
   options?: {
     agentSystemPrompt?: string;
+    projectSystemPrompt?: string;
   }
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
@@ -355,9 +357,10 @@ export async function buildSystemMessage(
   );
 
   const agentPrompt = options?.agentSystemPrompt?.trim() ?? null;
+  const projectPrompt = options?.projectSystemPrompt?.trim() ?? null;
 
   // Combine: global + context (workspace takes precedence over project) after stripping scoped sections
-  // Also strip scoped sections from agent prompt for consistency
+  // Also strip scoped sections from agent and project prompts for consistency.
   const sanitizeScopedInstructions = (input?: string | null): string | undefined => {
     if (!input) return undefined;
     const stripped = stripScopedInstructionSections(input);
@@ -367,6 +370,12 @@ export async function buildSystemMessage(
   const sanitizedAgentPrompt = sanitizeScopedInstructions(agentPrompt);
   if (sanitizedAgentPrompt) {
     systemMessage += `\n<agent-instructions>\n${sanitizedAgentPrompt}\n</agent-instructions>`;
+  }
+
+  const sanitizedProjectPrompt = sanitizeScopedInstructions(projectPrompt);
+  if (sanitizedProjectPrompt) {
+    // Keep project.systemPrompt in a dedicated section so AGENTS.md layering stays unchanged.
+    systemMessage += `\n<project-system-prompt>\n${sanitizedProjectPrompt}\n</project-system-prompt>`;
   }
 
   const customInstructionSources = [
