@@ -1,6 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
-import { createRuntime, IncompatibleRuntimeError } from "./runtimeFactory";
+import {
+  checkRuntimeAvailability,
+  createRuntime,
+  IncompatibleRuntimeError,
+} from "./runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { LocalRuntime } from "./LocalRuntime";
 import { WorktreeRuntime } from "./WorktreeRuntime";
@@ -84,6 +88,117 @@ describe("createRuntime", () => {
     const config = { type: "future-runtime" } as unknown as RuntimeConfig;
     expect(() => createRuntime(config)).toThrow(IncompatibleRuntimeError);
     expect(() => createRuntime(config)).toThrow(/newer version of mux/);
+  });
+});
+
+describe("checkRuntimeAvailability", () => {
+  type RuntimeAvailabilityDependencies = NonNullable<
+    NonNullable<Parameters<typeof checkRuntimeAvailability>[1]>["dependencies"]
+  >;
+
+  const createDependencies = (
+    overrides: Partial<RuntimeAvailabilityDependencies> = {}
+  ): RuntimeAvailabilityDependencies => ({
+    isGitRepository: async () => true,
+    isDockerAvailable: async () => true,
+    checkDevcontainerCliVersion: async () => ({ available: true, version: "0.81.1" }),
+    scanDevcontainerConfigs: async () => [],
+    ...overrides,
+  });
+
+  it("enables git-dependent runtimes when every working directory is a git repository", async () => {
+    const workingDirectories = ["/tmp/project-a", "/tmp/project-b"];
+    const isGitRepository = mock(async () => true);
+
+    const availability = await checkRuntimeAvailability(workingDirectories, {
+      dependencies: createDependencies({ isGitRepository }),
+    });
+
+    expect(isGitRepository).toHaveBeenCalledTimes(2);
+    expect(availability.local).toEqual({ available: true });
+    expect(availability.worktree).toEqual({ available: true });
+    expect(availability.ssh).toEqual({ available: true });
+    expect(availability.docker).toEqual({ available: true });
+    expect(availability.devcontainer).toEqual({
+      available: false,
+      reason: "No devcontainer.json found",
+    });
+  });
+
+  it("returns an explicit reason for mixed git and non-git working directories", async () => {
+    const workingDirectories = ["/tmp/project-a", "/tmp/project-b"];
+
+    const availability = await checkRuntimeAvailability(workingDirectories, {
+      dependencies: createDependencies({
+        isGitRepository: async (projectPath) => projectPath === workingDirectories[0],
+      }),
+    });
+
+    const reason = "Some working directories are not git repositories";
+    expect(availability.worktree).toEqual({ available: false, reason });
+    expect(availability.ssh).toEqual({ available: false, reason });
+    expect(availability.docker).toEqual({ available: false, reason });
+    expect(availability.devcontainer).toEqual({ available: false, reason });
+  });
+
+  it("returns an explicit reason when the working-directory set is empty", async () => {
+    const isGitRepository = mock(async () => true);
+    const isDockerAvailable = mock(async () => true);
+    const checkDevcontainerCliVersion = mock(async () => ({ available: true, version: "0.81.1" }));
+    const scanDevcontainerConfigs = mock(async () => [".devcontainer/devcontainer.json"]);
+
+    const availability = await checkRuntimeAvailability([], {
+      dependencies: {
+        isGitRepository,
+        isDockerAvailable,
+        checkDevcontainerCliVersion,
+        scanDevcontainerConfigs,
+      },
+    });
+
+    const reason = "No working directories configured";
+    expect(availability.worktree).toEqual({ available: false, reason });
+    expect(availability.ssh).toEqual({ available: false, reason });
+    expect(availability.docker).toEqual({ available: false, reason });
+    expect(availability.devcontainer).toEqual({ available: false, reason });
+    expect(isGitRepository).not.toHaveBeenCalled();
+    expect(isDockerAvailable).not.toHaveBeenCalled();
+    expect(checkDevcontainerCliVersion).not.toHaveBeenCalled();
+    expect(scanDevcontainerConfigs).not.toHaveBeenCalled();
+  });
+
+  it("aggregates devcontainer configs across every working directory", async () => {
+    const workingDirectories = ["/tmp/project-a", "/tmp/project-b"];
+    const scanDevcontainerConfigs = mock(async (projectPath: string) => {
+      if (projectPath === workingDirectories[0]) {
+        return [".devcontainer/devcontainer.json"];
+      }
+
+      return [".devcontainer/backend/devcontainer.json"];
+    });
+
+    const availability = await checkRuntimeAvailability(workingDirectories, {
+      dependencies: createDependencies({ scanDevcontainerConfigs }),
+    });
+
+    expect(scanDevcontainerConfigs).toHaveBeenCalledTimes(2);
+    expect(scanDevcontainerConfigs).toHaveBeenNthCalledWith(1, workingDirectories[0]);
+    expect(scanDevcontainerConfigs).toHaveBeenNthCalledWith(2, workingDirectories[1]);
+
+    expect(availability.devcontainer.available).toBe(true);
+    if (availability.devcontainer.available && "configs" in availability.devcontainer) {
+      expect(availability.devcontainer.configs).toEqual([
+        {
+          path: ".devcontainer/devcontainer.json",
+          label: "Default (.devcontainer/devcontainer.json)",
+        },
+        {
+          path: ".devcontainer/backend/devcontainer.json",
+          label: "backend (.devcontainer/backend/devcontainer.json)",
+        },
+      ]);
+      expect(availability.devcontainer.cliVersion).toBe("0.81.1");
+    }
   });
 });
 

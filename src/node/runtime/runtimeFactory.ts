@@ -14,7 +14,7 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 import { execFileAsync } from "@/node/utils/disposableExec";
 import type { CoderService } from "@/node/services/coderService";
 import { Config } from "@/node/config";
-import { checkDevcontainerCliVersion } from "./devcontainerCli";
+import { checkDevcontainerCliVersion, type DevcontainerCliInfo } from "./devcontainerCli";
 import { buildDevcontainerConfigInfo, scanDevcontainerConfigs } from "./devcontainerConfigs";
 import { resolveCoderSSHHost } from "@/constants/coder";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -270,37 +270,116 @@ async function isDockerAvailable(): Promise<boolean> {
 
 type RuntimeAvailabilityMap = Record<RuntimeMode, RuntimeAvailabilityStatus>;
 
+type RuntimeAvailabilityInput = string | readonly string[];
+
+interface RuntimeAvailabilityDependencies {
+  isGitRepository(projectPath: string): Promise<boolean>;
+  isDockerAvailable(): Promise<boolean>;
+  checkDevcontainerCliVersion(): Promise<DevcontainerCliInfo | null>;
+  scanDevcontainerConfigs(projectPath: string): Promise<string[]>;
+}
+
+interface RuntimeAvailabilityOptions {
+  dependencies?: RuntimeAvailabilityDependencies;
+}
+
+const DEFAULT_RUNTIME_AVAILABILITY_DEPENDENCIES: RuntimeAvailabilityDependencies = {
+  isGitRepository,
+  isDockerAvailable,
+  checkDevcontainerCliVersion,
+  scanDevcontainerConfigs,
+};
+
+const GIT_REQUIRED_REASON = "Requires git repository";
+const MIXED_GIT_WORKING_DIRECTORIES_REASON = "Some working directories are not git repositories";
+const NON_GIT_WORKING_DIRECTORIES_REASON = "No working directories are git repositories";
+const ZERO_WORKING_DIRECTORIES_REASON = "No working directories configured";
+const DOCKER_UNAVAILABLE_REASON = "Docker daemon not running";
+const DEVCONTAINER_CLI_MISSING_REASON =
+  "Dev Container CLI not installed. Run: npm install -g @devcontainers/cli";
+const DEVCONTAINER_CONFIG_MISSING_REASON = "No devcontainer.json found";
+
+function normalizeWorkingDirectories(input: RuntimeAvailabilityInput): string[] {
+  const projectPaths = Array.isArray(input) ? input : [input];
+  return Array.from(new Set(projectPaths.filter((projectPath) => projectPath.length > 0)));
+}
+
+function getGitUnavailableReason(workingDirectoryCount: number, gitDirectoryCount: number): string {
+  if (workingDirectoryCount === 0) {
+    return ZERO_WORKING_DIRECTORIES_REASON;
+  }
+
+  if (gitDirectoryCount === workingDirectoryCount) {
+    return "";
+  }
+
+  if (gitDirectoryCount === 0) {
+    // Keep the legacy reason when checking a single project path so existing
+    // non-git UX logic remains stable until project-dir callers are migrated.
+    return workingDirectoryCount === 1 ? GIT_REQUIRED_REASON : NON_GIT_WORKING_DIRECTORIES_REASON;
+  }
+
+  return MIXED_GIT_WORKING_DIRECTORIES_REASON;
+}
+
 /**
- * Check availability of all runtime types for a given project.
+ * Check availability of all runtime types for a project's working directories.
  * Returns a record of runtime mode to availability status.
  */
 export async function checkRuntimeAvailability(
-  projectPath: string
+  input: RuntimeAvailabilityInput,
+  options?: RuntimeAvailabilityOptions
 ): Promise<RuntimeAvailabilityMap> {
-  const [isGit, dockerAvailable, devcontainerCliInfo, devcontainerConfigs] = await Promise.all([
-    isGitRepository(projectPath),
-    isDockerAvailable(),
-    checkDevcontainerCliVersion(),
-    scanDevcontainerConfigs(projectPath),
+  const dependencies = options?.dependencies ?? DEFAULT_RUNTIME_AVAILABILITY_DEPENDENCIES;
+  const workingDirectories = normalizeWorkingDirectories(input);
+
+  if (workingDirectories.length === 0) {
+    return {
+      local: { available: true },
+      worktree: { available: false, reason: ZERO_WORKING_DIRECTORIES_REASON },
+      ssh: { available: false, reason: ZERO_WORKING_DIRECTORIES_REASON },
+      docker: { available: false, reason: ZERO_WORKING_DIRECTORIES_REASON },
+      devcontainer: { available: false, reason: ZERO_WORKING_DIRECTORIES_REASON },
+    };
+  }
+
+  const [
+    gitRepositoryResults,
+    dockerAvailable,
+    devcontainerCliInfo,
+    devcontainerConfigsByDirectory,
+  ] = await Promise.all([
+    Promise.all(workingDirectories.map((projectPath) => dependencies.isGitRepository(projectPath))),
+    dependencies.isDockerAvailable(),
+    dependencies.checkDevcontainerCliVersion(),
+    Promise.all(
+      workingDirectories.map((projectPath) => dependencies.scanDevcontainerConfigs(projectPath))
+    ),
   ]);
 
-  const devcontainerConfigInfo = buildDevcontainerConfigInfo(devcontainerConfigs);
+  const gitDirectoryCount = gitRepositoryResults.filter(Boolean).length;
+  const hasGitAcrossAllWorkingDirectories = gitDirectoryCount === workingDirectories.length;
+  const gitUnavailableReason = getGitUnavailableReason(
+    workingDirectories.length,
+    gitDirectoryCount
+  );
 
-  const gitRequiredReason = "Requires git repository";
+  const devcontainerConfigs = devcontainerConfigsByDirectory.flat();
+  const devcontainerConfigInfo = buildDevcontainerConfigInfo(devcontainerConfigs);
 
   // Determine devcontainer availability
   let devcontainerAvailability: RuntimeAvailabilityStatus;
-  if (!isGit) {
-    devcontainerAvailability = { available: false, reason: gitRequiredReason };
+  if (!hasGitAcrossAllWorkingDirectories) {
+    devcontainerAvailability = { available: false, reason: gitUnavailableReason };
   } else if (!devcontainerCliInfo) {
     devcontainerAvailability = {
       available: false,
-      reason: "Dev Container CLI not installed. Run: npm install -g @devcontainers/cli",
+      reason: DEVCONTAINER_CLI_MISSING_REASON,
     };
   } else if (!dockerAvailable) {
-    devcontainerAvailability = { available: false, reason: "Docker daemon not running" };
+    devcontainerAvailability = { available: false, reason: DOCKER_UNAVAILABLE_REASON };
   } else if (devcontainerConfigInfo.length === 0) {
-    devcontainerAvailability = { available: false, reason: "No devcontainer.json found" };
+    devcontainerAvailability = { available: false, reason: DEVCONTAINER_CONFIG_MISSING_REASON };
   } else {
     devcontainerAvailability = {
       available: true,
@@ -311,12 +390,16 @@ export async function checkRuntimeAvailability(
 
   return {
     local: { available: true },
-    worktree: isGit ? { available: true } : { available: false, reason: gitRequiredReason },
-    ssh: isGit ? { available: true } : { available: false, reason: gitRequiredReason },
-    docker: !isGit
-      ? { available: false, reason: gitRequiredReason }
+    worktree: hasGitAcrossAllWorkingDirectories
+      ? { available: true }
+      : { available: false, reason: gitUnavailableReason },
+    ssh: hasGitAcrossAllWorkingDirectories
+      ? { available: true }
+      : { available: false, reason: gitUnavailableReason },
+    docker: !hasGitAcrossAllWorkingDirectories
+      ? { available: false, reason: gitUnavailableReason }
       : !dockerAvailable
-        ? { available: false, reason: "Docker daemon not running" }
+        ? { available: false, reason: DOCKER_UNAVAILABLE_REASON }
         : { available: true },
     devcontainer: devcontainerAvailability,
   };
