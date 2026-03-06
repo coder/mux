@@ -1395,7 +1395,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     ]);
 
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
-    expect(openaiOptions.previousResponseId).toBe("resp_before_malformed");
+    expect(openaiOptions.previousResponseId).toBeUndefined();
     expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
   });
 });

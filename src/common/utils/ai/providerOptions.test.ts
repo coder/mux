@@ -484,19 +484,19 @@ describe("buildProviderOptions - OpenAI", () => {
     });
   });
 
-  describe("previousResponseId reuse", () => {
-    test("should reuse previousResponseId for gateway OpenAI history", () => {
+  describe("OpenAI conversation state management", () => {
+    test("does not reuse previousResponseId when Mux already sends explicit GPT-5.4 history", () => {
       const messages = [
         createMuxMessage("assistant-1", "assistant", "", {
-          model: "mux-gateway:openai/gpt-5.2",
+          model: "mux-gateway:openai/gpt-5.4",
           providerMetadata: { openai: { responseId: "resp_123" } },
         }),
       ];
-      const result = buildProviderOptions("mux-gateway:openai/gpt-5.2", "medium", messages);
+      const result = buildProviderOptions("mux-gateway:openai/gpt-5.4", "medium", messages);
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();
-      expect(openai!.previousResponseId).toBe("resp_123");
+      expect(openai!.previousResponseId).toBeUndefined();
     });
   });
   describe("wireFormat gating", () => {

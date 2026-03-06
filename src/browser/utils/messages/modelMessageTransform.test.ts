@@ -786,7 +786,7 @@ describe("modelMessageTransform", () => {
   });
 
   describe("reasoning part handling for OpenAI", () => {
-    it("should preserve reasoning parts for OpenAI provider (managed via previousResponseId)", () => {
+    it("should preserve reasoning parts for OpenAI provider (managed via explicit history)", () => {
       const messages: ModelMessage[] = [
         {
           role: "user",

@@ -1,8 +1,8 @@
 /**
- * OpenAI previousResponseId recovery integration test.
+ * OpenAI response-id metadata integration test.
  *
- * This simulates a corrupted previousResponseId and verifies the runtime
- * retries the request without it so the first request succeeds.
+ * This seeds stale responseId metadata in history and verifies the runtime still
+ * succeeds because Mux now sends OpenAI conversation state via explicit history.
  */
 
 import { randomBytes } from "crypto";
@@ -32,11 +32,11 @@ function createInvalidResponseId(): string {
   return `resp_${randomBytes(12).toString("hex")}`;
 }
 
-describeIntegration("OpenAI previousResponseId recovery", () => {
+describeIntegration("OpenAI response-id metadata", () => {
   configureTestRetries(3);
 
   test.concurrent(
-    "recovers from invalid previousResponseId on the first request",
+    "ignores stale previousResponseId metadata on the first request",
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("openai");
 
@@ -45,7 +45,7 @@ describeIntegration("OpenAI previousResponseId recovery", () => {
         const summaryMessage = createMuxMessage(
           `summary-${Date.now()}`,
           "assistant",
-          "Summary placeholder for previousResponseId recovery.",
+          "Summary placeholder for stale responseId metadata.",
           {
             timestamp: Date.now(),
             model: OPENAI_MODEL,

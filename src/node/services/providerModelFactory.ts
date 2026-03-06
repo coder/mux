@@ -1099,7 +1099,8 @@ export class ProviderModelFactory {
           // The preconnect method is optional in our implementation but required by the SDK type.
           fetch: providerFetch,
         });
-        // OpenAI manages reasoning state via previousResponseId - no middleware needed
+        // OpenAI reasoning state is preserved via explicit history, so no extra
+        // middleware is needed beyond the provider's standard Responses handling.
         const model =
           effectiveWireFormat === "chatCompletions"
             ? provider.chat(modelId)

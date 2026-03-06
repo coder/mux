@@ -1200,7 +1200,7 @@ function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): Model
  * 2. Drop orphaned tool calls/results (self-healing)
  * 3. Coalesce consecutive no-progress `task_await` polls - all providers
  * 4. Filter reasoning-only messages:
- *    - OpenAI: Keep reasoning parts (managed via previousResponseId), filter reasoning-only messages
+ *    - OpenAI: Keep reasoning parts in explicit history, filter reasoning-only messages
  *    - Anthropic: Filter out reasoning-only messages (API rejects them)
  * 5. Merge consecutive user messages - all providers
  *
@@ -1232,7 +1232,8 @@ export function transformModelMessages(
   // Pass 4: Provider-specific reasoning handling
   let reasoningHandled: ModelMessage[];
   if (provider === "openai") {
-    // OpenAI: Keep reasoning parts - managed via previousResponseId
+    // OpenAI: Keep reasoning parts in explicit history so later turns can
+    // preserve reasoning context without chaining previous_response_id.
     // Only filter out reasoning-only messages (messages with no text/tool-call content)
     reasoningHandled = filterReasoningOnlyMessages(taskAwaitCoalesced);
   } else if (provider === "anthropic") {
