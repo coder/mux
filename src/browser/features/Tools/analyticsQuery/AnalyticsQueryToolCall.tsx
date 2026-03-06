@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import {
   AlertTriangle,
   AreaChart as AreaChartIcon,
@@ -7,8 +7,11 @@ import {
   PieChart as PieChartIcon,
   Table,
 } from "lucide-react";
-import { cn } from "@/common/lib/utils";
+import { useRouter } from "@/browser/contexts/RouterContext";
+import { useSavedQueries } from "@/browser/hooks/useAnalytics";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { cn } from "@/common/lib/utils";
+import { getErrorMessage } from "@/common/utils/errors";
 import {
   DetailContent,
   DetailSection,
@@ -51,6 +54,15 @@ interface ChartTypeOption {
   label: string;
 }
 
+type SaveState =
+  | { status: "idle" }
+  | { status: "saving" }
+  | { status: "saved"; chartType: ChartType }
+  | { status: "error"; message: string }
+  | { status: "unavailable" };
+
+const SAVED_QUERY_UNAVAILABLE_MESSAGE = "Analytics dashboard saving is unavailable in this build.";
+
 const CHART_TYPE_OPTIONS: ChartTypeOption[] = [
   { type: "table", icon: Table, label: "Table" },
   { type: "bar", icon: BarChart3, label: "Bar" },
@@ -82,8 +94,11 @@ function escapeDoubleQuotes(value: string): string {
 
 export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.Element {
   const { expanded, toggleExpanded } = useToolExpansion(true);
+  const { save } = useSavedQueries();
+  const { navigateToAnalytics } = useRouter();
   const [chartTypeOverride, setChartTypeOverride] = useState<ChartType | null>(null);
   const [showSql, setShowSql] = useState(false);
+  const [saveState, setSaveState] = useState<SaveState>({ status: "idle" });
 
   const status = props.status ?? "pending";
   const errorResult = isToolErrorResult(props.result) ? props.result : null;
@@ -102,6 +117,12 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
   const title = props.args.title ?? successResult?.title ?? "Query results";
   const isRowCountLowerBound = successResult?.rowCountExact === false;
 
+  useEffect(() => {
+    if (saveState.status === "saved" && saveState.chartType !== effectiveChartType) {
+      setSaveState({ status: "idle" });
+    }
+  }, [effectiveChartType, saveState]);
+
   const handleDrillDown = (context: DrillDownContext) => {
     if (typeof window === "undefined") {
       return;
@@ -116,6 +137,34 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
         mode: "replace",
       })
     );
+  };
+
+  const handleSaveToAnalyticsDashboard = async () => {
+    if (saveState.status === "saving") {
+      return;
+    }
+
+    const chartTypeToSave = effectiveChartType;
+    setSaveState({ status: "saving" });
+
+    try {
+      const savedQuery = await save({
+        // Rationale: reuse the exact label already rendered in chat so the saved panel matches
+        // the message the user is looking at.
+        label: title,
+        sql: props.args.sql,
+        chartType: chartTypeToSave,
+      });
+
+      if (!savedQuery) {
+        setSaveState({ status: "unavailable" });
+        return;
+      }
+
+      setSaveState({ status: "saved", chartType: chartTypeToSave });
+    } catch (error) {
+      setSaveState({ status: "error", message: getErrorMessage(error) });
+    }
   };
 
   return (
@@ -169,6 +218,46 @@ export function AnalyticsQueryToolCall(props: AnalyticsQueryToolCallProps): JSX.
                     {option.label}
                   </HeaderButton>
                 ))}
+              </div>
+
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                {saveState.status === "saved" ? (
+                  <>
+                    <span className="text-success text-[10px]" role="status">
+                      Added to analytics dashboard.
+                    </span>
+                    <HeaderButton
+                      type="button"
+                      onClick={navigateToAnalytics}
+                      className="disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Open dashboard
+                    </HeaderButton>
+                  </>
+                ) : (
+                  <HeaderButton
+                    type="button"
+                    onClick={() => {
+                      void handleSaveToAnalyticsDashboard();
+                    }}
+                    disabled={saveState.status === "saving"}
+                    className="disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {saveState.status === "saving" ? "Adding..." : "Add to analytics dashboard"}
+                  </HeaderButton>
+                )}
+
+                {saveState.status === "error" && (
+                  <span className="text-[10px] text-danger" role="alert">
+                    {saveState.message}
+                  </span>
+                )}
+
+                {saveState.status === "unavailable" && (
+                  <span className="text-warning text-[10px]" role="status">
+                    {SAVED_QUERY_UNAVAILABLE_MESSAGE}
+                  </span>
+                )}
               </div>
 
               {effectiveChartType === "table" ||
