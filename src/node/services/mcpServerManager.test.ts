@@ -389,6 +389,43 @@ describe("MCPServerManager", () => {
     }
   });
 
+  test("startSingleServerImpl cleans up HTTP client that resolves after abort", async () => {
+    const controller = new AbortController();
+    const lateClientClose = mock(() => Promise.resolve(undefined));
+    const createClient =
+      Promise.withResolvers<Awaited<ReturnType<typeof mcpSdk.createMCPClient>>>();
+
+    const createMCPClientSpy = spyOn(mcpSdk, "createMCPClient").mockImplementation(() => {
+      controller.abort();
+      return createClient.promise;
+    });
+
+    try {
+      const startup = access.startSingleServerImpl(
+        "http-late-client-cleanup",
+        { transport: "http", url: "https://example.com/mcp" },
+        {} as Runtime,
+        "/tmp/project",
+        "/tmp/workspace",
+        undefined,
+        () => undefined,
+        controller.signal
+      );
+
+      createClient.resolve({
+        close: lateClientClose,
+        tools: mock(() => Promise.resolve({})),
+      } as unknown as Awaited<ReturnType<typeof mcpSdk.createMCPClient>>);
+
+      const result = await startup;
+
+      expect(result).toBeNull();
+      expect(lateClientClose).toHaveBeenCalledTimes(1);
+    } finally {
+      createMCPClientSpy.mockRestore();
+    }
+  });
+
   test("getToolsForWorkspace tracks failed server names in stats", async () => {
     const workspaceId = "ws-failed-names";
     const projectPath = "/tmp/project";

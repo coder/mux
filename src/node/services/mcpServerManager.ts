@@ -1681,21 +1681,35 @@ export class MCPServerManager {
     let cleanupPromise: Promise<void> | null = null;
 
     const cleanupStartupClient = async () => {
-      cleanupPromise ??= (async () => {
-        if (!client) {
+      const previousCleanup = cleanupPromise;
+      if (previousCleanup) {
+        await previousCleanup;
+      }
+
+      const currentCleanup = (async () => {
+        const startupClient = client;
+        client = null;
+
+        if (!startupClient) {
           return;
         }
 
         try {
-          await client.close();
+          await startupClient.close();
         } catch (error) {
           log.debug("[MCP] Error closing client during startup cleanup", { name, error });
-        } finally {
-          client = null;
         }
       })();
 
-      await cleanupPromise;
+      cleanupPromise = currentCleanup;
+
+      try {
+        await currentCleanup;
+      } finally {
+        if (cleanupPromise === currentCleanup) {
+          cleanupPromise = null;
+        }
+      }
     };
 
     const onAbort = () => {
