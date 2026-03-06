@@ -281,10 +281,14 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     return (
       <>
         <div className="space-y-1">
-          <label className="text-muted text-xs">Path</label>
+          <label htmlFor="project-create-path" className="text-muted text-xs">
+            Path
+          </label>
           <div className="flex gap-2">
             <input
+              id="project-create-path"
               type="text"
+              aria-label="Project path"
               value={path}
               onChange={(e) => {
                 setPath(e.target.value);

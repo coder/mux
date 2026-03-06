@@ -240,7 +240,13 @@ export async function addProjectViaUI(view: RenderedApp, projectPath: string): P
   const dialog = await body.findByRole("dialog", {}, { timeout: 10_000 });
   const dialogCanvas = within(dialog);
 
-  const pathInput = await dialogCanvas.findByRole("textbox", {}, { timeout: 10_000 });
+  // The add-project dialog now has multiple textboxes, so target the path field by its
+  // accessible name instead of relying on the first textbox in the modal.
+  const pathInput = await dialogCanvas.findByRole(
+    "textbox",
+    { name: "Project path" },
+    { timeout: 10_000 }
+  );
   const user = userEvent.setup({ document: view.container.ownerDocument });
   await user.clear(pathInput);
   await user.type(pathInput, projectPath);

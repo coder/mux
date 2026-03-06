@@ -56,11 +56,11 @@ describe("ProjectAddForm", () => {
     };
 
     const onSuccess = mock(() => undefined);
-    const { getByPlaceholderText, getByRole, getAllByLabelText, getByLabelText } = render(
+    const { getByRole, getAllByLabelText, getByLabelText } = render(
       <ProjectAddForm isOpen onSuccess={onSuccess} />
     );
 
-    const pathInput = getByPlaceholderText("/home/user/projects/my-project");
+    const pathInput = getByLabelText("Project path");
     const user = userEvent.setup({ document: pathInput.ownerDocument });
 
     await user.type(pathInput, "  /tmp/demo  ");
