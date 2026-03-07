@@ -14,6 +14,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { getDefaultModel, getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useOpenAICompatibleProviders } from "@/browser/hooks/useOpenAICompatibleProviders";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   getModelKey,
@@ -39,6 +40,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 export function System1Section() {
   const { api } = useAPI();
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
+  const { config: openaiCompatibleConfig } = useOpenAICompatibleProviders();
 
   const [taskSettings, setTaskSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
   const [loaded, setLoaded] = useState(false);
@@ -287,7 +289,7 @@ export function System1Section() {
     );
   }
 
-  const allModels = getSuggestedModels(providersConfig);
+  const allModels = getSuggestedModels(providersConfig, openaiCompatibleConfig ?? null);
 
   const bashOutputCompactionMinLines =
     taskSettings.bashOutputCompactionMinLines ??

@@ -31,6 +31,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { isRegularProviderConfigInfo } from "@/common/orpc/schemas/api";
+import { OpenAICompatibleProvidersSection } from "./OpenAICompatibleProvidersSection";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
@@ -380,10 +383,21 @@ export function ProvidersSection() {
   );
   const [codexOauthAuthorizeUrl, setCodexOauthAuthorizeUrl] = useState<string | null>(null);
 
-  const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
-  const openaiApiKeySet = config?.openai?.apiKeySet === true;
+  const openaiConfig = config?.openai;
+  const codexOauthIsConnected =
+    openaiConfig && isRegularProviderConfigInfo(openaiConfig)
+      ? openaiConfig.codexOauthSet === true
+      : false;
+  const openaiApiKeySet =
+    openaiConfig && isRegularProviderConfigInfo(openaiConfig)
+      ? openaiConfig.apiKeySet === true
+      : false;
   const codexOauthDefaultAuth =
-    config?.openai?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
+    openaiConfig && isRegularProviderConfigInfo(openaiConfig)
+      ? openaiConfig.codexOauthDefaultAuth === "apiKey"
+        ? "apiKey"
+        : "oauth"
+      : "oauth";
   const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
 
   const codexOauthLoginInProgress =
@@ -2199,6 +2213,8 @@ export function ProvidersSection() {
           </div>
         );
       })}
+
+      <OpenAICompatibleProvidersSection />
 
       {config && !hasAnyConfiguredProvider && (
         <div className="border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-xs">

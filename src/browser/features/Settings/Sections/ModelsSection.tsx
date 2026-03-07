@@ -16,6 +16,7 @@ import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { useRouting } from "@/browser/hooks/useRouting";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useOpenAICompatibleProviders } from "@/browser/hooks/useOpenAICompatibleProviders";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
@@ -27,6 +28,7 @@ import {
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { LAST_CUSTOM_MODEL_PROVIDER_KEY } from "@/common/constants/storage";
 import type { ProviderModelEntry } from "@/common/orpc/types";
+import { isRegularProviderConfigInfo } from "@/common/orpc/schemas/api";
 import {
   getProviderModelEntryContextWindowTokens,
   getProviderModelEntryId,
@@ -35,7 +37,7 @@ import {
 import { ModelRow } from "./ModelRow";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
-const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
+const HIDDEN_PROVIDERS = new Set(["mux-gateway", "openai-compatible"]);
 
 // Shared header cell styles
 const headerCellBase = "py-1.5 pr-2 text-xs font-medium text-muted";
@@ -61,6 +63,8 @@ interface EditingState {
   contextWindowTokens: string;
   mappedToModel: string;
   focus?: "model" | "context";
+  /** Instance ID for openai-compatible providers (e.g., "together-ai") */
+  instanceId?: string;
 }
 
 function parseContextWindowTokensInput(value: string): number | null {
@@ -128,6 +132,7 @@ export function ModelsSection() {
   const { api } = useAPI();
   const { open: openSettings } = useSettings();
   const { config, loading, updateModelsOptimistically } = useProvidersConfig();
+  const { config: openaiCompatibleConfig } = useOpenAICompatibleProviders();
   const [lastProvider, setLastProvider] = usePersistedState(LAST_CUSTOM_MODEL_PROVIDER_KEY, "");
   const [newModelId, setNewModelId] = useState("");
   const [editing, setEditing] = useState<EditingState | null>(null);
@@ -143,7 +148,11 @@ export function ModelsSection() {
 
   // Read OAuth state from this component's provider config source to avoid
   // cross-hook timing mismatches while settings are loading/refetching.
-  const codexOauthConfigured = config?.openai?.codexOauthSet === true;
+  const openaiConfig = config?.openai;
+  const codexOauthConfigured =
+    openaiConfig && isRegularProviderConfigInfo(openaiConfig)
+      ? openaiConfig.codexOauthSet === true
+      : false;
 
   // "Treat as" dropdown should only list known models — custom models don't have
   // the metadata (pricing, context window, tokenizer) that mapping inherits.
@@ -156,8 +165,12 @@ export function ModelsSection() {
   const modelExists = useCallback(
     (provider: string, modelId: string, excludeOriginal?: string): boolean => {
       if (!config) return false;
-      const currentModels = config[provider]?.models ?? [];
-      return currentModels.some((entry) => {
+      const providerConfig = config[provider];
+      const currentModels =
+        providerConfig && isRegularProviderConfigInfo(providerConfig)
+          ? (providerConfig.models ?? [])
+          : [];
+      return currentModels.some((entry: ProviderModelEntry) => {
         const currentModelId = getProviderModelEntryId(entry);
         return currentModelId === modelId && currentModelId !== excludeOriginal;
       });
@@ -215,7 +228,8 @@ export function ModelsSection() {
       provider: string,
       modelId: string,
       contextWindowTokens: number | null,
-      mappedToModel: string | null
+      mappedToModel: string | null,
+      instanceId?: string
     ) => {
       setEditing({
         provider,
@@ -224,6 +238,7 @@ export function ModelsSection() {
         contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
         mappedToModel: mappedToModel ?? "",
         focus: "model",
+        instanceId,
       });
       setError(null);
     },
@@ -235,7 +250,8 @@ export function ModelsSection() {
       provider: string,
       modelId: string,
       contextWindowTokens: number | null,
-      mappedToModel: string | null
+      mappedToModel: string | null,
+      instanceId?: string
     ) => {
       setEditing({
         provider,
@@ -244,6 +260,7 @@ export function ModelsSection() {
         contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
         mappedToModel: mappedToModel ?? "",
         focus: "context",
+        instanceId,
       });
       setError(null);
     },
@@ -288,32 +305,67 @@ export function ModelsSection() {
       mappedTo
     );
 
-    // Optimistic update - returns new models array for API call
-    const updatedModels = updateModelsOptimistically(editing.provider, (models) => {
-      const nextModels: ProviderModelEntry[] = [];
-      let replaced = false;
+    const isOpenAICompatible = editing.provider === "openai-compatible" && editing.instanceId;
 
-      for (const modelEntry of models) {
-        if (!replaced && getProviderModelEntryId(modelEntry) === editing.originalModelId) {
-          nextModels.push(replacementEntry);
-          replaced = true;
-          continue;
+    // Optimistic update
+    if (isOpenAICompatible) {
+      // For openai-compatible, we need to update via the provider's models array
+      const providerConfig = openaiCompatibleConfig?.providers?.find(
+        (p) => p.id === editing.instanceId
+      );
+      if (providerConfig) {
+        const currentModels = providerConfig.models ?? [];
+        const nextModels: ProviderModelEntry[] = [];
+        let replaced = false;
+
+        for (const modelEntry of currentModels) {
+          if (!replaced && getProviderModelEntryId(modelEntry) === editing.originalModelId) {
+            nextModels.push(replacementEntry);
+            replaced = true;
+            continue;
+          }
+          nextModels.push(modelEntry);
         }
 
-        nextModels.push(modelEntry);
-      }
+        if (!replaced) {
+          nextModels.push(replacementEntry);
+        }
 
-      if (!replaced) {
-        nextModels.push(replacementEntry);
+        // Save in background
+        void api.openaiCompatibleProviders.setModels({
+          instanceId: editing.instanceId!,
+          models: nextModels,
+        });
       }
+    } else {
+      // Regular provider
+      const updatedModels = updateModelsOptimistically(editing.provider, (models) => {
+        const nextModels: ProviderModelEntry[] = [];
+        let replaced = false;
 
-      return nextModels;
-    });
+        for (const modelEntry of models) {
+          if (!replaced && getProviderModelEntryId(modelEntry) === editing.originalModelId) {
+            nextModels.push(replacementEntry);
+            replaced = true;
+            continue;
+          }
+
+          nextModels.push(modelEntry);
+        }
+
+        if (!replaced) {
+          nextModels.push(replacementEntry);
+        }
+
+        return nextModels;
+      });
+
+      // Save in background
+      void api.providers.setModels({ provider: editing.provider, models: updatedModels });
+    }
+
     setEditing(null);
-
-    // Save in background
-    void api.providers.setModels({ provider: editing.provider, models: updatedModels });
-  }, [api, editing, config, modelExists, updateModelsOptimistically]);
+  }, [api, editing, config, modelExists, updateModelsOptimistically, openaiCompatibleConfig]);
 
   // Show loading state while config is being fetched
   if (loading || !config) {
@@ -332,6 +384,7 @@ export function ModelsSection() {
     fullId: string;
     contextWindowTokens: number | null;
     mappedToModel: string | null;
+    instanceId?: string;
   }> => {
     const models: Array<{
       provider: string;
@@ -339,11 +392,13 @@ export function ModelsSection() {
       fullId: string;
       contextWindowTokens: number | null;
       mappedToModel: string | null;
+      instanceId?: string;
     }> = [];
 
     for (const [provider, providerConfig] of Object.entries(config)) {
       // Skip hidden providers (mux-gateway models are routed, not managed as a standalone list)
       if (HIDDEN_PROVIDERS.has(provider)) continue;
+      if (!isRegularProviderConfigInfo(providerConfig)) continue;
       if (!providerConfig.models) continue;
 
       for (const modelEntry of providerConfig.models) {
@@ -355,6 +410,24 @@ export function ModelsSection() {
           contextWindowTokens: getProviderModelEntryContextWindowTokens(modelEntry),
           mappedToModel: getProviderModelEntryMappedTo(modelEntry),
         });
+      }
+    }
+
+    // Add OpenAI-compatible provider models
+    if (openaiCompatibleConfig?.providers) {
+      for (const provider of openaiCompatibleConfig.providers) {
+        if (!provider.models) continue;
+        for (const modelEntry of provider.models) {
+          const modelId = getProviderModelEntryId(modelEntry);
+          models.push({
+            provider: "openai-compatible",
+            modelId,
+            fullId: `openai-compatible:${provider.id}:${modelId}`,
+            contextWindowTokens: getProviderModelEntryContextWindowTokens(modelEntry),
+            mappedToModel: getProviderModelEntryMappedTo(modelEntry),
+            instanceId: provider.id,
+          });
+        }
       }
     }
 
@@ -469,7 +542,8 @@ export function ModelsSection() {
                           model.provider,
                           model.modelId,
                           model.contextWindowTokens,
-                          model.mappedToModel
+                          model.mappedToModel,
+                          model.instanceId
                         )
                       }
                       onStartContextEdit={() =>
@@ -477,7 +551,8 @@ export function ModelsSection() {
                           model.provider,
                           model.modelId,
                           model.contextWindowTokens,
-                          model.mappedToModel
+                          model.mappedToModel,
+                          model.instanceId
                         )
                       }
                       onSaveEdit={handleSaveEdit}

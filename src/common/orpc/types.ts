@@ -30,6 +30,12 @@ export type SendMessageOptions = z.infer<typeof schemas.SendMessageOptionsSchema
 export type AWSCredentialStatus = z.infer<typeof schemas.AWSCredentialStatusSchema>;
 export type ProviderModelEntry = z.infer<typeof schemas.ProviderModelEntrySchema>;
 export type ProviderConfigInfo = z.infer<typeof schemas.ProviderConfigInfoSchema>;
+export type OpenAICompatibleInstanceInfo = z.infer<
+  typeof schemas.OpenAICompatibleInstanceInfoSchema
+>;
+export type OpenAICompatibleProvidersInfo = z.infer<
+  typeof schemas.OpenAICompatibleProvidersInfoSchema
+>;
 export type ProvidersConfigMap = z.infer<typeof schemas.ProvidersConfigMapSchema>;
 export type FilePart = z.infer<typeof schemas.FilePartSchema>;
 export type WorkspaceChatMessage = z.infer<typeof schemas.WorkspaceChatMessageSchema>;

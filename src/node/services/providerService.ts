@@ -8,10 +8,16 @@ import {
 import type { Result } from "@/common/types/result";
 import type {
   AWSCredentialStatus,
+  OpenAICompatibleInstanceInfo,
+  OpenAICompatibleProvidersInfo,
   ProviderConfigInfo,
   ProviderModelEntry,
   ProvidersConfigMap,
 } from "@/common/orpc/types";
+import type {
+  OpenAICompatibleProviderInstance,
+  OpenAICompatibleProvidersConfig,
+} from "@/common/config/schemas/openaiCompatibleProvider";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import { isOpReference } from "@/common/utils/opRef";
 import {
@@ -89,6 +95,24 @@ export class ProviderService {
       return providers;
     } catch (error) {
       log.error("Failed to list providers:", error);
+      return [];
+    }
+  }
+
+  /**
+   * List all OpenAI-compatible provider instance IDs.
+   * Returns the IDs of configured provider instances.
+   */
+  public listOpenAICompatibleProviders(): string[] {
+    try {
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+      const openaiCompatibleConfig = providersConfig["openai-compatible"] as
+        | OpenAICompatibleProvidersConfig
+        | undefined;
+
+      return (openaiCompatibleConfig?.providers ?? []).map((p) => p.id);
+    } catch (error) {
+      log.error("Failed to list OpenAI-compatible providers:", error);
       return [];
     }
   }
@@ -501,6 +525,204 @@ export class ProviderService {
     } catch (error) {
       const message = getErrorMessage(error);
       return { success: false, error: `Failed to set provider config: ${message}` };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // OpenAI-Compatible Provider Methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get OpenAI-compatible providers configuration for the frontend.
+   * Returns safe info (no actual API keys).
+   */
+  public getOpenAICompatibleProvidersInfo(): OpenAICompatibleProvidersInfo {
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    const openaiCompatibleConfig = providersConfig["openai-compatible"] as
+      | OpenAICompatibleProvidersConfig
+      | undefined;
+
+    const providers = openaiCompatibleConfig?.providers ?? [];
+    const instances: OpenAICompatibleInstanceInfo[] = providers.map((provider) => {
+      const apiKeyIsOpRef = isOpReference(provider.apiKey);
+      const isEnabled = provider.enabled !== false;
+      const isConfigured = !!(provider.baseUrl && (provider.apiKey ?? !provider.baseUrl));
+
+      return {
+        id: provider.id,
+        name: provider.name,
+        baseUrl: provider.baseUrl,
+        apiKeySet: !!provider.apiKey,
+        apiKeyIsOpRef: apiKeyIsOpRef || undefined,
+        apiKeyOpLabel: apiKeyIsOpRef ? provider.apiKeyOpLabel : undefined,
+        isEnabled,
+        isConfigured,
+        models: provider.models ? normalizeProviderModelEntries(provider.models) : undefined,
+      };
+    });
+
+    return {
+      isEnabled: true,
+      isConfigured: instances.some((i) => i.isConfigured),
+      providers: instances.length > 0 ? instances : undefined,
+    };
+  }
+
+  /**
+   * Add a new OpenAI-compatible provider instance.
+   */
+  public addOpenAICompatibleProvider(
+    instance: Omit<OpenAICompatibleProviderInstance, "models">
+  ): Result<void, string> {
+    try {
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      const openaiCompatibleConfig = (providersConfig["openai-compatible"] ??
+        {}) as OpenAICompatibleProvidersConfig;
+      const existingProviders = openaiCompatibleConfig.providers ?? [];
+
+      if (existingProviders.some((p) => p.id === instance.id)) {
+        return {
+          success: false,
+          error: `Provider instance with id "${instance.id}" already exists`,
+        };
+      }
+
+      const newProvider: OpenAICompatibleProviderInstance = {
+        ...instance,
+        models: [],
+      };
+
+      providersConfig["openai-compatible"] = {
+        ...openaiCompatibleConfig,
+        providers: [...existingProviders, newProvider],
+      };
+
+      this.config.saveProvidersConfig(providersConfig);
+      this.notifyConfigChanged();
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return { success: false, error: `Failed to add provider: ${message}` };
+    }
+  }
+
+  /**
+   * Update an existing OpenAI-compatible provider instance.
+   */
+  public updateOpenAICompatibleProvider(
+    instanceId: string,
+    updates: Partial<Omit<OpenAICompatibleProviderInstance, "id">>
+  ): Result<void, string> {
+    try {
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      const openaiCompatibleConfig = (providersConfig["openai-compatible"] ??
+        {}) as OpenAICompatibleProvidersConfig;
+      const existingProviders = openaiCompatibleConfig.providers ?? [];
+
+      const index = existingProviders.findIndex((p) => p.id === instanceId);
+      if (index === -1) {
+        return { success: false, error: `Provider instance "${instanceId}" not found` };
+      }
+
+      const updatedProvider: OpenAICompatibleProviderInstance = {
+        ...existingProviders[index],
+        ...updates,
+        id: instanceId,
+      };
+
+      const updatedProviders = [...existingProviders];
+      updatedProviders[index] = updatedProvider;
+
+      providersConfig["openai-compatible"] = {
+        ...openaiCompatibleConfig,
+        providers: updatedProviders,
+      };
+
+      this.config.saveProvidersConfig(providersConfig);
+      this.notifyConfigChanged();
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return { success: false, error: `Failed to update provider: ${message}` };
+    }
+  }
+
+  /**
+   * Remove an OpenAI-compatible provider instance.
+   */
+  public removeOpenAICompatibleProvider(instanceId: string): Result<void, string> {
+    try {
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      const openaiCompatibleConfig = (providersConfig["openai-compatible"] ??
+        {}) as OpenAICompatibleProvidersConfig;
+      const existingProviders = openaiCompatibleConfig.providers ?? [];
+
+      const filtered = existingProviders.filter((p) => p.id !== instanceId);
+      if (filtered.length === existingProviders.length) {
+        return { success: false, error: `Provider instance "${instanceId}" not found` };
+      }
+
+      providersConfig["openai-compatible"] = {
+        ...openaiCompatibleConfig,
+        providers: filtered.length > 0 ? filtered : undefined,
+      };
+
+      this.config.saveProvidersConfig(providersConfig);
+      this.notifyConfigChanged();
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return { success: false, error: `Failed to remove provider: ${message}` };
+    }
+  }
+
+  /**
+   * Set models for a specific OpenAI-compatible provider instance.
+   */
+  public setOpenAICompatibleProviderModels(
+    instanceId: string,
+    models: ProviderModelEntry[]
+  ): Result<void, string> {
+    try {
+      const normalizedModels = normalizeProviderModelEntries(models);
+
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      const openaiCompatibleConfig = (providersConfig["openai-compatible"] ??
+        {}) as OpenAICompatibleProvidersConfig;
+      const existingProviders = openaiCompatibleConfig.providers ?? [];
+
+      const index = existingProviders.findIndex((p) => p.id === instanceId);
+      if (index === -1) {
+        return { success: false, error: `Provider instance "${instanceId}" not found` };
+      }
+
+      const updatedProvider: OpenAICompatibleProviderInstance = {
+        ...existingProviders[index],
+        models: normalizedModels,
+      };
+
+      const updatedProviders = [...existingProviders];
+      updatedProviders[index] = updatedProvider;
+
+      providersConfig["openai-compatible"] = {
+        ...openaiCompatibleConfig,
+        providers: updatedProviders,
+      };
+
+      this.config.saveProvidersConfig(providersConfig);
+      this.notifyConfigChanged();
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return { success: false, error: `Failed to set models: ${message}` };
     }
   }
 }

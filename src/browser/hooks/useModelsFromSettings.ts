@@ -8,6 +8,7 @@ import {
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { useRouting } from "./useRouting";
+import { useOpenAICompatibleProviders } from "./useOpenAICompatibleProviders";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { isValidProvider } from "@/common/constants/providers";
@@ -19,6 +20,10 @@ import {
 } from "@/common/utils/ai/models";
 import { isModelAvailable } from "@/common/routing";
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
+import { getModelProvider } from "@/common/utils/ai/models";
+import type {
+  OpenAICompatibleProvidersInfo,
+} from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
@@ -26,20 +31,42 @@ import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
 const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
 
-function getCustomModels(config: ProvidersConfigMap | null): string[] {
-  if (!config) return [];
+function getCustomModels(
+  config: ProvidersConfigMap | null,
+  openaiCompatibleConfig: OpenAICompatibleProvidersInfo | null
+): string[] {
+  if (!config && !openaiCompatibleConfig) return [];
   const models: string[] = [];
-  for (const [provider, info] of Object.entries(config)) {
-    // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
-    if (provider === "mux-gateway") continue;
-    // Only surface custom models from enabled providers
-    if (!info.isEnabled) continue;
-    if (!info.models) continue;
-    for (const modelEntry of info.models) {
-      const modelId = getProviderModelEntryId(modelEntry);
-      models.push(`${provider}:${modelId}`);
+
+  // Get models from regular providers
+  if (config) {
+    for (const [provider, info] of Object.entries(config)) {
+      // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
+      if (provider === "mux-gateway") continue;
+      // Skip openai-compatible - handled separately
+      if (provider === "openai-compatible") continue;
+      // Only surface custom models from enabled providers
+      if (!info.isEnabled) continue;
+      if (!info.models) continue;
+      for (const modelEntry of info.models) {
+        const modelId = getProviderModelEntryId(modelEntry);
+        models.push(`${provider}:${modelId}`);
+      }
     }
   }
+
+  // Get models from OpenAI-compatible providers
+  if (openaiCompatibleConfig?.providers) {
+    for (const provider of openaiCompatibleConfig.providers) {
+      if (!provider.isEnabled) continue;
+      if (!provider.models) continue;
+      for (const modelEntry of provider.models) {
+        const modelId = getProviderModelEntryId(modelEntry);
+        models.push(`openai-compatible:${provider.id}:${modelId}`);
+      }
+    }
+  }
+
   return models;
 }
 
@@ -80,8 +107,11 @@ function dedupeKeepFirst(models: string[]): string[] {
   return out;
 }
 
-export function getSuggestedModels(config: ProvidersConfigMap | null): string[] {
-  const customModels = getCustomModels(config);
+export function getSuggestedModels(
+  config: ProvidersConfigMap | null,
+  openaiCompatibleConfig: OpenAICompatibleProvidersInfo | null
+): string[] {
+  const customModels = getCustomModels(config, openaiCompatibleConfig);
   return dedupeKeepFirst([...customModels, ...BUILT_IN_MODELS]);
 }
 
@@ -121,6 +151,7 @@ export function useModelsFromSettings() {
   );
   const { config, refresh } = useProvidersConfig();
   const { routePriority, routeOverrides } = useRouting();
+  const { config: openaiCompatibleConfig } = useOpenAICompatibleProviders();
 
   const [defaultModel, setDefaultModel] = usePersistedState<string>(
     DEFAULT_MODEL_KEY,
@@ -156,9 +187,9 @@ export function useModelsFromSettings() {
   );
 
   const customModels = useMemo(() => {
-    const next = filterHiddenModels(getCustomModels(config), hiddenModels);
+    const next = filterHiddenModels(getCustomModels(config, openaiCompatibleConfig), hiddenModels);
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy]);
+  }, [config, openaiCompatibleConfig, hiddenModels, effectivePolicy]);
 
   const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
   const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
@@ -217,7 +248,10 @@ export function useModelsFromSettings() {
   );
 
   const models = useMemo(() => {
-    const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);
+    const suggested = filterHiddenModels(
+      getSuggestedModels(config, openaiCompatibleConfig),
+      hiddenModels
+    );
 
     // Hide models that are unavailable from both direct and gateway routes.
     // Keep all models visible while provider config is still loading to avoid UI flicker.

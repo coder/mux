@@ -14,6 +14,7 @@ import { GitInitBanner } from "../GitInitBanner/GitInitBanner";
 import { ConfiguredProvidersBar } from "../ConfiguredProvidersBar/ConfiguredProvidersBar";
 import { ConfigureProvidersPrompt } from "../ConfigureProvidersPrompt/ConfigureProvidersPrompt";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useOpenAICompatibleProviders } from "@/browser/hooks/useOpenAICompatibleProviders";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { AgentsInitBanner } from "../AgentsInitBanner/AgentsInitBanner";
 import {
@@ -60,7 +61,12 @@ function archivedListsEqual(
 }
 
 /** Check if any provider is configured (uses backend-computed isConfigured) */
-function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
+function hasConfiguredProvider(
+  config: ProvidersConfigMap | null,
+  openaiCompatibleConfig: { isConfigured: boolean } | null
+): boolean {
+  if (!config && !openaiCompatibleConfig) return false;
+  if (openaiCompatibleConfig?.isConfigured) return true;
   if (!config) return false;
   return Object.values(config).some((provider) => provider?.isConfigured);
 }
@@ -91,7 +97,8 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     { listener: true }
   );
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
-  const hasProviders = hasConfiguredProvider(providersConfig);
+  const { config: openaiCompatibleConfig } = useOpenAICompatibleProviders();
+  const hasProviders = hasConfiguredProvider(providersConfig, openaiCompatibleConfig);
   const shouldShowAgentsInitBanner = !providersLoading && hasProviders && showAgentsInitNudge;
 
   // Git repository state for the banner

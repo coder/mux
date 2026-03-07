@@ -44,6 +44,152 @@ describe("resolveModelForMetadata", () => {
   test("returns original model for unparseable ID", () => {
     expect(resolveModelForMetadata("bare-model", null)).toBe("bare-model");
   });
+
+  test("returns original model for openai-compatible without config", () => {
+    expect(resolveModelForMetadata("openai-compatible:together-ai:llama-3-1-70b", null)).toBe(
+      "openai-compatible:together-ai:llama-3-1-70b"
+    );
+  });
+
+  test("returns original model for openai-compatible when not found", () => {
+    const config = {
+      "openai-compatible": {
+        isEnabled: true,
+        isConfigured: true,
+        providers: [
+          {
+            id: "other-provider",
+            name: "Other Provider",
+            baseUrl: "https://other.example.com",
+            apiKeySet: false,
+            isEnabled: true,
+            isConfigured: true,
+            models: ["some-model"],
+          },
+        ],
+      },
+    } as unknown as ProvidersConfigMap;
+
+    expect(resolveModelForMetadata("openai-compatible:together-ai:llama-3-1-70b", config)).toBe(
+      "openai-compatible:together-ai:llama-3-1-70b"
+    );
+  });
+
+  test("returns mapped model for openai-compatible when mapping exists", () => {
+    const config = {
+      "openai-compatible": {
+        isEnabled: true,
+        isConfigured: true,
+        providers: [
+          {
+            id: "together-ai",
+            name: "Together AI",
+            baseUrl: "https://api.together.xyz",
+            apiKeySet: true,
+            isEnabled: true,
+            isConfigured: true,
+            models: [
+              {
+                id: "llama-3-1-70b",
+                mappedToModel: "anthropic:claude-sonnet-4-6",
+              },
+            ],
+          },
+        ],
+      },
+    } as unknown as ProvidersConfigMap;
+
+    expect(resolveModelForMetadata("openai-compatible:together-ai:llama-3-1-70b", config)).toBe(
+      "anthropic:claude-sonnet-4-6"
+    );
+  });
+});
+
+describe("getModelContextWindowOverride", () => {
+  test("returns null for openai-compatible without config", () => {
+    expect(getModelContextWindowOverride("openai-compatible:together-ai:llama-3-1-70b", null)).toBe(
+      null
+    );
+  });
+
+  test("returns null for openai-compatible when model not found", () => {
+    const config = {
+      "openai-compatible": {
+        isEnabled: true,
+        isConfigured: true,
+        providers: [
+          {
+            id: "other-provider",
+            name: "Other Provider",
+            baseUrl: "https://other.example.com",
+            apiKeySet: false,
+            isEnabled: true,
+            isConfigured: true,
+            models: ["some-model"],
+          },
+        ],
+      },
+    } as unknown as ProvidersConfigMap;
+
+    expect(
+      getModelContextWindowOverride("openai-compatible:together-ai:llama-3-1-70b", config)
+    ).toBe(null);
+  });
+
+  test("returns context window for openai-compatible model", () => {
+    const config = {
+      "openai-compatible": {
+        isEnabled: true,
+        isConfigured: true,
+        providers: [
+          {
+            id: "together-ai",
+            name: "Together AI",
+            baseUrl: "https://api.together.xyz",
+            apiKeySet: true,
+            isEnabled: true,
+            isConfigured: true,
+            models: [
+              {
+                id: "llama-3-1-70b",
+                contextWindowTokens: 131072,
+              },
+            ],
+          },
+        ],
+      },
+    } as unknown as ProvidersConfigMap;
+
+    expect(
+      getModelContextWindowOverride("openai-compatible:together-ai:llama-3-1-70b", config)
+    ).toBe(131072);
+  });
+
+  test("returns null for standard provider without configWindowTokens", () => {
+    const config: ProvidersConfigMap = {
+      ollama: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        models: ["llama3"],
+      },
+    };
+
+    expect(getModelContextWindowOverride("ollama:llama3", config)).toBe(null);
+  });
+
+  test("returns context window for standard provider", () => {
+    const config: ProvidersConfigMap = {
+      ollama: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "llama3", contextWindowTokens: 8192 }],
+      },
+    };
+
+    expect(getModelContextWindowOverride("ollama:llama3", config)).toBe(8192);
+  });
 });
 
 describe("gateway-scoped provider model entry lookup", () => {
