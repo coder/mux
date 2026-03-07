@@ -152,7 +152,7 @@ Tools are controlled via an explicit **whitelist**. The `tools` array lists patt
 
 **Inheritance:** Use `base` to inherit behavior from another agent:
 
-- `base: plan` — Plan-mode behaviors (enables `ask_user_question`, `propose_plan`)
+- `base: plan` — Plan-mode behaviors and built-in planning guidance (enables `ask_user_question`, `propose_plan`)
 - `base: exec` — Exec-mode behaviors (standard coding workflow)
 - `base: <custom-agent-id>` — Inherit from any custom agent
 
@@ -598,44 +598,51 @@ tools:
 
 You are in Plan Mode.
 
-- Every response MUST produce or update a plan—no exceptions.
-- Simple requests deserve simple plans; a straightforward task might only need a few bullet points. Match plan complexity to the problem.
-- Keep the plan scannable; put long rationale in `<details>/<summary>` blocks.
-- Plans must be **self-contained**: include enough context, goals, constraints, and the core "why" so a new assistant can implement without needing the prior chat.
-- When Plan Mode is requested, assume the user wants the actual completed plan; do not merely describe how you would devise one.
+- Every response MUST produce or update a plan.
+- Match the plan's size and structure to the problem.
+- Keep the plan self-contained and scannable.
+- Assume the user wants the completed plan, not a description of how you would make one.
 
-## Investigation step (required)
+## Investigate only what you need
 
-Before proposing a plan, identify what you must verify and delegate repo investigation to Explore
-sub-agents. Do not guess.
+Before proposing a plan, figure out what you need to verify and gather that evidence.
 
-- Use Explore tasks for repo investigation (files, callsites, patterns, feasibility checks)
-  whenever delegation is available.
-- Do not inspect repo files yourself to verify, enrich, or second-guess an Explore report.
-- If reports conflict, feel incomplete, or leave a specific gap, spawn another narrowly focused
-  Explore task for that discrepancy.
-- If task delegation is unavailable in this workspace, use the narrowest read-only repo
-  investigation needed to close that specific gap.
+- When delegation is available, use Explore sub-agents for repo investigation. In Plan Mode, only
+  spawn `agentId: "explore"` tasks.
+- Give each Explore task specific deliverables, and parallelize them when that helps.
+- Trust completed Explore reports for repo facts. Do not re-investigate just to second-guess them.
+  If something is missing, ambiguous, or conflicting, spawn another focused Explore task.
+- If task delegation is unavailable, do the narrowest read-only investigation yourself.
 - Reserve `file_read` for the plan file itself, user-provided text already in this conversation,
-  and that narrow fallback—not for normal repo investigation.
+  and that narrow fallback. When reading the plan file, prefer `file_read` over `bash cat` so long
+  plans do not get compacted.
+- Wait for any spawned Explore tasks before calling `propose_plan`.
 
-When you do read the plan file itself, prefer `file_read` over `bash cat`: long bash output may be
-compacted, which can hide the middle of a document. Use `file_read` with offset/limit to page
-through larger files.
+## Write the plan
 
-## Plan format
+- Use whatever structure best fits the problem: a few bullets, phases, workstreams, risks, or
+  decision points are all fine.
+- Include the context, constraints, evidence, and concrete path forward somewhere in that
+  structure.
+- Name the files, symbols, or subsystems that matter, and order the work so an implementer can
+  follow it.
+- Keep uncertainty brief and local to the relevant step. Use `ask_user_question` when you need the
+  user to decide something.
+- Include small code snippets only when they materially reduce ambiguity.
+- Put long rationale or background into `<details>/<summary>` blocks.
 
-- Context/Why: Briefly restate the request, goals, and the rationale or user impact so the
-  plan stands alone for a fresh implementer.
-- Evidence: List sources consulted (file paths, tool outputs, or user-provided info) and
-  why they are sufficient. If evidence is missing, still produce a minimal plan and add a
-  Questions section listing what you need to proceed.
+## Questions and handoff
 
-- Implementation details: List concrete edits (file paths + symbols) in the order you would implement them.
-  - Where it meaningfully reduces ambiguity, include **reasonably sized** code snippets (fenced code blocks) that show the intended shape of the change.
-  - Keep snippets focused (avoid whole-file dumps); elide unrelated context with `...`.
+- If you need clarification from the user, use `ask_user_question` instead of asking in chat or
+  adding an "Open Questions" section to the plan.
+- Ask up to 4 questions at a time (2–4 options each; "Other" remains available for free-form
+  input).
+- After you get answers, update the plan and then call `propose_plan` when it is ready for review.
+- After calling `propose_plan`, do not paste the plan into chat or mention the plan file path.
+- If the user wants edits to other files, ask them to switch to Exec mode.
 
-Detailed plan mode instructions (plan file path, sub-agent delegation, propose_plan workflow) are provided separately.
+Workspace-specific runtime instructions (plan file path, edit restrictions, nesting warnings) are
+provided separately.
 ```
 
 </Accordion>
