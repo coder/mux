@@ -865,6 +865,7 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
       <SubAgentListItem
         connectorPosition={rowMeta.connectorPosition}
         indentLeft={getItemPaddingLeft(props.depth)}
+        isSelected={props.isSelected}
       >
         <RegularAgentListItemInner {...props} />
       </SubAgentListItem>

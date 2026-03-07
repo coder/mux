@@ -459,6 +459,51 @@ export const SubAgentWithStatusText: Story = {
     }),
 };
 
+export const SubAgentMiddleSelectedWithStatusText: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Middle Selected With Status Text",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 1,
+      rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+      isSelected: true,
+      activeWorkspaceId: "ws-active",
+    }),
+};
+
+export const SubAgentLastWithStatusText: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Last With Status Text",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 1,
+      rowRenderMeta: createSubAgentRowRenderMeta("last"),
+      activeWorkspaceId: "ws-active",
+    }),
+};
+
+export const SubAgentLastSelected: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Last Selected",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: createSubAgentRowRenderMeta("last"),
+      isSelected: true,
+    }),
+};
+
+export const SubAgentLastSelectedWithStatusText: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Last Selected With Status Text",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 1,
+      rowRenderMeta: createSubAgentRowRenderMeta("last"),
+      isSelected: true,
+      activeWorkspaceId: "ws-active",
+    }),
+};
 export const ParentWithCompletedChildrenCollapsed: Story = {
   args: undefined as never,
   name: "SubAgent States/Parent With Completed Children Collapsed",
