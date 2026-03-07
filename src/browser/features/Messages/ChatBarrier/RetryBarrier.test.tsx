@@ -136,6 +136,26 @@ describe("RetryBarrier", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
+  test("uses delayed-start copy while the first response is still starting", () => {
+    currentWorkspaceState = createWorkspaceState({
+      isStreamStarting: true,
+      messages: [
+        {
+          type: "user",
+          id: "user-1",
+          historyId: "user-1",
+          content: "Hello",
+          historySequence: 1,
+        },
+      ],
+    });
+
+    const view = render(<RetryBarrier workspaceId="ws-1" />);
+
+    expect(view.getByText("Response startup is taking longer than expected")).toBeTruthy();
+    expect(view.queryByText("Stream interrupted")).toBeNull();
+  });
+
   test("shows error details when manual resume fails before stream events", async () => {
     resumeStreamResult = {
       success: false,
