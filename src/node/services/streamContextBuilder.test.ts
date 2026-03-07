@@ -28,7 +28,7 @@ class TestRuntime extends LocalRuntime {
 }
 
 describe("buildPlanInstructions", () => {
-  test("injects anti-reverification guidance when building plan mode instructions", async () => {
+  test("prepends runtime plan file guidance ahead of caller additional instructions", async () => {
     using tempRoot = new DisposableTempDir("stream-context-builder");
 
     const projectPath = path.join(tempRoot.path, "project");
@@ -46,6 +46,9 @@ describe("buildPlanInstructions", () => {
 
     const runtime = new TestRuntime(projectPath, muxHome);
     const requestPayloadMessages = [createMuxMessage("u1", "user", "plan the fix")];
+    const callerInstructions = "Caller-specific plan note";
+
+    const expectedPlanFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
 
     const result = await buildPlanInstructions({
       runtime,
@@ -56,7 +59,7 @@ describe("buildPlanInstructions", () => {
       effectiveAgentId: "plan",
       agentIsPlanLike: true,
       agentDiscoveryPath: projectPath,
-      additionalSystemInstructions: undefined,
+      additionalSystemInstructions: callerInstructions,
       shouldDisableTaskToolsForDepth: false,
       taskDepth: 0,
       taskSettings: DEFAULT_TASK_SETTINGS,
@@ -64,16 +67,15 @@ describe("buildPlanInstructions", () => {
     });
 
     expect(result.effectiveAdditionalInstructions).toContain(
-      "Anti-pattern: using `file_read` or `bash` in Plan Mode"
+      `Plan file path: ${expectedPlanFilePath}`
     );
-    expect(result.effectiveAdditionalInstructions).toContain(
-      "spawn another narrowly focused Explore task instead"
-    );
-    expect(result.effectiveAdditionalInstructions).toContain(
-      "If task tools are disabled in this workspace, use the narrowest read-only investigation needed"
-    );
-    expect(result.effectiveAdditionalInstructions).not.toContain(
-      "only re-check if the report is ambiguous or contradicts other evidence"
+    expect(result.effectiveAdditionalInstructions).toContain(callerInstructions);
+    expect(result.effectiveAdditionalInstructions).toContain("propose_plan");
+    expect(
+      result.effectiveAdditionalInstructions?.indexOf(`Plan file path: ${expectedPlanFilePath}`)
+    ).toBeLessThan(
+      result.effectiveAdditionalInstructions?.indexOf(callerInstructions) ??
+        Number.POSITIVE_INFINITY
     );
   });
 

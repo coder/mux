@@ -131,6 +131,36 @@ Replaced body.
     expect(replacerBody).not.toContain("Base instructions");
   });
 
+  test("project plan agents can replace the built-in plan prompt body without losing inherited frontmatter", async () => {
+    using tempDir = new DisposableTempDir("agent-plan-guidance");
+    const agentsRoot = path.join(tempDir.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(agentsRoot, "custom-plan.md"),
+      `---
+name: Custom Plan
+base: plan
+prompt:
+  append: false
+---
+Custom planning instructions.
+`,
+      "utf-8"
+    );
+
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const customPlanBody = await resolveAgentBody(runtime, tempDir.path, "custom-plan");
+    expect(customPlanBody).toBe("Custom planning instructions.\n");
+
+    const customPlanFrontmatter = await resolveAgentFrontmatter(
+      runtime,
+      tempDir.path,
+      "custom-plan"
+    );
+    expect(customPlanFrontmatter.tools?.require).toEqual(["propose_plan"]);
+  });
   test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {
     using project = new DisposableTempDir("agent-same-name");
     using global = new DisposableTempDir("agent-same-name-global");
