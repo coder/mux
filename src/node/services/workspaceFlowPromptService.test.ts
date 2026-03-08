@@ -1,6 +1,14 @@
+import * as fsPromises from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+
+import type { Config } from "@/node/config";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
+
 import {
   buildFlowPromptUpdateMessage,
   getFlowPromptPollIntervalMs,
+  WorkspaceFlowPromptService,
 } from "./workspaceFlowPromptService";
 
 describe("getFlowPromptPollIntervalMs", () => {
@@ -34,6 +42,66 @@ describe("getFlowPromptPollIntervalMs", () => {
         nowMs,
       })
     ).toBeNull();
+  });
+});
+
+describe("WorkspaceFlowPromptService.renamePromptFile", () => {
+  function createMetadata(params: {
+    projectPath: string;
+    name: string;
+    srcBaseDir: string;
+    projectName?: string;
+  }): WorkspaceMetadata {
+    return {
+      id: "workspace-1",
+      name: params.name,
+      projectName: params.projectName ?? path.basename(params.projectPath),
+      projectPath: params.projectPath,
+      runtimeConfig: {
+        type: "worktree",
+        srcBaseDir: params.srcBaseDir,
+      },
+    };
+  }
+
+  test("moves an existing prompt from the renamed workspace directory to the new filename", async () => {
+    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "flow-prompt-rename-"));
+    const sessionsDir = path.join(tempDir, "sessions");
+    const srcBaseDir = path.join(tempDir, "src");
+    const projectPath = path.join(tempDir, "projects", "repo");
+    const oldMetadata = createMetadata({ projectPath, name: "old-name", srcBaseDir });
+    const newMetadata = createMetadata({ projectPath, name: "new-name", srcBaseDir });
+    const newWorkspacePath = path.join(srcBaseDir, "repo", "new-name");
+    const oldPromptPathAfterWorkspaceRename = path.join(
+      newWorkspacePath,
+      ".mux/prompts/old-name.md"
+    );
+    const newPromptPath = path.join(newWorkspacePath, ".mux/prompts/new-name.md");
+
+    await fsPromises.mkdir(path.dirname(oldPromptPathAfterWorkspaceRename), { recursive: true });
+    await fsPromises.writeFile(
+      oldPromptPathAfterWorkspaceRename,
+      "Persist flow prompt across rename",
+      "utf8"
+    );
+
+    const mockConfig = {
+      getAllWorkspaceMetadata: () => Promise.resolve([newMetadata]),
+      getSessionDir: () => path.join(sessionsDir, oldMetadata.id),
+    } as unknown as Config;
+
+    const service = new WorkspaceFlowPromptService(mockConfig);
+
+    try {
+      await service.renamePromptFile(oldMetadata.id, oldMetadata, newMetadata);
+
+      expect(await fsPromises.readFile(newPromptPath, "utf8")).toBe(
+        "Persist flow prompt across rename"
+      );
+      await expect(fsPromises.access(oldPromptPathAfterWorkspaceRename)).rejects.toThrow();
+    } finally {
+      await fsPromises.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

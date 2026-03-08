@@ -376,6 +376,7 @@ describe("Flow Prompting (mock AI router)", () => {
       expect(existsSync(promptPath)).toBe(true);
       expect(within(app.view.container).queryByText("Flow Prompting")).toBeTruthy();
 
+      collector.clear();
       const disableAgainButton = await within(app.view.container).findByRole(
         "button",
         { name: "Disable" },
@@ -389,6 +390,10 @@ describe("Flow Prompting (mock AI router)", () => {
         { timeout: 10_000 }
       );
       await user.click(deleteButton);
+
+      const clearingStreamEnd = await collector.waitForEvent("stream-end", 45_000);
+      expect(clearingStreamEnd).not.toBeNull();
+      await app.chat.expectTranscriptContains("The flow prompt file is now empty.", 20_000);
 
       await waitFor(
         () => {
@@ -407,6 +412,9 @@ describe("Flow Prompting (mock AI router)", () => {
         },
         { timeout: 10_000 }
       );
+
+      const lastPrompt = getLastMockPromptMessages(app);
+      expect(getLastUserPromptText(lastPrompt)).toContain("The flow prompt file is now empty.");
       expect(await getActiveTextarea(app)).toBeTruthy();
     } finally {
       await collector.waitForStop();

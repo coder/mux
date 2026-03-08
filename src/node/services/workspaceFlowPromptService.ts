@@ -313,23 +313,39 @@ export class WorkspaceFlowPromptService extends EventEmitter {
   ): Promise<void> {
     const oldContext = this.getWorkspaceContextFromMetadata(oldMetadata);
     const newContext = this.getWorkspaceContextFromMetadata(newMetadata);
+    const renamedWorkspacePromptPath = joinForRuntime(
+      newMetadata.runtimeConfig,
+      newContext.workspacePath,
+      getFlowPromptRelativePath(oldMetadata.name)
+    );
 
-    if (oldContext.promptPath === newContext.promptPath) {
+    if (renamedWorkspacePromptPath === newContext.promptPath) {
       await this.refreshMonitor(workspaceId, true);
       return;
     }
 
     try {
-      const content = await readFileString(oldContext.runtime, oldContext.promptPath);
+      const content = await readFileString(newContext.runtime, renamedWorkspacePromptPath);
       await writeFileString(newContext.runtime, newContext.promptPath, content);
       await this.deleteFile(
-        oldContext.runtime,
-        oldContext.metadata.runtimeConfig,
-        oldContext.workspacePath,
-        oldContext.promptPath
+        newContext.runtime,
+        newContext.metadata.runtimeConfig,
+        newContext.workspacePath,
+        renamedWorkspacePromptPath
       );
     } catch {
-      // No prompt file to rename.
+      try {
+        const content = await readFileString(oldContext.runtime, oldContext.promptPath);
+        await writeFileString(newContext.runtime, newContext.promptPath, content);
+        await this.deleteFile(
+          oldContext.runtime,
+          oldContext.metadata.runtimeConfig,
+          oldContext.workspacePath,
+          oldContext.promptPath
+        );
+      } catch {
+        // No prompt file to rename.
+      }
     }
 
     await this.refreshMonitor(workspaceId, true);
@@ -512,8 +528,10 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     persisted: PersistedFlowPromptState,
     pendingFingerprint: string | null
   ): boolean {
+    const previousTrimmed = (persisted.lastSentContent ?? "").trim();
+
     if (!snapshot.exists || snapshot.contentFingerprint == null) {
-      return false;
+      return previousTrimmed.length > 0;
     }
 
     const currentFingerprint = snapshot.contentFingerprint;
@@ -525,7 +543,6 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       return false;
     }
 
-    const previousTrimmed = (persisted.lastSentContent ?? "").trim();
     if (!snapshot.hasNonEmptyContent && previousTrimmed.length === 0) {
       return false;
     }
