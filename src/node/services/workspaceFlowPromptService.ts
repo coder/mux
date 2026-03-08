@@ -625,6 +625,10 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     const previousTrimmed = (persisted.lastSentContent ?? "").trim();
 
     if (!snapshot.exists || snapshot.contentFingerprint == null) {
+      const clearedFingerprint = computeFingerprint(snapshot.content);
+      if (pendingFingerprint === clearedFingerprint) {
+        return false;
+      }
       return previousTrimmed.length > 0;
     }
 

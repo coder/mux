@@ -265,6 +265,41 @@ test("rememberUpdate prunes superseded queued revisions from memory", () => {
   ]);
 });
 
+test("shouldEmitUpdate skips repeated clear notifications while deletion is pending", () => {
+  const service = new WorkspaceFlowPromptService({
+    getSessionDir: () => "/tmp/flow-prompt-session",
+  } as unknown as Config);
+
+  const shouldEmitUpdate = (
+    service as unknown as {
+      shouldEmitUpdate: (
+        snapshot: unknown,
+        persisted: unknown,
+        pendingFingerprint: string | null
+      ) => boolean;
+    }
+  ).shouldEmitUpdate.bind(service);
+
+  expect(
+    shouldEmitUpdate(
+      {
+        workspaceId: "workspace-1",
+        path: "/tmp/workspace/.mux/prompts/feature.md",
+        exists: false,
+        content: "",
+        hasNonEmptyContent: false,
+        modifiedAtMs: null,
+        contentFingerprint: null,
+      },
+      {
+        lastSentContent: "Keep this instruction active.",
+        lastSentFingerprint: "previous-fingerprint",
+      },
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+  ).toBe(false);
+});
+
 describe("buildFlowPromptUpdateMessage", () => {
   const flowPromptPath = "/tmp/workspace/.mux/prompts/feature-branch.md";
 
