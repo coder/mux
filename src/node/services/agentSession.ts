@@ -2118,8 +2118,6 @@ export class AgentSession {
           return Err(createUnknownSendMessageError(appendCompactionResult.error));
         }
 
-        await internal?.onAccepted?.();
-
         this.emitChatEvent({
           type: "auto-compaction-triggered",
           reason: "on-send",

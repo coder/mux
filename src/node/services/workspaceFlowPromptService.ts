@@ -7,6 +7,7 @@ import type { WorkspaceActivitySnapshot, WorkspaceMetadata } from "@/common/type
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import {
   FLOW_PROMPTS_DIR,
@@ -207,6 +208,7 @@ export declare interface WorkspaceFlowPromptService {
 export class WorkspaceFlowPromptService extends EventEmitter {
   private readonly monitors = new Map<string, FlowPromptMonitor>();
   private readonly activityRecencyByWorkspaceId = new Map<string, number | null>();
+  private readonly rememberedUpdates = new Map<string, Map<string, string>>();
   private detachEventSource: (() => void) | null = null;
 
   constructor(private readonly config: Config) {
@@ -408,6 +410,30 @@ export class WorkspaceFlowPromptService extends EventEmitter {
 
     monitor.pendingFingerprint = computeFingerprint(nextContent);
     void this.refreshMonitor(workspaceId, true);
+  }
+
+  rememberUpdate(workspaceId: string, fingerprint: string, nextContent: string): void {
+    let updatesForWorkspace = this.rememberedUpdates.get(workspaceId);
+    if (!updatesForWorkspace) {
+      updatesForWorkspace = new Map<string, string>();
+      this.rememberedUpdates.set(workspaceId, updatesForWorkspace);
+    }
+
+    updatesForWorkspace.set(fingerprint, nextContent);
+  }
+
+  async markAcceptedUpdateByFingerprint(workspaceId: string, fingerprint: string): Promise<void> {
+    const rememberedContent = this.rememberedUpdates.get(workspaceId)?.get(fingerprint) ?? null;
+    if (rememberedContent != null) {
+      await this.markAcceptedUpdate(workspaceId, rememberedContent);
+      this.rememberedUpdates.delete(workspaceId);
+      return;
+    }
+
+    const snapshot = await this.readPromptSnapshot(workspaceId);
+    if (snapshot.contentFingerprint === fingerprint) {
+      await this.markAcceptedUpdate(workspaceId, snapshot.content);
+    }
   }
 
   async markAcceptedUpdate(workspaceId: string, nextContent: string): Promise<void> {
@@ -699,7 +725,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     filePath: string
   ): Promise<void> {
     if (isHostWritableRuntime(runtimeConfig)) {
-      await fsPromises.rm(filePath, { force: true });
+      await fsPromises.rm(expandTilde(filePath), { force: true });
       return;
     }
 

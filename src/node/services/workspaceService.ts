@@ -1496,6 +1496,51 @@ export class WorkspaceService extends EventEmitter {
   // Clear persisted sidebar status only after the user turn is accepted and emitted.
   // sendMessage can fail before acceptance (for example invalid_model_string), so
   // clearing inside sendMessage would drop status for turns that never entered history.
+  private maybeFinalizeAcceptedFlowPromptUpdate(message: WorkspaceChatMessage): void {
+    if (message.type !== "message" || message.role !== "user") {
+      return;
+    }
+
+    const messageRecord = message as {
+      workspaceId?: unknown;
+      metadata?: { muxMetadata?: unknown } | undefined;
+    };
+    const muxMetadata = messageRecord.metadata?.muxMetadata;
+    if (typeof muxMetadata !== "object" || muxMetadata === null) {
+      return;
+    }
+
+    const flowPromptMetadata = muxMetadata as {
+      type?: unknown;
+      fingerprint?: unknown;
+    };
+    const fingerprint = flowPromptMetadata.fingerprint;
+    if (
+      flowPromptMetadata.type !== "flow-prompt-update" ||
+      typeof fingerprint !== "string" ||
+      fingerprint.length === 0
+    ) {
+      return;
+    }
+
+    const workspaceId =
+      typeof messageRecord.workspaceId === "string" && messageRecord.workspaceId.length > 0
+        ? messageRecord.workspaceId
+        : null;
+    if (!workspaceId) {
+      return;
+    }
+
+    void this.flowPromptService
+      .markAcceptedUpdateByFingerprint(workspaceId, fingerprint)
+      .catch((error) => {
+        log.error("Failed to persist accepted Flow Prompting update", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
   private shouldClearAgentStatusFromChatMessage(message: WorkspaceChatMessage): boolean {
     return (
       message.type === "message" && message.role === "user" && message.metadata?.synthetic !== true
@@ -1530,6 +1575,7 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      this.maybeFinalizeAcceptedFlowPromptUpdate(event.message);
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
       }
@@ -3008,7 +3054,6 @@ export class WorkspaceService extends EventEmitter {
       synthetic: true,
       requireIdle: true,
       skipAutoResumeReset: true,
-      onAccepted: internal.onAccepted,
     });
 
     if (!result.success && session.isBusy()) {
