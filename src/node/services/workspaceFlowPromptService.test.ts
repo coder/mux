@@ -229,6 +229,42 @@ describe("WorkspaceFlowPromptService runtime error handling", () => {
   });
 });
 
+test("rememberUpdate prunes superseded queued revisions from memory", () => {
+  const service = new WorkspaceFlowPromptService({
+    getSessionDir: () => "/tmp/flow-prompt-session",
+  } as unknown as Config);
+  const workspaceId = "workspace-1";
+
+  const monitors = (
+    service as unknown as {
+      monitors: Map<string, { pendingFingerprint: string | null }>;
+    }
+  ).monitors;
+  monitors.set(workspaceId, { pendingFingerprint: null });
+
+  service.rememberUpdate(workspaceId, "in-flight", "Persist this accepted revision");
+  service.rememberUpdate(workspaceId, "queued-1", "First queued revision");
+
+  const monitor = monitors.get(workspaceId);
+  if (!monitor) {
+    throw new Error("Expected Flow Prompting monitor to exist");
+  }
+  monitor.pendingFingerprint = "queued-1";
+
+  service.rememberUpdate(workspaceId, "queued-2", "Latest queued revision");
+
+  const rememberedUpdates = (
+    service as unknown as {
+      rememberedUpdates: Map<string, Map<string, string>>;
+    }
+  ).rememberedUpdates;
+
+  expect([...(rememberedUpdates.get(workspaceId)?.entries() ?? [])]).toEqual([
+    ["in-flight", "Persist this accepted revision"],
+    ["queued-2", "Latest queued revision"],
+  ]);
+});
+
 describe("buildFlowPromptUpdateMessage", () => {
   const flowPromptPath = "/tmp/workspace/.mux/prompts/feature-branch.md";
 

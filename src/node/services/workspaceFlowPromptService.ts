@@ -444,7 +444,22 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       this.rememberedUpdates.set(workspaceId, updatesForWorkspace);
     }
 
+    const supersededPendingFingerprint = this.monitors.get(workspaceId)?.pendingFingerprint ?? null;
+    if (supersededPendingFingerprint && supersededPendingFingerprint !== fingerprint) {
+      updatesForWorkspace.delete(supersededPendingFingerprint);
+    }
+
     updatesForWorkspace.set(fingerprint, nextContent);
+
+    // Flow Prompting only ever needs to remember the accepted in-flight revision plus the
+    // latest queued revision. Older queued saves are overwritten before they can be sent.
+    while (updatesForWorkspace.size > 2) {
+      const oldestFingerprint = updatesForWorkspace.keys().next().value;
+      if (typeof oldestFingerprint !== "string") {
+        break;
+      }
+      updatesForWorkspace.delete(oldestFingerprint);
+    }
   }
 
   forgetUpdate(workspaceId: string, fingerprint: string): void {

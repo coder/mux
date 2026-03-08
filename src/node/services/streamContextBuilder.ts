@@ -29,7 +29,7 @@ import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeU
 import { getFlowPromptFileHint } from "@/common/utils/ui/flowPrompting";
 import { getFlowPromptRelativePath } from "@/common/constants/flowPrompting";
 import { hasStartHerePlanSummary } from "@/common/utils/messages/startHerePlanSummary";
-import { readPlanFile, readFileString } from "@/node/utils/runtime/helpers";
+import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   readAgentDefinition,
   resolveAgentBody,
@@ -160,12 +160,14 @@ export async function buildPlanInstructions(
     workspacePath
   );
   try {
-    await readFileString(runtime, flowPromptPath);
-    const flowPromptHint = getFlowPromptFileHint(flowPromptPath, true);
-    if (flowPromptHint) {
-      effectiveAdditionalInstructions = effectiveAdditionalInstructions
-        ? `${flowPromptHint}\n\n${effectiveAdditionalInstructions}`
-        : flowPromptHint;
+    const flowPromptStat = await runtime.stat(flowPromptPath);
+    if (!flowPromptStat.isDirectory) {
+      const flowPromptHint = getFlowPromptFileHint(flowPromptPath, true);
+      if (flowPromptHint) {
+        effectiveAdditionalInstructions = effectiveAdditionalInstructions
+          ? `${flowPromptHint}\n\n${effectiveAdditionalInstructions}`
+          : flowPromptHint;
+      }
     }
   } catch {
     // No flow prompt file yet.

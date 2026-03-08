@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { getFlowPromptRelativePath } from "@/common/constants/flowPrompting";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 import { createMuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -232,6 +233,77 @@ describe("buildPlanInstructions", () => {
       `A plan file exists at: ${fromSlicedPayload.planFilePath}`
     );
     expect(fromFullHistory.effectiveAdditionalInstructions).toBeUndefined();
+  });
+
+  test("checks flow prompt existence via stat without reading the full file", async () => {
+    using tempRoot = new DisposableTempDir("stream-context-builder");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata: WorkspaceMetadata = {
+      id: "ws-flow-prompt",
+      name: "workspace-1",
+      projectName: "project-1",
+      projectPath,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const flowPromptPath = path.join(projectPath, getFlowPromptRelativePath(metadata.name));
+    await fs.mkdir(path.dirname(flowPromptPath), { recursive: true });
+    await fs.writeFile(flowPromptPath, "Keep the fix scoped.", "utf-8");
+
+    class FlowPromptTrackingRuntime extends TestRuntime {
+      public flowPromptStatCalls = 0;
+      public flowPromptReadCalls = 0;
+
+      constructor(
+        projectPath: string,
+        muxHomePath: string,
+        private readonly trackedPath: string
+      ) {
+        super(projectPath, muxHomePath);
+      }
+
+      override async stat(filePath: string, abortSignal?: AbortSignal) {
+        if (path.resolve(filePath) === this.trackedPath) {
+          this.flowPromptStatCalls += 1;
+        }
+        return super.stat(filePath, abortSignal);
+      }
+
+      override readFile(filePath: string, abortSignal?: AbortSignal) {
+        if (path.resolve(filePath) === this.trackedPath) {
+          this.flowPromptReadCalls += 1;
+        }
+        return super.readFile(filePath, abortSignal);
+      }
+    }
+
+    const runtime = new FlowPromptTrackingRuntime(projectPath, muxHome, flowPromptPath);
+    const result = await buildPlanInstructions({
+      runtime,
+      metadata,
+      workspaceId: metadata.id,
+      workspacePath: projectPath,
+      effectiveMode: "exec",
+      effectiveAgentId: "exec",
+      agentIsPlanLike: false,
+      agentDiscoveryPath: projectPath,
+      additionalSystemInstructions: undefined,
+      shouldDisableTaskToolsForDepth: false,
+      taskDepth: 0,
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      requestPayloadMessages: [createMuxMessage("u1", "user", "continue")],
+    });
+
+    expect(result.effectiveAdditionalInstructions).toContain(
+      `Flow prompt file path: ${flowPromptPath}`
+    );
+    expect(runtime.flowPromptStatCalls).toBeGreaterThan(0);
+    expect(runtime.flowPromptReadCalls).toBe(0);
   });
 });
 
