@@ -40,7 +40,6 @@ import { getErrorMessage } from "@/common/utils/errors";
 export function System1Section() {
   const { api } = useAPI();
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
-  const { config: openaiCompatibleConfig } = useOpenAICompatibleProviders();
 
   const [taskSettings, setTaskSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
   const [loaded, setLoaded] = useState(false);
@@ -289,7 +288,7 @@ export function System1Section() {
     );
   }
 
-  const allModels = getSuggestedModels(providersConfig, openaiCompatibleConfig ?? null);
+  const allModels = getSuggestedModels(providersConfig);
 
   const bashOutputCompactionMinLines =
     taskSettings.bashOutputCompactionMinLines ??

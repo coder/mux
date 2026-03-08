@@ -32,7 +32,6 @@ import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { isRegularProviderConfigInfo } from "@/common/orpc/schemas/api";
 import { OpenAICompatibleProvidersSection } from "./OpenAICompatibleProvidersSection";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
@@ -384,20 +383,10 @@ export function ProvidersSection() {
   const [codexOauthAuthorizeUrl, setCodexOauthAuthorizeUrl] = useState<string | null>(null);
 
   const openaiConfig = config?.openai;
-  const codexOauthIsConnected =
-    openaiConfig && isRegularProviderConfigInfo(openaiConfig)
-      ? openaiConfig.codexOauthSet === true
-      : false;
-  const openaiApiKeySet =
-    openaiConfig && isRegularProviderConfigInfo(openaiConfig)
-      ? openaiConfig.apiKeySet === true
-      : false;
+  const codexOauthIsConnected = openaiConfig?.codexOauthSet === true;
+  const openaiApiKeySet = openaiConfig?.apiKeySet === true;
   const codexOauthDefaultAuth =
-    openaiConfig && isRegularProviderConfigInfo(openaiConfig)
-      ? openaiConfig.codexOauthDefaultAuth === "apiKey"
-        ? "apiKey"
-        : "oauth"
-      : "oauth";
+    openaiConfig?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
   const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
 
   const codexOauthLoginInProgress =

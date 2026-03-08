@@ -28,7 +28,6 @@ import {
 } from "@/browser/utils/policyUi";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
-import { isRegularProviderConfigInfo } from "@/common/orpc/schemas/api";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
@@ -1403,26 +1402,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (!signal.aborted) {
           const openaiConfig = config?.openai;
           const muxGatewayConfig = config?.["mux-gateway"];
-          setOpenAIKeySet(
-            openaiConfig && isRegularProviderConfigInfo(openaiConfig)
-              ? openaiConfig.apiKeySet
-              : false
-          );
-          setOpenAIProviderEnabled(
-            openaiConfig && isRegularProviderConfigInfo(openaiConfig)
-              ? openaiConfig.isEnabled
-              : true
-          );
-          setMuxGatewayCouponSet(
-            muxGatewayConfig && isRegularProviderConfigInfo(muxGatewayConfig)
-              ? (muxGatewayConfig.couponCodeSet ?? false)
-              : false
-          );
-          setMuxGatewayEnabled(
-            muxGatewayConfig && isRegularProviderConfigInfo(muxGatewayConfig)
-              ? muxGatewayConfig.isEnabled
-              : true
-          );
+          setOpenAIKeySet(openaiConfig?.apiKeySet ?? false);
+          setOpenAIProviderEnabled(openaiConfig?.isEnabled ?? true);
+          setMuxGatewayCouponSet(muxGatewayConfig?.couponCodeSet ?? false);
+          setMuxGatewayEnabled(muxGatewayConfig?.isEnabled ?? true);
         }
       } catch {
         // Ignore errors fetching config

@@ -674,9 +674,10 @@ export class ProviderModelFactory {
 
       // Check if provider is supported (prevents silent failures when adding to PROVIDER_REGISTRY
       // but forgetting to implement handler below)
-      // Note: "openai-compatible" is a special multi-instance provider handled separately
-      const isSupportedProvider =
-        providerName in PROVIDER_REGISTRY || providerName === "openai-compatible";
+      // Note: "openai-compatible" and "openai-compatible/*" are special multi-instance providers handled separately
+      const isOpenAICompatibleProvider =
+        providerName === "openai-compatible" || providerName.startsWith("openai-compatible/");
+      const isSupportedProvider = providerName in PROVIDER_REGISTRY || isOpenAICompatibleProvider;
       if (!isSupportedProvider) {
         return Err({
           type: "provider_not_supported",
@@ -1542,18 +1543,12 @@ export class ProviderModelFactory {
       }
 
       // Handle OpenAI-compatible providers (dynamic provider instances)
-      // Model string format: "openai-compatible:<instance-id>:<model-id>"
-      if (providerName === "openai-compatible") {
-        // Parse instance ID from model string
-        const colonIndex = modelId.indexOf(":");
-        if (colonIndex === -1) {
-          return Err({
-            type: "invalid_model_string",
-            message: `Invalid openai-compatible model string. Expected "openai-compatible:<instance-id>:<model-id>"`,
-          });
-        }
-        const instanceId = modelId.slice(0, colonIndex);
-        const actualModelId = modelId.slice(colonIndex + 1);
+      const isOpenAICompatible =
+        providerName === "openai-compatible" || providerName.startsWith("openai-compatible/");
+
+      if (isOpenAICompatible) {
+        const instanceId = providerName.slice("openai-compatible/".length);
+        const actualModelId = modelId;
 
         // Load the openai-compatible provider config
         const openaiCompatibleConfig = providersConfig["openai-compatible"] as
@@ -1566,7 +1561,7 @@ export class ProviderModelFactory {
         if (!instance) {
           return Err({
             type: "provider_not_supported",
-            provider: `openai-compatible:${instanceId}`,
+            provider: `openai-compatible/${instanceId}`,
           });
         }
 
@@ -1574,7 +1569,7 @@ export class ProviderModelFactory {
         if (instance.enabled === false) {
           return Err({
             type: "provider_disabled",
-            provider: `openai-compatible:${instanceId}`,
+            provider: `openai-compatible/${instanceId}`,
           });
         }
 
@@ -1583,7 +1578,7 @@ export class ProviderModelFactory {
         if (instance.apiKey && isOpReference(instance.apiKey) && !resolvedApiKey) {
           return Err({
             type: "api_key_not_found",
-            provider: `openai-compatible:${instanceId}`,
+            provider: `openai-compatible/${instanceId}`,
           });
         }
 
@@ -1591,7 +1586,7 @@ export class ProviderModelFactory {
         if (!resolvedApiKey && !instance.baseUrl) {
           return Err({
             type: "api_key_not_found",
-            provider: `openai-compatible:${instanceId}`,
+            provider: `openai-compatible/${instanceId}`,
           });
         }
 

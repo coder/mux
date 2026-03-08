@@ -20,7 +20,6 @@ import {
 } from "@/common/utils/ai/models";
 import { isModelAvailable } from "@/common/routing";
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
-import { getModelProvider } from "@/common/utils/ai/models";
 import type {
   OpenAICompatibleProvidersInfo,
 } from "@/common/orpc/types";
@@ -31,39 +30,19 @@ import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
 const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
 
-function getCustomModels(
-  config: ProvidersConfigMap | null,
-  openaiCompatibleConfig: OpenAICompatibleProvidersInfo | null
-): string[] {
-  if (!config && !openaiCompatibleConfig) return [];
+function getCustomModels(config: ProvidersConfigMap | null): string[] {
+  if (!config) return [];
   const models: string[] = [];
 
-  // Get models from regular providers
-  if (config) {
-    for (const [provider, info] of Object.entries(config)) {
-      // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
-      if (provider === "mux-gateway") continue;
-      // Skip openai-compatible - handled separately
-      if (provider === "openai-compatible") continue;
-      // Only surface custom models from enabled providers
-      if (!info.isEnabled) continue;
-      if (!info.models) continue;
-      for (const modelEntry of info.models) {
-        const modelId = getProviderModelEntryId(modelEntry);
-        models.push(`${provider}:${modelId}`);
-      }
-    }
-  }
-
-  // Get models from OpenAI-compatible providers
-  if (openaiCompatibleConfig?.providers) {
-    for (const provider of openaiCompatibleConfig.providers) {
-      if (!provider.isEnabled) continue;
-      if (!provider.models) continue;
-      for (const modelEntry of provider.models) {
-        const modelId = getProviderModelEntryId(modelEntry);
-        models.push(`openai-compatible:${provider.id}:${modelId}`);
-      }
+  for (const [provider, info] of Object.entries(config)) {
+    // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
+    if (provider === "mux-gateway") continue;
+    // Only surface custom models from enabled providers
+    if (!info.isEnabled) continue;
+    if (!info.models) continue;
+    for (const modelEntry of info.models) {
+      const modelId = getProviderModelEntryId(modelEntry);
+      models.push(`${provider}:${modelId}`);
     }
   }
 
@@ -107,11 +86,8 @@ function dedupeKeepFirst(models: string[]): string[] {
   return out;
 }
 
-export function getSuggestedModels(
-  config: ProvidersConfigMap | null,
-  openaiCompatibleConfig: OpenAICompatibleProvidersInfo | null
-): string[] {
-  const customModels = getCustomModels(config, openaiCompatibleConfig);
+export function getSuggestedModels(config: ProvidersConfigMap | null): string[] {
+  const customModels = getCustomModels(config);
   return dedupeKeepFirst([...customModels, ...BUILT_IN_MODELS]);
 }
 
@@ -187,9 +163,9 @@ export function useModelsFromSettings() {
   );
 
   const customModels = useMemo(() => {
-    const next = filterHiddenModels(getCustomModels(config, openaiCompatibleConfig), hiddenModels);
+    const next = filterHiddenModels(getCustomModels(config), hiddenModels);
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, openaiCompatibleConfig, hiddenModels, effectivePolicy]);
+  }, [config, hiddenModels, effectivePolicy]);
 
   const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
   const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
@@ -248,10 +224,7 @@ export function useModelsFromSettings() {
   );
 
   const models = useMemo(() => {
-    const suggested = filterHiddenModels(
-      getSuggestedModels(config, openaiCompatibleConfig),
-      hiddenModels
-    );
+    const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);
 
     // Hide models that are unavailable from both direct and gateway routes.
     // Keep all models visible while provider config is still loading to avoid UI flicker.

@@ -105,7 +105,7 @@ describe("getSuggestedModels", () => {
       },
     };
 
-    const suggested = getSuggestedModels(config, null);
+    const suggested = getSuggestedModels(config);
 
     // Custom models are listed first (in config order)
     expect(suggested[0]).toBe("openai:my-team-model");
@@ -134,7 +134,7 @@ describe("getSuggestedModels", () => {
       },
     };
 
-    const suggested = getSuggestedModels(config, null);
+    const suggested = getSuggestedModels(config);
 
     expect(suggested).toContain("anthropic:enabled-custom");
     expect(suggested).not.toContain("openai:disabled-custom");

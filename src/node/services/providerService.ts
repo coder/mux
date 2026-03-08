@@ -84,6 +84,16 @@ export class ProviderService {
     this.emitter.emit("configChanged");
   }
 
+  /**
+   * Parse an openai-compatible provider key like "openai-compatible/fireworks".
+   * Returns the instance ID if the key matches the pattern, null otherwise.
+   */
+  private parseOpenAICompatibleKey(provider: string): string | null {
+    if (!provider.startsWith("openai-compatible/")) return null;
+    const instanceId = provider.slice("openai-compatible/".length);
+    return instanceId.length > 0 ? instanceId : null;
+  }
+
   public list(): ProviderName[] {
     try {
       const providers = [...SUPPORTED_PROVIDERS];
@@ -265,6 +275,25 @@ export class ProviderService {
       result[provider] = providerInfo;
     }
 
+    // Flatten openai-compatible providers into individual entries with keys like
+    // "openai-compatible/fireworks" so they follow the standard provider:modelId pattern.
+    // This eliminates the need for special handling and type guards throughout the codebase.
+    const openaiCompatibleInfo = this.getOpenAICompatibleProvidersInfo();
+    if (openaiCompatibleInfo.providers && openaiCompatibleInfo.providers.length > 0) {
+      for (const instance of openaiCompatibleInfo.providers) {
+        const key = `openai-compatible/${instance.id}`;
+        result[key] = {
+          apiKeySet: instance.apiKeySet,
+          apiKeyIsOpRef: instance.apiKeyIsOpRef,
+          apiKeyOpLabel: instance.apiKeyOpLabel,
+          isEnabled: instance.isEnabled,
+          isConfigured: instance.isConfigured,
+          baseUrl: instance.baseUrl,
+          models: instance.models,
+        };
+      }
+    }
+
     return result;
   }
 
@@ -272,6 +301,12 @@ export class ProviderService {
    * Set custom models for a provider
    */
   public setModels(provider: string, models: ProviderModelEntry[]): Result<void, string> {
+    // Route openai-compatible/* keys to the dedicated handler
+    const instanceId = this.parseOpenAICompatibleKey(provider);
+    if (instanceId) {
+      return this.setOpenAICompatibleProviderModels(instanceId, models);
+    }
+
     try {
       const normalizedModels = normalizeProviderModelEntries(models);
 
@@ -379,6 +414,24 @@ export class ProviderService {
     keyPath: string[],
     value: unknown
   ): Promise<Result<void, string>> {
+    // Route openai-compatible/* keys to the dedicated handler
+    const instanceId = this.parseOpenAICompatibleKey(provider);
+    if (instanceId) {
+      // Map keyPath to updateOpenAICompatibleProvider format
+      const updates: Partial<Omit<OpenAICompatibleProviderInstance, "id">> = {};
+      if (keyPath.length === 1) {
+        const key = keyPath[0];
+        if (key === "baseUrl") {
+          updates.baseUrl = value as string;
+        } else if (key === "apiKey") {
+          updates.apiKey = value as string;
+        } else if (key === "enabled") {
+          updates.enabled = value as boolean;
+        }
+      }
+      return this.updateOpenAICompatibleProvider(instanceId, updates);
+    }
+
     try {
       // Load current providers config or create empty
       const providersConfig = this.config.loadProvidersConfig() ?? {};
@@ -445,6 +498,26 @@ export class ProviderService {
     keyPath: string[],
     value: string | boolean
   ): Promise<Result<void, string>> {
+    // Route openai-compatible/* keys to the dedicated handler
+    const instanceId = this.parseOpenAICompatibleKey(provider);
+    if (instanceId) {
+      // Map keyPath to updateOpenAICompatibleProvider format
+      const updates: Partial<Omit<OpenAICompatibleProviderInstance, "id">> = {};
+      if (keyPath.length === 1) {
+        const key = keyPath[0];
+        if (key === "baseUrl") {
+          updates.baseUrl = value as string;
+        } else if (key === "apiKey") {
+          updates.apiKey = value as string;
+        } else if (key === "name") {
+          updates.name = value as string;
+        } else if (key === "enabled") {
+          updates.enabled = value as boolean;
+        }
+      }
+      return this.updateOpenAICompatibleProvider(instanceId, updates);
+    }
+
     try {
       // Load current providers config or create empty
       const providersConfig = this.config.loadProvidersConfig() ?? {};

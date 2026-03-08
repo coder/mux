@@ -46,12 +46,6 @@ function findProviderModelEntry(
     return null;
   }
 
-  for (const entry of entries) {
-    if (getProviderModelEntryId(entry) === modelId) {
-      return entry;
-    }
-  }
-
   return null;
 }
 

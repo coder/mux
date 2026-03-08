@@ -45,60 +45,74 @@ describe("resolveModelForMetadata", () => {
     expect(resolveModelForMetadata("bare-model", null)).toBe("bare-model");
   });
 
-  test("returns original model for openai-compatible without config", () => {
+  // New format tests: openai-compatible/{instanceId}:{modelId}
+  test("returns original model for openai-compatible new format without config", () => {
+    expect(resolveModelForMetadata("openai-compatible/together-ai:llama-3-1-70b", null)).toBe(
+      "openai-compatible/together-ai:llama-3-1-70b"
+    );
+  });
+
+  test("returns original model for openai-compatible new format when not found", () => {
+    const config: ProvidersConfigMap = {
+      "openai-compatible/other-provider": {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        baseUrl: "https://other.example.com",
+        models: ["some-model"],
+      },
+    };
+
+    expect(resolveModelForMetadata("openai-compatible/together-ai:llama-3-1-70b", config)).toBe(
+      "openai-compatible/together-ai:llama-3-1-70b"
+    );
+  });
+
+  test("returns mapped model for openai-compatible new format when mapping exists", () => {
+    const config: ProvidersConfigMap = {
+      "openai-compatible/together-ai": {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        baseUrl: "https://api.together.xyz",
+        models: [
+          {
+            id: "llama-3-1-70b",
+            mappedToModel: "anthropic:claude-sonnet-4-6",
+          },
+        ],
+      },
+    };
+
+    expect(resolveModelForMetadata("openai-compatible/together-ai:llama-3-1-70b", config)).toBe(
+      "anthropic:claude-sonnet-4-6"
+    );
+  });
+
+  // Old format tests (dual-support for existing data): openai-compatible:{instanceId}:{modelId}
+  test("returns original model for openai-compatible old format without config", () => {
     expect(resolveModelForMetadata("openai-compatible:together-ai:llama-3-1-70b", null)).toBe(
       "openai-compatible:together-ai:llama-3-1-70b"
     );
   });
 
-  test("returns original model for openai-compatible when not found", () => {
-    const config = {
-      "openai-compatible": {
+  test("returns mapped model for openai-compatible old format when mapping exists", () => {
+    const config: ProvidersConfigMap = {
+      "openai-compatible/together-ai": {
+        apiKeySet: true,
         isEnabled: true,
         isConfigured: true,
-        providers: [
+        baseUrl: "https://api.together.xyz",
+        models: [
           {
-            id: "other-provider",
-            name: "Other Provider",
-            baseUrl: "https://other.example.com",
-            apiKeySet: false,
-            isEnabled: true,
-            isConfigured: true,
-            models: ["some-model"],
+            id: "llama-3-1-70b",
+            mappedToModel: "anthropic:claude-sonnet-4-6",
           },
         ],
       },
-    } as unknown as ProvidersConfigMap;
+    };
 
-    expect(resolveModelForMetadata("openai-compatible:together-ai:llama-3-1-70b", config)).toBe(
-      "openai-compatible:together-ai:llama-3-1-70b"
-    );
-  });
-
-  test("returns mapped model for openai-compatible when mapping exists", () => {
-    const config = {
-      "openai-compatible": {
-        isEnabled: true,
-        isConfigured: true,
-        providers: [
-          {
-            id: "together-ai",
-            name: "Together AI",
-            baseUrl: "https://api.together.xyz",
-            apiKeySet: true,
-            isEnabled: true,
-            isConfigured: true,
-            models: [
-              {
-                id: "llama-3-1-70b",
-                mappedToModel: "anthropic:claude-sonnet-4-6",
-              },
-            ],
-          },
-        ],
-      },
-    } as unknown as ProvidersConfigMap;
-
+    // Old format should still resolve using flattened config
     expect(resolveModelForMetadata("openai-compatible:together-ai:llama-3-1-70b", config)).toBe(
       "anthropic:claude-sonnet-4-6"
     );
@@ -106,59 +120,65 @@ describe("resolveModelForMetadata", () => {
 });
 
 describe("getModelContextWindowOverride", () => {
-  test("returns null for openai-compatible without config", () => {
-    expect(getModelContextWindowOverride("openai-compatible:together-ai:llama-3-1-70b", null)).toBe(
+  test("returns null for openai-compatible new format without config", () => {
+    expect(getModelContextWindowOverride("openai-compatible/together-ai:llama-3-1-70b", null)).toBe(
       null
     );
   });
 
-  test("returns null for openai-compatible when model not found", () => {
-    const config = {
-      "openai-compatible": {
+  test("returns null for openai-compatible new format when model not found", () => {
+    const config: ProvidersConfigMap = {
+      "openai-compatible/other-provider": {
+        apiKeySet: false,
         isEnabled: true,
         isConfigured: true,
-        providers: [
-          {
-            id: "other-provider",
-            name: "Other Provider",
-            baseUrl: "https://other.example.com",
-            apiKeySet: false,
-            isEnabled: true,
-            isConfigured: true,
-            models: ["some-model"],
-          },
-        ],
+        baseUrl: "https://other.example.com",
+        models: ["some-model"],
       },
-    } as unknown as ProvidersConfigMap;
+    };
 
     expect(
-      getModelContextWindowOverride("openai-compatible:together-ai:llama-3-1-70b", config)
+      getModelContextWindowOverride("openai-compatible/together-ai:llama-3-1-70b", config)
     ).toBe(null);
   });
 
-  test("returns context window for openai-compatible model", () => {
-    const config = {
-      "openai-compatible": {
+  test("returns context window for openai-compatible new format model", () => {
+    const config: ProvidersConfigMap = {
+      "openai-compatible/together-ai": {
+        apiKeySet: true,
         isEnabled: true,
         isConfigured: true,
-        providers: [
+        baseUrl: "https://api.together.xyz",
+        models: [
           {
-            id: "together-ai",
-            name: "Together AI",
-            baseUrl: "https://api.together.xyz",
-            apiKeySet: true,
-            isEnabled: true,
-            isConfigured: true,
-            models: [
-              {
-                id: "llama-3-1-70b",
-                contextWindowTokens: 131072,
-              },
-            ],
+            id: "llama-3-1-70b",
+            contextWindowTokens: 131072,
           },
         ],
       },
-    } as unknown as ProvidersConfigMap;
+    };
+
+    expect(
+      getModelContextWindowOverride("openai-compatible/together-ai:llama-3-1-70b", config)
+    ).toBe(131072);
+  });
+
+  // Old format tests (dual-support)
+  test("returns context window for openai-compatible old format model", () => {
+    const config: ProvidersConfigMap = {
+      "openai-compatible/together-ai": {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        baseUrl: "https://api.together.xyz",
+        models: [
+          {
+            id: "llama-3-1-70b",
+            contextWindowTokens: 131072,
+          },
+        ],
+      },
+    };
 
     expect(
       getModelContextWindowOverride("openai-compatible:together-ai:llama-3-1-70b", config)
