@@ -276,6 +276,34 @@ describe("WorkspaceFlowPromptService runtime error handling", () => {
     }
   });
 
+  test("ensurePromptFile repairs prompt-path directories into empty files", async () => {
+    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "flow-prompt-dir-repair-"));
+    const sessionsDir = path.join(tempDir, "sessions");
+    const srcBaseDir = path.join(tempDir, "src");
+    const metadata = createMetadata({
+      projectPath: path.join(tempDir, "projects", "repo"),
+      name: "feature-branch",
+      srcBaseDir,
+    });
+    const workspacePath = path.join(srcBaseDir, "repo", metadata.name);
+    const promptPath = path.join(workspacePath, ".mux/prompts/feature-branch.md");
+
+    await fsPromises.mkdir(promptPath, { recursive: true });
+
+    const service = new WorkspaceFlowPromptService({
+      getAllWorkspaceMetadata: () => Promise.resolve([metadata]),
+      getSessionDir: () => path.join(sessionsDir, metadata.id),
+    } as unknown as Config);
+
+    try {
+      const state = await service.ensurePromptFile(metadata.id);
+      expect(state.exists).toBe(true);
+      expect(await fsPromises.readFile(promptPath, "utf8")).toBe("");
+    } finally {
+      await fsPromises.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("ensurePromptFile rethrows transient stat failures instead of overwriting the prompt", async () => {
     const metadata = createMetadata({
       projectPath: "/tmp/projects/repo",

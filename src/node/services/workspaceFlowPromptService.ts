@@ -314,7 +314,17 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     );
 
     try {
-      await context.runtime.stat(context.promptPath);
+      const stat = await context.runtime.stat(context.promptPath);
+      if (stat.isDirectory) {
+        await this.deleteFile(
+          context.runtime,
+          context.metadata.runtimeConfig,
+          context.workspacePath,
+          context.promptPath,
+          { recursive: true }
+        );
+        await writeFileString(context.runtime, context.promptPath, "");
+      }
     } catch (error) {
       if (!isMissingFileError(error)) {
         throw error;
@@ -839,15 +849,19 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     runtime: Runtime,
     runtimeConfig: RuntimeConfig | undefined,
     workspacePath: string,
-    filePath: string
+    filePath: string,
+    options?: { recursive?: boolean }
   ): Promise<void> {
+    const recursive = options?.recursive === true;
     if (isHostWritableRuntime(runtimeConfig)) {
-      await fsPromises.rm(expandTilde(filePath), { force: true });
+      await fsPromises.rm(expandTilde(filePath), { recursive, force: true });
       return;
     }
 
     const resolvedFilePath = await runtime.resolvePath(filePath);
-    const command = `rm -f ${shellQuote(resolvedFilePath)}`;
+    const command = recursive
+      ? `rm -rf ${shellQuote(resolvedFilePath)}`
+      : `rm -f ${shellQuote(resolvedFilePath)}`;
     const result = await execBuffered(runtime, command, {
       cwd: workspacePath,
       timeout: 10,
