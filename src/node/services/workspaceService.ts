@@ -4438,7 +4438,15 @@ export class WorkspaceService extends EventEmitter {
           : {}),
       };
 
-      await this.flowPromptService.copyPromptFile(sourceMetadata, metadata);
+      try {
+        await this.flowPromptService.copyPromptFile(sourceMetadata, metadata);
+      } catch (error) {
+        log.error("Failed to copy Flow Prompting file during workspace fork", {
+          sourceWorkspaceId,
+          targetWorkspaceId: newWorkspaceId,
+          error: getErrorMessage(error),
+        });
+      }
       await this.config.addWorkspace(foundProjectPath, metadata);
 
       const enrichedMetadata = this.enrichFrontendMetadata(metadata);
