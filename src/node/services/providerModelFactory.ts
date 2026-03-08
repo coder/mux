@@ -674,9 +674,8 @@ export class ProviderModelFactory {
 
       // Check if provider is supported (prevents silent failures when adding to PROVIDER_REGISTRY
       // but forgetting to implement handler below)
-      // Note: "openai-compatible" and "openai-compatible/*" are special multi-instance providers handled separately
-      const isOpenAICompatibleProvider =
-        providerName === "openai-compatible" || providerName.startsWith("openai-compatible/");
+      // Note: "openai-compatible/*" are special multi-instance providers handled separately
+      const isOpenAICompatibleProvider = providerName.startsWith("openai-compatible/");
       const isSupportedProvider = providerName in PROVIDER_REGISTRY || isOpenAICompatibleProvider;
       if (!isSupportedProvider) {
         return Err({
@@ -1543,8 +1542,7 @@ export class ProviderModelFactory {
       }
 
       // Handle OpenAI-compatible providers (dynamic provider instances)
-      const isOpenAICompatible =
-        providerName === "openai-compatible" || providerName.startsWith("openai-compatible/");
+      const isOpenAICompatible = providerName.startsWith("openai-compatible/");
 
       if (isOpenAICompatible) {
         const instanceId = providerName.slice("openai-compatible/".length);

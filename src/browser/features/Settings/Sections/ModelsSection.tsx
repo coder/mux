@@ -290,7 +290,7 @@ export function ModelsSection() {
       mappedTo
     );
 
-    // With flattened structure, openai-compatible/{instanceId} is just a regular provider
+    // Optimistic update - returns new models array for API call
     const updatedModels = updateModelsOptimistically(editing.provider, (models) => {
       const nextModels: ProviderModelEntry[] = [];
       let replaced = false;
