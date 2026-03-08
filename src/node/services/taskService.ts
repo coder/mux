@@ -2659,6 +2659,15 @@ export class TaskService {
         return;
       }
 
+      // If the parent already has a follow-up turn queued or starting (for example, the user
+      // interrupted with new context), do not inject a synthetic task_await warning mid-handoff.
+      if (this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)) {
+        log.debug("Skipping parent auto-resume: follow-up turn already queued or preparing", {
+          workspaceId,
+        });
+        return;
+      }
+
       // Check for auto-resume flood protection
       const resumeCount = this.consecutiveAutoResumes.get(workspaceId) ?? 0;
       if (resumeCount >= MAX_CONSECUTIVE_PARENT_AUTO_RESUMES) {
