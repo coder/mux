@@ -7,7 +7,7 @@ import { ProviderModelEntrySchema } from "./providerModelEntry";
  * Examples: Together AI, Fireworks, LM Studio, Jan, custom inference servers.
  */
 export const OpenAICompatibleProviderInstanceSchema = z.object({
-  /** Unique identifier for this provider instance (used in model strings like "openai-compatible:my-provider:model-id") */
+  /** Unique identifier for this provider instance (used in model strings like "openai-compatible/my-provider:model-id") */
   id: z.string().min(1),
   /** Display name shown in the UI */
   name: z.string().min(1),
