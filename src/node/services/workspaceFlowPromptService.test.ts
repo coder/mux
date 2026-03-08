@@ -1,15 +1,22 @@
+import { afterEach, describe, expect, it, mock, spyOn, test } from "bun:test";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 
+import type { Runtime, FileStat, ExecStream } from "@/node/runtime/Runtime";
 import type { Config } from "@/node/config";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import * as runtimeHelpers from "@/node/runtime/runtimeHelpers";
 
 import {
   buildFlowPromptUpdateMessage,
   getFlowPromptPollIntervalMs,
   WorkspaceFlowPromptService,
 } from "./workspaceFlowPromptService";
+
+afterEach(() => {
+  mock.restore();
+});
 
 describe("getFlowPromptPollIntervalMs", () => {
   const nowMs = new Date("2026-03-08T00:00:00.000Z").getTime();
@@ -98,9 +105,126 @@ describe("WorkspaceFlowPromptService.renamePromptFile", () => {
       expect(await fsPromises.readFile(newPromptPath, "utf8")).toBe(
         "Persist flow prompt across rename"
       );
-      await expect(fsPromises.access(oldPromptPathAfterWorkspaceRename)).rejects.toThrow();
+
+      let accessError: unknown = null;
+      try {
+        await fsPromises.access(oldPromptPathAfterWorkspaceRename);
+      } catch (error) {
+        accessError = error;
+      }
+      expect(accessError).toBeTruthy();
     } finally {
       await fsPromises.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("WorkspaceFlowPromptService runtime error handling", () => {
+  function createMetadata(params: {
+    projectPath: string;
+    name: string;
+    srcBaseDir: string;
+    projectName?: string;
+  }): WorkspaceMetadata {
+    return {
+      id: "workspace-1",
+      name: params.name,
+      projectName: params.projectName ?? path.basename(params.projectPath),
+      projectPath: params.projectPath,
+      runtimeConfig: {
+        type: "worktree",
+        srcBaseDir: params.srcBaseDir,
+      },
+    };
+  }
+
+  function createCompletedExecStream(): ExecStream {
+    return {
+      stdout: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      stderr: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      stdin: new WritableStream<Uint8Array>(),
+      exitCode: Promise.resolve(0),
+      duration: Promise.resolve(0),
+    };
+  }
+
+  test("deleteFile resolves remote prompt paths before shelling out", async () => {
+    const service = new WorkspaceFlowPromptService({
+      getSessionDir: () => "/tmp/flow-prompt-session",
+    } as unknown as Config);
+
+    let executedCommand = "";
+    const runtime = {
+      resolvePath: (filePath: string) => Promise.resolve(filePath.replace(/^~\//, "/home/test/")),
+      exec: (command: string) => {
+        executedCommand = command;
+        return Promise.resolve(createCompletedExecStream());
+      },
+    } as unknown as Runtime;
+
+    const deleteFile = (
+      service as unknown as {
+        deleteFile: (
+          runtime: Runtime,
+          runtimeConfig: unknown,
+          workspacePath: string,
+          filePath: string
+        ) => Promise<void>;
+      }
+    ).deleteFile.bind(service);
+
+    await deleteFile(
+      runtime,
+      { type: "ssh" },
+      "/tmp/workspace",
+      "~/.mux/src/repo/.mux/prompts/feature.md"
+    );
+
+    expect(executedCommand).toContain("/home/test/.mux/src/repo/.mux/prompts/feature.md");
+    expect(executedCommand).not.toContain("~/.mux/src/repo/.mux/prompts/feature.md");
+  });
+
+  test("getState rethrows transient prompt read failures instead of treating them as deletion", async () => {
+    const metadata = createMetadata({
+      projectPath: "/tmp/projects/repo",
+      name: "feature-branch",
+      srcBaseDir: "/tmp/src",
+    });
+    const service = new WorkspaceFlowPromptService({
+      getAllWorkspaceMetadata: () => Promise.resolve([metadata]),
+      getSessionDir: () => "/tmp/flow-prompt-session",
+    } as unknown as Config);
+
+    const runtime = {
+      getWorkspacePath: () => "/tmp/src/repo/feature-branch",
+      stat: (): Promise<FileStat> =>
+        Promise.resolve({
+          size: 64,
+          modifiedTime: new Date("2026-03-08T00:00:00.000Z"),
+          isDirectory: false,
+        }),
+      readFile: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(new Error("transient SSH read failure"));
+          },
+        }),
+    } as unknown as Runtime;
+    spyOn(runtimeHelpers, "createRuntimeForWorkspace").mockReturnValue(runtime);
+
+    try {
+      await service.getState(metadata.id);
+      throw new Error("Expected getState to reject");
+    } catch (error) {
+      expect(String(error)).toContain("transient SSH read failure");
     }
   });
 });

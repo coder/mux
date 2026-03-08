@@ -770,6 +770,67 @@ describe("WorkspaceService sendMessage status clearing", () => {
 
     expect(updateAgentStatus).not.toHaveBeenCalled();
   });
+  test("registerSession finalizes Flow Prompting updates using the chat event workspaceId", () => {
+    const markAcceptedUpdateByFingerprint = spyOn(
+      (
+        workspaceService as unknown as {
+          flowPromptService: {
+            markAcceptedUpdateByFingerprint: (
+              workspaceId: string,
+              fingerprint: string
+            ) => Promise<void>;
+          };
+        }
+      ).flowPromptService,
+      "markAcceptedUpdateByFingerprint"
+    ).mockResolvedValue(undefined);
+
+    const workspaceId = "flow-prompt-listener-workspace";
+    const sessionEmitter = new EventEmitter();
+    const listenerSession = {
+      onChatEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("chat-event", listener);
+        return () => sessionEmitter.off("chat-event", listener);
+      },
+      onMetadataEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("metadata-event", listener);
+        return () => sessionEmitter.off("metadata-event", listener);
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      dispose: () => {},
+    } as unknown as AgentSession;
+
+    workspaceService.registerSession(workspaceId, listenerSession);
+
+    const acceptedMessage = createMuxMessage(
+      "flow-prompt-accepted",
+      "user",
+      "updated flow prompt",
+      {
+        synthetic: true,
+      }
+    );
+
+    sessionEmitter.emit("chat-event", {
+      workspaceId,
+      message: {
+        type: "message",
+        ...acceptedMessage,
+        metadata: {
+          ...(acceptedMessage.metadata ?? {}),
+          muxMetadata: {
+            type: "flow-prompt-update",
+            fingerprint: "flow-prompt-fingerprint",
+          },
+        },
+      },
+    });
+
+    expect(markAcceptedUpdateByFingerprint).toHaveBeenCalledWith(
+      workspaceId,
+      "flow-prompt-fingerprint"
+    );
+  });
 });
 
 describe("WorkspaceService idle compaction dispatch", () => {

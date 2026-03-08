@@ -1262,6 +1262,10 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private async primeFlowPromptMonitorActivity(): Promise<void> {
+    if (typeof this.extensionMetadata.getAllSnapshots !== "function") {
+      return;
+    }
+
     try {
       const snapshots = await this.extensionMetadata.getAllSnapshots();
       for (const [workspaceId, snapshot] of snapshots) {
@@ -1496,13 +1500,15 @@ export class WorkspaceService extends EventEmitter {
   // Clear persisted sidebar status only after the user turn is accepted and emitted.
   // sendMessage can fail before acceptance (for example invalid_model_string), so
   // clearing inside sendMessage would drop status for turns that never entered history.
-  private maybeFinalizeAcceptedFlowPromptUpdate(message: WorkspaceChatMessage): void {
+  private maybeFinalizeAcceptedFlowPromptUpdate(
+    workspaceId: string,
+    message: WorkspaceChatMessage
+  ): void {
     if (message.type !== "message" || message.role !== "user") {
       return;
     }
 
     const messageRecord = message as {
-      workspaceId?: unknown;
       metadata?: { muxMetadata?: unknown } | undefined;
     };
     const muxMetadata = messageRecord.metadata?.muxMetadata;
@@ -1520,14 +1526,6 @@ export class WorkspaceService extends EventEmitter {
       typeof fingerprint !== "string" ||
       fingerprint.length === 0
     ) {
-      return;
-    }
-
-    const workspaceId =
-      typeof messageRecord.workspaceId === "string" && messageRecord.workspaceId.length > 0
-        ? messageRecord.workspaceId
-        : null;
-    if (!workspaceId) {
       return;
     }
 
@@ -1575,7 +1573,7 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
-      this.maybeFinalizeAcceptedFlowPromptUpdate(event.message);
+      this.maybeFinalizeAcceptedFlowPromptUpdate(event.workspaceId, event.message);
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
       }
@@ -1613,6 +1611,7 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      this.maybeFinalizeAcceptedFlowPromptUpdate(event.workspaceId, event.message);
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
       }
@@ -3017,6 +3016,12 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const session = this.getOrCreateSession(event.workspaceId);
+    this.flowPromptService.rememberUpdate(
+      event.workspaceId,
+      event.nextFingerprint,
+      event.nextContent
+    );
+
     const options = {
       ...(await session.getFlowPromptSendOptions()),
       queueDispatchMode: "tool-end" as const,
@@ -3026,26 +3031,13 @@ export class WorkspaceService extends EventEmitter {
         fingerprint: event.nextFingerprint,
       },
     };
-    const internal = {
-      synthetic: true,
-      onAccepted: async () => {
-        try {
-          await this.flowPromptService.markAcceptedUpdate(event.workspaceId, event.nextContent);
-        } catch (error) {
-          log.error("Failed to persist accepted Flow Prompting update", {
-            workspaceId: event.workspaceId,
-            error: getErrorMessage(error),
-          });
-        }
-      },
-    };
 
     if (session.isBusy()) {
       this.flowPromptService.markPendingUpdate(event.workspaceId, event.nextContent);
       session.queueFlowPromptUpdate({
         message: event.text,
         options,
-        internal,
+        internal: { synthetic: true },
       });
       return;
     }
@@ -3061,12 +3053,13 @@ export class WorkspaceService extends EventEmitter {
       session.queueFlowPromptUpdate({
         message: event.text,
         options,
-        internal,
+        internal: { synthetic: true },
       });
       return;
     }
 
     if (!result.success) {
+      this.flowPromptService.forgetUpdate(event.workspaceId, event.nextFingerprint);
       log.error("Failed to enqueue Flow Prompting update", {
         workspaceId: event.workspaceId,
         error: result.error,

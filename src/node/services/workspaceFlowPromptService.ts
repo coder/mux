@@ -14,8 +14,10 @@ import {
   getFlowPromptPathMarkerLine,
   getFlowPromptRelativePath,
 } from "@/common/constants/flowPrompting";
-import { generateDiff } from "@/node/services/tools/fileCommon";
+import { getErrorMessage } from "@/common/utils/errors";
 import { shellQuote } from "@/common/utils/shell";
+import { log } from "@/node/services/log";
+import { generateDiff } from "@/node/services/tools/fileCommon";
 
 const FLOW_PROMPT_ACTIVE_POLL_INTERVAL_MS = 1_000;
 const FLOW_PROMPT_RECENT_POLL_INTERVAL_MS = 10_000;
@@ -88,6 +90,32 @@ function computeFingerprint(content: string): string {
 
 function isHostWritableRuntime(runtimeConfig: RuntimeConfig | undefined): boolean {
   return runtimeConfig?.type !== "ssh" && runtimeConfig?.type !== "docker";
+}
+
+function isErrnoWithCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
+const MISSING_FILE_ERROR_PATTERN =
+  /ENOENT|ENOTDIR|No such file or directory|Not a directory|cannot statx?|can't open/i;
+
+function isMissingFileError(error: unknown): boolean {
+  if (isErrnoWithCode(error, "ENOENT") || isErrnoWithCode(error, "ENOTDIR")) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (
+    isErrnoWithCode((error as Error & { cause?: unknown }).cause, "ENOENT") ||
+    isErrnoWithCode((error as Error & { cause?: unknown }).cause, "ENOTDIR")
+  ) {
+    return true;
+  }
+
+  return MISSING_FILE_ERROR_PATTERN.test(error.message);
 }
 
 function areFlowPromptStatesEqual(a: FlowPromptState | null, b: FlowPromptState): boolean {
@@ -249,9 +277,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
         // Flow Prompting reads through runtime abstractions for SSH/Docker/devcontainer
         // workspaces, so reopening the selected workspace should pick up saved prompt
         // changes immediately instead of waiting for a slower background poll.
-        void this.refreshMonitor(event.workspaceId, true).finally(() => {
-          this.scheduleNextRefresh(event.workspaceId);
-        });
+        this.refreshMonitorInBackground(event.workspaceId, { reschedule: true });
         return;
       }
 
@@ -384,9 +410,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       lastKnownActivityAtMs: this.activityRecencyByWorkspaceId.get(workspaceId) ?? null,
     });
 
-    void this.refreshMonitor(workspaceId, true).finally(() => {
-      this.scheduleNextRefresh(workspaceId);
-    });
+    this.refreshMonitorInBackground(workspaceId, { reschedule: true });
   }
 
   stopMonitoring(workspaceId: string): void {
@@ -400,6 +424,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       clearTimeout(monitor.timer);
     }
     this.monitors.delete(workspaceId);
+    this.rememberedUpdates.delete(workspaceId);
   }
 
   markPendingUpdate(workspaceId: string, nextContent: string): void {
@@ -409,7 +434,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     }
 
     monitor.pendingFingerprint = computeFingerprint(nextContent);
-    void this.refreshMonitor(workspaceId, true);
+    this.refreshMonitorInBackground(workspaceId);
   }
 
   rememberUpdate(workspaceId: string, fingerprint: string, nextContent: string): void {
@@ -422,11 +447,23 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     updatesForWorkspace.set(fingerprint, nextContent);
   }
 
+  forgetUpdate(workspaceId: string, fingerprint: string): void {
+    const updatesForWorkspace = this.rememberedUpdates.get(workspaceId);
+    if (!updatesForWorkspace) {
+      return;
+    }
+
+    updatesForWorkspace.delete(fingerprint);
+    if (updatesForWorkspace.size === 0) {
+      this.rememberedUpdates.delete(workspaceId);
+    }
+  }
+
   async markAcceptedUpdateByFingerprint(workspaceId: string, fingerprint: string): Promise<void> {
     const rememberedContent = this.rememberedUpdates.get(workspaceId)?.get(fingerprint) ?? null;
     if (rememberedContent != null) {
       await this.markAcceptedUpdate(workspaceId, rememberedContent);
-      this.rememberedUpdates.delete(workspaceId);
+      this.forgetUpdate(workspaceId, fingerprint);
       return;
     }
 
@@ -450,6 +487,24 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     }
 
     await this.refreshMonitor(workspaceId, true);
+  }
+
+  private refreshMonitorInBackground(
+    workspaceId: string,
+    options?: { reschedule?: boolean }
+  ): void {
+    void this.refreshMonitor(workspaceId, true)
+      .catch((error) => {
+        log.error("Failed to refresh Flow Prompting state", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      })
+      .finally(() => {
+        if (options?.reschedule) {
+          this.scheduleNextRefresh(workspaceId);
+        }
+      });
   }
 
   private clearScheduledRefresh(monitor: FlowPromptMonitor): void {
@@ -479,9 +534,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
 
     monitor.timer = setTimeout(() => {
       monitor.timer = null;
-      void this.refreshMonitor(workspaceId, true).finally(() => {
-        this.scheduleNextRefresh(workspaceId);
-      });
+      this.refreshMonitorInBackground(workspaceId, { reschedule: true });
     }, intervalMs);
     monitor.timer.unref?.();
   }
@@ -608,32 +661,35 @@ export class WorkspaceFlowPromptService extends EventEmitter {
 
   private async readPromptSnapshot(workspaceId: string): Promise<FlowPromptFileSnapshot> {
     const context = await this.getWorkspaceContext(workspaceId);
+    const buildMissingSnapshot = (promptPath: string): FlowPromptFileSnapshot => ({
+      workspaceId,
+      path: promptPath,
+      exists: false,
+      content: "",
+      hasNonEmptyContent: false,
+      modifiedAtMs: null,
+      contentFingerprint: null,
+    });
+
     if (!context) {
-      return {
-        workspaceId,
-        path: "",
-        exists: false,
-        content: "",
-        hasNonEmptyContent: false,
-        modifiedAtMs: null,
-        contentFingerprint: null,
-      };
+      return buildMissingSnapshot("");
+    }
+
+    let stat;
+    try {
+      stat = await context.runtime.stat(context.promptPath);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return buildMissingSnapshot(context.promptPath);
+      }
+      throw error;
+    }
+
+    if (stat.isDirectory) {
+      return buildMissingSnapshot(context.promptPath);
     }
 
     try {
-      const stat = await context.runtime.stat(context.promptPath);
-      if (stat.isDirectory) {
-        return {
-          workspaceId,
-          path: context.promptPath,
-          exists: false,
-          content: "",
-          hasNonEmptyContent: false,
-          modifiedAtMs: null,
-          contentFingerprint: null,
-        };
-      }
-
       const content = await readFileString(context.runtime, context.promptPath);
       return {
         workspaceId,
@@ -644,16 +700,11 @@ export class WorkspaceFlowPromptService extends EventEmitter {
         modifiedAtMs: stat.modifiedTime.getTime(),
         contentFingerprint: computeFingerprint(content),
       };
-    } catch {
-      return {
-        workspaceId,
-        path: context.promptPath,
-        exists: false,
-        content: "",
-        hasNonEmptyContent: false,
-        modifiedAtMs: null,
-        contentFingerprint: null,
-      };
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return buildMissingSnapshot(context.promptPath);
+      }
+      throw error;
     }
   }
 
@@ -664,7 +715,15 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     if (!metadata) {
       return null;
     }
-    return this.getWorkspaceContextFromMetadata(metadata);
+
+    try {
+      return this.getWorkspaceContextFromMetadata(metadata);
+    } catch (error) {
+      if (error instanceof TypeError) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   private getWorkspaceContextFromMetadata(metadata: WorkspaceMetadata): FlowPromptWorkspaceContext {
@@ -683,6 +742,10 @@ export class WorkspaceFlowPromptService extends EventEmitter {
   }
 
   private async getWorkspaceMetadata(workspaceId: string): Promise<WorkspaceMetadata | null> {
+    if (typeof this.config.getAllWorkspaceMetadata !== "function") {
+      return null;
+    }
+
     const allMetadata = await this.config.getAllWorkspaceMetadata();
     return allMetadata.find((entry) => entry.id === workspaceId) ?? null;
   }
@@ -729,7 +792,8 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       return;
     }
 
-    const command = `rm -f ${shellQuote(filePath)}`;
+    const resolvedFilePath = await runtime.resolvePath(filePath);
+    const command = `rm -f ${shellQuote(resolvedFilePath)}`;
     const result = await execBuffered(runtime, command, {
       cwd: workspacePath,
       timeout: 10,
