@@ -98,7 +98,7 @@ function isErrnoWithCode(error: unknown, code: string): boolean {
 }
 
 const MISSING_FILE_ERROR_PATTERN =
-  /ENOENT|ENOTDIR|No such file or directory|Not a directory|cannot statx?|can't open/i;
+  /ENOENT|ENOTDIR|No such file or directory|Not a directory|cannot statx?|can't open .*No such file or directory/i;
 
 function isMissingFileError(error: unknown): boolean {
   if (isErrnoWithCode(error, "ENOENT") || isErrnoWithCode(error, "ENOTDIR")) {

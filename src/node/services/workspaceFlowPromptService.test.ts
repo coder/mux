@@ -224,6 +224,46 @@ describe("WorkspaceFlowPromptService runtime error handling", () => {
     expect(wrotePrompt).toBe(false);
   });
 
+  test("getState does not treat BusyBox-style permission errors as missing files", async () => {
+    const metadata = createMetadata({
+      projectPath: "/tmp/projects/repo",
+      name: "feature-branch",
+      srcBaseDir: "/tmp/src",
+    });
+    const service = new WorkspaceFlowPromptService({
+      getAllWorkspaceMetadata: () => Promise.resolve([metadata]),
+      getSessionDir: () => "/tmp/flow-prompt-session",
+    } as unknown as Config);
+
+    const runtime = {
+      getWorkspacePath: () => "/tmp/src/repo/feature-branch",
+      stat: (): Promise<FileStat> =>
+        Promise.resolve({
+          size: 64,
+          modifiedTime: new Date("2026-03-08T00:00:00.000Z"),
+          isDirectory: false,
+        }),
+      readFile: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(
+              new Error(
+                "cat: can't open '/tmp/src/repo/feature-branch/.mux/prompts/feature-branch.md': Permission denied"
+              )
+            );
+          },
+        }),
+    } as unknown as Runtime;
+    spyOn(runtimeHelpers, "createRuntimeForWorkspace").mockReturnValue(runtime);
+
+    try {
+      await service.getState(metadata.id);
+      throw new Error("Expected getState to reject");
+    } catch (error) {
+      expect(String(error)).toContain("Permission denied");
+    }
+  });
+
   test("getState rethrows transient prompt read failures instead of treating them as deletion", async () => {
     const metadata = createMetadata({
       projectPath: "/tmp/projects/repo",

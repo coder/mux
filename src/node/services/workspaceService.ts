@@ -1092,7 +1092,12 @@ export class WorkspaceService extends EventEmitter {
       this.emit("flowPrompt", event);
     });
     this.flowPromptService.on("update", (event) => {
-      void this.handleFlowPromptUpdate(event);
+      void this.handleFlowPromptUpdate(event).catch((error) => {
+        log.error("Failed to handle Flow Prompting update", {
+          workspaceId: event.workspaceId,
+          error: getErrorMessage(error),
+        });
+      });
     });
     void this.primeFlowPromptMonitorActivity();
     this.setupMetadataListeners();
