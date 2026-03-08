@@ -187,7 +187,9 @@ jobs:
     name: Test / Integration
     needs: [changes]
     if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
-    timeout-minutes: 10
+    # Backend changes run the full tests/ tree (IPC + UI + provider-backed coverage),
+    # which can legitimately exceed 10 minutes on busy runners.
+    timeout-minutes: 15
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
