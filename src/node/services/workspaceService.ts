@@ -3022,8 +3022,18 @@ export class WorkspaceService extends EventEmitter {
       event.nextContent
     );
 
+    const sendOptions = await session.getFlowPromptSendOptions();
+    const isCurrentFlowPromptVersion = await this.flowPromptService.isCurrentFingerprint(
+      event.workspaceId,
+      event.nextFingerprint
+    );
+    if (!isCurrentFlowPromptVersion) {
+      this.flowPromptService.forgetUpdate(event.workspaceId, event.nextFingerprint);
+      return;
+    }
+
     const options = {
-      ...(await session.getFlowPromptSendOptions()),
+      ...sendOptions,
       queueDispatchMode: "tool-end" as const,
       muxMetadata: {
         type: "flow-prompt-update",

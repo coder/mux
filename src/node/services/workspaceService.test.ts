@@ -931,6 +931,108 @@ describe("WorkspaceService sendMessage status clearing", () => {
   });
 });
 
+describe("WorkspaceService Flow Prompting update ordering", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => ({
+        workspacePath: "/tmp/test/workspace",
+        projectPath: "/tmp/test/project",
+      })),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("drops stale revisions after awaiting send options", async () => {
+    const flowPromptSession = {
+      isBusy: mock(() => false),
+      getFlowPromptSendOptions: mock(() =>
+        Promise.resolve({
+          model: "openai:gpt-4o-mini",
+          agentId: "exec",
+        })
+      ),
+      queueFlowPromptUpdate: mock(() => undefined),
+    };
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = mock(() => flowPromptSession as unknown as AgentSession);
+
+    const flowPromptService = (
+      workspaceService as unknown as {
+        flowPromptService: {
+          isCurrentFingerprint: (workspaceId: string, fingerprint: string) => Promise<boolean>;
+          forgetUpdate: (workspaceId: string, fingerprint: string) => void;
+        };
+      }
+    ).flowPromptService;
+    const isCurrentFingerprint = spyOn(flowPromptService, "isCurrentFingerprint").mockResolvedValue(
+      false
+    );
+    const forgetUpdate = spyOn(flowPromptService, "forgetUpdate").mockImplementation(
+      () => undefined
+    );
+    const sendMessage = spyOn(workspaceService, "sendMessage");
+
+    await (
+      workspaceService as unknown as {
+        handleFlowPromptUpdate: (event: {
+          workspaceId: string;
+          path: string;
+          nextContent: string;
+          nextFingerprint: string;
+          text: string;
+        }) => Promise<void>;
+      }
+    ).handleFlowPromptUpdate({
+      workspaceId: "test-workspace",
+      path: "/tmp/test/workspace/.mux/prompts/test-workspace.md",
+      nextContent: "stale flow prompt revision",
+      nextFingerprint: "stale-fingerprint",
+      text: "[Flow prompt updated. Follow current agent instructions.]",
+    });
+
+    expect(isCurrentFingerprint).toHaveBeenCalledWith("test-workspace", "stale-fingerprint");
+    expect(forgetUpdate).toHaveBeenCalledWith("test-workspace", "stale-fingerprint");
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(flowPromptSession.queueFlowPromptUpdate).not.toHaveBeenCalled();
+  });
+});
+
 describe("WorkspaceService idle compaction dispatch", () => {
   let workspaceService: WorkspaceService;
   let historyService: HistoryService;

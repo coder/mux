@@ -296,6 +296,12 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     return this.refreshMonitor(workspaceId, false);
   }
 
+  async isCurrentFingerprint(workspaceId: string, fingerprint: string): Promise<boolean> {
+    const snapshot = await this.readPromptSnapshot(workspaceId);
+    const currentFingerprint = snapshot.contentFingerprint ?? computeFingerprint(snapshot.content);
+    return currentFingerprint === fingerprint;
+  }
+
   async ensurePromptFile(workspaceId: string): Promise<FlowPromptState> {
     const context = await this.getWorkspaceContext(workspaceId);
     if (!context) {
