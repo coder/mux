@@ -371,7 +371,11 @@ export class WorkspaceFlowPromptService extends EventEmitter {
         newContext.workspacePath,
         renamedWorkspacePromptPath
       );
-    } catch {
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
       try {
         const content = await readFileString(oldContext.runtime, oldContext.promptPath);
         await writeFileString(newContext.runtime, newContext.promptPath, content);
@@ -381,7 +385,10 @@ export class WorkspaceFlowPromptService extends EventEmitter {
           oldContext.workspacePath,
           oldContext.promptPath
         );
-      } catch {
+      } catch (fallbackError) {
+        if (!isMissingFileError(fallbackError)) {
+          throw fallbackError;
+        }
         // No prompt file to rename.
       }
     }
@@ -396,12 +403,17 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     const sourceContext = this.getWorkspaceContextFromMetadata(sourceMetadata);
     const targetContext = this.getWorkspaceContextFromMetadata(targetMetadata);
 
+    let content: string;
     try {
-      const content = await readFileString(sourceContext.runtime, sourceContext.promptPath);
-      await writeFileString(targetContext.runtime, targetContext.promptPath, content);
-    } catch {
-      // No flow prompt file to copy.
+      content = await readFileString(sourceContext.runtime, sourceContext.promptPath);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return;
+      }
+      throw error;
     }
+
+    await writeFileString(targetContext.runtime, targetContext.promptPath, content);
   }
 
   startMonitoring(workspaceId: string): void {

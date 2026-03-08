@@ -192,6 +192,90 @@ describe("WorkspaceFlowPromptService runtime error handling", () => {
     expect(executedCommand).not.toContain("~/.mux/src/repo/.mux/prompts/feature.md");
   });
 
+  test("renamePromptFile rethrows target write failures instead of treating them as missing prompts", async () => {
+    const oldMetadata = createMetadata({
+      projectPath: "/tmp/projects/repo",
+      name: "old-name",
+      srcBaseDir: "/tmp/src",
+    });
+    const newMetadata = createMetadata({
+      projectPath: "/tmp/projects/repo",
+      name: "new-name",
+      srcBaseDir: "/tmp/src",
+    });
+    const service = new WorkspaceFlowPromptService({
+      getSessionDir: () => "/tmp/flow-prompt-session",
+    } as unknown as Config);
+
+    const runtime = {
+      getWorkspacePath: (_projectPath: string, workspaceName: string) =>
+        `/tmp/src/repo/${workspaceName}`,
+      readFile: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("Persist this flow prompt"));
+            controller.close();
+          },
+        }),
+      writeFile: () =>
+        new WritableStream<Uint8Array>({
+          write() {
+            throw new Error("disk full");
+          },
+        }),
+    } as unknown as Runtime;
+    spyOn(runtimeHelpers, "createRuntimeForWorkspace").mockReturnValue(runtime);
+
+    try {
+      await service.renamePromptFile(oldMetadata.id, oldMetadata, newMetadata);
+      throw new Error("Expected renamePromptFile to reject");
+    } catch (error) {
+      expect(String(error)).toContain("disk full");
+    }
+  });
+
+  test("copyPromptFile rethrows target write failures instead of treating them as missing prompts", async () => {
+    const sourceMetadata = createMetadata({
+      projectPath: "/tmp/projects/repo",
+      name: "source-name",
+      srcBaseDir: "/tmp/src",
+    });
+    const targetMetadata = createMetadata({
+      projectPath: "/tmp/projects/repo",
+      name: "target-name",
+      srcBaseDir: "/tmp/src",
+    });
+    const service = new WorkspaceFlowPromptService({
+      getSessionDir: () => "/tmp/flow-prompt-session",
+    } as unknown as Config);
+
+    const runtime = {
+      getWorkspacePath: (_projectPath: string, workspaceName: string) =>
+        `/tmp/src/repo/${workspaceName}`,
+      readFile: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("Persist this flow prompt"));
+            controller.close();
+          },
+        }),
+      writeFile: () =>
+        new WritableStream<Uint8Array>({
+          write() {
+            throw new Error("disk full");
+          },
+        }),
+    } as unknown as Runtime;
+    spyOn(runtimeHelpers, "createRuntimeForWorkspace").mockReturnValue(runtime);
+
+    try {
+      await service.copyPromptFile(sourceMetadata, targetMetadata);
+      throw new Error("Expected copyPromptFile to reject");
+    } catch (error) {
+      expect(String(error)).toContain("disk full");
+    }
+  });
+
   test("ensurePromptFile rethrows transient stat failures instead of overwriting the prompt", async () => {
     const metadata = createMetadata({
       projectPath: "/tmp/projects/repo",
