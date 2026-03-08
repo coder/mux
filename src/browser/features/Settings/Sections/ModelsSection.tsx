@@ -35,7 +35,7 @@ import {
 import { ModelRow } from "./ModelRow";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
-const HIDDEN_PROVIDERS = new Set(["mux-gateway", "openai-compatible"]);
+const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
 
 // Shared header cell styles
 const headerCellBase = "py-1.5 pr-2 text-xs font-medium text-muted";
@@ -61,8 +61,6 @@ interface EditingState {
   contextWindowTokens: string;
   mappedToModel: string;
   focus?: "model" | "context";
-  /** Instance ID for openai-compatible providers (e.g., "together-ai") */
-  instanceId?: string;
 }
 
 function parseContextWindowTokensInput(value: string): number | null {
@@ -219,8 +217,7 @@ export function ModelsSection() {
       provider: string,
       modelId: string,
       contextWindowTokens: number | null,
-      mappedToModel: string | null,
-      instanceId?: string
+      mappedToModel: string | null
     ) => {
       setEditing({
         provider,
@@ -229,7 +226,6 @@ export function ModelsSection() {
         contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
         mappedToModel: mappedToModel ?? "",
         focus: "model",
-        instanceId,
       });
       setError(null);
     },
@@ -241,8 +237,7 @@ export function ModelsSection() {
       provider: string,
       modelId: string,
       contextWindowTokens: number | null,
-      mappedToModel: string | null,
-      instanceId?: string
+      mappedToModel: string | null
     ) => {
       setEditing({
         provider,
@@ -251,7 +246,6 @@ export function ModelsSection() {
         contextWindowTokens: contextWindowTokens === null ? "" : String(contextWindowTokens),
         mappedToModel: mappedToModel ?? "",
         focus: "context",
-        instanceId,
       });
       setError(null);
     },
