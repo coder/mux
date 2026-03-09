@@ -336,6 +336,110 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
   },
 };
 
+/**
+ * Regression variant: mirrors SingleOldWorkspaceInOlderTier, but the parent agent
+ * is less than 1 day old so the full hierarchy should render in the recent section.
+ */
+export const SingleRecentWorkspaceInTopTier: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/age-tier-demo";
+        const recentCreatedAt = new Date(NOW - 6 * 60 * 60 * 1000).toISOString();
+        const recentWorkspace = createWorkspace({
+          id: "ws-recent-only",
+          name: "recent-workspace",
+          title: "Recent workspace",
+          projectName: "age-tier-demo",
+          projectPath,
+          createdAt: recentCreatedAt,
+        });
+        const activeSubAgent = {
+          ...createWorkspace({
+            id: "ws-recent-active-subagent",
+            name: "active-subagent",
+            title: "Active sub-agent",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: recentCreatedAt,
+          }),
+          parentWorkspaceId: recentWorkspace.id,
+          taskStatus: "running" as const,
+        };
+        const completedSubAgentOne = {
+          ...createWorkspace({
+            id: "ws-recent-completed-subagent-1",
+            name: "completed-subagent-1",
+            title: "Completed sub-agent 1",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: recentCreatedAt,
+          }),
+          parentWorkspaceId: recentWorkspace.id,
+          taskStatus: "reported" as const,
+          reportedAt: recentCreatedAt,
+        };
+        const completedSubAgentTwo = {
+          ...createWorkspace({
+            id: "ws-recent-completed-subagent-2",
+            name: "completed-subagent-2",
+            title: "Completed sub-agent 2",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: recentCreatedAt,
+          }),
+          parentWorkspaceId: recentWorkspace.id,
+          taskStatus: "reported" as const,
+          reportedAt: recentCreatedAt,
+        };
+        const workspaces = [
+          recentWorkspace,
+          activeSubAgent,
+          completedSubAgentOne,
+          completedSubAgentTwo,
+        ];
+
+        expandProjects([projectPath]);
+        localStorage.setItem(
+          "expandedCompletedSubAgents",
+          JSON.stringify({ [recentWorkspace.id]: true })
+        );
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      const tierToggle = within(canvasElement).queryByRole("button", {
+        name: /workspaces older than 1 day/i,
+      });
+      if (tierToggle) {
+        throw new Error("Did not expect an older-than-1-day tier for a recent parent workspace");
+      }
+    });
+
+    await waitFor(() => {
+      for (const workspaceId of [
+        "ws-recent-only",
+        "ws-recent-active-subagent",
+        "ws-recent-completed-subagent-1",
+        "ws-recent-completed-subagent-2",
+      ]) {
+        const row = canvasElement.querySelector<HTMLElement>(
+          `[data-workspace-id="${workspaceId}"]`
+        );
+        if (!row) {
+          throw new Error(`Workspace ${workspaceId} did not render in the recent tier`);
+        }
+      }
+    });
+  },
+};
+
 /** Long workspace names - tests truncation and prevents horizontal scroll regression */
 export const LongWorkspaceNames: AppStory = {
   render: () => (
