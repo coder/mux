@@ -86,6 +86,8 @@ export interface ProjectsConfig {
   /** Enable recording AI SDK devtools logs to ~/.mux/sessions/<workspace>/devtools.jsonl */
   llmDebugLogs?: boolean;
   muxGatewayModels?: string[];
+  routePriority?: string[];
+  routeOverrides?: Record<string, string>;
 
   /**
    * Default model used for new workspaces (shared via ~/.mux/config.json).

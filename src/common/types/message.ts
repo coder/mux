@@ -401,8 +401,9 @@ export interface MuxMetadata {
   model?: string;
   /** Effective thinking/reasoning level used for this response (after model policy clamping). */
   thinkingLevel?: ThinkingLevel;
-  /** True when this response was routed through Mux Gateway (model stays canonical). */
+  /** @deprecated Legacy gateway flag; prefer routeProvider for source attribution. */
   routedThroughGateway?: boolean;
+  routeProvider?: string;
   /**
    * True when usage costs are included in a subscription (e.g., ChatGPT subscription routing).
    * Token counts are still tracked, but the UI should display costs as $0.
@@ -580,6 +581,7 @@ export type DisplayedMessage =
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       model?: string;
       routedThroughGateway?: boolean;
+      routeProvider?: string;
       agentId?: string; // Agent id active when this message was sent (assistant messages only)
       /** @deprecated Legacy base mode derived from agent definition. */
       mode?: AgentMode;

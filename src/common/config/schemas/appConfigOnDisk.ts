@@ -48,6 +48,8 @@ export const AppConfigOnDiskSchema = z
     muxGatewayEnabled: z.boolean().optional(),
     llmDebugLogs: z.boolean().optional(),
     muxGatewayModels: z.array(z.string()).optional(),
+    routePriority: z.array(z.string()).optional(),
+    routeOverrides: z.record(z.string(), z.string()).optional(),
     defaultModel: z.string().optional(),
     hiddenModels: z.array(z.string()).optional(),
     preferredCompactionModel: z.string().optional(),
