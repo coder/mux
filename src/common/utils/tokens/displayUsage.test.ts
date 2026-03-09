@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { createDisplayUsage } from "./displayUsage";
+import { createDisplayUsage, recomputeUsageCosts } from "./displayUsage";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 describe("createDisplayUsage", () => {
@@ -188,6 +188,92 @@ describe("createDisplayUsage", () => {
     expect(result).toBeDefined();
     expect(result!.input.tokens).toBe(1000);
     expect(result!.cached.tokens).toBe(0);
+  });
+
+  describe("tiered long-context pricing", () => {
+    test("keeps GPT-5.4 on base rates at the published 272K boundary", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 272000,
+        outputTokens: 1000,
+        totalTokens: 273000,
+      };
+
+      const result = createDisplayUsage(usage, "openai:gpt-5.4");
+
+      expect(result).toBeDefined();
+      expect(result!.input.cost_usd).toBeCloseTo(0.68);
+      expect(result!.output.cost_usd).toBeCloseTo(0.015);
+    });
+
+    test("switches GPT-5.4 to long-context rates above 272K including cache reads", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 300000,
+        outputTokens: 1000,
+        totalTokens: 301000,
+        cachedInputTokens: 100000,
+      };
+
+      const result = createDisplayUsage(usage, "openai:gpt-5.4");
+
+      expect(result).toBeDefined();
+      expect(result!.input.tokens).toBe(200000);
+      expect(result!.cached.tokens).toBe(100000);
+      expect(result!.input.cost_usd).toBeCloseTo(1);
+      expect(result!.cached.cost_usd).toBeCloseTo(0.05);
+      expect(result!.output.cost_usd).toBeCloseTo(0.0225);
+    });
+
+    test("falls back to LiteLLM's default 200K threshold for existing tiered models", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 250000,
+        outputTokens: 1000,
+        totalTokens: 251000,
+      };
+
+      const result = createDisplayUsage(usage, "google:gemini-3.1-pro-preview");
+
+      expect(result).toBeDefined();
+      expect(result!.input.cost_usd).toBeCloseTo(1);
+      expect(result!.output.cost_usd).toBeCloseTo(0.018);
+    });
+
+    test("preserves aggregate GPT-5.4 totals during repricing and flags them as approximate", () => {
+      const aggregate = {
+        input: { tokens: 200000, cost_usd: 0.5 },
+        cached: { tokens: 100000, cost_usd: 0.025 },
+        cacheCreate: { tokens: 0, cost_usd: 0 },
+        output: { tokens: 1000, cost_usd: 0.015 },
+        reasoning: { tokens: 0, cost_usd: 0 },
+        model: "openai:gpt-5.4",
+      };
+
+      const result = recomputeUsageCosts(aggregate, "openai:gpt-5.4", {
+        aggregatedUsage: true,
+      });
+
+      expect(result).toEqual({
+        ...aggregate,
+        hasUnknownCosts: true,
+      });
+    });
+
+    test("recomputes persisted GPT-5.4 Pro usage with the higher long-context tier", () => {
+      const result = recomputeUsageCosts(
+        {
+          input: { tokens: 280000 },
+          cached: { tokens: 0 },
+          cacheCreate: { tokens: 0 },
+          output: { tokens: 1000 },
+          reasoning: { tokens: 500 },
+          model: "openai:gpt-5.4-pro",
+        },
+        "openai:gpt-5.4-pro"
+      );
+
+      expect(result.input.cost_usd).toBeCloseTo(16.8);
+      expect(result.output.cost_usd).toBeCloseTo(0.27);
+      expect(result.reasoning.cost_usd).toBeCloseTo(0.135);
+    });
   });
 
   describe("Subscription-covered usage costs", () => {

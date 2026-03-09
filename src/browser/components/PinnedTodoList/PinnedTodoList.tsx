@@ -10,14 +10,14 @@ interface PinnedTodoListProps {
 
 /**
  * Pinned TODO list displayed at bottom of chat (before StreamingBarrier).
- * Shows current TODOs from active stream only - automatically cleared when stream ends.
+ * Shows current TODOs — persists across streams until updated by todo_write.
  * Reuses TodoList component for consistent styling.
  *
  * Relies on natural reference stability from MapStore + Aggregator architecture:
  * - Aggregator.getCurrentTodos() returns direct reference (not a copy)
  * - Reference only changes when todos are actually modified
  * - MapStore caches WorkspaceState per version, avoiding unnecessary recomputation
- * - Todos are cleared by StreamingMessageAggregator when stream completes
+ * - Todos persist until updated by a new todo_write call
  */
 export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) => {
   const [expanded, setExpanded] = usePersistedState("pinnedTodoExpanded", true);
@@ -28,7 +28,7 @@ export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) =
     () => workspaceStore.getWorkspaceState(workspaceId).todos
   );
 
-  // Todos are cleared when stream ends, so if there are todos they're from an active stream
+  // No todos have been written yet in this session
   if (todos.length === 0) {
     return null;
   }

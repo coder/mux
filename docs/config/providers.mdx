@@ -121,3 +121,68 @@ See [OpenRouter Provider Routing docs](https://openrouter.ai/docs/features/provi
 ### xAI Search Orchestration
 
 Grok models support live web search. Mux enables this by default with `mode: "auto"`. Customize via [`searchParameters`](https://docs.x.ai/docs/resources/search) for regional focus, time filters, or to disable search.
+
+### Model Parameter Overrides
+
+Set per-model defaults for parameters like temperature, token limits, and sampling by adding a
+`modelParameters` section under any provider:
+
+```jsonc
+{
+  "anthropic": {
+    "apiKey": "sk-ant-...",
+    "modelParameters": {
+      // Override for a specific model
+      "claude-sonnet-4-5": {
+        "temperature": 0.7,
+        "max_output_tokens": 16384,
+      },
+      // Wildcard default for all Anthropic models
+      "*": {
+        "max_output_tokens": 8192,
+      },
+    },
+  },
+}
+```
+
+#### Supported parameters
+
+| Parameter           | Range            | Description                     |
+| ------------------- | ---------------- | ------------------------------- |
+| `temperature`       | 0–2              | Randomness of responses         |
+| `top_p`             | 0–1              | Nucleus sampling threshold      |
+| `top_k`             | positive integer | Top-K sampling                  |
+| `max_output_tokens` | positive integer | Maximum response length         |
+| `seed`              | integer          | Deterministic generation seed   |
+| `frequency_penalty` | number           | Penalize repeated tokens        |
+| `presence_penalty`  | number           | Penalize tokens already present |
+
+Any unrecognized key is passed through as a provider-specific option (for example, OpenRouter routing hints).
+
+#### Resolution order
+
+When multiple entries could match, the **first match wins** (no merging across tiers):
+
+1. **Effective model ID** — a dated snapshot like `claude-sonnet-4-5-20250929`
+2. **Canonical model ID** — the model you selected, e.g. `claude-sonnet-4-5`
+3. **Wildcard `"*"`** — catch-all for that provider
+
+For example, if you configure both `"claude-sonnet-4-5"` and `"*"` with different temperatures,
+requesting `claude-sonnet-4-5` uses the specific entry — the wildcard is not merged in.
+
+#### Priority with other settings
+
+For `max_output_tokens` specifically, the priority chain is:
+
+1. Explicit per-message override (from thinking level or UI)
+2. `modelParameters` config value
+3. Model's built-in default
+
+This means model parameters act as a **default** — they never override explicit per-message choices.
+
+<Warning>
+  Some providers require specific parameter values when extended thinking is enabled. For example,
+  Anthropic requires `temperature: 1` with thinking. Setting a different temperature in
+  `modelParameters` may cause API errors when thinking is active.
+</Warning>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, Code, RefreshCw, Trash2, X } from "lucide-react";
 import { Button } from "@/browser/components/Button/Button";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { useAnalyticsRawQuery } from "@/browser/hooks/useAnalytics";
@@ -11,6 +11,7 @@ import { cn } from "@/common/lib/utils";
 import type { SavedQuery } from "@/common/types/savedQueries";
 import { getErrorMessage } from "@/common/utils/errors";
 import { ChartTypePicker } from "./ChartTypePicker";
+import { SavedQuerySqlDialog } from "./SavedQuerySqlDialog";
 
 interface SavedQueryPanelProps {
   query: SavedQuery;
@@ -145,7 +146,15 @@ function EditableLabel(props: EditableLabelProps) {
 export function SavedQueryPanel(props: SavedQueryPanelProps) {
   const { data, loading, error, executeQuery } = useAnalyticsRawQuery();
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isSqlDialogOpen, setIsSqlDialogOpen] = useState(false);
+  const [draftSql, setDraftSql] = useState(props.query.sql);
+  const [sqlDialogError, setSqlDialogError] = useState<string | null>(null);
+  const [savingSql, setSavingSql] = useState(false);
   const executeQueryRef = useRef(executeQuery);
+  const normalizedSavedSql = props.query.sql.trim();
+  const normalizedDraftSql = draftSql.trim();
+  const saveSqlDisabled =
+    savingSql || normalizedDraftSql.length === 0 || normalizedDraftSql === normalizedSavedSql;
 
   useEffect(() => {
     executeQueryRef.current = executeQuery;
@@ -164,6 +173,22 @@ export function SavedQueryPanel(props: SavedQueryPanelProps) {
   const explicitChartType = normalizeChartType(props.query.chartType);
   const effectiveChartType = explicitChartType ?? inferredChartType;
   const axes = data ? inferAxes(data.columns) : { xAxis: "", yAxes: [] };
+
+  const openSqlDialog = () => {
+    setDraftSql(props.query.sql);
+    setSqlDialogError(null);
+    setIsSqlDialogOpen(true);
+  };
+
+  const closeSqlDialog = () => {
+    if (savingSql) {
+      return;
+    }
+
+    setDraftSql(props.query.sql);
+    setSqlDialogError(null);
+    setIsSqlDialogOpen(false);
+  };
 
   const handleRefresh = () => {
     if (loading) {
@@ -205,11 +230,50 @@ export function SavedQueryPanel(props: SavedQueryPanelProps) {
     }
   };
 
+  const handleSaveSql = async () => {
+    const normalizedSavedQueryId = props.query.id.trim();
+
+    if (!normalizedSavedQueryId) {
+      setSqlDialogError("This saved panel is missing its ID and cannot be updated.");
+      return;
+    }
+
+    if (!normalizedDraftSql) {
+      setSqlDialogError("SQL cannot be empty.");
+      return;
+    }
+
+    if (normalizedDraftSql === normalizedSavedSql) {
+      closeSqlDialog();
+      return;
+    }
+
+    setSavingSql(true);
+    setSqlDialogError(null);
+    try {
+      await props.onUpdate({ id: normalizedSavedQueryId, sql: normalizedDraftSql });
+      closeSqlDialog();
+    } catch (updateError) {
+      setSqlDialogError(getErrorMessage(updateError));
+    } finally {
+      setSavingSql(false);
+    }
+  };
+
   return (
     <div className="bg-background-secondary border-border-medium rounded-lg border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <EditableLabel label={props.query.label} onCommit={handleRename} />
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={openSqlDialog}
+            aria-label="View or edit SQL"
+            className="text-muted hover:text-foreground h-7 w-7"
+          >
+            <Code className="size-3.5" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -282,6 +346,27 @@ export function SavedQueryPanel(props: SavedQueryPanelProps) {
       ) : (
         <p className="text-muted mt-3 text-xs">Run the saved query to view results.</p>
       )}
+
+      <SavedQuerySqlDialog
+        open={isSqlDialogOpen}
+        label={props.query.label}
+        sql={draftSql}
+        saving={savingSql}
+        saveDisabled={saveSqlDisabled}
+        error={sqlDialogError}
+        onSqlChange={setDraftSql}
+        onOpenChange={(open) => {
+          if (open) {
+            openSqlDialog();
+            return;
+          }
+
+          closeSqlDialog();
+        }}
+        onSave={() => {
+          void handleSaveSql();
+        }}
+      />
     </div>
   );
 }

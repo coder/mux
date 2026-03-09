@@ -24,7 +24,7 @@ export function getProviderModelEntryMappedTo(entry: ProviderModelEntry): string
   return entry.mappedToModel ?? null;
 }
 
-export function parseProviderModelId(fullModelId: string): ParsedProviderModelId | null {
+function parseProviderModelId(fullModelId: string): ParsedProviderModelId | null {
   const separatorIndex = fullModelId.indexOf(":");
   if (separatorIndex <= 0 || separatorIndex >= fullModelId.length - 1) {
     return null;
@@ -36,7 +36,7 @@ export function parseProviderModelId(fullModelId: string): ParsedProviderModelId
   };
 }
 
-export function findProviderModelEntry(
+function findProviderModelEntry(
   providersConfig: ProvidersConfigMap | null,
   provider: string,
   modelId: string

@@ -1,5 +1,7 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
+import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
+import { assert } from "@/common/utils/assert";
 
 // Re-export shared section sorting utility
 export { sortSectionsByLinkedList } from "@/common/utils/sections";
@@ -18,48 +20,57 @@ function flattenWorkspaceTree(
   const roots: FrontendWorkspaceMetadata[] = [];
 
   // Preserve input order for both roots and siblings by iterating in-order.
+  // Active sub-workspaces only render when their full parent chain is active.
   for (const workspace of workspaces) {
     const parentId = workspace.parentWorkspaceId;
-    if (parentId && byId.has(parentId)) {
-      const children = childrenByParent.get(parentId) ?? [];
-      children.push(workspace);
-      childrenByParent.set(parentId, children);
-    } else {
+    if (parentId == null) {
       roots.push(workspace);
+      continue;
     }
+
+    if (!byId.has(parentId)) {
+      continue;
+    }
+
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(workspace);
+    childrenByParent.set(parentId, children);
   }
 
   const result: FrontendWorkspaceMetadata[] = [];
   const visited = new Set<string>();
+  const stack = roots.slice().reverse();
 
-  const visit = (workspace: FrontendWorkspaceMetadata, depth: number) => {
-    if (visited.has(workspace.id)) return;
+  while (stack.length > 0) {
+    const workspace = stack.pop();
+    assert(workspace != null, "flattenWorkspaceTree: stack entries must exist while traversing");
+
+    if (visited.has(workspace.id)) {
+      continue;
+    }
     visited.add(workspace.id);
-
-    // Cap depth defensively to avoid pathological cycles/graphs.
-    if (depth > 32) {
-      result.push(workspace);
-      return;
-    }
-
     result.push(workspace);
-    const children = childrenByParent.get(workspace.id);
-    if (children) {
-      for (const child of children) {
-        visit(child, depth + 1);
-      }
-    }
-  };
 
-  for (const root of roots) {
-    visit(root, 0);
+    const children = childrenByParent.get(workspace.id);
+    if (!children) {
+      continue;
+    }
+
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
   }
 
-  // Fallback: ensure we include any remaining nodes (cycles, missing parents, etc.).
   for (const workspace of workspaces) {
-    if (!visited.has(workspace.id)) {
-      visit(workspace, 0);
+    if (visited.has(workspace.id)) {
+      continue;
     }
+
+    assert(
+      workspace.parentWorkspaceId != null,
+      "flattenWorkspaceTree: unvisited root workspaces should have been traversed"
+    );
+    // Intentionally drop orphaned/cyclic descendants instead of promoting them to roots.
   }
 
   return result;
@@ -102,12 +113,147 @@ export function computeWorkspaceDepthMap(
   return Object.fromEntries(depths);
 }
 
+export interface AgentRowRenderMeta {
+  depth: number;
+  rowKind: "primary" | "subagent";
+  connectorPosition: "single" | "middle" | "last";
+  hasHiddenCompletedChildren: boolean;
+  visibleCompletedChildrenCount: number;
+}
+
+/**
+ * Hide completed child tasks by default unless their parent is expanded.
+ * Child visibility is inherited from ancestors so hidden parents also hide descendants.
+ */
+export function filterVisibleAgentRows(
+  flattenedWorkspaces: FrontendWorkspaceMetadata[],
+  expandedParentIds: ReadonlySet<string> = new Set()
+): FrontendWorkspaceMetadata[] {
+  if (flattenedWorkspaces.length === 0) {
+    return [];
+  }
+
+  const byId = new Map<string, FrontendWorkspaceMetadata>();
+  for (const workspace of flattenedWorkspaces) {
+    byId.set(workspace.id, workspace);
+  }
+
+  const visibilityById = new Map<string, boolean>();
+  const visiting = new Set<string>();
+
+  const isVisible = (workspace: FrontendWorkspaceMetadata): boolean => {
+    const cached = visibilityById.get(workspace.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    if (visiting.has(workspace.id)) {
+      // Defensive cycle handling: keep nodes visible instead of accidentally hiding them forever.
+      return true;
+    }
+
+    visiting.add(workspace.id);
+
+    const parentId = workspace.parentWorkspaceId;
+    if (!parentId) {
+      visiting.delete(workspace.id);
+      visibilityById.set(workspace.id, true);
+      return true;
+    }
+
+    const parent = byId.get(parentId);
+    if (!parent) {
+      visiting.delete(workspace.id);
+      visibilityById.set(workspace.id, true);
+      return true;
+    }
+
+    const parentVisible = isVisible(parent);
+    const isCompletedChildTask = hasCompletedAgentReport(workspace);
+    const shouldHideCompletedChild = isCompletedChildTask && !expandedParentIds.has(parentId);
+    const visible = parentVisible && !shouldHideCompletedChild;
+
+    visiting.delete(workspace.id);
+    visibilityById.set(workspace.id, visible);
+    return visible;
+  };
+
+  return flattenedWorkspaces.filter((workspace) => isVisible(workspace));
+}
+
+/**
+ * Build render metadata for visible rows in a flattened workspace tree.
+ */
+export function computeAgentRowRenderMeta(
+  flattenedWorkspaces: FrontendWorkspaceMetadata[],
+  depthByWorkspaceId: Record<string, number>,
+  expandedParentIds: ReadonlySet<string> = new Set()
+): Map<string, AgentRowRenderMeta> {
+  const visibleRows = filterVisibleAgentRows(flattenedWorkspaces, expandedParentIds);
+  const visibleWorkspaceIds = new Set(visibleRows.map((workspace) => workspace.id));
+
+  const visibleChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+  const completedChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+
+  for (const workspace of visibleRows) {
+    const parentId = workspace.parentWorkspaceId;
+    if (!parentId) {
+      continue;
+    }
+
+    const siblings = visibleChildrenByParent.get(parentId) ?? [];
+    siblings.push(workspace);
+    visibleChildrenByParent.set(parentId, siblings);
+  }
+
+  for (const workspace of flattenedWorkspaces) {
+    if (!workspace.parentWorkspaceId || !hasCompletedAgentReport(workspace)) {
+      continue;
+    }
+
+    const completedChildren = completedChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+    completedChildren.push(workspace);
+    completedChildrenByParent.set(workspace.parentWorkspaceId, completedChildren);
+  }
+
+  const metadataByWorkspaceId = new Map<string, AgentRowRenderMeta>();
+
+  for (const workspace of visibleRows) {
+    const rowKind = workspace.parentWorkspaceId ? "subagent" : "primary";
+
+    let connectorPosition: AgentRowRenderMeta["connectorPosition"] = "single";
+    if (workspace.parentWorkspaceId) {
+      const siblings = visibleChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+      if (siblings.length > 1) {
+        connectorPosition = siblings[siblings.length - 1]?.id === workspace.id ? "last" : "middle";
+      }
+    }
+
+    const completedChildren = completedChildrenByParent.get(workspace.id) ?? [];
+    let visibleCompletedChildrenCount = 0;
+    for (const child of completedChildren) {
+      if (visibleWorkspaceIds.has(child.id)) {
+        visibleCompletedChildrenCount += 1;
+      }
+    }
+
+    metadataByWorkspaceId.set(workspace.id, {
+      depth: depthByWorkspaceId[workspace.id] ?? 0,
+      rowKind,
+      connectorPosition,
+      hasHiddenCompletedChildren: visibleCompletedChildrenCount < completedChildren.length,
+      visibleCompletedChildrenCount,
+    });
+  }
+
+  return metadataByWorkspaceId;
+}
+
 /**
  * Age thresholds for workspace filtering, in ascending order.
  * Each tier hides workspaces older than the specified duration.
  */
 export const AGE_THRESHOLDS_DAYS = [1, 7, 30] as const;
-export type AgeThresholdDays = (typeof AGE_THRESHOLDS_DAYS)[number];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -206,7 +352,7 @@ export function formatDaysThreshold(days: number): string {
  *   - buckets[1]: older than 7 days but newer than 30 days
  *   - buckets[2]: older than 30 days
  */
-export interface AgePartitionResult {
+interface AgePartitionResult {
   recent: FrontendWorkspaceMetadata[];
   buckets: FrontendWorkspaceMetadata[][];
 }
@@ -234,7 +380,14 @@ export function findNextNonEmptyTier(
 
 /**
  * Partition workspaces into age-based buckets.
- * Always shows at least one workspace in the recent section (the most recent one).
+ *
+ * Parent/child hierarchy is preserved across tiers: if a workspace has a parent
+ * present in the same list, it inherits the parent's tier. This keeps sub-agent
+ * rows colocated with their parent instead of splitting them across recent/old
+ * buckets based on each child row's individual recency.
+ *
+ * Workspaces older than the first threshold remain in old-age tiers, even when
+ * that leaves the recent section empty.
  */
 export function partitionWorkspacesByAge(
   workspaces: FrontendWorkspaceMetadata[],
@@ -246,42 +399,66 @@ export function partitionWorkspacesByAge(
 
   const now = Date.now();
   const thresholdMs = AGE_THRESHOLDS_DAYS.map((d) => d * DAY_MS);
+  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+
+  // Tier index: -1 => recent, 0..N-1 => age buckets.
+  const tierByWorkspaceId = new Map<string, number>();
+  const visiting = new Set<string>();
+
+  const classifyByOwnRecency = (workspace: FrontendWorkspaceMetadata): number => {
+    const recencyTimestamp = workspaceRecency[workspace.id] ?? 0;
+    const age = now - recencyTimestamp;
+
+    if (age < thresholdMs[0]) {
+      return -1;
+    }
+
+    for (let i = 0; i < thresholdMs.length - 1; i++) {
+      if (age >= thresholdMs[i] && age < thresholdMs[i + 1]) {
+        return i;
+      }
+    }
+
+    return thresholdMs.length - 1;
+  };
+
+  const resolveTierIndex = (workspace: FrontendWorkspaceMetadata): number => {
+    const cachedTier = tierByWorkspaceId.get(workspace.id);
+    if (cachedTier !== undefined) {
+      return cachedTier;
+    }
+
+    if (visiting.has(workspace.id)) {
+      // Defensive cycle handling: fall back to direct age classification.
+      const fallbackTier = classifyByOwnRecency(workspace);
+      tierByWorkspaceId.set(workspace.id, fallbackTier);
+      return fallbackTier;
+    }
+
+    visiting.add(workspace.id);
+
+    const parentId = workspace.parentWorkspaceId;
+    const parent = parentId ? byId.get(parentId) : undefined;
+    const tierIndex = parent ? resolveTierIndex(parent) : classifyByOwnRecency(workspace);
+
+    visiting.delete(workspace.id);
+    tierByWorkspaceId.set(workspace.id, tierIndex);
+    return tierIndex;
+  };
 
   const recent: FrontendWorkspaceMetadata[] = [];
   const buckets: FrontendWorkspaceMetadata[][] = AGE_THRESHOLDS_DAYS.map(() => []);
 
   for (const workspace of workspaces) {
-    const recencyTimestamp = workspaceRecency[workspace.id] ?? 0;
-    const age = now - recencyTimestamp;
-
-    if (age < thresholdMs[0]) {
+    const tierIndex = resolveTierIndex(workspace);
+    if (tierIndex === -1) {
       recent.push(workspace);
-    } else {
-      // Find which bucket this workspace belongs to
-      // buckets[i] contains workspaces older than threshold[i] but newer than threshold[i+1]
-      let placed = false;
-      for (let i = 0; i < thresholdMs.length - 1; i++) {
-        if (age >= thresholdMs[i] && age < thresholdMs[i + 1]) {
-          buckets[i].push(workspace);
-          placed = true;
-          break;
-        }
-      }
-      // Older than the last threshold
-      if (!placed) {
-        buckets[buckets.length - 1].push(workspace);
-      }
+      continue;
     }
-  }
 
-  // Always show at least one workspace - move the most recent from first non-empty bucket
-  if (recent.length === 0) {
-    for (const bucket of buckets) {
-      if (bucket.length > 0) {
-        recent.push(bucket.shift()!);
-        break;
-      }
-    }
+    const safeBucketIndex =
+      tierIndex >= 0 && tierIndex < buckets.length ? tierIndex : buckets.length - 1;
+    buckets[safeBucketIndex].push(workspace);
   }
 
   return { recent, buckets };
@@ -296,7 +473,7 @@ export function partitionWorkspacesByAge(
  * - unsectioned: workspaces not assigned to any section
  * - bySectionId: map of section ID to workspaces in that section
  */
-export interface SectionPartitionResult {
+interface SectionPartitionResult {
   unsectioned: FrontendWorkspaceMetadata[];
   bySectionId: Map<string, FrontendWorkspaceMetadata[]>;
 }

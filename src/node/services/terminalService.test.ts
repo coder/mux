@@ -4,6 +4,7 @@ import type { PTYService } from "./ptyService";
 import type { Config } from "@/node/config";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type { TerminalCreateParams } from "@/common/types/terminal";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import * as childProcess from "child_process";
 import * as fs from "fs/promises";
 
@@ -17,6 +18,7 @@ const mockConfig = {
         id: "ws-1",
         projectPath: "/tmp/project",
         name: "main",
+        namedWorkspacePath: "/tmp/project/main",
         runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
       },
     ])
@@ -28,6 +30,24 @@ const mockConfig = {
   })),
   srcDir: "/tmp",
 } as unknown as Config;
+
+function createConfigWithMetadata(metadata: {
+  id: string;
+  projectPath: string;
+  name: string;
+  runtimeConfig: RuntimeConfig;
+  namedWorkspacePath?: string;
+}): Config {
+  return {
+    getAllWorkspaceMetadata: mock(() => Promise.resolve([metadata])),
+    getEffectiveSecrets: getEffectiveSecretsMock,
+    loadConfigOrDefault: mock(() => ({
+      projects: new Map(),
+      terminalDefaultShell: undefined,
+    })),
+    srcDir: "/tmp",
+  } as unknown as Config;
+}
 
 const createSessionMock = mock(
   (
@@ -112,6 +132,70 @@ describe("TerminalService", () => {
     openTerminalWindowMock.mockClear();
   });
 
+  function getCreateSessionEnvFromFirstCall(): NodeJS.ProcessEnv {
+    const call = createSessionMock.mock.calls[0];
+    if (!call) {
+      throw new Error("Expected createSession to be called");
+    }
+
+    const options = call[6] as { env?: NodeJS.ProcessEnv } | undefined;
+    if (!options?.env) {
+      throw new Error("Expected createSession to receive terminal env");
+    }
+
+    return options.env;
+  }
+
+  function getCreateSessionPathFromFirstCall(): string {
+    const call = createSessionMock.mock.calls[0];
+    if (!call) {
+      throw new Error("Expected createSession to be called");
+    }
+
+    const workspacePath = call[2];
+    if (typeof workspacePath !== "string") {
+      throw new Error("Expected createSession to receive a workspace path");
+    }
+
+    return workspacePath;
+  }
+
+  async function withProxyEnv<T>(
+    env: { vscodeProxyUri?: string; muxProxyUri?: string },
+    run: () => Promise<T>
+  ): Promise<T> {
+    const previousVscodeProxyUri = process.env.VSCODE_PROXY_URI;
+    const previousMuxProxyUri = process.env.MUX_PROXY_URI;
+
+    if (env.vscodeProxyUri === undefined) {
+      delete process.env.VSCODE_PROXY_URI;
+    } else {
+      process.env.VSCODE_PROXY_URI = env.vscodeProxyUri;
+    }
+
+    if (env.muxProxyUri === undefined) {
+      delete process.env.MUX_PROXY_URI;
+    } else {
+      process.env.MUX_PROXY_URI = env.muxProxyUri;
+    }
+
+    try {
+      return await run();
+    } finally {
+      if (previousVscodeProxyUri === undefined) {
+        delete process.env.VSCODE_PROXY_URI;
+      } else {
+        process.env.VSCODE_PROXY_URI = previousVscodeProxyUri;
+      }
+
+      if (previousMuxProxyUri === undefined) {
+        delete process.env.MUX_PROXY_URI;
+      } else {
+        process.env.MUX_PROXY_URI = previousMuxProxyUri;
+      }
+    }
+  }
+
   it("should create a session", async () => {
     const session = await service.create({
       workspaceId: "ws-1",
@@ -124,20 +208,147 @@ describe("TerminalService", () => {
     expect(createSessionMock).toHaveBeenCalled();
     expect(getEffectiveSecretsMock).toHaveBeenCalledWith("/tmp/project");
 
-    const call = createSessionMock.mock.calls[0];
-    if (!call) {
-      throw new Error("Expected createSession to be called");
-    }
+    const env = getCreateSessionEnvFromFirstCall();
 
-    const options = call[6] as { env?: NodeJS.ProcessEnv } | undefined;
-    if (!options?.env) {
-      throw new Error("Expected createSession to receive terminal env");
-    }
+    expect(env.MUX_PROJECT_PATH).toBe("/tmp/project");
+    expect(env.MUX_RUNTIME).toBe("worktree");
+    expect(env.MUX_WORKSPACE_NAME).toBe("main");
+    expect(env.TEST_SECRET).toBe("secret-value");
+  });
 
-    expect(options.env.MUX_PROJECT_PATH).toBe("/tmp/project");
-    expect(options.env.MUX_RUNTIME).toBe("worktree");
-    expect(options.env.MUX_WORKSPACE_NAME).toBe("main");
-    expect(options.env.TEST_SECRET).toBe("secret-value");
+  it("uses the persisted workspace root for worktree terminals", async () => {
+    service = new TerminalService(
+      createConfigWithMetadata({
+        id: "ws-persisted",
+        projectPath: "/tmp/project",
+        name: "feature",
+        namedWorkspacePath: "/persisted/workspace-root",
+        runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/runtime-src" },
+      }),
+      mockPTYService,
+      undefined
+    );
+
+    await service.create({ workspaceId: "ws-persisted", cols: 80, rows: 24 });
+
+    expect(getCreateSessionPathFromFirstCall()).toBe("/persisted/workspace-root");
+  });
+
+  it("keeps docker terminals rooted in the translated runtime path", async () => {
+    service = new TerminalService(
+      createConfigWithMetadata({
+        id: "ws-docker",
+        projectPath: "/tmp/project",
+        name: "feature",
+        namedWorkspacePath: "/persisted/workspace-root",
+        runtimeConfig: { type: "docker", image: "node:20" },
+      }),
+      mockPTYService,
+      undefined
+    );
+
+    await service.create({ workspaceId: "ws-docker", cols: 80, rows: 24 });
+
+    expect(getCreateSessionPathFromFirstCall()).toBe("/src");
+    expect(getEffectiveSecretsMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates VSCODE_PROXY_URI and falls back MUX_PROXY_URI to it", async () => {
+    const vscodeProxyUri = "https://coder.example/proxy/{{port}}/";
+
+    await withProxyEnv({ vscodeProxyUri }, async () => {
+      await service.create({
+        workspaceId: "ws-1",
+        cols: 80,
+        rows: 24,
+      });
+    });
+
+    const env = getCreateSessionEnvFromFirstCall();
+    expect(env.VSCODE_PROXY_URI).toBe(vscodeProxyUri);
+    expect(env.MUX_PROXY_URI).toBe(vscodeProxyUri);
+  });
+
+  it("prefers MUX_PROXY_URI over VSCODE_PROXY_URI when both are set", async () => {
+    const vscodeProxyUri = "https://coder.example/proxy/{{port}}/";
+    const muxProxyUri = "https://mux.example/proxy/{{port}}/";
+
+    await withProxyEnv({ vscodeProxyUri, muxProxyUri }, async () => {
+      await service.create({
+        workspaceId: "ws-1",
+        cols: 80,
+        rows: 24,
+      });
+    });
+
+    const env = getCreateSessionEnvFromFirstCall();
+    expect(env.VSCODE_PROXY_URI).toBe(vscodeProxyUri);
+    expect(env.MUX_PROXY_URI).toBe(muxProxyUri);
+  });
+
+  it("omits proxy URI variables when neither source variable is set", async () => {
+    await withProxyEnv({}, async () => {
+      await service.create({
+        workspaceId: "ws-1",
+        cols: 80,
+        rows: 24,
+      });
+    });
+
+    const env = getCreateSessionEnvFromFirstCall();
+    expect(env.VSCODE_PROXY_URI).toBeUndefined();
+    expect(env.MUX_PROXY_URI).toBeUndefined();
+  });
+
+  it("keeps proxy env injection scoped to local/worktree runtimes", async () => {
+    const configRef = mockConfig as unknown as {
+      getAllWorkspaceMetadata: typeof mockConfig.getAllWorkspaceMetadata;
+    };
+    const originalGetAllWorkspaceMetadata = configRef.getAllWorkspaceMetadata;
+    configRef.getAllWorkspaceMetadata = mock(() =>
+      Promise.resolve([
+        {
+          id: "ws-ssh",
+          projectPath: "/tmp/project",
+          name: "main",
+          namedWorkspacePath: "~/mux/project/main",
+          runtimeConfig: {
+            type: "ssh",
+            host: "example.com",
+            srcBaseDir: "~/mux",
+            username: "coder",
+            identityFile: "~/.ssh/id_rsa",
+          },
+        },
+      ])
+    ) as unknown as typeof configRef.getAllWorkspaceMetadata;
+
+    try {
+      await withProxyEnv(
+        {
+          vscodeProxyUri: "https://coder.example/proxy/{{port}}/",
+          muxProxyUri: "https://mux.example/proxy/{{port}}/",
+        },
+        async () => {
+          await service.create({
+            workspaceId: "ws-ssh",
+            cols: 80,
+            rows: 24,
+          });
+        }
+      );
+
+      const call = createSessionMock.mock.calls[0];
+      if (!call) {
+        throw new Error("Expected createSession to be called");
+      }
+
+      const options = call[6] as { env?: NodeJS.ProcessEnv } | undefined;
+      expect(options?.env).toBeUndefined();
+      expect(getEffectiveSecretsMock).not.toHaveBeenCalled();
+    } finally {
+      configRef.getAllWorkspaceMetadata = originalGetAllWorkspaceMetadata;
+    }
   });
 
   it("should handle resizing", () => {
@@ -527,12 +738,14 @@ describe("TerminalService", () => {
             id: "ws-1",
             projectPath: "/tmp/project",
             name: "main",
+            namedWorkspacePath: "/tmp/project/main",
             runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
           },
           {
             id: "ws-2",
             projectPath: "/tmp/project2",
             name: "dev",
+            namedWorkspacePath: "/tmp/project2/dev",
             runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
           },
         ])

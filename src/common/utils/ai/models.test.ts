@@ -55,7 +55,17 @@ describe("supports1MContext", () => {
     expect(supports1MContext("mux-gateway:anthropic/claude-sonnet-4-5-20250514")).toBe(true);
   });
 
-  it("should return false for non-Anthropic models", () => {
+  it("should return false for OpenAI GPT models with native large context", () => {
+    expect(supports1MContext("openai:gpt-5.4")).toBe(false);
+    expect(supports1MContext("openai:gpt-5.4-2026-03-05")).toBe(false);
+    expect(supports1MContext("openai:gpt-5.4-pro")).toBe(false);
+    expect(supports1MContext("openai:gpt-5.4-pro-2026-03-05")).toBe(false);
+    expect(supports1MContext("mux-gateway:openai/gpt-5.4")).toBe(false);
+    expect(supports1MContext("mux-gateway:openai/gpt-5.4-pro")).toBe(false);
+  });
+
+  it("should return false for other OpenAI models", () => {
+    expect(supports1MContext("openai:gpt-5.2")).toBe(false);
     expect(supports1MContext("openai:gpt-4o")).toBe(false);
     expect(supports1MContext("mux-gateway:openai/gpt-4o")).toBe(false);
   });

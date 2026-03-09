@@ -1,11 +1,8 @@
-/**
- * Analytics dashboard (stats page) story.
- *
- * Navigates through the titlebar analytics button so the story exercises
- * the same route transition users hit in the real app.
- */
+/** Analytics dashboard (stats page) story. */
 
-import type { APIClient } from "@/browser/contexts/API";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
 import type {
   AgentCostItem,
   DelegationSummary,
@@ -17,17 +14,23 @@ import type {
   TimingDistribution,
   TokensByModelItem,
 } from "@/browser/hooks/useAnalytics";
+import { lightweightMeta } from "@/browser/stories/meta.js";
+import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mockFactory";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import assert from "@/common/utils/assert";
-import { userEvent, waitFor, within } from "@storybook/test";
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { selectWorkspace } from "./storyHelpers";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { waitFor, within } from "@storybook/test";
+import React from "react";
+import { AnalyticsDashboard } from "./AnalyticsDashboard.js";
 
-export default {
-  ...appMeta,
-  title: "App/Analytics",
-};
+const meta = {
+  ...lightweightMeta,
+  title: "Analytics/AnalyticsDashboard",
+  component: AnalyticsDashboard,
+} satisfies Meta<typeof AnalyticsDashboard>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
 
 const PROJECT_PATHS = {
   atlas: "/home/user/projects/atlas-api",
@@ -820,7 +823,7 @@ function getProviderCacheHitRatios(
   })).filter((row) => row.responseCount >= 12);
 }
 
-function setupAnalyticsStory(): APIClient {
+function setupAnalyticsMockClient(): APIClient {
   const workspaces = [
     createWorkspace({
       id: "ws-analytics-atlas",
@@ -841,8 +844,6 @@ function setupAnalyticsStory(): APIClient {
       projectPath: PROJECT_PATHS.docs,
     }),
   ];
-
-  selectWorkspace(workspaces[0]);
 
   const baseClient = createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
@@ -941,21 +942,29 @@ function setupAnalyticsStory(): APIClient {
   return client as APIClient;
 }
 
-async function openAnalyticsDashboard(canvasElement: HTMLElement): Promise<void> {
-  const canvas = within(canvasElement);
+function AnalyticsDashboardStory() {
+  const client = React.useRef(setupAnalyticsMockClient()).current;
 
-  const analyticsButton = await canvas.findByTestId("analytics-button", {}, { timeout: 10_000 });
-  await userEvent.click(analyticsButton);
-
-  await canvas.findByRole("heading", { name: /^analytics$/i });
+  return (
+    <APIProvider client={client}>
+      <RouterProvider>
+        <ProjectProvider>
+          <AnalyticsDashboard
+            leftSidebarCollapsed={false}
+            onToggleLeftSidebarCollapsed={() => {
+              /* noop */
+            }}
+          />
+        </ProjectProvider>
+      </RouterProvider>
+    </APIProvider>
+  );
 }
 
-export const StatsDashboard: AppStory = {
-  render: () => <AppWithMocks setup={setupAnalyticsStory} />,
+export const StatsDashboard: Story = {
+  render: () => <AnalyticsDashboardStory />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
-
-    await openAnalyticsDashboard(canvasElement);
 
     await canvas.findByText("Total Spend");
     await canvas.findByText("$184.73");

@@ -32,6 +32,7 @@
             "pages": [
               "index",
               "install",
+              "getting-started/chat",
               {
                 "group": "Models",
                 "pages": ["config/models", "config/providers"]

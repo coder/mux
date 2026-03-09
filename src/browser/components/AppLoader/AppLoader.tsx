@@ -147,6 +147,7 @@ function AppLoaderInner() {
           initial={{ opacity: 1 }}
           exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -20 }}
           transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.4, ease: "easeInOut" }}
+          className="bg-surface-primary h-full"
         >
           {apiState.status === "error" ? (
             <StartupConnectionError error={apiState.error} onRetry={apiState.retry} />
@@ -166,7 +167,7 @@ function AppLoaderInner() {
           initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.3, ease: "easeOut" }}
-          className="h-full"
+          className="bg-surface-primary h-full"
         >
           <TelemetryEnabledProvider>
             <TerminalRouterProvider>

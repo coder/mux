@@ -14,6 +14,8 @@ env:
   RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
 
 jobs:
+  # NOTE: npm publishing is handled by publish-npm.yml (triggered by tag push),
+  # not by this workflow. This avoids OIDC trusted publisher filename mismatches.
   preflight:
     name: Validate release target
     runs-on: ubuntu-latest
@@ -38,18 +40,6 @@ jobs:
           fi
 
           echo "Publishing tag $RELEASE_TAG"
-
-  npm-publish-stable:
-    name: Publish to NPM (latest)
-    needs: preflight
-    permissions:
-      contents: read
-      id-token: write # Required for OIDC trusted publishing
-    uses: ./.github/workflows/_npm-publish.yml
-    with:
-      channel: latest
-      ref: ${{ inputs.tag || github.ref }}
-      release_tag: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
 
   desktop-builds:
     name: Build and Release Desktop Apps
@@ -134,7 +124,7 @@ jobs:
   notify-slack-failure:
     name: Notify Slack on Failure
     runs-on: ubuntu-latest
-    needs: [desktop-builds, docker-publish, build-vscode-extension, npm-publish-stable]
+    needs: [desktop-builds, docker-publish, build-vscode-extension]
     if: failure()
     steps:
       - name: Send failure notification to Slack
@@ -174,7 +164,7 @@ jobs:
   notify-discord:
     name: Notify Discord
     runs-on: ubuntu-latest
-    needs: [desktop-builds, docker-publish, build-vscode-extension, npm-publish-stable]
+    needs: [desktop-builds, docker-publish, build-vscode-extension]
     # Only notify on actual releases, not manual workflow runs
     if: github.event_name == 'release'
     steps:

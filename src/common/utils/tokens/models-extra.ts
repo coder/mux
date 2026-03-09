@@ -12,7 +12,13 @@ interface ModelData {
   input_cost_per_token_above_200k_tokens?: number;
   output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
+  cache_creation_input_token_cost_above_200k_tokens?: number;
   cache_read_input_token_cost?: number;
+  cache_read_input_token_cost_above_200k_tokens?: number;
+  // LiteLLM's upstream schema hard-codes the field suffix `_above_200k_tokens`, but
+  // some providers publish a different long-context boundary. Omit this to keep the
+  // historical 200K default; set it explicitly when the provider documents another cutoff.
+  tiered_pricing_threshold_tokens?: number;
   litellm_provider?: string;
   mode?: string;
   supports_function_calling?: boolean;
@@ -82,6 +88,54 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
+  },
+
+  // GPT-5.4 - Released March 5, 2026
+  // Native 1.05M context, 128K max output; OpenAI's model page exposes the larger
+  // window directly and does not document an extra API flag for it, so Mux should
+  // present the published limit instead of routing this through the Anthropic-only toggle.
+  // Base pricing: $2.50/M input, $15/M output, $0.25/M cached input.
+  // Above 272K prompt tokens: $5/M input, $22.50/M output, $0.50/M cached input.
+  "gpt-5.4": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.0000025, // $2.50 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.000005, // $5 per million input tokens (>272K)
+    output_cost_per_token: 0.000015, // $15 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.0000225, // $22.50 per million output tokens (>272K)
+    cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens (<272K)
+    cache_read_input_token_cost_above_200k_tokens: 0.0000005, // $0.50 per million cached input tokens (>272K)
+    // OpenAI's published long-context boundary is 272K even though LiteLLM's field names say 200K.
+    tiered_pricing_threshold_tokens: 272000,
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-08-31",
+  },
+
+  // GPT-5.4 Pro - Released March 5, 2026
+  // Native 1.05M context, 128K max output; same rationale as GPT-5.4 above.
+  // Base pricing: $30/M input, $180/M output; OpenAI has not published cached-input pricing.
+  // Above 272K prompt tokens: $60/M input, $270/M output.
+  "gpt-5.4-pro": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00003, // $30 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.00006, // $60 per million input tokens (>272K)
+    output_cost_per_token: 0.00018, // $180 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.00027, // $270 per million output tokens (>272K)
+    tiered_pricing_threshold_tokens: 272000,
+    knowledge_cutoff: "2025-08-31",
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
   },
 
   // GPT-5.2 / GPT-5.2 Codex - keep aligned

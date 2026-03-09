@@ -689,6 +689,7 @@ export const TOOL_DEFINITIONS = {
               "List active tasks with task_list. " +
               "Process persists until timeout_secs expires, terminated, or workspace is removed." +
               "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
+              "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
               "Check back periodically with task_await rather than blocking on completion."
           ),
         display_name: z
@@ -815,7 +816,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_list: {
     description:
-      "List global skills from the global skills directory for management in Chat with Mux.",
+      "List available skills in the current workspace. Returns the effective flat skill list across project, global, and built-in scopes, with shadowing already applied. Use each descriptor's scope field to identify where the visible skill came from.",
     schema: z
       .object({
         includeUnadvertised: z
@@ -1022,6 +1023,7 @@ export const TOOL_DEFINITIONS = {
       "If run_in_background is true, returns immediately with a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
       "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
       "Use run_in_background: true when launching multiple tasks in parallel so you can await them as a batch. " +
+      "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
       "Use the bash tool to run shell commands.",
     schema: TaskToolArgsSchema,
   },

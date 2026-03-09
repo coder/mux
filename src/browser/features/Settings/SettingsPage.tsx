@@ -180,14 +180,18 @@ export function SettingsPage(props: SettingsPageProps) {
   const SectionComponent = currentSection.component;
 
   return (
-    <div className="bg-dark flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="bg-surface-primary flex min-h-0 flex-1 flex-col overflow-hidden">
       {/*
         Keep explicit mobile escape controls in the page chrome:
         - The desktop close button is hidden below md.
         - On touch layouts, the left sidebar is often off-canvas by default.
         Without back + menu actions here, /settings/:section can trap users in-pane.
       */}
-      <div className="bg-sidebar border-border-light flex shrink-0 items-center justify-between border-b px-2 md:hidden [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
+      <div
+        className="bg-surface-primary border-border-light flex shrink-0 items-center 
+        justify-between border-b px-2 md:hidden [@media(max-width:768px)]:h-auto 
+        [@media(max-width:768px)]:py-2"
+      >
         <div className="flex min-w-0 items-center gap-2">
           {props.leftSidebarCollapsed && (
             <Button

@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { installBrowserLogCapture } from "@/browser/utils/browserLog";
+import { installWindowOpenLocalhostProxyNormalization } from "@/browser/utils/windowOpenLocalhostProxy";
 import { AppLoader } from "@/browser/components/AppLoader/AppLoader";
 import { initTelemetry, trackAppStarted } from "@/common/telemetry";
 import { initTitlebarInsets } from "@/browser/hooks/useDesktopTitlebar";
@@ -11,6 +12,8 @@ try {
 } catch {
   // Silent failure — never crash the app for logging capture
 }
+
+installWindowOpenLocalhostProxyNormalization();
 
 initTelemetry();
 trackAppStarted();

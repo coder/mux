@@ -101,6 +101,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
   }, [isOpen, initialQuery, resetPaletteState]);
 
   useEffect(() => {
+    const clearAgentSkillsCache = () => {
+      agentSkillsCacheRef.current.clear();
+    };
+
+    window.addEventListener("focus", clearAgentSkillsCache);
+    window.addEventListener(CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED, clearAgentSkillsCache);
+
+    return () => {
+      window.removeEventListener("focus", clearAgentSkillsCache);
+      window.removeEventListener(CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED, clearAgentSkillsCache);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isOpen || !api || !slashWorkspaceId) {
       setAgentSkills([]);
       return;

@@ -75,12 +75,12 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
   return (
     <>
       {count > 0 && (
-        <div className="border-border bg-dark border-t px-[15px]">
+        <div className="border-border bg-surface-primary border-t px-[15px]">
           {/* Collapsed banner - thin stripe, content aligned with chat */}
           <button
             type="button"
             onClick={handleToggle}
-            className="group mx-auto flex w-full max-w-4xl items-center gap-2 px-2 py-1 text-xs transition-colors"
+            className="group mx-auto flex w-full max-w-4xl items-center gap-2 px-2 py-1.5 text-xs transition-colors"
           >
             <Terminal className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
             <span className="text-muted group-hover:text-secondary transition-colors">

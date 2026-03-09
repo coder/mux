@@ -11,9 +11,12 @@ import type {
   TerminalCreateParams,
   TerminalResizeParams,
 } from "@/common/types/terminal";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isDockerRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
+import {
+  createRuntimeForWorkspace,
+  resolveWorkspaceExecutionPath,
+} from "@/node/runtime/runtimeHelpers";
 import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
 import { Terminal } from "@xterm/headless";
@@ -79,6 +82,23 @@ export class TerminalService {
     return !!this.terminalWindowManager;
   }
 
+  private getProxyUriEnv(): Record<string, string> {
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+    const vscodeProxyUri = process.env.VSCODE_PROXY_URI?.trim() || undefined;
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+    const muxProxyUri = process.env.MUX_PROXY_URI?.trim() || vscodeProxyUri;
+
+    const proxyUriEnv: Record<string, string> = {};
+    if (vscodeProxyUri != null) {
+      proxyUriEnv.VSCODE_PROXY_URI = vscodeProxyUri;
+    }
+    if (muxProxyUri != null) {
+      proxyUriEnv.MUX_PROXY_URI = muxProxyUri;
+    }
+
+    return proxyUriEnv;
+  }
+
   async create(params: TerminalCreateParams): Promise<TerminalSession> {
     try {
       // 1. Resolve workspace
@@ -105,16 +125,11 @@ export class TerminalService {
       }
 
       // 2. Create runtime (pass workspace info for Docker container name derivation)
-      const runtime = createRuntime(workspaceMetadata.runtimeConfig, {
-        projectPath: workspaceMetadata.projectPath,
-        workspaceName: workspaceMetadata.name,
-      });
+      const runtime = createRuntimeForWorkspace(workspaceMetadata);
 
-      // 3. Compute workspace path
-      const workspacePath = runtime.getWorkspacePath(
-        workspaceMetadata.projectPath,
-        workspaceMetadata.name
-      );
+      // 3. Use the persisted workspace root everywhere users can observe it, except for runtimes
+      // like Docker whose executable cwd is intentionally translated inside the runtime.
+      const workspacePath = resolveWorkspaceExecutionPath(workspaceMetadata, runtime);
 
       // Keep integrated terminal context aligned with the bash tool for stable workspace metadata.
       // We intentionally skip dynamic values (like cost/model) because long-lived shells would go stale.
@@ -135,7 +150,9 @@ export class TerminalService {
           : {};
 
       // Any process launched from this terminal inherits these variables.
-      const terminalEnv = muxEnv ? { ...muxEnv, ...secrets } : undefined;
+      // Proxy URI propagation allows terminal tools to construct externally reachable links.
+      // MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI, and falls back to it when unset.
+      const terminalEnv = muxEnv ? { ...muxEnv, ...this.getProxyUriEnv(), ...secrets } : undefined;
 
       // 4. Setup emitters and buffer
       // We don't know the sessionId yet (PTYService generates it), but PTYService uses a callback.

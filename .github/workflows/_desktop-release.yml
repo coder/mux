@@ -20,10 +20,11 @@ on:
 jobs:
   build-macos:
     name: Build and Release macOS
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    runs-on: macos-15
     permissions:
       contents: write # Upload release assets
     env:
+      NODE_OPTIONS: --max-old-space-size=4096
       RELEASE_TAG: ${{ inputs.release_tag }}
       VERSION_OVERRIDE: ${{ inputs.version_override }}
     steps:
@@ -56,7 +57,8 @@ jobs:
           AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
 
       - name: Package and publish for macOS
-        run: make dist-mac-release
+        # Retry for transient Apple timestamp-server failures during code signing.
+        run: ./scripts/retry.sh 3 30 make dist-mac-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

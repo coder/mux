@@ -1370,7 +1370,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       data-testid="review-panel"
       onFocus={() => setIsPanelFocused(true)}
       onBlur={() => setIsPanelFocused(false)}
-      className="bg-dark [container-type:inline-size] flex h-full min-h-0 flex-col outline-none [container-name:review-panel]"
+      className="bg-surface-primary [container-type:inline-size] flex h-full min-h-0 flex-col outline-none [container-name:review-panel]"
     >
       {/* Always show controls so user can change diff base */}
       <ReviewControls

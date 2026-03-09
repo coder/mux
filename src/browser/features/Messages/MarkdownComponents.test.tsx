@@ -222,3 +222,87 @@ describe("MarkdownComponents command code blocks", () => {
     expect(queryByRole("button", { name: "Run command" })).toBeNull();
   });
 });
+
+describe("MarkdownComponents anchors", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+  });
+
+  afterEach(() => {
+    cleanup();
+
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+  });
+
+  test("rewrites loopback hrefs when proxy template is configured", () => {
+    window.location.href = "https://coder.example.com/@u/ws/apps/mux/";
+    (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =
+      "https://proxy-{{port}}.{{host}}";
+
+    const element = markdownComponents.a({
+      href: "http://127.0.0.1:5173/docs?x=1#details",
+      children: "Open local docs",
+    });
+
+    const { getByRole } = render(element);
+    const link = getByRole("link", { name: "Open local docs" });
+
+    expect(link.getAttribute("href")).toBe("https://proxy-5173.coder.example.com/docs?x=1#details");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  test("derives coder-style template from current host when injected template is missing", () => {
+    window.location.href =
+      "https://5173--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/workspace/f5a5ed5f7e";
+    (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =
+      undefined;
+
+    const element = markdownComponents.a({
+      href: "http://127.0.0.1:8080/api/health?x=1#ok",
+      children: "Open forwarded health",
+    });
+
+    const { getByRole } = render(element);
+    const link = getByRole("link", { name: "Open forwarded health" });
+
+    expect(link.getAttribute("href")).toBe(
+      "https://8080--dev--pog2--ethan--apps.sydney.fly.dev.coder.com/api/health?x=1#ok"
+    );
+  });
+
+  test("keeps non-loopback hrefs unchanged", () => {
+    window.location.href = "https://coder.example.com/@u/ws/apps/mux/";
+    (window as Window & { __MUX_PROXY_URI_TEMPLATE__?: string }).__MUX_PROXY_URI_TEMPLATE__ =
+      "https://proxy-{{port}}.{{host}}";
+
+    const element = markdownComponents.a({
+      href: "https://example.com/docs?x=1#details",
+      children: "Open external docs",
+    });
+
+    const { getByRole } = render(element);
+    const link = getByRole("link", { name: "Open external docs" });
+
+    expect(link.getAttribute("href")).toBe("https://example.com/docs?x=1#details");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  test("keeps undefined href behavior unchanged", () => {
+    const element = markdownComponents.a({
+      href: undefined,
+      children: "Missing href",
+    });
+
+    const { container } = render(element);
+    const link = container.querySelector("a");
+
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("href")).toBeNull();
+    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+});

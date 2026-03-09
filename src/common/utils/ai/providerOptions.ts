@@ -66,12 +66,12 @@ function supportsOpenAIReasoningSummary(modelName: string): boolean {
  * 1. Enable reasoning traces (transparency into model's thought process)
  * 2. Set reasoning level (control depth of reasoning based on task complexity)
  * 3. Enable parallel tool calls (allow concurrent tool execution)
- * 4. Extract previousResponseId for OpenAI persistence (when available)
+ * 4. Keep provider-specific request knobs consistent with Mux's explicit history model
  *
  * @param modelString - Full model string (e.g., "anthropic:claude-opus-4-1")
  * @param thinkingLevel - Unified thinking level (must be pre-clamped via enforceThinkingPolicy)
- * @param messages - Conversation history to extract previousResponseId from
- * @param lostResponseIds - Optional callback to check if a responseId has been invalidated by OpenAI
+ * @param messages - Conversation history being sent to the provider
+ * @param _lostResponseIds - Reserved for OpenAI response-state recovery filtering
  * @param muxProviderOptions - Optional provider overrides from config
  * @param workspaceId - Optional for non-OpenAI providers
  * @param openaiTruncationMode - Optional truncation mode for OpenAI responses (auto/disabled)
@@ -83,7 +83,7 @@ export function buildProviderOptions(
   modelString: string,
   thinkingLevel: ThinkingLevel,
   messages?: MuxMessage[],
-  lostResponseIds?: (id: string) => boolean,
+  _lostResponseIds?: (id: string) => boolean,
   muxProviderOptions?: MuxProviderOptions,
   workspaceId?: string, // Optional for non-OpenAI providers
   openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"],
@@ -107,7 +107,7 @@ export function buildProviderOptions(
   const formatProvider = routeUsesOriginFormat ? origin : routeProvider;
 
   // Resolve aliases to their base model for capability detection while keeping
-  // the original modelString for provider routing and previousResponseId lookups.
+  // the original modelString for provider routing and metadata lookups.
   const capabilityModel = resolveModelForMetadata(normalizedModel, providersConfig ?? null);
   const [, resolvedCapabilityModelName] = capabilityModel.split(":", 2);
   const capModelName = resolvedCapabilityModelName || modelName;
@@ -202,58 +202,10 @@ export function buildProviderOptions(
   if (formatProvider === "openai") {
     const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
 
-    // Extract previousResponseId from last assistant message for persistence
-    // IMPORTANT: Only use previousResponseId if:
-    // 1. The previous message used the same model (prevents cross-model contamination)
-    // 2. That model uses reasoning (reasoning effort is set)
-    // 3. The response ID exists
-    // 4. The response ID hasn't been invalidated by OpenAI
-    let previousResponseId: string | undefined;
-    if (messages && messages.length > 0 && reasoningEffort) {
-      // Parse current model name (without provider prefix), normalize gateway format if needed
-      const currentModelName = normalizeToCanonical(modelString).split(":")[1];
-
-      // Find last assistant message from the same model
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg.role === "assistant") {
-          // Check if this message is from the same model
-          const msgModel = msg.metadata?.model;
-          const msgModelName = msgModel ? normalizeToCanonical(msgModel).split(":")[1] : undefined;
-
-          if (msgModelName === currentModelName) {
-            const metadata = msg.metadata?.providerMetadata;
-            if (metadata && "openai" in metadata) {
-              const openaiData = metadata.openai as Record<string, unknown> | undefined;
-              previousResponseId = openaiData?.responseId as string | undefined;
-            }
-            if (previousResponseId) {
-              // Check if this responseId has been invalidated by OpenAI
-              if (lostResponseIds?.(previousResponseId)) {
-                log.info("buildProviderOptions: Filtering out lost previousResponseId", {
-                  previousResponseId,
-                  model: currentModelName,
-                });
-                previousResponseId = undefined;
-              } else {
-                log.debug("buildProviderOptions: Found previousResponseId from same model", {
-                  previousResponseId,
-                  model: currentModelName,
-                });
-              }
-              break;
-            }
-          } else if (msgModelName) {
-            // Found assistant message from different model, stop searching
-            log.debug("buildProviderOptions: Skipping previousResponseId - model changed", {
-              previousModel: msgModelName,
-              currentModel: currentModelName,
-            });
-            break;
-          }
-        }
-      }
-    }
+    // Mux always sends the latest conversation history explicitly. OpenAI's
+    // previous_response_id is an alternative state-management path, not an additive one.
+    // Chaining it on top of explicit history double-counts prior turns and caused GPT-5.4
+    // requests to hit context_exceeded far below the documented native window.
 
     // Prompt cache key: derive from workspaceId
     // This helps OpenAI route requests to cached prefixes for improved hit rates
@@ -271,7 +223,7 @@ export function buildProviderOptions(
       reasoningEffort,
       shouldSendReasoningSummary,
       thinkingLevel: effectiveThinking,
-      previousResponseId,
+      historyMessages: messages?.length ?? 0,
       promptCacheKey,
       truncation: truncationMode,
       wireFormat,
@@ -303,9 +255,6 @@ export function buildProviderOptions(
             include: ["reasoning.encrypted_content"],
           }),
         }),
-        // Include previousResponseId for conversation persistence
-        // OpenAI uses this to maintain reasoning state across turns
-        ...(isResponses && previousResponseId && { previousResponseId }),
       },
     };
     log.info("buildProviderOptions: Returning OpenAI options", options);

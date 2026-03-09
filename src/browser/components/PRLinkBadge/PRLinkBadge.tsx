@@ -10,6 +10,7 @@ import {
   X,
   AlertCircle,
   CircleDot,
+  Rocket,
 } from "lucide-react";
 import type { GitHubPRLinkWithStatus } from "@/common/types/links";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -25,7 +26,7 @@ interface PRLinkBadgeProps {
  * Get status color class based on PR merge state.
  * When refreshing with cached status, we keep the existing color rather than fading to muted.
  */
-function getStatusColorClass(prLink: GitHubPRLinkWithStatus): string {
+export function getStatusColorClass(prLink: GitHubPRLinkWithStatus): string {
   // When loading without cached status, show muted
   if (prLink.loading && !prLink.status) return "text-muted";
   if (prLink.error) return "text-danger-soft";
@@ -37,6 +38,8 @@ function getStatusColorClass(prLink: GitHubPRLinkWithStatus): string {
   if (state === "MERGED") return "text-purple-500";
   if (state === "CLOSED") return "text-danger-soft";
   if (isDraft || mergeStateStatus === "DRAFT") return "text-muted";
+
+  if (prLink.status.mergeQueueEntry != null) return "text-warning";
 
   if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") return "text-danger-soft";
 
@@ -87,6 +90,10 @@ function StatusIcon({ prLink }: { prLink: GitHubPRLinkWithStatus }) {
     return <GitPullRequest className="h-3 w-3" />;
   }
 
+  if (prLink.status.mergeQueueEntry != null) {
+    return <Rocket className="h-3 w-3" />;
+  }
+
   if (mergeable === "CONFLICTING" || mergeStateStatus === "DIRTY") {
     return <X className="h-3 w-3" />;
   }
@@ -114,7 +121,7 @@ function StatusIcon({ prLink }: { prLink: GitHubPRLinkWithStatus }) {
 /**
  * Format PR tooltip content
  */
-function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
+export function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
   // When refreshing with cached status, don't show "Loading..." - show the cached status
   if (prLink.loading && !prLink.status) return "Loading PR status...";
   if (prLink.error) return `Error: ${prLink.error}`;
@@ -126,6 +133,7 @@ function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
     mergeable,
     mergeStateStatus,
     isDraft,
+    mergeQueueEntry,
     hasFailedChecks,
     hasPendingChecks,
     headRefName,
@@ -136,6 +144,12 @@ function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
 
   if (isDraft) {
     lines.push("Draft PR");
+  } else if (mergeQueueEntry != null) {
+    lines.push(
+      mergeQueueEntry.position != null
+        ? `In merge queue (position ${mergeQueueEntry.position + 1})`
+        : "In merge queue"
+    );
   } else if (state === "MERGED") {
     lines.push("Merged");
   } else if (state === "CLOSED") {

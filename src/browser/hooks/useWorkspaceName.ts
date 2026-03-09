@@ -94,7 +94,7 @@ const DEFAULT_PERSISTED_STATE: WorkspaceNamePersistedState = {
 
 /**
  * Extract the display title from persisted workspace name state.
- * Used by DraftWorkspaceListItem to show the title in the sidebar without
+ * Used by DraftAgentListItem to show the title in the sidebar without
  * duplicating knowledge of the persisted state structure.
  *
  * For auto-generated identities, prefers title (human-readable) over name (git-safe branch name).

@@ -54,7 +54,7 @@ import {
   TaskToolResultSchema,
   TaskToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
-import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
+import { isPlanLikeInResolvedChain, isToolEnabledInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import {
@@ -70,6 +70,7 @@ import {
 } from "@/node/services/subagentReportArtifacts";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
+import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 
 export type TaskKind = "agent";
 
@@ -429,6 +430,44 @@ export class TaskService {
     }
   }
 
+  private getTaskWorkspaceAgentResolutionContext(args: {
+    projectPath: string;
+    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
+  }): {
+    workspaceName: string;
+    runtime: Runtime;
+    workspacePath: string;
+  } | null {
+    assert(
+      args.projectPath.length > 0,
+      "getTaskWorkspaceAgentResolutionContext: projectPath must be non-empty"
+    );
+
+    const workspaceName = coerceNonEmptyString(args.workspace.name) ?? args.workspace.id;
+    if (!workspaceName) {
+      return null;
+    }
+
+    const runtimeConfig = args.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig,
+      projectPath: args.projectPath,
+      name: workspaceName,
+    });
+    const workspacePath =
+      coerceNonEmptyString(args.workspace.path) ??
+      runtime.getWorkspacePath(args.projectPath, workspaceName);
+    if (!workspacePath) {
+      return null;
+    }
+
+    return {
+      workspaceName,
+      runtime,
+      workspacePath,
+    };
+  }
+
   private async isAgentEnabledForTaskWorkspace(args: {
     workspaceId: string;
     projectPath: string;
@@ -444,29 +483,18 @@ export class TaskService {
       "isAgentEnabledForTaskWorkspace: projectPath must be non-empty"
     );
 
-    const workspaceName = coerceNonEmptyString(args.workspace.name) ?? args.workspace.id;
-    if (!workspaceName) {
-      return false;
-    }
-
-    const runtimeConfig = args.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
-    const runtime = createRuntimeForWorkspace({
-      runtimeConfig,
+    const resolutionContext = this.getTaskWorkspaceAgentResolutionContext({
       projectPath: args.projectPath,
-      name: workspaceName,
+      workspace: args.workspace,
     });
-    const workspacePath =
-      coerceNonEmptyString(args.workspace.path) ??
-      runtime.getWorkspacePath(args.projectPath, workspaceName);
-
-    if (!workspacePath) {
+    if (!resolutionContext) {
       return false;
     }
 
     try {
       const resolvedFrontmatter = await resolveAgentFrontmatter(
-        runtime,
-        workspacePath,
+        resolutionContext.runtime,
+        resolutionContext.workspacePath,
         args.agentId
       );
       const cfg = this.config.loadConfigOrDefault();
@@ -478,6 +506,72 @@ export class TaskService {
       return !effectivelyDisabled;
     } catch (error: unknown) {
       log.warn("Failed to resolve task handoff target agent availability", {
+        workspaceId: args.workspaceId,
+        agentId: args.agentId,
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  private async canAgentSpawnTasksInWorkspace(args: {
+    workspaceId: string;
+    projectPath: string;
+    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
+    agentId: "orchestrator";
+  }): Promise<boolean> {
+    assert(
+      args.workspaceId.length > 0,
+      "canAgentSpawnTasksInWorkspace: workspaceId must be non-empty"
+    );
+    assert(
+      args.projectPath.length > 0,
+      "canAgentSpawnTasksInWorkspace: projectPath must be non-empty"
+    );
+
+    const resolutionContext = this.getTaskWorkspaceAgentResolutionContext({
+      projectPath: args.projectPath,
+      workspace: args.workspace,
+    });
+    if (!resolutionContext) {
+      return false;
+    }
+
+    try {
+      const cfg = this.config.loadConfigOrDefault();
+      const resolvedFrontmatter = await resolveAgentFrontmatter(
+        resolutionContext.runtime,
+        resolutionContext.workspacePath,
+        args.agentId
+      );
+      const effectivelyDisabled = isAgentEffectivelyDisabled({
+        cfg,
+        agentId: args.agentId,
+        resolvedFrontmatter,
+      });
+      if (effectivelyDisabled) {
+        return false;
+      }
+
+      const agentDefinition = await readAgentDefinition(
+        resolutionContext.runtime,
+        resolutionContext.workspacePath,
+        args.agentId
+      );
+      const chain = await resolveAgentInheritanceChain({
+        runtime: resolutionContext.runtime,
+        workspacePath: resolutionContext.workspacePath,
+        agentId: agentDefinition.id,
+        agentDefinition,
+        workspaceId: args.workspaceId,
+      });
+      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      const taskDepth = this.getTaskDepth(cfg, args.workspaceId);
+      const disableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
+
+      return !disableTaskToolsForDepth && isToolEnabledInResolvedChain("task", chain);
+    } catch (error: unknown) {
+      log.warn("Failed to resolve task handoff target task-spawning capability", {
         workspaceId: args.workspaceId,
         agentId: args.agentId,
         error: getErrorMessage(error),
@@ -538,6 +632,22 @@ export class TaskService {
       log.warn("Plan-task auto-handoff auto-routing has no plan content; defaulting to exec", {
         workspaceId: args.workspaceId,
       });
+      return "exec";
+    }
+
+    const orchestratorCanSpawnTasks = await this.canAgentSpawnTasksInWorkspace({
+      workspaceId: args.workspaceId,
+      projectPath: args.entry.projectPath,
+      workspace: args.entry.workspace,
+      agentId: "orchestrator",
+    });
+    if (!orchestratorCanSpawnTasks) {
+      log.warn(
+        "Plan-task auto-handoff auto-routing defaulting to exec because orchestrator cannot orchestrate in this workspace",
+        {
+          workspaceId: args.workspaceId,
+        }
+      );
       return "exec";
     }
 
@@ -710,12 +820,13 @@ export class TaskService {
 
     // Restart-safety for git patch artifacts:
     // - If mux crashed mid-generation, patch artifacts can be left "pending".
-    // - Reported tasks are auto-deleted once they're leaves; defer deletion while patches are pending.
-    const reportedTasks = this.listAgentTaskWorkspaces(config).filter(
-      (t) => t.taskStatus === "reported" && typeof t.id === "string" && t.id.length > 0
+    // - Tasks with completed reports remain in config and keep their runtime on disk so
+    //   completed sub-agents stay visible/selectable in the sidebar.
+    const completedReportTasks = this.listAgentTaskWorkspaces(config).filter(
+      (task) => hasCompletedAgentReport(task) && typeof task.id === "string" && task.id.length > 0
     );
 
-    for (const task of reportedTasks) {
+    for (const task of completedReportTasks) {
       if (!task.parentWorkspaceId) continue;
       try {
         await this.gitPatchArtifactService.maybeStartGeneration(
@@ -732,8 +843,8 @@ export class TaskService {
       }
     }
 
-    // Best-effort cleanup of reported leaf tasks (will no-op when patch artifacts are pending).
-    for (const task of reportedTasks) {
+    // Best-effort completed-report ancestor recheck after restart.
+    for (const task of completedReportTasks) {
       if (!task.id) continue;
       await this.cleanupReportedLeafTask(task.id);
     }
@@ -1289,15 +1400,21 @@ export class TaskService {
         }
 
         this.remindedAwaitingReport.delete(id);
-        this.completedReportsByTaskId.delete(id);
-        this.rejectWaiters(id, interruptionError);
-
+        let preservedCompletedDescendant = false;
         const updated = await this.editWorkspaceEntry(
           id,
           (ws) => {
+            if (hasCompletedAgentReport(ws)) {
+              // Preserve completed report evidence so already-finished descendants stay
+              // collapse-eligible after a later parent hard interrupt.
+              preservedCompletedDescendant = true;
+              return;
+            }
+
             const previousStatus = ws.taskStatus;
             const persistedQueuedPrompt = coerceNonEmptyString(ws.taskPrompt);
             ws.taskStatus = "interrupted";
+            ws.reportedAt = undefined;
 
             // Queued tasks persist their initial prompt in config until first start.
             // Preserve that prompt when interrupting queued descendants so users can
@@ -1313,12 +1430,25 @@ export class TaskService {
           { allowMissing: true }
         );
         if (!updated) {
+          // Missing descendants should still reject prompt waiters promptly so task_await does
+          // not hang until timeout after a parent hard interrupt races with external cleanup.
+          this.rejectWaiters(id, interruptionError);
           log.debug("terminateAllDescendantAgentTasks: descendant workspace missing", {
             taskId: id,
           });
           continue;
         }
 
+        if (preservedCompletedDescendant) {
+          log.debug("terminateAllDescendantAgentTasks: preserving completed descendant report", {
+            taskId: id,
+          });
+          continue;
+        }
+
+        // Report monotonicity: descendants that did not complete a report must reject waiters
+        // once the interrupt status transition is persisted.
+        this.rejectWaiters(id, interruptionError);
         interruptedTaskIds.push(id);
       }
     }
@@ -1464,6 +1594,8 @@ export class TaskService {
   ): Promise<{ reportMarkdown: string; title?: string }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
+    // Report monotonicity invariant: check the in-memory cache before any status-based
+    // interruption handling so a finalized report stays awaitable once observed.
     const cached = this.completedReportsByTaskId.get(taskId);
     if (cached) {
       return { reportMarkdown: cached.reportMarkdown, title: cached.title };
@@ -1508,17 +1640,27 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const taskWorkspaceEntry = findWorkspaceEntry(cfg, taskId);
     const taskStatus = taskWorkspaceEntry?.workspace.taskStatus;
-    if (!taskWorkspaceEntry || taskStatus === "reported" || taskStatus === "interrupted") {
+
+    if (!taskWorkspaceEntry || taskStatus === "reported") {
       const persisted = await tryReadPersistedReport();
       if (persisted) {
         return persisted;
       }
 
-      if (taskStatus === "interrupted") {
-        throw new Error("Task interrupted");
+      throw new Error("Task not found");
+    }
+
+    if (taskStatus === "interrupted") {
+      const persisted = await tryReadPersistedReport();
+      if (persisted) {
+        return persisted;
       }
 
-      throw new Error("Task not found");
+      // Report monotonicity: interrupted tasks can still be streaming while stream-end
+      // finalization persists agent_report. Waiters should keep waiting in that window.
+      if (!this.aiService.isStreaming(taskId)) {
+        throw new Error("Task interrupted");
+      }
     }
 
     return await new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
@@ -1537,24 +1679,30 @@ export class TaskService {
           return;
         }
 
-        if (
-          taskWorkspaceEntry.workspace.taskStatus === "reported" ||
-          taskWorkspaceEntry.workspace.taskStatus === "interrupted"
-        ) {
+        if (taskWorkspaceEntry.workspace.taskStatus === "reported") {
           const persisted = await tryReadPersistedReport();
           if (persisted) {
             resolve(persisted);
             return;
           }
 
-          reject(
-            new Error(
-              taskWorkspaceEntry.workspace.taskStatus === "interrupted"
-                ? "Task interrupted"
-                : "Task not found"
-            )
-          );
+          reject(new Error("Task not found"));
           return;
+        }
+
+        if (taskWorkspaceEntry.workspace.taskStatus === "interrupted") {
+          const persisted = await tryReadPersistedReport();
+          if (persisted) {
+            resolve(persisted);
+            return;
+          }
+
+          // Report monotonicity: an interrupted task may still be in stream-end teardown,
+          // so keep the waiter alive while the stream is active.
+          if (!this.aiService.isStreaming(taskId)) {
+            reject(new Error("Task interrupted"));
+            return;
+          }
         }
 
         let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -2063,13 +2211,23 @@ export class TaskService {
   }
 
   /**
-   * Topology predicate: does this workspace still have child agent-task nodes in config?
-   * Unlike hasActiveDescendantAgentTasks (which checks runtime activity for scheduling),
-   * this checks structural tree shape — any child node blocks parent deletion regardless
-   * of its status.
+   * Topology predicate for reported-task cleanup: does this workspace still have child agent
+   * tasks without completed report evidence?
+   *
+   * Children with completed reports should not block ancestor rechecks. Once every child has a
+   * completed report, the cleanup walk can continue upward and evaluate that ancestor as a
+   * reported leaf.
    */
-  private hasChildAgentTasks(index: AgentTaskIndex, workspaceId: string): boolean {
-    return (index.childrenByParent.get(workspaceId)?.length ?? 0) > 0;
+  private hasIncompleteChildAgentReports(index: AgentTaskIndex, workspaceId: string): boolean {
+    const childIds = index.childrenByParent.get(workspaceId) ?? [];
+    for (const childId of childIds) {
+      const childEntry = index.byId.get(childId);
+      if (!childEntry || !hasCompletedAgentReport(childEntry)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private getTaskDepth(
@@ -2604,6 +2762,7 @@ export class TaskService {
         }
 
         ws.taskStatus = "interrupted";
+        ws.reportedAt = undefined;
         revertedToInterrupted = true;
       },
       { allowMissing: true }
@@ -2704,7 +2863,12 @@ export class TaskService {
     }
 
     const status = entry.workspace.taskStatus;
+    const reportArgs = this.findAgentReportArgsInParts(event.parts);
+
+    // Stream-end settlement: interrupted tasks must settle all pending waiters.
+    // Report present → finalize (resolve waiters). No report → reject waiters promptly.
     if (status === "interrupted") {
+      await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, reportArgs);
       return;
     }
     if (status === "reported") {
@@ -2724,7 +2888,6 @@ export class TaskService {
       return;
     }
 
-    const reportArgs = this.findAgentReportArgsInParts(event.parts);
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
       await this.finalizeTerminationPhaseForReportedTask(workspaceId);
@@ -2770,6 +2933,24 @@ export class TaskService {
       },
       { synthetic: true, agentInitiated: true }
     );
+  }
+
+  /**
+   * Stream-end settlement for interrupted tasks. Guarantees every pending waiter
+   * is settled exactly once: resolved if an agent_report exists, rejected otherwise.
+   * No waiter should depend on timeout to discover terminal interruption.
+   */
+  private async settleInterruptedTaskAtStreamEnd(
+    workspaceId: string,
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    reportArgs: { reportMarkdown: string; title?: string } | null
+  ): Promise<void> {
+    if (reportArgs) {
+      await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      return;
+    }
+
+    this.rejectWaiters(workspaceId, new Error("Task interrupted"));
   }
 
   private async handleSuccessfulProposePlanAutoHandoff(args: {
@@ -3532,33 +3713,36 @@ export class TaskService {
       return { ok: false, reason: "missing_parent_workspace" };
     }
 
-    if (entry.workspace.taskStatus !== "reported") {
+    if (!hasCompletedAgentReport(entry.workspace)) {
       return { ok: false, reason: "task_not_reported" };
     }
 
     if (this.aiService.isStreaming(workspaceId)) {
-      log.debug("cleanupReportedLeafTask: deferring auto-delete; stream still active", {
+      log.debug("cleanupReportedLeafTask: deferring reported-task retention; stream still active", {
         workspaceId,
         parentWorkspaceId,
       });
       return { ok: false, reason: "still_streaming" };
     }
 
-    // Topology gate: a reported task can only be cleaned up when it is a structural leaf
-    // (has no child agent tasks in config). This is status-agnostic — even reported children
-    // block parent deletion, ensuring artifact rollup always targets an existing parent path.
+    // Reported-task topology gate: children only block ancestor walk-up while they are still
+    // active. Once all children have completed reports, this workspace is treated as a reported
+    // leaf.
     const index = this.buildAgentTaskIndex(config);
-    if (this.hasChildAgentTasks(index, workspaceId)) {
-      return { ok: false, reason: "has_child_tasks" };
+    if (this.hasIncompleteChildAgentReports(index, workspaceId)) {
+      return { ok: false, reason: "has_non_reported_child_tasks" };
     }
 
     const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
     const patchArtifact = await readSubagentGitPatchArtifact(parentSessionDir, workspaceId);
     if (patchArtifact?.status === "pending") {
-      log.debug("cleanupReportedLeafTask: deferring auto-delete; patch artifact pending", {
-        workspaceId,
-        parentWorkspaceId,
-      });
+      log.debug(
+        "cleanupReportedLeafTask: deferring reported-task retention; patch artifact pending",
+        {
+          workspaceId,
+          parentWorkspaceId,
+        }
+      );
       return { ok: false, reason: "patch_pending" };
     }
 
@@ -3568,9 +3752,9 @@ export class TaskService {
   private async cleanupReportedLeafTask(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "cleanupReportedLeafTask: workspaceId must be non-empty");
 
-    // Lineage reduction: each iteration removes exactly one leaf node, then re-evaluates
-    // the parent on fresh config. The structural-leaf gate in canCleanupReportedTask ensures
-    // parents are only removed after all children are gone.
+    // Keep reported task metadata + runtime intact so completed tasks remain visible and
+    // selectable in the sidebar. We still walk ancestors so reported parents get re-evaluated
+    // once every descendant has reported.
     let currentWorkspaceId = workspaceId;
     const visited = new Set<string>();
     for (let depth = 0; depth < 32; depth++) {
@@ -3584,15 +3768,6 @@ export class TaskService {
 
       const cleanupEligibility = await this.canCleanupReportedTask(currentWorkspaceId);
       if (!cleanupEligibility.ok) {
-        return;
-      }
-
-      const removeResult = await this.workspaceService.remove(currentWorkspaceId, true);
-      if (!removeResult.success) {
-        log.error("Failed to auto-delete reported task workspace", {
-          workspaceId: currentWorkspaceId,
-          error: removeResult.error,
-        });
         return;
       }
 

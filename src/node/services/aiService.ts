@@ -713,10 +713,10 @@ export class AIService extends EventEmitter {
       }
       log.debug_obj(`${workspaceId}/1b_provider_request_messages.json`, providerRequestMessages);
 
-      // OpenAI-specific: Keep reasoning parts in history
-      // OpenAI manages conversation state via previousResponseId
+      // OpenAI-specific: Keep reasoning parts in history so each request can
+      // carry forward reasoning context without relying on previous_response_id.
       if (canonicalProviderName === "openai") {
-        log.debug("Keeping reasoning parts for OpenAI (managed via previousResponseId)");
+        log.debug("Keeping reasoning parts for OpenAI (managed via explicit history)");
       }
       // Add [CONTINUE] sentinel to partial messages (for model context)
       const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
@@ -1128,8 +1128,7 @@ export class AIService extends EventEmitter {
       // Build provider options based on thinking level and request-sliced message history.
       const truncationMode = openaiTruncationModeOverride;
       // Use the same boundary-sliced payload history that we send to the provider.
-      // This prevents previousResponseId lookup from reaching pre-compaction epochs.
-      // Also pass callback to filter out lost responseIds (OpenAI invalidated them).
+      // This keeps OpenAI request state aligned with the explicit history Mux sends.
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching.
       const providerOptions = buildProviderOptions(
         modelString,

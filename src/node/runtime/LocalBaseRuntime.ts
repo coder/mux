@@ -23,7 +23,7 @@ import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { shellQuote } from "@/common/utils/shell";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
-import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
+import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -171,31 +171,7 @@ export abstract class LocalBaseRuntime implements Runtime {
       // Kill the full process tree (see comment in exit handler).
       killProcessTree(childProcess.pid);
 
-      // Force-close stdio streams after process kill.
-      // On Windows, killing a process tree via taskkill doesn't always close
-      // Node.js pipe handles immediately, causing Web ReadableStream readers
-      // (from Readable.toWeb()) to hang indefinitely on reader.read().
-      // Queue an EOF first so current readers complete cleanly, then destroy
-      // the underlying Node streams to close any stuck handles.
-      if (
-        childProcess.stdout &&
-        !childProcess.stdout.destroyed &&
-        !childProcess.stdout.readableEnded
-      ) {
-        childProcess.stdout.push(null);
-      }
-      if (
-        childProcess.stderr &&
-        !childProcess.stderr.destroyed &&
-        !childProcess.stderr.readableEnded
-      ) {
-        childProcess.stderr.push(null);
-      }
-      setImmediate(() => {
-        childProcess.stdout?.destroy();
-        childProcess.stderr?.destroy();
-        childProcess.stdin?.destroy();
-      });
+      forceCloseStdio(childProcess);
     });
 
     // Handle abort signal

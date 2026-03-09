@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
-import { WorkspaceListItem } from "@/browser/components/WorkspaceListItem/WorkspaceListItem";
+import { AgentListItem } from "@/browser/components/AgentListItem/AgentListItem";
 import { APIProvider } from "@/browser/contexts/API";
 import { TelemetryEnabledProvider } from "@/browser/contexts/TelemetryEnabledContext";
 import { TitleEditProvider } from "@/browser/contexts/WorkspaceTitleEditContext";
@@ -19,10 +19,11 @@ import {
   getStatusStateKey,
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
+import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 
-const meta: Meta<typeof WorkspaceListItem> = {
-  title: "Components/WorkspaceListItem",
-  component: WorkspaceListItem,
+const meta: Meta<typeof AgentListItem> = {
+  title: "Components/AgentListItem",
+  component: AgentListItem,
   parameters: {
     layout: "padded",
   },
@@ -189,7 +190,7 @@ function StoryScaffold(props: { children: ReactNode; activeWorkspaceId?: string 
 function renderFigmaStates() {
   return (
     <StoryScaffold>
-      <WorkspaceListItem
+      <AgentListItem
         metadata={STORY_WORKSPACES[0]}
         projectPath={PROJECT_PATH}
         projectName={PROJECT_NAME}
@@ -199,7 +200,7 @@ function renderFigmaStates() {
         onArchiveWorkspace={() => Promise.resolve()}
         onCancelCreation={() => Promise.resolve()}
       />
-      <WorkspaceListItem
+      <AgentListItem
         metadata={STORY_WORKSPACES[1]}
         projectPath={PROJECT_PATH}
         projectName={PROJECT_NAME}
@@ -209,7 +210,7 @@ function renderFigmaStates() {
         onArchiveWorkspace={() => Promise.resolve()}
         onCancelCreation={() => Promise.resolve()}
       />
-      <WorkspaceListItem
+      <AgentListItem
         metadata={STORY_WORKSPACES[2]}
         projectPath={PROJECT_PATH}
         projectName={PROJECT_NAME}
@@ -219,7 +220,7 @@ function renderFigmaStates() {
         onArchiveWorkspace={() => Promise.resolve()}
         onCancelCreation={() => Promise.resolve()}
       />
-      <WorkspaceListItem
+      <AgentListItem
         metadata={STORY_WORKSPACES[3]}
         projectPath={PROJECT_PATH}
         projectName={PROJECT_NAME}
@@ -229,7 +230,7 @@ function renderFigmaStates() {
         onArchiveWorkspace={() => Promise.resolve()}
         onCancelCreation={() => Promise.resolve()}
       />
-      <WorkspaceListItem
+      <AgentListItem
         metadata={STORY_WORKSPACES[4]}
         projectPath={PROJECT_PATH}
         projectName={PROJECT_NAME}
@@ -239,7 +240,7 @@ function renderFigmaStates() {
         onArchiveWorkspace={() => Promise.resolve()}
         onCancelCreation={() => Promise.resolve()}
       />
-      <WorkspaceListItem
+      <AgentListItem
         variant="draft"
         draft={{
           draftId: "draft-state",
@@ -260,7 +261,7 @@ function renderSingleWorkspaceState(workspaceIndex: number, options?: { isArchiv
   const workspace = STORY_WORKSPACES[workspaceIndex];
   return (
     <StoryScaffold activeWorkspaceId={workspace.id}>
-      <WorkspaceListItem
+      <AgentListItem
         metadata={workspace}
         projectPath={PROJECT_PATH}
         projectName={PROJECT_NAME}
@@ -289,7 +290,7 @@ function renderIdleState(isUnread: boolean) {
 function renderDraftState() {
   return (
     <StoryScaffold>
-      <WorkspaceListItem
+      <AgentListItem
         variant="draft"
         draft={{
           draftId: "draft-state",
@@ -301,6 +302,51 @@ function renderDraftState() {
         }}
         projectPath={PROJECT_PATH}
         isSelected={false}
+      />
+    </StoryScaffold>
+  );
+}
+
+const SUB_AGENT_ROW_META_BASE = {
+  depth: 1,
+  rowKind: "subagent",
+  hasHiddenCompletedChildren: false,
+  visibleCompletedChildrenCount: 0,
+} as const satisfies Omit<AgentRowRenderMeta, "connectorPosition">;
+
+function createSubAgentRowRenderMeta(
+  connectorPosition: AgentRowRenderMeta["connectorPosition"]
+): AgentRowRenderMeta {
+  return {
+    ...SUB_AGENT_ROW_META_BASE,
+    connectorPosition,
+  };
+}
+
+function renderWorkspaceWithRowMeta(options: {
+  workspaceIndex: number;
+  rowRenderMeta: AgentRowRenderMeta;
+  isSelected?: boolean;
+  completedChildrenExpanded?: boolean;
+  onToggleCompletedChildren?: (workspaceId: string) => void;
+  activeWorkspaceId?: string;
+}) {
+  const workspace = STORY_WORKSPACES[options.workspaceIndex];
+  return (
+    <StoryScaffold activeWorkspaceId={options.activeWorkspaceId}>
+      <AgentListItem
+        metadata={workspace}
+        projectPath={PROJECT_PATH}
+        projectName={PROJECT_NAME}
+        depth={options.rowRenderMeta.depth}
+        rowRenderMeta={options.rowRenderMeta}
+        completedChildrenExpanded={options.completedChildrenExpanded}
+        onToggleCompletedChildren={options.onToggleCompletedChildren}
+        isSelected={options.isSelected ?? false}
+        onSelectWorkspace={() => undefined}
+        onForkWorkspace={() => Promise.resolve()}
+        onArchiveWorkspace={() => Promise.resolve()}
+        onCancelCreation={() => Promise.resolve()}
       />
     </StoryScaffold>
   );
@@ -351,6 +397,136 @@ export const Draft: Story = {
   render: renderDraftState,
 };
 
+const PRIMARY_ROW_META_WITH_HIDDEN_COMPLETED_CHILDREN = {
+  depth: 0,
+  rowKind: "primary",
+  connectorPosition: "single",
+  hasHiddenCompletedChildren: true,
+  visibleCompletedChildrenCount: 0,
+} as const satisfies AgentRowRenderMeta;
+
+const noopToggleCompletedChildren = () => undefined;
+
+export const SubAgentMiddle: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Middle",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+    }),
+};
+
+export const SubAgentLast: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Last",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: createSubAgentRowRenderMeta("last"),
+    }),
+};
+
+export const SubAgentSingle: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Single",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: createSubAgentRowRenderMeta("single"),
+    }),
+};
+
+export const SubAgentMiddleSelected: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Middle Selected",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+      isSelected: true,
+    }),
+};
+
+export const SubAgentWithStatusText: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent With Status Text",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 1,
+      rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+      activeWorkspaceId: "ws-active",
+    }),
+};
+
+export const SubAgentMiddleSelectedWithStatusText: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Middle Selected With Status Text",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 1,
+      rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+      isSelected: true,
+      activeWorkspaceId: "ws-active",
+    }),
+};
+
+export const SubAgentLastWithStatusText: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Last With Status Text",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 1,
+      rowRenderMeta: createSubAgentRowRenderMeta("last"),
+      activeWorkspaceId: "ws-active",
+    }),
+};
+
+export const SubAgentLastSelected: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Last Selected",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: createSubAgentRowRenderMeta("last"),
+      isSelected: true,
+    }),
+};
+
+export const SubAgentLastSelectedWithStatusText: Story = {
+  args: undefined as never,
+  name: "SubAgent States/SubAgent Last Selected With Status Text",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 1,
+      rowRenderMeta: createSubAgentRowRenderMeta("last"),
+      isSelected: true,
+      activeWorkspaceId: "ws-active",
+    }),
+};
+export const ParentWithCompletedChildrenCollapsed: Story = {
+  args: undefined as never,
+  name: "SubAgent States/Parent With Completed Children Collapsed",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: PRIMARY_ROW_META_WITH_HIDDEN_COMPLETED_CHILDREN,
+      completedChildrenExpanded: false,
+      onToggleCompletedChildren: noopToggleCompletedChildren,
+    }),
+};
+
+export const ParentWithCompletedChildrenExpanded: Story = {
+  args: undefined as never,
+  name: "SubAgent States/Parent With Completed Children Expanded",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: PRIMARY_ROW_META_WITH_HIDDEN_COMPLETED_CHILDREN,
+      completedChildrenExpanded: true,
+      onToggleCompletedChildren: noopToggleCompletedChildren,
+    }),
+};
 export const ClickKebabButton: Story = {
   args: undefined as never,
   render: () => renderSingleWorkspaceState(1),

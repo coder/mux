@@ -1,5 +1,6 @@
 import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
@@ -11,6 +12,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
+import { SubAgentListItem } from "./SubAgentListItem";
 
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "../Popover/Popover";
@@ -24,6 +26,7 @@ import {
   Sparkles,
   PenLine,
   MessageCircleQuestionMark,
+  ChevronRight,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -58,14 +61,14 @@ export interface DraftWorkspaceData {
 }
 
 /** Base props shared by both workspace and draft items */
-interface WorkspaceListItemBaseProps {
+interface AgentListItemBaseProps {
   projectPath: string;
   isSelected: boolean;
   depth?: number;
 }
 
 /** Props for regular (persisted) workspace items */
-export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
+export interface AgentListItemProps extends AgentListItemBaseProps {
   variant?: "workspace";
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
@@ -74,6 +77,9 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   isRemoving?: boolean;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
+  rowRenderMeta?: AgentRowRenderMeta;
+  completedChildrenExpanded?: boolean;
+  onToggleCompletedChildren?: (workspaceId: string) => void;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onForkWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
@@ -81,7 +87,7 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
 }
 
 /** Props for draft (UI-only placeholder) items */
-export interface DraftWorkspaceListItemProps extends WorkspaceListItemBaseProps {
+export interface DraftAgentListItemProps extends AgentListItemBaseProps {
   variant: "draft";
   draft: DraftWorkspaceData;
 }
@@ -157,7 +163,11 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
   return (
     // Keep the dot centered relative to the full row height so multi-line rows
     // (for example while streaming) do not pin the icon to the title line.
-    <div className="relative flex h-4 w-4 shrink-0 items-center justify-center self-center">
+    <div
+      // Keep the status dot above sub-agent connector overlays so branch lines do
+      // not draw across the dot when rows are nested.
+      className="relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
+    >
       {dot}
     </div>
   );
@@ -181,7 +191,7 @@ function ActionButtonWrapper(props: { children: React.ReactNode }) {
 // Draft Workspace Item (UI-only placeholder)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
+function DraftAgentListItemInner(props: DraftAgentListItemProps) {
   const { projectPath, isSelected, depth, draft } = props;
   const paddingLeft = getItemPaddingLeft(depth);
   const hasPromptPreview = draft.promptPreview.length > 0;
@@ -294,7 +304,7 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
 // Regular Workspace Item (persisted workspace)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
+function RegularAgentListItemInner(props: AgentListItemProps) {
   const {
     metadata,
     projectPath,
@@ -304,6 +314,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     isRemoving: isRemovingProp,
     depth,
     sectionId,
+    rowRenderMeta,
+    completedChildrenExpanded,
+    onToggleCompletedChildren,
     onSelectWorkspace,
     onForkWorkspace,
     onArchiveWorkspace,
@@ -469,6 +482,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   // Note: we intentionally render the secondary row even while the workspace is still
   // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
+  const hasCompletedChildren =
+    (rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
+    (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
+  const canToggleCompletedChildren = hasCompletedChildren && onToggleCompletedChildren != null;
+  const isCompletedChildrenExpanded = completedChildrenExpanded ?? false;
 
   const paddingLeft = getItemPaddingLeft(depth);
 
@@ -716,21 +734,57 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <span
-                className={cn(
-                  "text-foreground block truncate text-left text-[14px] leading-6 transition-colors duration-200",
-                  !isDisabled && "cursor-pointer",
-                  isGeneratingTitle && "italic",
-                  !isSelected && visualState === "seen" && "text-secondary"
+              <div className="flex min-w-0 items-center gap-1">
+                {canToggleCompletedChildren && (
+                  <button
+                    type="button"
+                    // Keep expansion toggles local to this button so row click/selection
+                    // behavior remains unchanged.
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (isDisabled) {
+                        return;
+                      }
+                      onToggleCompletedChildren?.(workspaceId);
+                    }}
+                    onKeyDown={stopKeyboardPropagation}
+                    aria-label={
+                      isCompletedChildrenExpanded
+                        ? `Collapse completed sub-agents for ${displayTitle}`
+                        : `Expand completed sub-agents for ${displayTitle}`
+                    }
+                    aria-expanded={isCompletedChildrenExpanded}
+                    disabled={isDisabled}
+                    className={cn(
+                      "text-muted inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border-none bg-transparent p-0 transition-colors duration-200",
+                      !isDisabled && "cursor-pointer hover:text-foreground",
+                      isDisabled && "cursor-default opacity-60"
+                    )}
+                  >
+                    <ChevronRight
+                      className={cn(
+                        "h-3 w-3 transition-transform duration-200 ease-in-out",
+                        isCompletedChildrenExpanded && "rotate-90"
+                      )}
+                    />
+                  </button>
                 )}
-                onDoubleClick={(e) => {
-                  if (isDisabled) return;
-                  e.stopPropagation();
-                  startEditing();
-                }}
-              >
-                {displayTitle}
-              </span>
+                <span
+                  className={cn(
+                    "text-foreground min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
+                    !isDisabled && "cursor-pointer",
+                    isGeneratingTitle && "italic",
+                    !isSelected && visualState === "seen" && "text-secondary"
+                  )}
+                  onDoubleClick={(e) => {
+                    if (isDisabled) return;
+                    e.stopPropagation();
+                    startEditing();
+                  }}
+                >
+                  {displayTitle}
+                </span>
+              </div>
             )}
 
             {!isInitializing && !isEditing && (
@@ -800,13 +854,29 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 // Unified Export (dispatches based on variant)
 // ─────────────────────────────────────────────────────────────────────────────
 
-type UnifiedWorkspaceListItemProps = WorkspaceListItemProps | DraftWorkspaceListItemProps;
+type UnifiedAgentListItemProps = AgentListItemProps | DraftAgentListItemProps;
 
-function WorkspaceListItemInner(props: UnifiedWorkspaceListItemProps) {
+function AgentListItemInner(props: UnifiedAgentListItemProps) {
   if (props.variant === "draft") {
-    return <DraftWorkspaceListItemInner {...props} />;
+    return <DraftAgentListItemInner {...props} />;
   }
-  return <RegularWorkspaceListItemInner {...props} />;
+
+  const rowMeta = props.rowRenderMeta;
+  if (rowMeta?.rowKind === "subagent") {
+    // Connector geometry is driven by render metadata so visible siblings keep
+    // consistent single/middle/last shapes as parents expand/collapse children.
+    return (
+      <SubAgentListItem
+        connectorPosition={rowMeta.connectorPosition}
+        indentLeft={getItemPaddingLeft(props.depth)}
+        isSelected={props.isSelected}
+      >
+        <RegularAgentListItemInner {...props} />
+      </SubAgentListItem>
+    );
+  }
+
+  return <RegularAgentListItemInner {...props} />;
 }
 
-export const WorkspaceListItem = React.memo(WorkspaceListItemInner);
+export const AgentListItem = React.memo(AgentListItemInner);

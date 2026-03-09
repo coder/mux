@@ -18,7 +18,3 @@ export function fromBashTaskId(taskId: string): string | null {
   const processId = taskId.slice(BASH_TASK_ID_PREFIX.length).trim();
   return processId.length > 0 ? processId : null;
 }
-
-export function isBashTaskId(taskId: string): boolean {
-  return fromBashTaskId(taskId) !== null;
-}

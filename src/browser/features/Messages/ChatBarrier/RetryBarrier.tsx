@@ -242,11 +242,23 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   const lastMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const lastStreamError = lastMessage?.type === "stream-error" ? lastMessage : null;
   const interruptionReason = lastStreamError?.errorType === "rate_limit" ? "Rate limited" : null;
+  const isWaitingForInitialResponse =
+    lastMessage?.type === "user" && workspaceState.isStreamStarting;
 
   let statusIcon: React.ReactNode = (
     <AlertTriangle aria-hidden="true" className="text-warning h-4 w-4 shrink-0" />
   );
-  let statusText: React.ReactNode = <>{interruptionReason ?? "Stream interrupted"}</>;
+  let statusText: React.ReactNode = (
+    <>
+      {interruptionReason ??
+        // A trailing user message means the backend has not emitted stream-start yet.
+        // Long init hooks (for example over SSH) can legitimately keep us here, so avoid
+        // claiming the stream was interrupted until we have evidence that it actually was.
+        (isWaitingForInitialResponse
+          ? "Response startup is taking longer than expected"
+          : "Stream interrupted")}
+    </>
+  );
   let actionButton: React.ReactNode = (
     <button
       className="bg-warning font-primary text-background cursor-pointer rounded border-none px-4 py-2 text-xs font-semibold whitespace-nowrap transition-all duration-200 hover:-translate-y-px hover:brightness-120 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"

@@ -47,24 +47,19 @@ const MODEL_DEFINITIONS = {
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
   },
+  // GPT alias tracks the latest stable GPT-5 tier.
   GPT: {
     provider: "openai",
-    providerModelId: "gpt-5.2",
+    providerModelId: "gpt-5.4",
     aliases: ["gpt"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
+  // GPT Pro alias tracks the latest GPT-5 Pro tier.
   GPT_PRO: {
     provider: "openai",
-    providerModelId: "gpt-5.2-pro",
+    providerModelId: "gpt-5.4-pro",
     aliases: ["gpt-pro"],
-  },
-  GPT_52_CODEX: {
-    provider: "openai",
-    providerModelId: "gpt-5.2-codex",
-    aliases: ["codex-5.2"],
-    warm: true,
-    tokenizerOverride: "openai/gpt-5",
   },
   // GPT-5.3-Codex is the released API model id.
   GPT_53_CODEX: {
@@ -154,7 +149,7 @@ export function getKnownModel(key: KnownModelKey): KnownModel {
  *
  * Keep this local (non-exported) to avoid confusion with storage keys.
  */
-const DEFAULT_KNOWN_MODEL_KEY: KnownModelKey = "OPUS";
+const DEFAULT_KNOWN_MODEL_KEY: KnownModelKey = "SONNET";
 
 export const DEFAULT_MODEL = KNOWN_MODELS[DEFAULT_KNOWN_MODEL_KEY].id;
 

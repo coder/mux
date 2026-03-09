@@ -20,7 +20,7 @@ interface PositionedMenuProps {
  * A lightweight popover menu anchored at an arbitrary screen position.
  *
  * Replaces the duplicated Popover+PopoverAnchor+invisible-span boilerplate
- * used across ChatPane transcript, WorkspaceListItem draft, etc.
+ * used across ChatPane transcript, AgentListItem draft, etc.
  */
 export function PositionedMenu(props: PositionedMenuProps) {
   const [isPlaced, setIsPlaced] = React.useState(false);
@@ -89,7 +89,7 @@ interface PositionedMenuItemProps {
 /**
  * Standard menu item button with icon, label, and optional keybind hint.
  *
- * Matches the styling used in WorkspaceListItem overflow menus so all
+ * Matches the styling used in AgentListItem overflow menus so all
  * positioned menus share a consistent look.
  */
 export function PositionedMenuItem(props: PositionedMenuItemProps) {

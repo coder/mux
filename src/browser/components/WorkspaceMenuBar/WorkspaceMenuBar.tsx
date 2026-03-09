@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -90,6 +90,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
   const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
+  const isSkillsMountedRef = useRef(true);
+
+  const skillsRequestIdRef = useRef(0);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
@@ -207,6 +210,33 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     [api, forkError, workspaceId]
   );
 
+  const loadSkills = useCallback(async () => {
+    const requestId = ++skillsRequestIdRef.current;
+
+    if (!api) {
+      if (!isSkillsMountedRef.current || requestId !== skillsRequestIdRef.current) return;
+      setAvailableSkills([]);
+      setInvalidSkills([]);
+      return;
+    }
+
+    try {
+      const diagnostics = await api.agentSkills.listDiagnostics({
+        workspaceId,
+        disableWorkspaceAgents: disableWorkspaceAgents || undefined,
+      });
+      if (!isSkillsMountedRef.current || requestId !== skillsRequestIdRef.current) return;
+      setAvailableSkills(Array.isArray(diagnostics.skills) ? diagnostics.skills : []);
+      setInvalidSkills(Array.isArray(diagnostics.invalidSkills) ? diagnostics.invalidSkills : []);
+    } catch (error) {
+      console.error("Failed to load available skills:", error);
+      if (isSkillsMountedRef.current && requestId === skillsRequestIdRef.current) {
+        setAvailableSkills([]);
+        setInvalidSkills([]);
+      }
+    }
+  }, [api, workspaceId, disableWorkspaceAgents]);
+
   // Start workspace tutorial on first entry
   useEffect(() => {
     // Small delay to ensure UI is rendered
@@ -247,7 +277,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Keybind for sharing transcript — lives here (not WorkspaceListItem) so it
+  // Keybind for sharing transcript — lives here (not AgentListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
   useEffect(() => {
     if (isMuxHelpChat || linkSharingEnabled !== true) return;
@@ -262,40 +292,40 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, [isMuxHelpChat, linkSharingEnabled]);
 
-  // Fetch available skills + diagnostics for this workspace
   useEffect(() => {
-    if (!api) {
-      setAvailableSkills([]);
-      setInvalidSkills([]);
-      return;
-    }
-
-    let isMounted = true;
-
-    const loadSkills = async () => {
-      try {
-        const diagnostics = await api.agentSkills.listDiagnostics({
-          workspaceId,
-          disableWorkspaceAgents: disableWorkspaceAgents || undefined,
-        });
-        if (!isMounted) return;
-        setAvailableSkills(Array.isArray(diagnostics.skills) ? diagnostics.skills : []);
-        setInvalidSkills(Array.isArray(diagnostics.invalidSkills) ? diagnostics.invalidSkills : []);
-      } catch (error) {
-        console.error("Failed to load available skills:", error);
-        if (isMounted) {
-          setAvailableSkills([]);
-          setInvalidSkills([]);
-        }
-      }
-    };
-
-    void loadSkills();
+    isSkillsMountedRef.current = true;
 
     return () => {
-      isMounted = false;
+      isSkillsMountedRef.current = false;
     };
-  }, [api, workspaceId, disableWorkspaceAgents]);
+  }, []);
+
+  // Fetch available skills + diagnostics for this workspace.
+  useEffect(() => {
+    void loadSkills();
+  }, [loadSkills]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void loadSkills();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [loadSkills]);
+
+  useEffect(() => {
+    const handleSkillsRefreshRequested = () => {
+      void loadSkills();
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED, handleSkillsRefreshRequested);
+    return () =>
+      window.removeEventListener(
+        CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED,
+        handleSkillsRefreshRequested
+      );
+  }, [loadSkills]);
 
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
@@ -537,7 +567,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               onOpenTouchFullscreenReview={
                 isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
               }
-              onEnterImmersiveReview={handleEnterImmersiveReview}
+              onEnterImmersiveReview={isTouchMobileScreen ? null : handleEnterImmersiveReview}
               onForkChat={(anchorEl) => {
                 void handleForkChat(anchorEl);
               }}

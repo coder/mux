@@ -7,7 +7,7 @@ const LEGACY_LAST_READ_KEY = "workspaceLastRead";
 
 /**
  * Track last-read timestamps for workspaces.
- * Individual WorkspaceListItem components compute their own unread state
+ * Individual AgentListItem components compute their own unread state
  * by comparing their recency timestamp with the last-read timestamp.
  *
  * This hook only manages the timestamps, not the unread computation.

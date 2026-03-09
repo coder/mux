@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, expect, test, mock, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
 import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
 import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
@@ -23,6 +23,7 @@ import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as bashToolModule from "@/node/services/tools/bash";
 import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
@@ -1134,6 +1135,131 @@ describe("WorkspaceService executeBash archive guards", () => {
 
     expect(waitForInitMock).toHaveBeenCalledTimes(0);
     expect(getWorkspaceMetadataMock).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe("WorkspaceService executeBash workspace path resolution", () => {
+  let workspaceService: WorkspaceService;
+  let waitForInitMock: ReturnType<typeof mock>;
+  let getWorkspaceMetadataMock: ReturnType<typeof mock>;
+  let findWorkspaceMock: ReturnType<typeof mock>;
+  let getEffectiveSecretsMock: ReturnType<typeof mock>;
+  let createRuntimeSpy: Mock<typeof runtimeFactory.createRuntime>;
+  let createBashToolSpy: Mock<typeof bashToolModule.createBashTool>;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    waitForInitMock = mock(() => Promise.resolve());
+    findWorkspaceMock = mock(() => ({
+      workspacePath: "/persisted/workspace-root",
+      projectPath: "/tmp/proj",
+      workspaceName: "ws",
+    }));
+    getEffectiveSecretsMock = mock(() => []);
+    getWorkspaceMetadataMock = mock(() =>
+      Promise.resolve(
+        Ok({
+          id: "ws-path",
+          name: "ws",
+          projectName: "proj",
+          projectPath: "/tmp/proj",
+          runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/runtime-src" },
+        } satisfies WorkspaceMetadata)
+      )
+    );
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: getWorkspaceMetadataMock,
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: findWorkspaceMock,
+      getEffectiveSecrets: getEffectiveSecretsMock,
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+      waitForInit: waitForInitMock,
+    };
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      ensureReady: mock(() => Promise.resolve({ ready: true })),
+      getWorkspacePath: mock(() => "/runtime/workspace-root"),
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    createBashToolSpy = spyOn(bashToolModule, "createBashTool").mockReturnValue({
+      execute: mock(() =>
+        Promise.resolve({
+          success: true,
+          output: "ok",
+          exitCode: 0,
+          wall_duration_ms: 1,
+        } satisfies BashToolResult)
+      ),
+    } as unknown as ReturnType<typeof bashToolModule.createBashTool>);
+  });
+
+  afterEach(async () => {
+    createRuntimeSpy.mockRestore();
+    createBashToolSpy.mockRestore();
+    await cleanupHistory();
+  });
+
+  test("uses persisted workspace root for path-addressable runtimes", async () => {
+    const result = await workspaceService.executeBash("ws-path", "pwd");
+
+    expect(result.success).toBe(true);
+    expect(createRuntimeSpy).toHaveBeenCalled();
+    expect(createBashToolSpy).toHaveBeenCalledTimes(1);
+    expect(createBashToolSpy.mock.calls[0]?.[0]?.cwd).toBe("/persisted/workspace-root");
+    expect(waitForInitMock).toHaveBeenCalledWith("ws-path");
+  });
+
+  test("keeps docker executeBash rooted in the translated runtime path", async () => {
+    getWorkspaceMetadataMock.mockReturnValue(
+      Promise.resolve(
+        Ok({
+          id: "ws-path",
+          name: "ws",
+          projectName: "proj",
+          projectPath: "/tmp/proj",
+          runtimeConfig: { type: "docker", image: "node:20" },
+        } satisfies WorkspaceMetadata)
+      )
+    );
+
+    const result = await workspaceService.executeBash("ws-path", "pwd");
+
+    expect(result.success).toBe(true);
+    expect(createBashToolSpy).toHaveBeenCalledTimes(1);
+    expect(createBashToolSpy.mock.calls[0]?.[0]?.cwd).toBe("/runtime/workspace-root");
   });
 });
 

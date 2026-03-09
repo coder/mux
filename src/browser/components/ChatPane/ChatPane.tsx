@@ -717,7 +717,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       <div
         ref={chatAreaRef}
         aria-hidden={immersiveHidden || undefined}
-        className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
+        className="bg-surface-primary flex min-w-96 flex-1 flex-col 
+          [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full 
+          [@media(max-width:768px)]:min-w-0"
       >
         <PerfRenderMarker id="chat-pane.header">
           <WorkspaceMenuBar
@@ -1017,7 +1019,11 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
 
   return (
-    <>
+    <div className="flex flex-col gap-2">
+      {/*
+        Keep optional banners/warnings on one shared stack so spacing above the chat input
+        stays consistent as background bash, review, and queue UI appear or disappear.
+      */}
       {props.shouldShowCompactionWarning && (
         <CompactionWarning
           usagePercentage={props.autoCompactionResult.usagePercentage}
@@ -1042,7 +1048,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         />
       )}
       {props.isQueuedAgentTask && (
-        <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
+        <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
           This agent task is queued and will start automatically when a parallel slot is available.
         </div>
       )}
@@ -1075,6 +1081,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onDeleteReview={reviews.removeReview}
         onUpdateReviewNote={reviews.updateReviewNote}
       />
-    </>
+    </div>
   );
 };

@@ -29,6 +29,7 @@ import "disposablestack/auto";
 import type { MenuItemConstructorOptions, MessageBoxOptions } from "electron";
 import {
   app,
+  crashReporter,
   BrowserWindow,
   ipcMain as electronIpcMain,
   Menu,
@@ -39,6 +40,11 @@ import {
   screen,
   shell,
 } from "electron";
+
+// Enable local crash dump collection so renderer SIGSEGV produces a minidump
+// at ~/.config/mux/Crashpad/completed/*.dmp — no data leaves the machine.
+// Must be called as early as possible, before app.whenReady().
+crashReporter.start({ uploadToServer: false });
 
 // Increase renderer V8 heap limit from default ~4GB to 8GB.
 // At ~3.9GB usage, the default limit causes frequent Mark-Compact GC cycles
@@ -56,6 +62,7 @@ import type { MuxDeepLinkPayload } from "../common/types/deepLink";
 import type { UpdateStatus } from "../common/orpc/types";
 import { parseMuxDeepLink } from "../common/utils/deepLink";
 
+import { normalizeLocalhostProxyUrl } from "../common/utils/localhostProxyUrl";
 import assert from "../common/utils/assert";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { loadTokenizerModules } from "../node/utils/main/tokenizer";
@@ -64,6 +71,7 @@ import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "./titleBarOptions";
 import { isUpdateInstallInProgress } from "./updateInstallState";
 import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -98,6 +106,11 @@ if (isE2ETest) {
     console.warn("Failed to prepare test userData directory:", error);
   }
 }
+
+// MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI for localhost external-link rewrites.
+const localhostProxyTemplate =
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+  process.env.MUX_PROXY_URI?.trim() || process.env.VSCODE_PROXY_URI?.trim() || undefined;
 
 const devServerPort = process.env.MUX_DEVSERVER_PORT ?? "5173";
 
@@ -483,7 +496,7 @@ async function showSplashScreen() {
     height: 300,
     frame: false,
     transparent: false,
-    backgroundColor: "#1f1f1f", // Match splash HTML background (hsl(0 0% 12%)) - prevents white flash
+    backgroundColor: "#0a0a0b", // Match surface-primary - prevents flash
     alwaysOnTop: true,
     center: true,
     resizable: false,
@@ -771,6 +784,7 @@ function createWindow() {
     y: windowState.y,
     width: windowState.width,
     height: windowState.height,
+    backgroundColor: "#0a0a0b",
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -859,19 +873,25 @@ function createWindow() {
     console.timeEnd("main window startup");
   });
 
-  // Open all external links in default browser
+  const normalizeExternalUrl = (url: string): string =>
+    normalizeLocalhostProxyUrl({
+      url,
+      localhostProxyTemplate,
+    });
+
+  // Open all external links in default browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    void shell.openExternal(normalizeExternalUrl(url));
     return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
     const currentOrigin = new URL(mainWindow!.webContents.getURL()).origin;
     const targetOrigin = new URL(url).origin;
-    // Prevent navigation away from app origin, open externally instead
+    // Prevent navigation away from app origin, open externally instead.
     if (targetOrigin !== currentOrigin) {
       event.preventDefault();
-      void shell.openExternal(url);
+      void shell.openExternal(normalizeExternalUrl(url));
     }
   });
 
@@ -913,8 +933,9 @@ function createWindow() {
 
   // Diagnostic crash hooks — log only, no recovery side effects.
   // Crash behavior is left unmodified so the root cause can be observed.
+  // Uses log.* (not console.*) so entries reach the log file and Output Tab.
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    console.error("[diag] render-process-gone", {
+    log.error("[diag] render-process-gone", {
       reason: details.reason,
       exitCode: details.exitCode,
       url: mainWindow?.webContents.getURL(),
@@ -925,7 +946,7 @@ function createWindow() {
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (isMainFrame) {
-        console.error("[diag] did-fail-load", {
+        log.error("[diag] did-fail-load", {
           errorCode,
           errorDescription,
           url: validatedURL,
@@ -935,7 +956,24 @@ function createWindow() {
   );
 
   mainWindow.webContents.on("unresponsive", () => {
-    console.warn("[diag] renderer unresponsive");
+    log.warn("[diag] renderer unresponsive");
+  });
+
+  // Forward renderer console errors to the log service so they reach the log
+  // file (~/.mux/logs/mux.log) and Output Tab even when the UI is white/blank.
+  // The renderer's global error handlers (window.addEventListener("error")) log
+  // to console.error, but that stays in renderer memory only — the main process
+  // never sees it without this hook.
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    // level: 0=debug, 1=info, 2=warning, 3=error
+    if (level >= 2) {
+      const source = sourceId ? `${sourceId}:${line}` : undefined;
+      if (level >= 3) {
+        log.error("[renderer]", message, ...(source ? [{ source }] : []));
+      } else {
+        log.warn("[renderer]", message, ...(source ? [{ source }] : []));
+      }
+    }
   });
 
   mainWindow.on("closed", () => {
@@ -1048,7 +1086,7 @@ if (gotTheLock) {
 
   app.on("child-process-gone", (_event, details) => {
     if (details.type === "GPU") {
-      console.error(
+      log.error(
         `[window] GPU process gone: reason=${details.reason}, exitCode=${details.exitCode}`
       );
     }

@@ -26,7 +26,10 @@ import {
   IncompatibleRuntimeError,
   runBackgroundInit,
 } from "@/node/runtime/runtimeFactory";
-import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import {
+  createRuntimeForWorkspace,
+  resolveWorkspaceExecutionPath,
+} from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
@@ -1095,11 +1098,6 @@ export class WorkspaceService extends EventEmitter {
         ...(typeof result.url === "string" ? { url: result.url } : {}),
       };
     };
-    const extractTimestamp = (event: StreamEndEvent | { metadata?: { timestamp?: number } }) => {
-      const raw = event.metadata?.timestamp;
-      return typeof raw === "number" && Number.isFinite(raw) ? raw : Date.now();
-    };
-
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
@@ -1109,7 +1107,7 @@ export class WorkspaceService extends EventEmitter {
 
     this.aiService.on("stream-end", (data: unknown) => {
       if (isStreamEndEvent(data)) {
-        void this.handleStreamCompletion(data.workspaceId, extractTimestamp(data));
+        void this.handleStreamCompletion(data.workspaceId);
       }
     });
 
@@ -1234,8 +1232,14 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async handleStreamCompletion(workspaceId: string, timestamp: number): Promise<void> {
-    await this.updateRecencyTimestamp(workspaceId, timestamp);
+  private async handleStreamCompletion(workspaceId: string): Promise<void> {
+    // Always use Date.now() for stream-completion recency.
+    // extractTimestamp() returns the message-creation timestamp from stream
+    // metadata, which is effectively the same as the sendMessage recency and
+    // can lose the race against the frontend's lastRead (set via Date.now()
+    // after the IPC round-trip). Using a fresh timestamp here ensures the
+    // completion recency is strictly after any earlier lastRead write.
+    await this.updateRecencyTimestamp(workspaceId, Date.now());
     await this.updateStreamingStatus(workspaceId, false);
   }
 
@@ -4383,10 +4387,7 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const runtime = createRuntimeForWorkspace(metadata);
-    const isInPlace = metadata.projectPath === metadata.name;
-    const workspacePath = isInPlace
-      ? metadata.projectPath
-      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+    const workspacePath = resolveWorkspaceExecutionPath(metadata, runtime);
 
     const now = Date.now();
     const CACHE_TTL_MS = 10_000;
@@ -4500,16 +4501,14 @@ export class WorkspaceService extends EventEmitter {
     }
 
     try {
-      // Get actual workspace path from config
-      if (!this.config.findWorkspace(workspaceId)) {
+      // Workspace metadata does not include the persisted root shown in the Explorer, so read it
+      // from config and reuse it for all path-addressable runtimes here.
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
         return Err(`Workspace ${workspaceId} not found in config`);
       }
 
-      // Create runtime and compute workspace path
-      const runtime = createRuntime(metadata.runtimeConfig, {
-        projectPath: metadata.projectPath,
-        workspaceName: metadata.name,
-      });
+      const runtime = createRuntimeForWorkspace(metadata);
 
       // Ensure runtime is ready (e.g., start Docker container if stopped)
       const readyResult = await runtime.ensureReady();
@@ -4517,7 +4516,13 @@ export class WorkspaceService extends EventEmitter {
         return Err(readyResult.error ?? "Runtime not ready");
       }
 
-      const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+      const workspacePath = resolveWorkspaceExecutionPath(
+        {
+          ...metadata,
+          namedWorkspacePath: workspace.workspacePath,
+        },
+        runtime
+      );
 
       // Read trust state so tool_env is sourced for trusted projects.
       const projectConfig = this.config

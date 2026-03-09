@@ -118,6 +118,25 @@ function escapeJsonForHtmlScript(value: unknown): string {
   // Prevent `</script>` injection when embedding untrusted strings in an inline <script>.
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
+
+function getBrowserProxyUriTemplate(): string | null {
+  const muxProxyUri = process.env.MUX_PROXY_URI?.trim();
+  if (muxProxyUri) {
+    return muxProxyUri;
+  }
+
+  const vscodeProxyUri = process.env.VSCODE_PROXY_URI?.trim();
+  return vscodeProxyUri?.length ? vscodeProxyUri : null;
+}
+
+function injectProxyUriTemplate(indexHtml: string, proxyUriTemplate: string | null): string {
+  const templateJson = escapeJsonForHtmlScript(proxyUriTemplate);
+  return indexHtml.replace(
+    /<head[^>]*>/i,
+    (match) => `${match}\n    <script>window.__MUX_PROXY_URI_TEMPLATE__ = ${templateJson};</script>`
+  );
+}
+
 function escapeHtml(input: string): string {
   return input
     .replaceAll("&", "&amp;")
@@ -544,12 +563,19 @@ export async function createOrpcServer({
     try {
       const indexHtmlPath = path.join(staticDir, "index.html");
       const indexHtml = await fs.readFile(indexHtmlPath, "utf8");
-      spaIndexHtml = injectBaseHref(indexHtml, "/");
+      const indexHtmlWithBaseHref = injectBaseHref(indexHtml, "/");
+      spaIndexHtml = injectProxyUriTemplate(indexHtmlWithBaseHref, getBrowserProxyUriTemplate());
     } catch (error) {
       log.error("Failed to read index.html for SPA fallback:", error);
     }
 
-    app.use(express.static(staticDir));
+    // Serve JS/CSS/assets from disk, but never serve index.html — the SPA fallback
+    // (below all API routes) serves the injected version with base href + proxy template.
+    const serveStaticAssets = express.static(staticDir, { index: false });
+    app.use((req, res, next) => {
+      if (req.path === "/index.html") return next();
+      serveStaticAssets(req, res, next);
+    });
   }
 
   // Health check endpoint

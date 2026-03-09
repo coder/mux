@@ -25,12 +25,56 @@ describe("getModelStats", () => {
       expect(stats?.input_cost_per_token).toBeGreaterThan(0);
     });
 
+    test("should fall back from dated GPT-5.4 IDs to the published family entry", () => {
+      const stats = getModelStats("openai:gpt-5.4-2026-03-05");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1_050_000);
+    });
+
+    test("should resolve dated GPT-5.4 Pro IDs behind mux-gateway", () => {
+      const stats = getModelStats("mux-gateway:openai/gpt-5.4-pro-2026-03-05");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1_050_000);
+    });
+
     test("models-extra.ts should override models.json", () => {
       // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k.
       // The exact value matters here: it proves the override mechanism works.
       const stats = getModelStats("openai:gpt-5.2-codex");
       expect(stats).not.toBeNull();
       expect(stats?.max_input_tokens).toBe(272000);
+    });
+
+    test("should find gpt-5.4 with correct 1.05M context window and long-context pricing", () => {
+      const stats = getModelStats("openai:gpt-5.4");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1050000);
+      expect(stats?.input_cost_per_token).toBe(0.0000025);
+      expect(stats?.input_cost_per_token_above_200k_tokens).toBe(0.000005);
+      expect(stats?.cache_read_input_token_cost).toBe(0.00000025);
+      expect(stats?.cache_read_input_token_cost_above_200k_tokens).toBe(0.0000005);
+      expect(stats?.output_cost_per_token).toBe(0.000015);
+      expect(stats?.output_cost_per_token_above_200k_tokens).toBe(0.0000225);
+      expect(stats?.tiered_pricing_threshold_tokens).toBe(272000);
+    });
+
+    test("should find gpt-5.4-pro with correct 1.05M context and long-context pricing", () => {
+      const stats = getModelStats("openai:gpt-5.4-pro");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(1050000);
+      expect(stats?.input_cost_per_token).toBe(0.00003);
+      expect(stats?.input_cost_per_token_above_200k_tokens).toBe(0.00006);
+      expect(stats?.output_cost_per_token).toBe(0.00018);
+      expect(stats?.output_cost_per_token_above_200k_tokens).toBe(0.00027);
+      expect(stats?.tiered_pricing_threshold_tokens).toBe(272000);
+    });
+
+    test("should default tiered pricing metadata to 200K when no override is published", () => {
+      const stats = getModelStats("google:gemini-3.1-pro-preview");
+      expect(stats).not.toBeNull();
+      expect(stats?.tiered_pricing_threshold_tokens).toBe(200000);
+      expect(stats?.input_cost_per_token_above_200k_tokens).toBe(0.000004);
+      expect(stats?.output_cost_per_token_above_200k_tokens).toBe(0.000018);
     });
   });
 

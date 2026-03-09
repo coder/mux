@@ -1,7 +1,7 @@
 name: NPM Publish (Reusable)
 
 # Reusable workflow for publishing npm packages with explicit channel routing.
-# Called by publish-npm.yml (next) and release.yml (latest).
+# Called by publish-npm.yml (the OIDC-trusted caller).
 #
 # OIDC TRUSTED PUBLISHING SETUP (on npmjs.com):
 #   For each package (mux, @coder/mux-chat-components):
@@ -9,7 +9,7 @@ name: NPM Publish (Reusable)
 #   2. Configure:
 #      - Owner: coder
 #      - Repository: mux
-#      - Workflow filename: _npm-publish.yml
+#      - Workflow filename: publish-npm.yml  (the caller, NOT this reusable)
 #      - Environment: (leave blank)
 
 on:

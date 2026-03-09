@@ -161,7 +161,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
       ref={containerRef}
       aria-hidden={immersiveHidden || undefined}
       className={cn(
-        "bg-sidebar border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
+        "bg-surface-primary border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
         // Hide on mobile touch devices - too narrow for useful interaction
         "mobile-hide-right-sidebar",
         !isResizing && "transition-[width] duration-200",

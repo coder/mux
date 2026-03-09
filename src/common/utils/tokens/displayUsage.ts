@@ -6,8 +6,92 @@
  */
 
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import { getModelStats } from "./modelStats";
+import { getModelStats, type ModelStats } from "./modelStats";
 import type { ChatUsageDisplay } from "./usageAggregator";
+
+interface UsageCostInputs {
+  inputTokens: number;
+  cachedTokens: number;
+  cacheCreateTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+interface RecomputeUsageCostsOptions {
+  aggregatedUsage?: boolean;
+}
+
+interface UsageCosts {
+  inputCost: number;
+  cachedCost: number;
+  cacheCreateCost: number;
+  outputCost: number;
+  reasoningCost: number;
+}
+
+function selectCostRate(
+  modelStats: ModelStats,
+  promptContextTokens: number,
+  baseRate: number,
+  highContextRate?: number
+): number {
+  if (
+    highContextRate != null &&
+    modelStats.tiered_pricing_threshold_tokens != null &&
+    promptContextTokens > modelStats.tiered_pricing_threshold_tokens
+  ) {
+    return highContextRate;
+  }
+
+  return baseRate;
+}
+
+function hasTieredPricing(modelStats: ModelStats): boolean {
+  return (
+    modelStats.input_cost_per_token_above_200k_tokens != null ||
+    modelStats.output_cost_per_token_above_200k_tokens != null ||
+    modelStats.cache_creation_input_token_cost_above_200k_tokens != null ||
+    modelStats.cache_read_input_token_cost_above_200k_tokens != null
+  );
+}
+
+function calculateUsageCosts(modelStats: ModelStats, usage: UsageCostInputs): UsageCosts {
+  // Long-context providers price the entire prompt tier (input/cache reads/cache writes)
+  // based on prompt size, then reuse that same tier for output/reasoning charges.
+  const promptContextTokens = usage.inputTokens + usage.cachedTokens + usage.cacheCreateTokens;
+  const inputRate = selectCostRate(
+    modelStats,
+    promptContextTokens,
+    modelStats.input_cost_per_token,
+    modelStats.input_cost_per_token_above_200k_tokens
+  );
+  const cachedRate = selectCostRate(
+    modelStats,
+    promptContextTokens,
+    modelStats.cache_read_input_token_cost ?? 0,
+    modelStats.cache_read_input_token_cost_above_200k_tokens
+  );
+  const cacheCreateRate = selectCostRate(
+    modelStats,
+    promptContextTokens,
+    modelStats.cache_creation_input_token_cost ?? 0,
+    modelStats.cache_creation_input_token_cost_above_200k_tokens
+  );
+  const outputRate = selectCostRate(
+    modelStats,
+    promptContextTokens,
+    modelStats.output_cost_per_token,
+    modelStats.output_cost_per_token_above_200k_tokens
+  );
+
+  return {
+    inputCost: usage.inputTokens * inputRate,
+    cachedCost: usage.cachedTokens * cachedRate,
+    cacheCreateCost: usage.cacheCreateTokens * cacheCreateRate,
+    outputCost: usage.outputTokens * outputRate,
+    reasoningCost: usage.reasoningTokens * outputRate,
+  };
+}
 
 /**
  * Create a display-friendly usage object from AI SDK usage
@@ -65,11 +149,18 @@ export function createDisplayUsage(
   let reasoningCost: number | undefined;
 
   if (modelStats) {
-    inputCost = inputTokens * modelStats.input_cost_per_token;
-    cachedCost = cachedTokens * (modelStats.cache_read_input_token_cost ?? 0);
-    cacheCreateCost = cacheCreateTokens * (modelStats.cache_creation_input_token_cost ?? 0);
-    outputCost = outputWithoutReasoning * modelStats.output_cost_per_token;
-    reasoningCost = reasoningTokens * modelStats.output_cost_per_token;
+    const costs = calculateUsageCosts(modelStats, {
+      inputTokens,
+      cachedTokens,
+      cacheCreateTokens,
+      outputTokens: outputWithoutReasoning,
+      reasoningTokens,
+    });
+    inputCost = costs.inputCost;
+    cachedCost = costs.cachedCost;
+    cacheCreateCost = costs.cacheCreateCost;
+    outputCost = costs.outputCost;
+    reasoningCost = costs.reasoningCost;
   }
 
   if (costsIncluded) {
@@ -111,10 +202,15 @@ export function createDisplayUsage(
  *
  * Used when provider config changes (e.g., model mapping updated) to refresh
  * persisted session cost aggregates without discarding the raw token counts.
+ *
+ * Pass `{ aggregatedUsage: true }` for buckets like session `byModel` totals that may span
+ * many requests. Tiered pricing is non-linear, so those aggregates cannot be safely repriced
+ * from summed tokens alone.
  */
 export function recomputeUsageCosts(
   usage: ChatUsageDisplay,
-  metadataModel: string
+  metadataModel: string,
+  options?: RecomputeUsageCostsOptions
 ): ChatUsageDisplay {
   const modelStats = getModelStats(metadataModel);
 
@@ -131,26 +227,45 @@ export function recomputeUsageCosts(
     };
   }
 
+  if (options?.aggregatedUsage === true && hasTieredPricing(modelStats)) {
+    // Aggregated `byModel` totals collapse many requests into one bucket. Tiered pricing is
+    // non-linear, so choosing a single tier from the sum can inflate costs once multiple
+    // sub-threshold requests add up past the long-context boundary. Preserve the stored costs
+    // and surface uncertainty instead of fabricating a repriced total.
+    return {
+      ...usage,
+      hasUnknownCosts: true,
+    };
+  }
+
+  const costs = calculateUsageCosts(modelStats, {
+    inputTokens: usage.input.tokens,
+    cachedTokens: usage.cached.tokens,
+    cacheCreateTokens: usage.cacheCreate.tokens,
+    outputTokens: usage.output.tokens,
+    reasoningTokens: usage.reasoning.tokens,
+  });
+
   return {
     input: {
       tokens: usage.input.tokens,
-      cost_usd: usage.input.tokens * modelStats.input_cost_per_token,
+      cost_usd: costs.inputCost,
     },
     cached: {
       tokens: usage.cached.tokens,
-      cost_usd: usage.cached.tokens * (modelStats.cache_read_input_token_cost ?? 0),
+      cost_usd: costs.cachedCost,
     },
     cacheCreate: {
       tokens: usage.cacheCreate.tokens,
-      cost_usd: usage.cacheCreate.tokens * (modelStats.cache_creation_input_token_cost ?? 0),
+      cost_usd: costs.cacheCreateCost,
     },
     output: {
       tokens: usage.output.tokens,
-      cost_usd: usage.output.tokens * modelStats.output_cost_per_token,
+      cost_usd: costs.outputCost,
     },
     reasoning: {
       tokens: usage.reasoning.tokens,
-      cost_usd: usage.reasoning.tokens * modelStats.output_cost_per_token,
+      cost_usd: costs.reasoningCost,
     },
     model: usage.model,
   };

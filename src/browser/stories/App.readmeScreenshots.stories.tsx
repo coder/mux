@@ -45,6 +45,7 @@ import {
   getStatusStateKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 export default {
   ...appMeta,
@@ -981,7 +982,7 @@ graph TD
 
 // README: docs/img/auto-mode.webp
 // Zoomed-in creation view that highlights project-scoped defaults before first send:
-// Auto agent mode, Claude Opus 4.6, and MAX thinking.
+// Auto agent mode, Claude Sonnet 4.6, and MAX thinking.
 export const AutoModeAgentSwitching: AppStory = {
   render: () => (
     <AppWithMocks
@@ -990,10 +991,7 @@ export const AutoModeAgentSwitching: AppStory = {
 
         // Seed creation-mode controls so the screenshot shows the exact requested defaults.
         window.localStorage.setItem(getAgentIdKey(projectScopeId), JSON.stringify("auto"));
-        window.localStorage.setItem(
-          getModelKey(projectScopeId),
-          JSON.stringify("anthropic:claude-opus-4-6")
-        );
+        window.localStorage.setItem(getModelKey(projectScopeId), JSON.stringify(DEFAULT_MODEL));
         window.localStorage.setItem(getThinkingLevelKey(projectScopeId), JSON.stringify("xhigh"));
 
         expandProjects([README_PROJECT_PATH]);

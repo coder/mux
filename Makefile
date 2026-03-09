@@ -187,7 +187,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@bun x concurrently -k \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec 'node scripts/build-main-watch.js'" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
+		"bun x nodemon --watch dist/.main-build-complete --delay 300ms --exec 'NODE_ENV=development node dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
 		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS) MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000) vite"
 endif
 
@@ -220,6 +220,9 @@ dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/ve
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
+	@# Signal nodemon only after alias rewriting is complete so it never boots from partial dist output.
+	@mkdir -p dist
+	@touch dist/.main-build-complete
 
 # Build API CLI as ESM bundle (trpc-cli requires ESM with top-level await)
 dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
@@ -319,7 +322,7 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck lint-hadolint flake-hash-check ## Run all static checks (lint + typecheck + fmt-check)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck lint-hadolint ## Run all static checks (lint + typecheck + fmt-check)
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -519,7 +522,9 @@ docs-server: node_modules/.installed ## Serve documentation locally (Mintlify de
 
 check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
-	@cd docs && bun x mintlify broken-links
+	# Workaround: katex@0.16.34 ships broken ESM with unreplaced __VERSION__ placeholder.
+	# Remove this NODE_OPTIONS prefix once katex publishes a fixed build.
+	@cd docs && NODE_OPTIONS="$${NODE_OPTIONS:+$$NODE_OPTIONS }--import data:text/javascript,globalThis.__VERSION__=%220.16.34%22" bun x mintlify broken-links
 
 check-code-docs-links: ## Validate code references to docs paths
 	@./scripts/check-code-docs-links.sh

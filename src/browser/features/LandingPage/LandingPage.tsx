@@ -70,7 +70,7 @@ export function LandingPage(props: LandingPageProps) {
   const dateFilters = useDateWindow7d();
 
   return (
-    <div className="bg-dark flex flex-1 flex-col overflow-hidden">
+    <div className="bg-surface-primary flex flex-1 flex-col overflow-hidden">
       <LandingTitlebar
         leftSidebarCollapsed={props.leftSidebarCollapsed}
         onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}

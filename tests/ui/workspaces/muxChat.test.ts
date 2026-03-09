@@ -197,7 +197,7 @@ describe("Chat with Mux system workspace (UI)", () => {
         { timeout: 10_000 }
       );
 
-      // Chat with Mux is no longer rendered as a WorkspaceListItem in the sidebar;
+      // Chat with Mux is no longer rendered as a AgentListItem in the sidebar;
       // it's accessed via the help button in the header. Verify no workspace
       // row exists for it (which means no Archive button by design).
       expect(

@@ -36,7 +36,7 @@ export interface UseContextMenuPositionReturn {
  * Manages position state, open/close, and optional long-press for positioned context menus.
  *
  * Extracts the duplicated Popover+PopoverAnchor positioning pattern used by
- * WorkspaceListItem (draft + regular) and ChatPane's transcript right-click menu.
+ * AgentListItem (draft + regular) and ChatPane's transcript right-click menu.
  */
 export function useContextMenuPosition(
   options?: UseContextMenuPositionOptions

@@ -111,6 +111,42 @@ function createHttpClient(
   return createORPCClient(link) as RouterClient<AppRouter>;
 }
 
+async function withProxyUriTemplateEnv<T>(
+  env: { muxProxyUri?: string; vscodeProxyUri?: string },
+  run: () => Promise<T>
+): Promise<T> {
+  const previousMuxProxyUri = process.env.MUX_PROXY_URI;
+  const previousVscodeProxyUri = process.env.VSCODE_PROXY_URI;
+
+  if (env.muxProxyUri === undefined) {
+    delete process.env.MUX_PROXY_URI;
+  } else {
+    process.env.MUX_PROXY_URI = env.muxProxyUri;
+  }
+
+  if (env.vscodeProxyUri === undefined) {
+    delete process.env.VSCODE_PROXY_URI;
+  } else {
+    process.env.VSCODE_PROXY_URI = env.vscodeProxyUri;
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (previousMuxProxyUri === undefined) {
+      delete process.env.MUX_PROXY_URI;
+    } else {
+      process.env.MUX_PROXY_URI = previousMuxProxyUri;
+    }
+
+    if (previousVscodeProxyUri === undefined) {
+      delete process.env.VSCODE_PROXY_URI;
+    } else {
+      process.env.VSCODE_PROXY_URI = previousVscodeProxyUri;
+    }
+  }
+}
+
 describe("createOrpcServer", () => {
   test("serveStatic fallback does not swallow /api routes", async () => {
     // Minimal context stub - router won't be exercised by this test.
@@ -144,6 +180,93 @@ describe("createOrpcServer", () => {
       expect(apiRes.status).toBe(404);
     } finally {
       await server?.close();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("injects proxy URI template into SPA fallback HTML when env is set", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-proxy-template-"));
+    const indexHtml =
+      "<!doctype html><html><head><title>mux</title></head><body><div>ok</div></body></html>";
+    const muxProxyUri = "https://proxy-{{port}}.example.test/path</script>";
+
+    try {
+      await fs.writeFile(path.join(tempDir, "index.html"), indexHtml, "utf-8");
+
+      await withProxyUriTemplateEnv({ muxProxyUri }, async () => {
+        const server = await createOrpcServer({
+          host: "127.0.0.1",
+          port: 0,
+          context: stubContext as ORPCContext,
+          authToken: "test-token",
+          serveStatic: true,
+          staticDir: tempDir,
+        });
+
+        try {
+          const rootRes = await fetch(`${server.baseUrl}/`);
+          expect(rootRes.status).toBe(200);
+          const rootHtml = await rootRes.text();
+
+          const uiRes = await fetch(`${server.baseUrl}/some/spa/route`);
+          expect(uiRes.status).toBe(200);
+          const uiText = await uiRes.text();
+
+          for (const html of [rootHtml, uiText]) {
+            expect(html).toContain('<base href="/"');
+            expect(html).toContain("window.__MUX_PROXY_URI_TEMPLATE__ =");
+            expect(html).toContain(
+              'window.__MUX_PROXY_URI_TEMPLATE__ = "https://proxy-{{port}}.example.test/path\\u003c/script>";'
+            );
+          }
+        } finally {
+          await server.close();
+        }
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("injects null proxy URI template into SPA fallback HTML when env vars are absent", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-static-proxy-template-null-"));
+    const indexHtml =
+      "<!doctype html><html><head><title>mux</title></head><body><div>ok</div></body></html>";
+
+    try {
+      await fs.writeFile(path.join(tempDir, "index.html"), indexHtml, "utf-8");
+
+      await withProxyUriTemplateEnv({}, async () => {
+        const server = await createOrpcServer({
+          host: "127.0.0.1",
+          port: 0,
+          context: stubContext as ORPCContext,
+          authToken: "test-token",
+          serveStatic: true,
+          staticDir: tempDir,
+        });
+
+        try {
+          const rootRes = await fetch(`${server.baseUrl}/`);
+          expect(rootRes.status).toBe(200);
+          const rootHtml = await rootRes.text();
+
+          const uiRes = await fetch(`${server.baseUrl}/some/spa/route`);
+          expect(uiRes.status).toBe(200);
+          const uiText = await uiRes.text();
+
+          for (const html of [rootHtml, uiText]) {
+            expect(html).toContain("window.__MUX_PROXY_URI_TEMPLATE__ = null;");
+          }
+        } finally {
+          await server.close();
+        }
+      });
+    } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });

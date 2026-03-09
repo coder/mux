@@ -2465,8 +2465,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         className={cn(
           "relative flex flex-col gap-1",
           variant === "creation"
-            ? "bg-separator w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
-            : "bg-separator border-border-light border-t px-[15px] pt-[5px] pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]"
+            ? "bg-surface-primary w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
+            : `bg-surface-primary border-border-light px-4 
+              pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] 
+              mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]`
         )}
         data-component="ChatInputSection"
         data-autofocus-state="done"
