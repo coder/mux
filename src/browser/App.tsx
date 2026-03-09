@@ -84,6 +84,7 @@ import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 
 import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
+import { createProjectRefs } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { LandingPage } from "@/browser/features/LandingPage/LandingPage";
@@ -511,11 +512,8 @@ function AppInner() {
         );
       }
 
-      const projects = projectPaths.map((projectPath) => ({
-        projectPath,
-        projectName:
-          projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Unnamed Project",
-      }));
+      // Multi-project container names must stay unique and path-separator-free.
+      const projects = createProjectRefs(projectPaths);
 
       const metadata = await api.workspace.createMultiProject({
         projects,

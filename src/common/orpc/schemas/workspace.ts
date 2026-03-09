@@ -5,7 +5,9 @@ import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./w
 
 export const ProjectRefSchema = z.object({
   projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
-  projectName: z.string().meta({ description: "Display name (basename of projectPath)" }),
+  projectName: z
+    .string()
+    .meta({ description: "Display name for the project (typically derived from projectPath)" }),
 });
 
 export const WorkspaceMetadataSchema = z.object({

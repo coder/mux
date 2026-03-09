@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { ProjectRefSchema, WorkspaceMetadataSchema } from "@/common/orpc/schemas/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 
-import { getProjects, isMultiProject } from "./multiProject";
+import { createProjectRefs, getProjects, isMultiProject } from "./multiProject";
 
 function makeMetadata(overrides: Partial<WorkspaceMetadata> = {}): WorkspaceMetadata {
   return WorkspaceMetadataSchema.parse({
@@ -60,6 +60,45 @@ describe("multiProject helpers", () => {
       ];
 
       expect(getProjects(makeMetadata({ projects }))).toEqual(projects);
+    });
+  });
+
+  describe("createProjectRefs", () => {
+    it("keeps unique basenames unchanged", () => {
+      expect(createProjectRefs(["/tmp/project-a", "/tmp/project-b"])).toEqual([
+        { projectPath: "/tmp/project-a", projectName: "project-a" },
+        { projectPath: "/tmp/project-b", projectName: "project-b" },
+      ]);
+    });
+
+    it("deduplicates duplicate basenames with container-safe numeric suffixes", () => {
+      expect(createProjectRefs(["/repos/frontend/app", "/repos/backend/app"])).toEqual([
+        { projectPath: "/repos/frontend/app", projectName: "app" },
+        { projectPath: "/repos/backend/app", projectName: "app-2" },
+      ]);
+    });
+
+    it("handles mixed POSIX and Windows paths deterministically", () => {
+      expect(createProjectRefs(["/repos/shared/api", "C:\\Users\\mux\\api"])).toEqual([
+        { projectPath: "/repos/shared/api", projectName: "api" },
+        { projectPath: "C:\\Users\\mux\\api", projectName: "api-2" },
+      ]);
+    });
+
+    it("keeps bumping suffixes when later basenames already include numeric suffixes", () => {
+      expect(
+        createProjectRefs([
+          "/repos/frontend/app",
+          "/repos/backend/app",
+          "/repos/ops/app-2",
+          "/repos/support/app",
+        ])
+      ).toEqual([
+        { projectPath: "/repos/frontend/app", projectName: "app" },
+        { projectPath: "/repos/backend/app", projectName: "app-2" },
+        { projectPath: "/repos/ops/app-2", projectName: "app-2-2" },
+        { projectPath: "/repos/support/app", projectName: "app-3" },
+      ]);
     });
   });
 
