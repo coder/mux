@@ -56,7 +56,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
 
   return (
     <div
-      className={cn("border-border bg-dark border-t px-[15px]", className)}
+      className={cn("border-border bg-surface-primary border-t px-[15px]", className)}
       data-component="QueuedMessageBanner"
     >
       <button

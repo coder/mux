@@ -52,7 +52,7 @@ class BannerErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="border-border bg-dark flex items-center gap-2 border-t px-3 py-1.5 text-xs">
+        <div className="border-border bg-surface-primary flex items-center gap-2 border-t px-3 py-1.5 text-xs">
           <AlertTriangle className="text-warning size-3.5" />
           <span className="text-muted">Reviews data corrupted</span>
           <Button
@@ -160,7 +160,7 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
         "group rounded border transition-colors",
         isChecked
           ? "border-border-light bg-hover/50 opacity-70"
-          : "border-border-medium bg-border-medium/20"
+          : "border-border-medium bg-surface-secondary/50"
       )}
     >
       {/* Header row - always visible */}
@@ -266,7 +266,7 @@ const ReviewItem: React.FC<ReviewItemProps> = ({
                   value={editValue}
                   onChange={(e) => setEditValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  className="bg-dark border-border text-secondary w-full resize-none rounded border p-2 text-xs focus:border-[var(--color-review-accent)] focus:outline-none"
+                  className="bg-surface-secondary border-border text-secondary w-full resize-none rounded border p-2 text-xs focus:border-[var(--color-review-accent)] focus:outline-none"
                   rows={2}
                   placeholder="Your comment..."
                 />
@@ -374,7 +374,7 @@ const ReviewsBannerInner: React.FC<ReviewsBannerInnerProps> = ({ workspaceId }) 
   }
 
   return (
-    <div className="border-border bg-dark border-t px-[15px]">
+    <div className="border-border bg-surface-primary border-t px-[15px]">
       {/* Collapsed banner - thin stripe, content aligned with chat */}
       <button
         type="button"

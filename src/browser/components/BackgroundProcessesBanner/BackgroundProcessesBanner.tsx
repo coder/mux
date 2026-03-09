@@ -75,7 +75,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
   return (
     <>
       {count > 0 && (
-        <div className="border-border bg-dark border-t px-[15px]">
+        <div className="border-border bg-surface-primary border-t px-[15px]">
           {/* Collapsed banner - thin stripe, content aligned with chat */}
           <button
             type="button"
