@@ -30,6 +30,13 @@ export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 
 export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
 
+export const EventSoundConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  filePath: z.string().nullable().default(null),
+});
+
+export const EventSoundSettingsSchema = z.record(z.string(), EventSoundConfigSchema).optional();
+
 export const AppConfigOnDiskSchema = z
   .object({
     projects: z.array(z.tuple([z.string(), ProjectConfigSchema])).optional(),
@@ -61,6 +68,7 @@ export const AppConfigOnDiskSchema = z
     updateChannel: UpdateChannelSchema.optional(),
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
+    eventSoundSettings: EventSoundSettingsSchema,
     onePasswordAccountName: z.string().optional(),
   })
   .passthrough();
@@ -71,5 +79,8 @@ export type SubagentAiDefaultsEntry = z.infer<typeof SubagentAiDefaultsEntrySche
 export type SubagentAiDefaults = z.infer<typeof SubagentAiDefaultsSchema>;
 export type FeatureFlagOverride = z.infer<typeof FeatureFlagOverrideSchema>;
 export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
+
+export type EventSoundConfig = z.infer<typeof EventSoundConfigSchema>;
+export type EventSoundSettings = z.infer<typeof EventSoundSettingsSchema>;
 
 export type AppConfigOnDisk = z.infer<typeof AppConfigOnDiskSchema>;

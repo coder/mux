@@ -182,6 +182,65 @@ describe("Config", () => {
     });
   });
 
+  describe("event sound settings", () => {
+    it("loads eventSoundSettings and applies schema defaults", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          eventSoundSettings: {
+            agent_review_ready: {
+              enabled: true,
+              filePath: "/tmp/review-ready.wav",
+            },
+            future_event: {
+              filePath: "/tmp/future-event.wav",
+            },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: true,
+          filePath: "/tmp/review-ready.wav",
+        },
+        future_event: {
+          enabled: false,
+          filePath: "/tmp/future-event.wav",
+        },
+      });
+    });
+
+    it("round-trips eventSoundSettings through editConfig", async () => {
+      const eventSoundSettings = {
+        agent_review_ready: {
+          enabled: true,
+          filePath: "/tmp/review-ready.wav",
+        },
+        future_event: {
+          enabled: false,
+          filePath: null,
+        },
+      };
+
+      await config.editConfig((cfg) => {
+        cfg.eventSoundSettings = eventSoundSettings;
+        return cfg;
+      });
+
+      const reloaded = config.loadConfigOrDefault();
+      expect(reloaded.eventSoundSettings).toEqual(eventSoundSettings);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        eventSoundSettings?: unknown;
+      };
+      expect(raw.eventSoundSettings).toEqual(eventSoundSettings);
+    });
+  });
+
   describe("model preferences", () => {
     it("should normalize and persist defaultModel and hiddenModels", async () => {
       await config.editConfig((cfg) => {

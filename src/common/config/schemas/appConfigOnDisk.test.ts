@@ -62,6 +62,55 @@ describe("AppConfigOnDiskSchema", () => {
     ).toBe(true);
   });
 
+  it("accepts missing eventSoundSettings", () => {
+    const result = AppConfigOnDiskSchema.safeParse({});
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toBeUndefined();
+    }
+  });
+
+  it("parses valid eventSoundSettings and applies entry defaults", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        agent_review_ready: {
+          enabled: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: true,
+          filePath: null,
+        },
+      });
+    }
+  });
+
+  it("preserves unknown eventSoundSettings keys", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        future_event: {
+          filePath: "/tmp/future.wav",
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        future_event: {
+          enabled: false,
+          filePath: "/tmp/future.wav",
+        },
+      });
+    }
+  });
+
   it("preserves unknown fields via passthrough", () => {
     const valid = { futureField: "something" };
 
