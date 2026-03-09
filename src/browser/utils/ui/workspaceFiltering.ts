@@ -367,83 +367,14 @@ export function findNextNonEmptyTier(
   return -1;
 }
 
-export interface PinnedCompletedChildOptions {
-  workspaces: FrontendWorkspaceMetadata[];
-  workspaceRecency: Record<string, number>;
-  expandedParentIds: ReadonlySet<string>;
-  isTierExpanded: (tierIndex: number) => boolean;
-}
-
-/**
- * Determine which expanded completed child rows should bypass age-tier collapsing.
- * Reported children are pinned only when their parent row is currently visible
- * (recent rows, expanded old tiers, or rows pinned earlier in this same pass).
- */
-export function computePinnedCompletedChildIdsForAgeTiers(
-  opts: PinnedCompletedChildOptions
-): Set<string> {
-  const potentialPinnedChildren = opts.workspaces.filter((workspace) => {
-    const parentId = workspace.parentWorkspaceId;
-    return (
-      workspace.taskStatus === "reported" &&
-      typeof parentId === "string" &&
-      opts.expandedParentIds.has(parentId)
-    );
-  });
-
-  if (potentialPinnedChildren.length === 0) {
-    return new Set<string>();
-  }
-
-  const { recent, buckets } = partitionWorkspacesByAge(opts.workspaces, opts.workspaceRecency);
-  const visibleParentIds = new Set<string>(recent.map((workspace) => workspace.id));
-
-  const markExpandedTierRowsVisible = (tierIndex: number): void => {
-    const bucket = buckets[tierIndex];
-    const remainingCount = buckets
-      .slice(tierIndex)
-      .reduce((sum, bucketRows) => sum + bucketRows.length, 0);
-    if (remainingCount === 0 || !opts.isTierExpanded(tierIndex)) {
-      return;
-    }
-
-    for (const workspace of bucket) {
-      visibleParentIds.add(workspace.id);
-    }
-
-    const nextTier = findNextNonEmptyTier(buckets, tierIndex + 1);
-    if (nextTier !== -1) {
-      markExpandedTierRowsVisible(nextTier);
-    }
-  };
-
-  const firstTier = findNextNonEmptyTier(buckets, 0);
-  if (firstTier !== -1) {
-    markExpandedTierRowsVisible(firstTier);
-  }
-
-  const pinnedIds = new Set<string>();
-  let pinnedInPass = true;
-  while (pinnedInPass) {
-    pinnedInPass = false;
-
-    for (const workspace of potentialPinnedChildren) {
-      const parentId = workspace.parentWorkspaceId;
-      if (!parentId || pinnedIds.has(workspace.id) || !visibleParentIds.has(parentId)) {
-        continue;
-      }
-
-      pinnedIds.add(workspace.id);
-      visibleParentIds.add(workspace.id);
-      pinnedInPass = true;
-    }
-  }
-
-  return pinnedIds;
-}
-
 /**
  * Partition workspaces into age-based buckets.
+ *
+ * Parent/child hierarchy is preserved across tiers: if a workspace has a parent
+ * present in the same list, it inherits the parent's tier. This keeps sub-agent
+ * rows colocated with their parent instead of splitting them across recent/old
+ * buckets based on each child row's individual recency.
+ *
  * Workspaces older than the first threshold remain in old-age tiers, even when
  * that leaves the recent section empty.
  */
@@ -457,32 +388,66 @@ export function partitionWorkspacesByAge(
 
   const now = Date.now();
   const thresholdMs = AGE_THRESHOLDS_DAYS.map((d) => d * DAY_MS);
+  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+
+  // Tier index: -1 => recent, 0..N-1 => age buckets.
+  const tierByWorkspaceId = new Map<string, number>();
+  const visiting = new Set<string>();
+
+  const classifyByOwnRecency = (workspace: FrontendWorkspaceMetadata): number => {
+    const recencyTimestamp = workspaceRecency[workspace.id] ?? 0;
+    const age = now - recencyTimestamp;
+
+    if (age < thresholdMs[0]) {
+      return -1;
+    }
+
+    for (let i = 0; i < thresholdMs.length - 1; i++) {
+      if (age >= thresholdMs[i] && age < thresholdMs[i + 1]) {
+        return i;
+      }
+    }
+
+    return thresholdMs.length - 1;
+  };
+
+  const resolveTierIndex = (workspace: FrontendWorkspaceMetadata): number => {
+    const cachedTier = tierByWorkspaceId.get(workspace.id);
+    if (cachedTier !== undefined) {
+      return cachedTier;
+    }
+
+    if (visiting.has(workspace.id)) {
+      // Defensive cycle handling: fall back to direct age classification.
+      const fallbackTier = classifyByOwnRecency(workspace);
+      tierByWorkspaceId.set(workspace.id, fallbackTier);
+      return fallbackTier;
+    }
+
+    visiting.add(workspace.id);
+
+    const parentId = workspace.parentWorkspaceId;
+    const parent = parentId ? byId.get(parentId) : undefined;
+    const tierIndex = parent ? resolveTierIndex(parent) : classifyByOwnRecency(workspace);
+
+    visiting.delete(workspace.id);
+    tierByWorkspaceId.set(workspace.id, tierIndex);
+    return tierIndex;
+  };
 
   const recent: FrontendWorkspaceMetadata[] = [];
   const buckets: FrontendWorkspaceMetadata[][] = AGE_THRESHOLDS_DAYS.map(() => []);
 
   for (const workspace of workspaces) {
-    const recencyTimestamp = workspaceRecency[workspace.id] ?? 0;
-    const age = now - recencyTimestamp;
-
-    if (age < thresholdMs[0]) {
+    const tierIndex = resolveTierIndex(workspace);
+    if (tierIndex === -1) {
       recent.push(workspace);
-    } else {
-      // Find which bucket this workspace belongs to
-      // buckets[i] contains workspaces older than threshold[i] but newer than threshold[i+1]
-      let placed = false;
-      for (let i = 0; i < thresholdMs.length - 1; i++) {
-        if (age >= thresholdMs[i] && age < thresholdMs[i + 1]) {
-          buckets[i].push(workspace);
-          placed = true;
-          break;
-        }
-      }
-      // Older than the last threshold
-      if (!placed) {
-        buckets[buckets.length - 1].push(workspace);
-      }
+      continue;
     }
+
+    const safeBucketIndex =
+      tierIndex >= 0 && tierIndex < buckets.length ? tierIndex : buckets.length - 1;
+    buckets[safeBucketIndex].push(workspace);
   }
 
   return { recent, buckets };
