@@ -276,6 +276,60 @@ describe("Config", () => {
       expect(loaded.routeOverrides).toEqual(expectedOverrides);
     });
 
+    it("normalizes gateway-scoped override keys on save", async () => {
+      await config.editConfig((cfg) => {
+        cfg.routeOverrides = {
+          "openrouter:anthropic/claude-opus-4-6": "direct",
+        };
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        routeOverrides?: Record<string, string>;
+      };
+
+      expect(raw.routeOverrides).toEqual({
+        "anthropic:claude-opus-4-6": "direct",
+      });
+    });
+
+    it("normalizes gateway-scoped override keys on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          routeOverrides: {
+            "openrouter:anthropic/claude-opus-4-6": "direct",
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-opus-4-6": "direct",
+      });
+    });
+
+    it("handles key collisions after normalization", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          routeOverrides: {
+            "openrouter:anthropic/claude-opus-4-6": "direct",
+            "mux-gateway:anthropic/claude-opus-4-6": "openrouter",
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-opus-4-6": "openrouter",
+      });
+    });
+
     it("keeps routePriority and routeOverrides across unrelated editConfig saves", async () => {
       const expectedPriority = ["openai:gpt-4o"];
       const expectedOverrides = {

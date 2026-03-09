@@ -109,6 +109,20 @@ function parseOptionalStringRecord(value: unknown): Record<string, string> | und
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function normalizeRouteOverridesRecord(value: unknown): Record<string, string> | undefined {
+  const parsed = parseOptionalStringRecord(value);
+  if (!parsed) {
+    return undefined;
+  }
+
+  const out: Record<string, string> = {};
+  for (const [key, route] of Object.entries(parsed)) {
+    out[normalizeToCanonical(key)] = route;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function areStringArraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) {
     return false;
@@ -477,7 +491,7 @@ export class Config {
         const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
         const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
         const routePriority = parseOptionalStringArray(parsed.routePriority);
-        const routeOverrides = parseOptionalStringRecord(parsed.routeOverrides);
+        const routeOverrides = normalizeRouteOverridesRecord(parsed.routeOverrides);
 
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
         const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
@@ -595,7 +609,7 @@ export class Config {
         data.routePriority = routePriority;
       }
 
-      const routeOverrides = parseOptionalStringRecord(config.routeOverrides);
+      const routeOverrides = normalizeRouteOverridesRecord(config.routeOverrides);
       if (routeOverrides !== undefined) {
         data.routeOverrides = routeOverrides;
       }

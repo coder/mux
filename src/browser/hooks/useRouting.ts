@@ -7,6 +7,7 @@ import {
   type AvailableRoute,
   type RouteContext,
 } from "@/common/routing";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 
 import { useProvidersConfig } from "./useProvidersConfig";
 
@@ -114,11 +115,12 @@ export function useRouting(): RoutingState {
 
   const setRouteOverride = useCallback(
     (canonicalModel: string, route: string | null) => {
+      const key = normalizeToCanonical(canonicalModel);
       const nextOverrides = { ...routeOverrides };
       if (route == null) {
-        delete nextOverrides[canonicalModel];
+        delete nextOverrides[key];
       } else {
-        nextOverrides[canonicalModel] = route;
+        nextOverrides[key] = route;
       }
 
       setRouteOverridesState(nextOverrides);
@@ -129,6 +131,7 @@ export function useRouting(): RoutingState {
 
   const resolveRoute = useCallback(
     (canonicalModel: string) => {
+      const normalized = normalizeToCanonical(canonicalModel);
       const resolved: RouteContext = resolveRouteForModel(
         canonicalModel,
         routePriority,
@@ -137,7 +140,7 @@ export function useRouting(): RoutingState {
       );
 
       const route = resolved.routeProvider === resolved.origin ? "direct" : resolved.routeProvider;
-      const override = routeOverrides[canonicalModel];
+      const override = routeOverrides[normalized];
       const overrideUsed =
         override != null &&
         (override === "direct" || override === resolved.origin
