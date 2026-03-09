@@ -485,8 +485,8 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
-  test("compaction model inherit uses activeStreamContext.modelString over stale baseOptions.model", async () => {
-    const workspaceId = "ws-auto-compaction-inherit-active-stream-model";
+  test("compaction model inherit uses caller-provided baseOptions.model when no preferred model configured", async () => {
+    const workspaceId = "ws-auto-compaction-inherit-base-options-model";
 
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
@@ -524,26 +524,18 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       backgroundProcessManager,
     });
 
-    const actualStreamModel = "anthropic:claude-sonnet-4-6";
-    const staleBaseModel = "anthropic:claude-opus-4-6";
+    const inheritedModel = "anthropic:claude-sonnet-4-6";
     const baseOptions: SendMessageOptions = {
-      model: staleBaseModel,
+      model: inheritedModel,
       agentId: "exec",
     };
     const followUpContent: CompactionFollowUpRequest = {
       text: "Continue",
-      model: actualStreamModel,
+      model: inheritedModel,
       agentId: "exec",
     };
 
     const internals = session as unknown as {
-      activeStreamContext?: {
-        modelString: string;
-        options?: SendMessageOptions;
-        agentInitiated?: boolean;
-        openaiTruncationModeOverride?: "auto" | "disabled";
-        providersConfig: ProvidersConfigMap | null;
-      };
       buildAutoCompactionRequest: (params: {
         followUpContent: CompactionFollowUpRequest;
         baseOptions: SendMessageOptions;
@@ -559,27 +551,21 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       };
     };
 
-    internals.activeStreamContext = {
-      modelString: actualStreamModel,
-      options: baseOptions,
-      providersConfig: null,
-    };
-
     const compactionRequest = internals.buildAutoCompactionRequest({
       followUpContent,
       baseOptions,
       reason: "mid-stream",
     });
 
-    expect(compactionRequest.sendOptions.model).toBe(actualStreamModel);
-    expect(compactionRequest.metadata.requestedModel).toBe(actualStreamModel);
-    expect(compactionRequest.metadata.parsed?.model).toBe(actualStreamModel);
+    expect(compactionRequest.sendOptions.model).toBe(inheritedModel);
+    expect(compactionRequest.metadata.requestedModel).toBe(inheritedModel);
+    expect(compactionRequest.metadata.parsed?.model).toBe(inheritedModel);
 
     session.dispose();
   });
 
-  test("compaction model explicit override takes priority over activeStreamContext", async () => {
-    const workspaceId = "ws-auto-compaction-explicit-model-overrides-stream-model";
+  test("compaction model explicit override takes priority over baseOptions.model", async () => {
+    const workspaceId = "ws-auto-compaction-explicit-model-overrides-base-model";
 
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
@@ -632,13 +618,6 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     };
 
     const internals = session as unknown as {
-      activeStreamContext?: {
-        modelString: string;
-        options?: SendMessageOptions;
-        agentInitiated?: boolean;
-        openaiTruncationModeOverride?: "auto" | "disabled";
-        providersConfig: ProvidersConfigMap | null;
-      };
       buildAutoCompactionRequest: (params: {
         followUpContent: CompactionFollowUpRequest;
         baseOptions: SendMessageOptions;
@@ -652,12 +631,6 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
           };
         };
       };
-    };
-
-    internals.activeStreamContext = {
-      modelString: "anthropic:claude-sonnet-4-6",
-      options: baseOptions,
-      providersConfig: null,
     };
 
     const compactionRequest = internals.buildAutoCompactionRequest({

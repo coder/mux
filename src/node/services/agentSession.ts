@@ -2507,10 +2507,9 @@ export class AgentSession {
     sendOptions: SendMessageOptions;
     agentInitiated: boolean;
   } {
-    const compactionModel =
-      this.getPreferredCompactionModel() ??
-      this.activeStreamContext?.modelString ??
-      params.baseOptions.model;
+    // Callers pass the stream model in baseOptions.model; avoid ambient session state
+    // here because the current stream is cleared before compaction and could go stale.
+    const compactionModel = this.getPreferredCompactionModel() ?? params.baseOptions.model;
     assert(
       typeof compactionModel === "string" && compactionModel.trim().length > 0,
       "auto-compaction requires a non-empty model"
