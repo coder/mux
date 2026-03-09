@@ -13,7 +13,7 @@ function stripMarkdownComments(content: string): string {
  * Instruction file names to search for, in priority order.
  * The first file found in a directory is used as the base instruction set.
  */
-export const INSTRUCTION_FILE_NAMES = ["AGENTS.md", "AGENT.md", "CLAUDE.md"] as const;
+const INSTRUCTION_FILE_NAMES = ["AGENTS.md", "AGENT.md", "CLAUDE.md"] as const;
 
 /**
  * Local instruction file suffix. If a base instruction file is found,
@@ -21,7 +21,7 @@ export const INSTRUCTION_FILE_NAMES = ["AGENTS.md", "AGENT.md", "CLAUDE.md"] as 
  *
  * Example: If AGENTS.md exists, we also check for AGENTS.local.md
  */
-export const LOCAL_INSTRUCTION_FILENAME = "AGENTS.local.md";
+const LOCAL_INSTRUCTION_FILENAME = "AGENTS.local.md";
 
 /**
  * File reader abstraction for reading files from either local fs or Runtime.
