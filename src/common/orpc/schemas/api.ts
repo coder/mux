@@ -1135,6 +1135,9 @@ export const workspace = {
       options: z
         .object({
           timeout_secs: z.number().optional(),
+          // Multi-project script mode defaults to the shared container root; repo-context UI
+          // callers opt into the primary repo checkout explicitly when they need git/file paths.
+          cwdMode: z.enum(["default", "repo-root"]).nullish(),
         })
         .optional(),
     }),

@@ -25,6 +25,7 @@ import {
   cacheToResult,
 } from "@/browser/utils/fileContentCache";
 import type { ReviewNoteData } from "@/common/types/review";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 
 interface FileViewerTabProps {
   workspaceId: string;
@@ -115,10 +116,12 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           api!.workspace.executeBash({
             workspaceId: props.workspaceId,
             script: buildReadFileScript(props.relativePath),
+            options: repoRootBashOptions(),
           }),
           api!.workspace.executeBash({
             workspaceId: props.workspaceId,
             script: buildFileDiffScript(props.relativePath),
+            options: repoRootBashOptions(),
           }),
         ]);
 

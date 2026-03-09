@@ -33,6 +33,7 @@ import { ImmersiveReviewView } from "./ImmersiveReviewView";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";
 import { shellQuote } from "@/common/utils/shell";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 import { readPersistedString, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
@@ -260,7 +261,7 @@ async function ensureOriginFetched(params: {
     .executeBash({
       workspaceId: params.workspaceId,
       script: `GIT_TERMINAL_PROMPT=0 git fetch origin ${shellQuote(originBranch)} --quiet || true`,
-      options: { timeout_secs: 30 },
+      options: repoRootBashOptions(30),
     })
     .then(() => undefined)
     .catch(() => undefined);
@@ -291,7 +292,7 @@ async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(par
   const result = await params.api.workspace.executeBash({
     workspaceId: params.workspaceId,
     script: params.script,
-    options: { timeout_secs: params.timeoutSecs },
+    options: repoRootBashOptions(params.timeoutSecs),
   });
 
   if (!result.success) {

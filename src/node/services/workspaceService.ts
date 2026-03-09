@@ -5224,6 +5224,7 @@ export class WorkspaceService extends EventEmitter {
     script: string,
     options?: {
       timeout_secs?: number;
+      cwdMode?: "default" | "repo-root" | null;
     },
     command?: string,
     args?: string[]
@@ -5332,20 +5333,25 @@ export class WorkspaceService extends EventEmitter {
 
       // Multi-project script mode must stay at the shared container root so sibling repos remain
       // addressable even when task/child workspaces persist their primary-project checkout path.
-      // Bare git command mode stays on the primary repo checkout so git always runs inside a repo.
+      // Repo-context UI can opt scripts back into the primary repo checkout, and bare git command
+      // mode continues to force repo-root execution so git always runs inside a repo.
       let cwdForExecution = multiProjectContainerPath ?? workspacePath;
       assert(cwdForExecution?.length, "executeBash requires a resolved execution cwd");
-      if (multiProjectRuntimes && command === "git") {
-        const primaryProjectRuntime = multiProjectRuntimes[0];
+      const requiresRepoRootCwd = command === "git" || options?.cwdMode === "repo-root";
+      if (multiProjectRuntimes && requiresRepoRootCwd) {
+        const primaryProjectRuntime =
+          multiProjectRuntimes.find(
+            (runtimeEntry) => runtimeEntry.projectPath === metadata.projectPath
+          ) ?? multiProjectRuntimes[0];
         assert(
           primaryProjectRuntime,
-          "Multi-project git command mode requires a primary project runtime"
+          "Multi-project repo-root execution requires a primary project runtime"
         );
         cwdForExecution = primaryProjectRuntime.runtime.getWorkspacePath(
           primaryProjectRuntime.projectPath,
           metadata.name
         );
-        assert(cwdForExecution.length > 0, "Multi-project git command mode requires a repo cwd");
+        assert(cwdForExecution.length > 0, "Multi-project repo-root execution requires a repo cwd");
       }
 
       // Load project secrets

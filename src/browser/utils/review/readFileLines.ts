@@ -4,6 +4,7 @@
  */
 
 import type { APIClient } from "@/browser/contexts/API";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 
 /** Number of lines to expand per click */
 export const LINES_PER_EXPANSION = 20;
@@ -29,7 +30,7 @@ export async function readFileLines(
   const result = await api.workspace.executeBash({
     workspaceId,
     script,
-    options: { timeout_secs: 3 },
+    options: repoRootBashOptions(3),
   });
 
   if (!result?.success) return null;
