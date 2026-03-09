@@ -31,37 +31,16 @@ function getWorkspaceRow(container: HTMLElement, workspaceId: string): HTMLEleme
 }
 
 function getSubagentConnector(container: HTMLElement, workspaceId: string): HTMLElement | null {
-  const workspaceRow = getWorkspaceRow(container, workspaceId);
-  if (!workspaceRow) {
-    return null;
-  }
-
-  // Sub-agent connectors are rendered as a sibling wrapper around the row, so
-  // this lookup must walk to the sibling/parent wrapper instead of querying
-  // within the row itself.
-  const siblingConnector = workspaceRow.previousElementSibling;
-  if (
-    siblingConnector instanceof HTMLElement &&
-    siblingConnector.getAttribute("data-testid") === "subagent-connector"
-  ) {
-    return siblingConnector;
-  }
-
-  const wrapper = workspaceRow.parentElement;
-  if (!wrapper) {
-    return null;
-  }
-
-  for (const child of wrapper.children) {
-    if (!(child instanceof HTMLElement)) {
-      continue;
-    }
-
-    if (child.getAttribute("data-testid") === "subagent-connector") {
-      return child;
+  // Find all connector elements and match by shared parent with the target workspace row.
+  // This avoids fragile sibling/parent traversal assumptions.
+  const connectors = container.querySelectorAll('[data-testid="subagent-connector"]');
+  for (const connector of connectors) {
+    const wrapper = connector.parentElement;
+    if (!wrapper) continue;
+    if (wrapper.querySelector(`[data-workspace-id="${workspaceId}"]`)) {
+      return connector as HTMLElement;
     }
   }
-
   return null;
 }
 
