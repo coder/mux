@@ -83,6 +83,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
     const srcDir = "/tmp/src";
     const projectAPath = "/tmp/project-a";
     const projectBPath = "/tmp/project-b";
+    const containerPath = new ContainerManager(srcDir).getContainerPath(workspaceName);
     const metadata: WorkspaceMetadata = {
       id: workspaceId,
       name: workspaceName,
@@ -139,7 +140,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
         getSessionDir: mock(() => "/tmp/test/sessions"),
         findWorkspace: mock(() => ({
           projectPath: projectAPath,
-          workspacePath: `/tmp/workspaces/project-a/${workspaceName}`,
+          workspacePath: containerPath,
         })),
         loadConfigOrDefault: mock(() => ({
           projects: new Map([
@@ -195,6 +196,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
     const srcDir = "/tmp/src";
     const projectAPath = "/tmp/project-a";
     const projectBPath = "/tmp/project-b";
+    const containerPath = new ContainerManager(srcDir).getContainerPath(workspaceName);
     const metadata: WorkspaceMetadata = {
       id: workspaceId,
       name: workspaceName,
@@ -251,7 +253,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
         getSessionDir: mock(() => "/tmp/test/sessions"),
         findWorkspace: mock(() => ({
           projectPath: projectAPath,
-          workspacePath: `/tmp/workspaces/project-a/${workspaceName}`,
+          workspacePath: containerPath,
         })),
         loadConfigOrDefault: mock(() => ({
           projects: new Map([
