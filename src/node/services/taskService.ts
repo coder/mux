@@ -54,7 +54,7 @@ import {
   TaskToolResultSchema,
   TaskToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
-import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
+import { isPlanLikeInResolvedChain, isToolEnabledInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import {
@@ -429,6 +429,44 @@ export class TaskService {
     }
   }
 
+  private getTaskWorkspaceAgentResolutionContext(args: {
+    projectPath: string;
+    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
+  }): {
+    workspaceName: string;
+    runtime: Runtime;
+    workspacePath: string;
+  } | null {
+    assert(
+      args.projectPath.length > 0,
+      "getTaskWorkspaceAgentResolutionContext: projectPath must be non-empty"
+    );
+
+    const workspaceName = coerceNonEmptyString(args.workspace.name) ?? args.workspace.id;
+    if (!workspaceName) {
+      return null;
+    }
+
+    const runtimeConfig = args.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig,
+      projectPath: args.projectPath,
+      name: workspaceName,
+    });
+    const workspacePath =
+      coerceNonEmptyString(args.workspace.path) ??
+      runtime.getWorkspacePath(args.projectPath, workspaceName);
+    if (!workspacePath) {
+      return null;
+    }
+
+    return {
+      workspaceName,
+      runtime,
+      workspacePath,
+    };
+  }
+
   private async isAgentEnabledForTaskWorkspace(args: {
     workspaceId: string;
     projectPath: string;
@@ -444,29 +482,18 @@ export class TaskService {
       "isAgentEnabledForTaskWorkspace: projectPath must be non-empty"
     );
 
-    const workspaceName = coerceNonEmptyString(args.workspace.name) ?? args.workspace.id;
-    if (!workspaceName) {
-      return false;
-    }
-
-    const runtimeConfig = args.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
-    const runtime = createRuntimeForWorkspace({
-      runtimeConfig,
+    const resolutionContext = this.getTaskWorkspaceAgentResolutionContext({
       projectPath: args.projectPath,
-      name: workspaceName,
+      workspace: args.workspace,
     });
-    const workspacePath =
-      coerceNonEmptyString(args.workspace.path) ??
-      runtime.getWorkspacePath(args.projectPath, workspaceName);
-
-    if (!workspacePath) {
+    if (!resolutionContext) {
       return false;
     }
 
     try {
       const resolvedFrontmatter = await resolveAgentFrontmatter(
-        runtime,
-        workspacePath,
+        resolutionContext.runtime,
+        resolutionContext.workspacePath,
         args.agentId
       );
       const cfg = this.config.loadConfigOrDefault();
@@ -478,6 +505,72 @@ export class TaskService {
       return !effectivelyDisabled;
     } catch (error: unknown) {
       log.warn("Failed to resolve task handoff target agent availability", {
+        workspaceId: args.workspaceId,
+        agentId: args.agentId,
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  private async canAgentSpawnTasksInWorkspace(args: {
+    workspaceId: string;
+    projectPath: string;
+    workspace: Pick<WorkspaceConfigEntry, "id" | "name" | "path" | "runtimeConfig">;
+    agentId: "orchestrator";
+  }): Promise<boolean> {
+    assert(
+      args.workspaceId.length > 0,
+      "canAgentSpawnTasksInWorkspace: workspaceId must be non-empty"
+    );
+    assert(
+      args.projectPath.length > 0,
+      "canAgentSpawnTasksInWorkspace: projectPath must be non-empty"
+    );
+
+    const resolutionContext = this.getTaskWorkspaceAgentResolutionContext({
+      projectPath: args.projectPath,
+      workspace: args.workspace,
+    });
+    if (!resolutionContext) {
+      return false;
+    }
+
+    try {
+      const cfg = this.config.loadConfigOrDefault();
+      const resolvedFrontmatter = await resolveAgentFrontmatter(
+        resolutionContext.runtime,
+        resolutionContext.workspacePath,
+        args.agentId
+      );
+      const effectivelyDisabled = isAgentEffectivelyDisabled({
+        cfg,
+        agentId: args.agentId,
+        resolvedFrontmatter,
+      });
+      if (effectivelyDisabled) {
+        return false;
+      }
+
+      const agentDefinition = await readAgentDefinition(
+        resolutionContext.runtime,
+        resolutionContext.workspacePath,
+        args.agentId
+      );
+      const chain = await resolveAgentInheritanceChain({
+        runtime: resolutionContext.runtime,
+        workspacePath: resolutionContext.workspacePath,
+        agentId: agentDefinition.id,
+        agentDefinition,
+        workspaceId: args.workspaceId,
+      });
+      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      const taskDepth = this.getTaskDepth(cfg, args.workspaceId);
+      const disableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
+
+      return !disableTaskToolsForDepth && isToolEnabledInResolvedChain("task", chain);
+    } catch (error: unknown) {
+      log.warn("Failed to resolve task handoff target task-spawning capability", {
         workspaceId: args.workspaceId,
         agentId: args.agentId,
         error: getErrorMessage(error),
@@ -538,6 +631,22 @@ export class TaskService {
       log.warn("Plan-task auto-handoff auto-routing has no plan content; defaulting to exec", {
         workspaceId: args.workspaceId,
       });
+      return "exec";
+    }
+
+    const orchestratorCanSpawnTasks = await this.canAgentSpawnTasksInWorkspace({
+      workspaceId: args.workspaceId,
+      projectPath: args.entry.projectPath,
+      workspace: args.entry.workspace,
+      agentId: "orchestrator",
+    });
+    if (!orchestratorCanSpawnTasks) {
+      log.warn(
+        "Plan-task auto-handoff auto-routing defaulting to exec because orchestrator cannot orchestrate in this workspace",
+        {
+          workspaceId: args.workspaceId,
+        }
+      );
       return "exec";
     }
 

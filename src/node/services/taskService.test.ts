@@ -4724,6 +4724,7 @@ describe("TaskService", () => {
     planSubagentDefaultsToOrchestrator?: boolean;
     childAgentId?: string;
     disableOrchestrator?: boolean;
+    maxTaskNestingDepth?: number;
     parentAiSettingsByAgent?: Record<string, { model: string; thinkingLevel: ThinkingLevel }>;
     agentAiDefaults?: Record<
       string,
@@ -4804,7 +4805,7 @@ describe("TaskService", () => {
       ]),
       taskSettings: {
         maxParallelAgentTasks: 3,
-        maxTaskNestingDepth: 3,
+        maxTaskNestingDepth: options?.maxTaskNestingDepth ?? 3,
         planSubagentExecutorRouting:
           options?.planSubagentExecutorRouting ??
           (options?.planSubagentDefaultsToOrchestrator ? "orchestrator" : "exec"),
@@ -4837,10 +4838,26 @@ describe("TaskService", () => {
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      resolvePlanAutoHandoffTargetAgentId: (args: {
+        workspaceId: string;
+        entry: {
+          projectPath: string;
+          workspace: {
+            id?: string;
+            name?: string;
+            path?: string;
+            runtimeConfig?: unknown;
+            taskModelString?: string;
+          };
+        };
+        routing: PlanSubagentExecutorRouting;
+        planContent: string | null;
+      }) => Promise<"exec" | "orchestrator">;
     };
 
     return {
       config,
+      projectPath,
       childId,
       sendMessage,
       replaceHistory,
@@ -5070,6 +5087,61 @@ describe("TaskService", () => {
 
     expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("auto plan handoff routing defaults to exec when orchestrator would have no task tools", async () => {
+    const { config, projectPath, childId, createModel, internal } =
+      await setupPlanModeStreamEndHarness({
+        planSubagentExecutorRouting: "auto",
+        maxTaskNestingDepth: 1,
+      });
+
+    const cfg = config.loadConfigOrDefault();
+    const childWorkspace = Array.from(cfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childWorkspace).toBeTruthy();
+    if (!childWorkspace) return;
+
+    const targetAgentId = await internal.resolvePlanAutoHandoffTargetAgentId({
+      workspaceId: childId,
+      entry: {
+        projectPath,
+        workspace: childWorkspace,
+      },
+      routing: "auto",
+      planContent: "1. Delegate implementation work to a child task.",
+    });
+
+    expect(targetAgentId).toBe("exec");
+    expect(createModel).not.toHaveBeenCalled();
+  });
+
+  test("auto plan handoff routing still evaluates the model when task tools are available", async () => {
+    const { config, projectPath, childId, createModel, internal } =
+      await setupPlanModeStreamEndHarness({
+        planSubagentExecutorRouting: "auto",
+      });
+
+    const cfg = config.loadConfigOrDefault();
+    const childWorkspace = Array.from(cfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childWorkspace).toBeTruthy();
+    if (!childWorkspace) return;
+
+    const targetAgentId = await internal.resolvePlanAutoHandoffTargetAgentId({
+      workspaceId: childId,
+      entry: {
+        projectPath,
+        workspace: childWorkspace,
+      },
+      routing: "auto",
+      planContent: "1. Implement the changes directly in this workspace.",
+    });
+
+    expect(targetAgentId).toBe("exec");
+    expect(createModel).toHaveBeenCalledTimes(1);
   });
 
   test("stream-end with propose_plan success hands off to orchestrator when routing is orchestrator", async () => {
