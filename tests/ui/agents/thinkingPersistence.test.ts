@@ -47,8 +47,11 @@ async function selectModel(
   await user.clear(input);
   await user.type(input, model);
 
+  const modelName = model.split(":")[1] ?? model;
+  const modelDisplayName = formatModelDisplayName(modelName);
+
   const option = await waitFor(() => {
-    const match = within(container).getByText(model);
+    const match = within(container).getByText(modelDisplayName);
     if (!match) {
       throw new Error("Model option not found");
     }
@@ -68,8 +71,7 @@ async function selectModel(
   // where backend metadata updates can temporarily revert localStorage (and thus
   // the displayed model) when switching models rapidly.
   // Use the exact display name that the UI will show.
-  const modelName = model.split(":")[1] ?? model;
-  const expectedDisplayName = formatModelDisplayName(modelName).toLowerCase();
+  const expectedDisplayName = modelDisplayName.toLowerCase();
   await waitFor(
     () => {
       const modelGroup = container.querySelector('[data-component="ModelSelectorGroup"]');
