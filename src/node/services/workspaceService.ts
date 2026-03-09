@@ -5261,8 +5261,9 @@ export class WorkspaceService extends EventEmitter {
     }
 
     try {
-      // Workspace metadata does not include the persisted root shown in the Explorer, so read it
-      // from config and reuse it for all path-addressable runtimes here.
+      // Get the persisted workspace entry from config. Multi-project git command mode needs the
+      // workspace checkout path rather than metadata.projectPath, and other path-addressable
+      // runtimes also reuse the persisted workspace root shown in the Explorer.
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
         return Err(`Workspace ${workspaceId} not found in config`);
@@ -5316,14 +5317,20 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Multi-project script mode still runs from the container root so sibling repos remain addressable,
-      // but bare git command mode needs a real repository cwd for existing status/branch callers.
-      const cwdForExecution =
-        isMultiProject(metadata) && command === "git" ? metadata.projectPath : workspacePath;
+      // but bare git command mode must target the primary workspace checkout to avoid mutating the
+      // user's source repo when worktree metadata.projectPath still points at the repo root.
+      let cwdForExecution = workspacePath;
       if (isMultiProject(metadata) && command === "git") {
+        const primaryProject = getProjects(metadata)[0];
+        assert(primaryProject, "Multi-project git command mode requires a primary project");
         assert(
-          metadata.projectPath.length > 0,
+          workspace.workspacePath.length > 0,
           "Multi-project git command mode requires a repo cwd"
         );
+        cwdForExecution =
+          workspace.projectPath === MULTI_PROJECT_CONFIG_KEY
+            ? path.join(workspace.workspacePath, primaryProject.projectName)
+            : workspace.workspacePath;
       }
 
       // Load project secrets

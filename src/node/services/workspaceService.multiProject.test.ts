@@ -185,7 +185,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
-  test("uses the primary project git root for multi-project git command mode", async () => {
+  test("uses the persisted per-project workspace path for multi-project git command mode", async () => {
     const workspaceId = "ws-multi-git";
     const workspaceName = "feature-multi-git";
     const srcDir = "/tmp/src";
@@ -276,7 +276,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
       expect(createRuntimeSpy).toHaveBeenCalledTimes(2);
       assert(capturedToolConfig);
       expect(capturedToolConfig.runtime).toBeInstanceOf(MultiProjectRuntime);
-      expect(capturedToolConfig.cwd).toBe(projectAPath);
+      expect(capturedToolConfig.cwd).toBe(`/tmp/workspaces/project-a/${workspaceName}`);
       expect(bashExecuteMock).toHaveBeenCalledTimes(1);
       const [toolInput, toolContext] = bashExecuteMock.mock.calls[0] as unknown as [
         { script: string; timeout_secs: number },
@@ -288,6 +288,106 @@ describe("WorkspaceService executeBash runtime selection", () => {
       });
       expect(toolContext.toolCallId).toMatch(/^bash-/);
       expect(toolContext.messages).toEqual([]);
+    } finally {
+      createBashToolSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
+  test("uses the primary project path inside the container for _multi git command mode", async () => {
+    const workspaceId = "ws-multi-git-container";
+    const workspaceName = "feature-multi-git-container";
+    const srcDir = "/tmp/src";
+    const projectAPath = "/tmp/project-a";
+    const projectBPath = "/tmp/project-b";
+    const containerPath = new ContainerManager(srcDir).getContainerPath(workspaceName);
+    const metadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: workspaceName,
+      projectPath: projectAPath,
+      projectName: "project-a",
+      projects: [
+        { projectPath: projectAPath, projectName: "project-a" },
+        { projectPath: projectBPath, projectName: "project-b" },
+      ],
+      runtimeConfig: { type: "local" },
+    };
+    const waitForInitMock = mock(() => Promise.resolve());
+    const ensureReadyAMock = mock(() => Promise.resolve({ ready: true as const }));
+    const ensureReadyBMock = mock(() => Promise.resolve({ ready: true as const }));
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+      (_runtimeConfig, options) => {
+        if (options?.projectPath === projectAPath) {
+          return {
+            ensureReady: ensureReadyAMock,
+            getWorkspacePath: mock(() => `/tmp/workspaces/project-a/${workspaceName}`),
+          } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+        }
+        if (options?.projectPath === projectBPath) {
+          return {
+            ensureReady: ensureReadyBMock,
+            getWorkspacePath: mock(() => `/tmp/workspaces/project-b/${workspaceName}`),
+          } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+        }
+        throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
+      }
+    );
+    const bashExecuteMock = mock(() =>
+      Promise.resolve({ success: true as const, output: "ok", exitCode: 0, wall_duration_ms: 1 })
+    );
+    let capturedToolConfig: Parameters<typeof bashToolModule.createBashTool>[0] | undefined;
+    const createBashToolSpy = spyOn(bashToolModule, "createBashTool").mockImplementation(
+      (config) => {
+        capturedToolConfig = config;
+        return {
+          execute: bashExecuteMock,
+        } as unknown as ReturnType<typeof bashToolModule.createBashTool>;
+      }
+    );
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(metadata))),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const workspaceService = new WorkspaceService(
+      {
+        srcDir,
+        getSessionDir: mock(() => "/tmp/test/sessions"),
+        findWorkspace: mock(() => ({
+          projectPath: MULTI_PROJECT_CONFIG_KEY,
+          workspacePath: containerPath,
+        })),
+        loadConfigOrDefault: mock(() => ({
+          projects: new Map([[projectAPath, { workspaces: [], trusted: true }]]),
+        })),
+        getEffectiveSecrets: mock(() => []),
+      } as unknown as Config,
+      historyService,
+      aiService,
+      {
+        on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
+        waitForInit: waitForInitMock,
+      } as unknown as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    try {
+      const result = await workspaceService.executeBash(workspaceId, "", undefined, "git", [
+        "status",
+        "--short",
+      ]);
+
+      expect(result.success).toBe(true);
+      expect(waitForInitMock).toHaveBeenCalledWith(workspaceId);
+      expect(createRuntimeSpy).toHaveBeenCalledTimes(2);
+      assert(capturedToolConfig);
+      expect(capturedToolConfig.runtime).toBeInstanceOf(MultiProjectRuntime);
+      expect(capturedToolConfig.cwd).toBe(path.join(containerPath, "project-a"));
+      expect(bashExecuteMock).toHaveBeenCalledTimes(1);
     } finally {
       createBashToolSpy.mockRestore();
       createRuntimeSpy.mockRestore();
