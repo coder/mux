@@ -83,7 +83,7 @@ describe("ProviderModelFactory.createModel", () => {
       await config.saveConfig({
         ...projectConfig,
         muxGatewayEnabled: true,
-        muxGatewayModels: ["openai:gpt-5"],
+        routePriority: ["mux-gateway", "direct"],
       });
 
       const result = await factory.createModel("openai:gpt-5");
@@ -154,7 +154,7 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
       await config.saveConfig({
         ...projectConfig,
         muxGatewayEnabled: true,
-        muxGatewayModels: ["openai:gpt-5"],
+        routePriority: ["mux-gateway", "direct"],
       });
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);
@@ -176,7 +176,7 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
       await config.saveConfig({
         ...projectConfig,
         muxGatewayEnabled: true,
-        muxGatewayModels: ["openai:gpt-5"],
+        routePriority: ["mux-gateway", "direct"],
       });
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);

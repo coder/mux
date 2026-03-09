@@ -4,7 +4,6 @@ import type {
   MuxFilePart,
   DisplayedMessage,
   CompactionRequestData,
-  MuxMessageMetadata,
 } from "@/common/types/message";
 import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
 
@@ -2257,7 +2256,7 @@ export class StreamingMessageAggregator {
         this.currentTodos = [];
 
         // Capture pending compaction metadata for pre-stream UI ("starting" phase).
-        const muxMetadata = incomingMessage.metadata?.muxMetadata as MuxMessageMetadata | undefined;
+        const muxMetadata = incomingMessage.metadata?.muxMetadata;
         this.pendingCompactionRequest =
           muxMetadata?.type === "compaction-request" ? muxMetadata.parsed : null;
 

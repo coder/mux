@@ -42,7 +42,7 @@ export function normalizeToCanonical(modelString: string): string {
   const gatewayModelId = modelString.slice(colonIndex + 1);
 
   const def = PROVIDER_DEFINITIONS[providerName];
-  if (!def || def.kind !== "gateway" || !("fromGatewayModelId" in def) || !def.fromGatewayModelId) {
+  if (def?.kind !== "gateway" || !("fromGatewayModelId" in def) || !def.fromGatewayModelId) {
     return modelString; // direct/local provider or unknown — already canonical
   }
 
@@ -54,7 +54,7 @@ export function normalizeToCanonical(modelString: string): string {
   // Only normalize if the origin is a known direct provider.
   // Gateway-only models like "meta-llama/llama-3.1-405b" stay gateway-scoped.
   const originDef = PROVIDER_DEFINITIONS[parsed.origin as ProviderName];
-  if (!originDef || originDef.kind !== "direct") {
+  if (originDef?.kind !== "direct") {
     return modelString; // origin is not a known direct provider
   }
 

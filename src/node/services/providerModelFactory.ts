@@ -1673,22 +1673,36 @@ export class ProviderModelFactory {
 
     const config = this.config.loadConfigOrDefault();
     const gatewayEnabled = config.muxGatewayEnabled !== false;
-    const gatewayModels = config.muxGatewayModels ?? [];
-    // Legacy clients may still send mux-gateway model IDs before the backend config
-    // has synchronized their allowlist, so honor an explicit mux-gateway prefix as
-    // an implicit opt-in to avoid first-message API key failures.
-    const isGatewayModelEnabled =
-      explicitlyRequestedGateway ||
-      gatewayModels.includes(canonicalModelString) ||
-      gatewayModels.includes(normalizedModelKey);
-
-    if (!gatewayEnabled || !isGatewayModelEnabled) {
+    if (!gatewayEnabled) {
       return canonicalModelString;
     }
 
     const providersConfig = this.config.loadProvidersConfig() ?? {};
-    const gatewayConfig = providersConfig["mux-gateway"] ?? {};
-    const gatewayConfigured = resolveProviderCredentials("mux-gateway", gatewayConfig).isConfigured;
+    const routeContext = resolveRoute(
+      normalizedModelKey,
+      config.routePriority ?? ["direct"],
+      config.routeOverrides ?? {},
+      (provider) =>
+        resolveProviderCredentials(
+          provider as ProviderName,
+          providersConfig[provider as ProviderName] ?? {}
+        ).isConfigured
+    );
+
+    // Legacy clients may still send mux-gateway model IDs before the backend config
+    // has synchronized routePriority, so honor an explicit mux-gateway prefix as
+    // an implicit opt-in to avoid first-message API key failures.
+    const shouldRouteThroughGateway =
+      explicitlyRequestedGateway || routeContext.routeProvider === "mux-gateway";
+
+    if (!shouldRouteThroughGateway) {
+      return canonicalModelString;
+    }
+
+    const gatewayConfigured = resolveProviderCredentials(
+      "mux-gateway",
+      providersConfig["mux-gateway"] ?? {}
+    ).isConfigured;
 
     if (!gatewayConfigured) {
       return canonicalModelString;

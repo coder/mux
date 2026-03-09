@@ -7,12 +7,12 @@ import { getModelProvider } from "@/common/utils/ai/models";
 
 import type { AvailableRoute, RouteContext } from "./types";
 
-type RoutingProviderDefinition = {
+interface RoutingProviderDefinition {
   displayName: string;
   kind: "direct" | "gateway" | "local";
   routes?: readonly ProviderName[];
   toGatewayModelId?: (origin: string, modelId: string) => string;
-};
+}
 
 function getProviderDefinition(provider: string): RoutingProviderDefinition | undefined {
   if (!(provider in PROVIDER_DEFINITIONS)) {
@@ -91,11 +91,7 @@ export function resolveRoute(
     }
 
     const definition = getProviderDefinition(route);
-    if (
-      !definition ||
-      definition.kind !== "gateway" ||
-      !definition.routes?.includes(origin as ProviderName)
-    ) {
+    if (definition?.kind !== "gateway" || !definition.routes?.includes(origin as ProviderName)) {
       continue;
     }
 
