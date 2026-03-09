@@ -96,9 +96,18 @@ export interface DraftAgentListItemProps extends AgentListItemBaseProps {
 // Shared components and utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Container styles shared between workspace and draft items */
+/**
+ * Container styles shared between workspace and draft items.
+ * Keep row text non-selectable so touch/pointer drags don't highlight titles
+ * before react-dnd has locked into a drag session.
+ */
 const LIST_ITEM_BASE_CLASSES =
-  "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 transition-all duration-150";
+  "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 select-none transition-all duration-150";
+
+const HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =
+  "[@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:invisible [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:pointer-events-none";
+const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
+  "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100";
 
 /** Calculate left padding based on nesting depth */
 function getItemPaddingLeft(depth?: number): number {
@@ -253,16 +262,18 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
       </div>
 
       <ActionButtonWrapper>
-        {/* Desktop: direct-delete button (hidden on touch devices) */}
+        {/* Inline delete button stays hidden only on the narrow touch sidebar. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
               className={cn(
                 "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200",
-                // On touch devices, fully hide so it can't intercept taps.
-                // Long-press opens the context menu instead.
-                "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
+                // Keep long-press as the compact mobile affordance on narrow
+                // touch layouts, but show the button on wider touch screens so
+                // it never becomes an invisible tappable hotspot.
+                HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH,
+                SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH
               )}
               onKeyDown={stopKeyboardPropagation}
               onClick={(e) => {
@@ -644,7 +655,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
                       ctxMenu.isOpen ? "opacity-100" : "opacity-0",
-                      "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
+                      HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH,
+                      SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH
                     )}
                     onClick={(e) => e.stopPropagation()}
                     aria-label={`Workspace actions for ${displayTitle}`}
@@ -723,7 +735,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           >
             {isEditing ? (
               <input
-                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
+                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none select-text"
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
                 onKeyDown={handleEditKeyDown}

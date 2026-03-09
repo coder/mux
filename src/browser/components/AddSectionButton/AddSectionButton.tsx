@@ -47,7 +47,7 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
           }}
           placeholder="Section name..."
           data-testid="add-section-input"
-          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none"
+          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-[11px] outline-none select-text"
         />
       </div>
     );
