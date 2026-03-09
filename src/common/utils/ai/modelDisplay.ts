@@ -158,6 +158,14 @@ export function formatModelDisplayName(modelName: string): string {
     return `${formatted.trim()} (${size.toUpperCase()})`;
   }
 
+  // Gateway-scoped vendor/model pattern (e.g., "meta-llama/llama-3.1-405b")
+  if (modelName.includes("/")) {
+    const slashIdx = modelName.indexOf("/");
+    const bareModel = modelName.slice(slashIdx + 1);
+    // Try formatting the bare model name through existing handlers.
+    return formatModelDisplayName(bareModel);
+  }
+
   // Fallback: capitalize first letter of each dash-separated part
   return modelName.split("-").map(capitalize).join(" ");
 }

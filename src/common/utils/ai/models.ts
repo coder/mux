@@ -3,6 +3,7 @@
  */
 
 import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
+import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 
 export const defaultModel = DEFAULT_MODEL;
 
@@ -27,24 +28,37 @@ export function isValidModelFormat(model: string): boolean {
   return colonIndex > 0 && colonIndex < model.length - 1;
 }
 
-const MUX_GATEWAY_PREFIX = "mux-gateway:";
-
 /**
- * Normalize gateway-prefixed model strings to standard format.
- * Converts "mux-gateway:provider/model" to "provider:model".
- * Returns non-gateway strings unchanged.
+ * Normalize gateway model strings to canonical provider:model format when possible.
+ * For gateway-only vendor/model IDs, keep the original gateway-scoped identity.
  */
 export function normalizeToCanonical(modelString: string): string {
-  if (!modelString.startsWith(MUX_GATEWAY_PREFIX)) {
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex === -1) {
     return modelString;
   }
-  // mux-gateway:anthropic/claude-opus-4-5 → anthropic:claude-opus-4-5
-  const inner = modelString.slice(MUX_GATEWAY_PREFIX.length);
-  const slashIndex = inner.indexOf("/");
-  if (slashIndex === -1) {
-    return modelString; // Malformed, return as-is
+
+  const providerName = modelString.slice(0, colonIndex) as ProviderName;
+  const gatewayModelId = modelString.slice(colonIndex + 1);
+
+  const def = PROVIDER_DEFINITIONS[providerName];
+  if (!def || def.kind !== "gateway" || !("fromGatewayModelId" in def) || !def.fromGatewayModelId) {
+    return modelString; // direct/local provider or unknown — already canonical
   }
-  return `${inner.slice(0, slashIndex)}:${inner.slice(slashIndex + 1)}`;
+
+  const parsed = def.fromGatewayModelId(gatewayModelId);
+  if (!parsed) {
+    return modelString; // couldn't parse
+  }
+
+  // Only normalize if the origin is a known direct provider.
+  // Gateway-only models like "meta-llama/llama-3.1-405b" stay gateway-scoped.
+  const originDef = PROVIDER_DEFINITIONS[parsed.origin as ProviderName];
+  if (!originDef || originDef.kind !== "direct") {
+    return modelString; // origin is not a known direct provider
+  }
+
+  return `${parsed.origin}:${parsed.modelId}`;
 }
 
 /**
