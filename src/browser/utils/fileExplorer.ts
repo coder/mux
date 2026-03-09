@@ -43,43 +43,26 @@ export function shellEscape(s: string): string {
 }
 
 /**
- * Parse `ls -la` output into FileTreeNode[].
- * Output format: `drwxr-xr-x 2 user group 4096 Jan 15 10:30 dirname`
- * For symlinks: `lrwxrwxrwx 1 user group 10 Jan 15 10:30 link -> target`
+ * Parse machine-readable directory listing output into FileTreeNode[].
+ * Output format: `d\tname` for directories and `f\tname` for non-directories.
  */
 export function parseLsOutput(output: string, basePath: string): FileTreeNode[] {
   const lines = output.trim().split("\n");
   const nodes: FileTreeNode[] = [];
 
   for (const line of lines) {
-    // Skip empty lines and total line
-    if (!line || line.startsWith("total ")) continue;
+    if (!line) continue;
 
-    // Parse ls -la output: permissions linkcount user group size date name
-    // The name is everything after the date/time fields
-    const parts = line.split(/\s+/);
-    if (parts.length < 9) continue;
+    const separatorIndex = line.indexOf("\t");
+    if (separatorIndex === -1) continue;
 
-    const permissions = parts[0];
-    const isSymlink = permissions.startsWith("l");
-    // Date/time is typically 3 fields (e.g., "Jan 15 10:30" or "Jan 15  2024")
-    // Name starts at index 8 and may contain spaces
-    let name = parts.slice(8).join(" ");
+    const entryType = line.slice(0, separatorIndex);
+    const name = line.slice(separatorIndex + 1);
 
-    // For symlinks, strip the " -> target" suffix
-    if (isSymlink) {
-      const arrowIndex = name.indexOf(" -> ");
-      if (arrowIndex !== -1) {
-        name = name.slice(0, arrowIndex);
-      }
-    }
-
-    // Skip . and .. entries, and .git
+    // Skip . and .. entries, and .git.
     if (name === "." || name === ".." || name === ".git") continue;
 
-    // Symlinks to directories still show 'l' not 'd', so treat symlinks as files
-    // (they'll be resolved when opened)
-    const isDirectory = permissions.startsWith("d");
+    const isDirectory = entryType === "d";
     const entryPath = basePath ? `${basePath}/${name}` : name;
 
     nodes.push({
@@ -252,10 +235,25 @@ export function detectBinary(buffer: Uint8Array): boolean {
 
 /**
  * Generate bash script to list directory contents.
+ * Emit a machine-readable `d\tname` / `f\tname` format so Explorer classification does not
+ * depend on GNU/BSD `ls` quirks or on suffix markers that can collide with real filenames.
  */
 export function buildListDirScript(relativePath: string): string {
   const dir = relativePath ? shellEscape(relativePath) : ".";
-  return `ls -la ${dir}`;
+  return `dir=${dir}
+[ -d "$dir" ] || exit 1
+[ -r "$dir" ] || exit 1
+[ -x "$dir" ] || exit 1
+shopt -s nullglob dotglob
+for entry in "$dir"/*; do
+  name="\${entry##*/}"
+  [ "$name" = ".git" ] && continue
+  if [ -d "$entry" ]; then
+    printf 'd\\t%s\\n' "$name"
+  else
+    printf 'f\\t%s\\n' "$name"
+  fi
+done`;
 }
 
 /**

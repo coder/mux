@@ -6,6 +6,8 @@ import { describe, expect, test } from "bun:test";
 import {
   parseReadFileOutput,
   buildReadFileScript,
+  buildListDirScript,
+  parseLsOutput,
   base64ToUint8Array,
   processFileContents,
   EXIT_CODE_TOO_LARGE,
@@ -72,6 +74,86 @@ describe("buildReadFileScript", () => {
   test("escapes paths with quotes", () => {
     const script = buildReadFileScript("file'with'quotes.txt");
     expect(script).toContain("'file'\\''with'\\''quotes.txt'");
+  });
+});
+
+describe("buildListDirScript", () => {
+  test("emits a machine-readable listing that validates directory access first", () => {
+    const script = buildListDirScript("nested/path");
+    expect(script).toContain('[ -d "$dir" ] || exit 1');
+    expect(script).toContain('[ -r "$dir" ] || exit 1');
+    expect(script).toContain("printf 'd\\t%s\\n' \"$name\"");
+    expect(script).toContain("printf 'f\\t%s\\n' \"$name\"");
+  });
+});
+
+describe("parseLsOutput", () => {
+  test("treats real directories as directories", () => {
+    const nodes = parseLsOutput("d\tmydir", "");
+    expect(nodes).toEqual([
+      {
+        name: "mydir",
+        path: "mydir",
+        isDirectory: true,
+        children: [],
+      },
+    ]);
+  });
+
+  test("treats symlinks to directories like normal directories", () => {
+    const nodes = parseLsOutput("d\tdir-link", "parent");
+    expect(nodes).toEqual([
+      {
+        name: "dir-link",
+        path: "parent/dir-link",
+        isDirectory: true,
+        children: [],
+      },
+    ]);
+  });
+
+  test("keeps symlinks to files non-expandable", () => {
+    const nodes = parseLsOutput("f\tfile-link", "");
+    expect(nodes).toEqual([
+      {
+        name: "file-link",
+        path: "file-link",
+        isDirectory: false,
+        children: [],
+      },
+    ]);
+  });
+
+  test("keeps directories first when mixing real and symlinked entries", () => {
+    const nodes = parseLsOutput(
+      ["f\tzeta.txt", "f\talpha-link", "d\tbravo", "d\talpha-dir"].join("\n"),
+      ""
+    );
+
+    expect(nodes.map((node) => ({ name: node.name, isDirectory: node.isDirectory }))).toEqual([
+      { name: "alpha-dir", isDirectory: true },
+      { name: "bravo", isDirectory: true },
+      { name: "alpha-link", isDirectory: false },
+      { name: "zeta.txt", isDirectory: false },
+    ]);
+  });
+
+  test("preserves literal filename suffix characters", () => {
+    const nodes = parseLsOutput(["f\tconfig@", "f\tliteral=", "f\tpipe|"].join("\n"), "");
+
+    expect(nodes.map((node) => node.name)).toEqual(["config@", "literal=", "pipe|"]);
+  });
+
+  test("keeps broken symlinks file-like instead of crashing", () => {
+    const nodes = parseLsOutput("f\tbroken-link", "");
+    expect(nodes).toEqual([
+      {
+        name: "broken-link",
+        path: "broken-link",
+        isDirectory: false,
+        children: [],
+      },
+    ]);
   });
 });
 
