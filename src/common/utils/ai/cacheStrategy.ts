@@ -13,23 +13,12 @@ export type AnthropicCacheTtl = "5m" | "1h";
 
 /**
  * Check if a model supports Anthropic cache control.
- * Matches:
- * - Direct Anthropic provider: "anthropic:claude-opus-4-5"
- * - Gateway providers routing to Anthropic: "mux-gateway:anthropic/claude-opus-4-5"
- * - OpenRouter Anthropic models: "openrouter:anthropic/claude-3.5-sonnet"
  */
 export function supportsAnthropicCache(modelString: string): boolean {
   const normalized = normalizeToCanonical(modelString);
-  // Direct Anthropic provider (or normalized gateway model)
-  if (normalized.startsWith("anthropic:")) {
-    return true;
-  }
-  // Other gateway/router providers routing to Anthropic (format: "provider:anthropic/model")
-  const [, modelId] = normalized.split(":");
-  if (modelId?.startsWith("anthropic/")) {
-    return true;
-  }
-  return false;
+  // After normalizeToCanonical, all gateway Anthropic models normalize to "anthropic:..."
+  // so we only need to check for the "anthropic:" prefix.
+  return normalized.startsWith("anthropic:");
 }
 
 /** Build cache control providerOptions for Anthropic with optional TTL. */

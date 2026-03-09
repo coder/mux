@@ -347,7 +347,11 @@ async function maybeFilterBashOutput(
       undefined,
       undefined,
       opts.muxProviderOptions,
-      opts.workspaceId
+      opts.workspaceId,
+      undefined,
+      undefined,
+      // TODO: pass routeProvider from RouteContext when System1 routing context is available.
+      undefined
     ) as unknown as Record<string, unknown>;
 
     const numberedOutput = formatNumberedLinesForSystem1(lines);

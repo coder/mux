@@ -29,6 +29,7 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
+import { resolveRoute, type RouteContext } from "@/common/routing";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
@@ -1582,6 +1583,8 @@ export class ProviderModelFactory {
         canonicalModelId: string;
         /** Whether the request is being routed through the Mux gateway. */
         routedThroughGateway: boolean;
+        /** Route provider chosen by backend routing (direct provider or gateway). */
+        routeProvider?: ProviderName;
       },
       SendMessageError
     >
@@ -1606,6 +1609,13 @@ export class ProviderModelFactory {
     );
 
     const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
+    const routeContext = this.resolveModelRoute(canonicalModelString);
+    const [effectiveRouteProvider] = parseModelString(effectiveModelString);
+    const routeProvider =
+      effectiveRouteProvider in PROVIDER_REGISTRY
+        ? (effectiveRouteProvider as ProviderName)
+        : routeContext.routeProvider;
+
     const modelResult = await this.createModel(effectiveModelString, muxProviderOptions, opts);
     if (!modelResult.success) {
       return Err(modelResult.error);
@@ -1618,8 +1628,25 @@ export class ProviderModelFactory {
       canonicalProviderName,
       canonicalModelId,
       routedThroughGateway,
+      routeProvider,
     });
   }
+
+  private resolveModelRoute(canonicalModel: string): RouteContext {
+    const config = this.config.loadConfigOrDefault();
+    const providersConfig = this.config.loadProvidersConfig?.() ?? {};
+    return resolveRoute(
+      canonicalModel,
+      config.routePriority ?? ["direct"],
+      config.routeOverrides ?? {},
+      (provider) =>
+        resolveProviderCredentials(
+          provider as ProviderName,
+          providersConfig?.[provider as ProviderName] ?? {}
+        ).isConfigured
+    );
+  }
+
   resolveGatewayModelString(
     modelString: string,
     modelKey?: string,

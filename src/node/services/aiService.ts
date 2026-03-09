@@ -683,6 +683,7 @@ export class AIService extends EventEmitter {
         canonicalModelString,
         canonicalProviderName,
         routedThroughGateway,
+        routeProvider,
       } = modelResult.data;
 
       // Dump original messages for debugging
@@ -1137,7 +1138,8 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions,
         workspaceId,
         truncationMode,
-        this.providerService.getConfig()
+        this.providerService.getConfig(),
+        routeProvider
       );
 
       // Build per-request HTTP headers (e.g., workspace correlation and
@@ -1148,7 +1150,8 @@ export class AIService extends EventEmitter {
         modelString,
         effectiveMuxProviderOptions,
         workspaceId,
-        this.providerService.getConfig()
+        this.providerService.getConfig(),
+        routeProvider
       );
 
       // --- Model parameter overrides from providers.jsonc ---
