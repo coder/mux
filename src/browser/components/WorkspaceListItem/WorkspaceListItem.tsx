@@ -168,10 +168,10 @@ function ActionButtonWrapper(props: { children: React.ReactNode }) {
   return (
     <div
       className={cn(
-        "relative order-last ml-auto mt-1 inline-flex h-4 w-4 shrink-0 items-center self-start"
+        "relative order-last ml-auto inline-flex h-4 w-4 shrink-0 items-center self-center"
       )}
     >
-      {/* Keep the kebab trigger aligned with the title row. */}
+      {/* Keep trailing controls centered against the full row so they align with the status dot. */}
       {props.children}
     </div>
   );
@@ -600,7 +600,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           </ActionButtonWrapper>
         ) : isDisabled ? (
           // Invisible spacer preserves title alignment during archive/remove transitions
-          <div className="order-last ml-auto h-4 w-4 shrink-0" />
+          <div className="order-last ml-auto h-4 w-4 shrink-0 self-center" />
         ) : (
           !isEditing && (
             <ActionButtonWrapper>
@@ -694,18 +694,13 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           )
         )}
 
-        {/* Keep title row anchored so status dot/title align across single+double-line states. */}
+        {/* Keep the title column shrinkable on narrow/mobile viewports so trailing
+            metadata never forces horizontal sidebar scrolling. */}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div
-            className={cn(
-              // Keep the title column shrinkable on narrow/mobile viewports so the
-              // right-side git indicator never forces horizontal sidebar scrolling.
-              "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5"
-            )}
-          >
+          <div className="min-w-0">
             {isEditing ? (
               <input
-                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
+                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus w-full min-w-0 rounded-sm border px-1 text-left text-[13px] outline-none"
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
                 onKeyDown={handleEditKeyDown}
@@ -731,32 +726,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               >
                 {displayTitle}
               </span>
-            )}
-
-            {!isInitializing && !isEditing && (
-              <div className="flex items-center gap-1">
-                {terminalActiveCount > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-muted flex items-center gap-0.5">
-                        <WorkspaceTerminalIcon className="h-3 w-3" />
-                        <span className="text-[11px]">{terminalActiveCount}</span>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
-                      commands
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-                <GitStatusIndicator
-                  gitStatus={gitStatus}
-                  workspaceId={workspaceId}
-                  projectPath={projectPath}
-                  tooltipPosition="right"
-                  isWorking={isWorking}
-                />
-              </div>
             )}
           </div>
           {hasSecondaryRow && (
@@ -786,6 +755,34 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             </div>
           )}
         </div>
+
+        {!isInitializing && !isEditing && (
+          <div className="ml-1 flex shrink-0 items-center gap-1 self-center">
+            {/* Keep right-side metadata centered against the full row height so it matches
+                the status dot when a secondary status line is present. */}
+            {terminalActiveCount > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="text-muted flex items-center gap-0.5">
+                    <WorkspaceTerminalIcon className="h-3 w-3" />
+                    <span className="text-[11px]">{terminalActiveCount}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
+                  commands
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <GitStatusIndicator
+              gitStatus={gitStatus}
+              workspaceId={workspaceId}
+              projectPath={projectPath}
+              tooltipPosition="right"
+              isWorking={isWorking}
+            />
+          </div>
+        )}
       </div>
       {titleError && isEditing && (
         <div className="bg-error-bg border-error text-error absolute top-full right-8 left-8 z-10 mt-1 rounded-sm border px-2 py-1.5 text-xs">
