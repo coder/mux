@@ -1128,7 +1128,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           const depthByWorkspaceId =
                             computeWorkspaceDepthMap(multiProjectWorkspaces);
                           return multiProjectWorkspaces.map((metadata) => (
-                            <WorkspaceListItem
+                            <AgentListItem
                               key={metadata.id}
                               metadata={metadata}
                               projectPath={metadata.projectPath}
