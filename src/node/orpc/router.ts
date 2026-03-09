@@ -7,6 +7,7 @@ import {
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
 } from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
+import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
@@ -575,6 +576,8 @@ export const router = (authToken?: string) => {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
             muxGatewayModels: config.muxGatewayModels,
+            routePriority: config.routePriority,
+            routeOverrides: config.routeOverrides,
             defaultModel: config.defaultModel,
             hiddenModels: config.hiddenModels,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
@@ -635,6 +638,16 @@ export const router = (authToken?: string) => {
           // Notify subscribers (useProvidersConfig) so the frontend picks up the
           // new gateway enabled/models state without needing localStorage.
           context.providerService.notifyConfigChanged();
+        }),
+      updateRoutePreferences: t
+        .input(schemas.config.updateRoutePreferences.input)
+        .output(schemas.config.updateRoutePreferences.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => ({
+            ...config,
+            routePriority: input.routePriority,
+            routeOverrides: input.routeOverrides ?? config.routeOverrides,
+          }));
         }),
       updateModelPreferences: t
         .input(schemas.config.updateModelPreferences.input)
@@ -1162,9 +1175,43 @@ export const router = (authToken?: string) => {
       setProviderConfig: t
         .input(schemas.providers.setProviderConfig.input)
         .output(schemas.providers.setProviderConfig.output)
-        .handler(({ context, input }) =>
-          context.providerService.setConfig(input.provider, input.keyPath, input.value)
-        ),
+        .handler(async ({ context, input }) => {
+          const result = context.providerService.setConfig(
+            input.provider,
+            input.keyPath,
+            input.value
+          );
+          if (!result.success) {
+            return result;
+          }
+
+          if (input.provider in PROVIDER_DEFINITIONS) {
+            const providerName = input.provider as ProviderName;
+            const providerDef = PROVIDER_DEFINITIONS[providerName];
+
+            if (providerDef.kind === "gateway") {
+              const providersConfig = context.config.loadProvidersConfig() ?? {};
+              const providerConfig = providersConfig[providerName] ?? {};
+              const creds = resolveProviderCredentials(providerName, providerConfig);
+              const config = context.config.loadConfigOrDefault();
+              const priority = config.routePriority ?? ["direct"];
+
+              if (creds.isConfigured && !priority.includes(providerName)) {
+                await context.config.editConfig((c) => ({
+                  ...c,
+                  routePriority: [providerName, ...priority],
+                }));
+              } else if (!creds.isConfigured && priority.includes(providerName)) {
+                await context.config.editConfig((c) => ({
+                  ...c,
+                  routePriority: priority.filter((p) => p !== providerName),
+                }));
+              }
+            }
+          }
+
+          return result;
+        }),
       setModels: t
         .input(schemas.providers.setModels.input)
         .output(schemas.providers.setModels.output)
