@@ -462,6 +462,41 @@ describe("buildProviderOptions - OpenAI", () => {
     });
   });
 
+  describe("route provider format selection", () => {
+    test("uses the transforming route provider format for gateway-routed OpenAI models", () => {
+      const result = buildProviderOptions(
+        "mux-gateway:openai/gpt-5.2",
+        "medium",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "openrouter"
+      );
+
+      expect(result).toEqual({
+        openrouter: {
+          reasoning: {
+            enabled: true,
+            effort: "medium",
+            exclude: false,
+          },
+        },
+      });
+    });
+
+    test("falls back to the canonical origin provider format when routeProvider is absent", () => {
+      const result = buildProviderOptions("mux-gateway:openai/gpt-5.2", "medium");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("medium");
+      expect("openrouter" in result).toBe(false);
+    });
+  });
+
   describe("reasoning summary compatibility", () => {
     test("should include reasoningSummary for supported OpenAI reasoning models", () => {
       const result = buildProviderOptions("openai:gpt-5.2", "medium");

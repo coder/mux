@@ -44,6 +44,7 @@ import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
 import * as toolsModule from "@/common/utils/tools/tools";
 import * as providerOptionsModule from "@/common/utils/ai/providerOptions";
+import * as system1ToolWrapperModule from "./system1ToolWrapper";
 import * as systemMessageModule from "./systemMessage";
 
 describe("AIService", () => {
@@ -1420,6 +1421,37 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const initialMetadata = initialMetadataFromStartStreamCall(startStreamCall);
     expect(Object.prototype.hasOwnProperty.call(initialMetadata, "routeProvider")).toBe(false);
+  });
+
+  it("passes routeProvider into the System1 wrapper when System1 reuses the primary model", async () => {
+    using muxHome = new DisposableTempDir("ai-service-system1-route-provider");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-system1-route-provider";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
+
+    let receivedWrapOptions:
+      | Parameters<typeof system1ToolWrapperModule.wrapToolsWithSystem1>[0]
+      | undefined;
+    spyOn(system1ToolWrapperModule, "wrapToolsWithSystem1").mockImplementation((options) => {
+      receivedWrapOptions = options;
+      return options.tools;
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+      experiments: { system1: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(receivedWrapOptions).toBeDefined();
+    expect(receivedWrapOptions?.routeProvider).toBe("openrouter");
+    expect(receivedWrapOptions?.system1Model).toBeUndefined();
   });
 
   it("falls back safely when boundary metadata is malformed", async () => {

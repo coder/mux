@@ -1259,6 +1259,7 @@ export class AIService extends EventEmitter {
               modelString,
               effectiveModelString,
               primaryModel: modelResult.data.model,
+              routeProvider,
               muxProviderOptions: effectiveMuxProviderOptions,
               workspaceId,
               effectiveMode,

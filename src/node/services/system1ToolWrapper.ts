@@ -24,6 +24,7 @@ import {
 import type { BashOutputEvent } from "@/common/types/stream";
 import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS, SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
+import type { ProviderName } from "@/common/constants/providers";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -53,6 +54,8 @@ export interface System1WrapOptions {
   effectiveModelString: string;
   /** Already-created primary model instance. */
   primaryModel: LanguageModel;
+  /** Route provider for the primary stream when System1 reuses that model. */
+  routeProvider?: ProviderName;
   muxProviderOptions: MuxProviderOptions;
   workspaceId: string;
   effectiveMode: string;
@@ -341,6 +344,7 @@ async function maybeFilterBashOutput(
     const system1 = await getSystem1Model();
     if (!system1) return undefined;
 
+    const system1RouteProvider = system1Ctx.modelString ? undefined : opts.routeProvider;
     const system1ProviderOptions = buildProviderOptions(
       system1.modelString,
       system1Ctx.thinkingLevel,
@@ -350,8 +354,7 @@ async function maybeFilterBashOutput(
       opts.workspaceId,
       undefined,
       undefined,
-      // TODO: pass routeProvider from RouteContext when System1 routing context is available.
-      undefined
+      system1RouteProvider
     ) as unknown as Record<string, unknown>;
 
     const numberedOutput = formatNumberedLinesForSystem1(lines);

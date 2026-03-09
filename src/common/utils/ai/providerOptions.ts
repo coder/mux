@@ -88,7 +88,7 @@ export function buildProviderOptions(
   workspaceId?: string, // Optional for non-OpenAI providers
   openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"],
   providersConfig?: ProvidersConfigMap | null,
-  routeProvider?: string
+  routeProvider?: ProviderName
 ): ProviderOptions {
   // Caller is responsible for enforcing thinking policy before calling this function.
   // agentSession.ts is the canonical enforcement point.
@@ -99,7 +99,7 @@ export function buildProviderOptions(
 
   // SDK format selection: passthrough gateways use origin format,
   // transforming gateways use their own format
-  const gwDef = routeProvider ? PROVIDER_DEFINITIONS[routeProvider as ProviderName] : undefined;
+  const gwDef = routeProvider ? PROVIDER_DEFINITIONS[routeProvider] : undefined;
   const routeUsesOriginFormat =
     !routeProvider ||
     routeProvider === origin ||
@@ -396,7 +396,7 @@ export function buildRequestHeaders(
   muxProviderOptions?: MuxProviderOptions,
   workspaceId?: string,
   providersConfig?: ProvidersConfigMap | null,
-  routeProvider?: string
+  routeProvider?: ProviderName
 ): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
 
@@ -409,7 +409,7 @@ export function buildRequestHeaders(
   const capabilityModel = resolveModelForMetadata(normalized, providersConfig ?? null);
 
   // 1M context header — only when origin supports it AND route is passthrough (or direct)
-  const gwDef = routeProvider ? PROVIDER_DEFINITIONS[routeProvider as ProviderName] : undefined;
+  const gwDef = routeProvider ? PROVIDER_DEFINITIONS[routeProvider] : undefined;
   const routePassesHeaders =
     !routeProvider ||
     routeProvider === origin ||
