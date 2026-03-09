@@ -534,7 +534,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [configuredProviders.length, hasConfiguredProvidersAtStart, providersLoading]);
 
   // ---- Key Discovery ----
-  type DiscoveredKeyEntry = { provider: string; source: string; keyPreview: string };
+  interface DiscoveredKeyEntry { provider: string; source: string; keyPreview: string }
   const [discoveredKeys, setDiscoveredKeys] = useState<DiscoveredKeyEntry[]>([]);
   const [discoveredKeysLoading, setDiscoveredKeysLoading] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());

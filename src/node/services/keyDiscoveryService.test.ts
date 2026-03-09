@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import * as fs from "fs";
+import * as fs from "fs/promises";
+import * as fsSync from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
@@ -13,13 +14,13 @@ import {
 // ---------------------------------------------------------------------------
 
 function createTempHome(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "mux-keydiscovery-"));
+  return fsSync.mkdtempSync(path.join(os.tmpdir(), "mux-keydiscovery-"));
 }
 
-function writeFile(base: string, relPath: string, content: string): void {
+async function writeFile(base: string, relPath: string, content: string): Promise<void> {
   const fullPath = path.join(base, relPath);
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  fs.writeFileSync(fullPath, content, "utf-8");
+  await fs.mkdir(path.dirname(fullPath), { recursive: true });
+  await fs.writeFile(fullPath, content, "utf-8");
 }
 
 // ---------------------------------------------------------------------------
@@ -34,14 +35,14 @@ describe("keyDiscoveryService", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(home, { recursive: true, force: true });
+    fsSync.rmSync(home, { recursive: true, force: true });
   });
 
   // === Scanner tests ===
 
   describe("scanClaudeJson", () => {
     it("discovers Anthropic key from ~/.claude.json", async () => {
-      writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-api03-testkey1234" }));
+      await writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-api03-testkey1234" }));
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -61,7 +62,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("ignores empty apiKey", async () => {
-      writeFile(home, ".claude.json", JSON.stringify({ apiKey: "" }));
+      await writeFile(home, ".claude.json", JSON.stringify({ apiKey: "" }));
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(0);
     });
@@ -69,7 +70,7 @@ describe("keyDiscoveryService", () => {
 
   describe("scanClaudeSettings", () => {
     it("discovers Anthropic key from ~/.config/claude/settings.json", async () => {
-      writeFile(
+      await writeFile(
         home,
         ".config/claude/settings.json",
         JSON.stringify({ apiKey: "sk-ant-settingskey" })
@@ -84,7 +85,7 @@ describe("keyDiscoveryService", () => {
 
   describe("scanClaudeEnv", () => {
     it("discovers Anthropic key from ~/.claude/.env", async () => {
-      writeFile(home, ".claude/.env", 'ANTHROPIC_API_KEY="sk-ant-envkey9999"\n');
+      await writeFile(home, ".claude/.env", 'ANTHROPIC_API_KEY="sk-ant-envkey9999"\n');
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -93,7 +94,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("handles unquoted value", async () => {
-      writeFile(home, ".claude/.env", "ANTHROPIC_API_KEY=sk-ant-bare\n");
+      await writeFile(home, ".claude/.env", "ANTHROPIC_API_KEY=sk-ant-bare\n");
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -103,7 +104,7 @@ describe("keyDiscoveryService", () => {
 
   describe("scanCodexCli", () => {
     it("discovers OpenAI key from ~/.codex/config.json", async () => {
-      writeFile(home, ".codex/config.json", JSON.stringify({ apiKey: "sk-openai-codex123" }));
+      await writeFile(home, ".codex/config.json", JSON.stringify({ apiKey: "sk-openai-codex123" }));
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -112,7 +113,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("discovers OpenAI key from openai_api_key field", async () => {
-      writeFile(home, ".codex/auth.json", JSON.stringify({ openai_api_key: "sk-openai-auth456" }));
+      await writeFile(home, ".codex/auth.json", JSON.stringify({ openai_api_key: "sk-openai-auth456" }));
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -121,8 +122,8 @@ describe("keyDiscoveryService", () => {
     });
 
     it("prefers config.json over auth.json", async () => {
-      writeFile(home, ".codex/config.json", JSON.stringify({ apiKey: "sk-from-config" }));
-      writeFile(home, ".codex/auth.json", JSON.stringify({ apiKey: "sk-from-auth" }));
+      await writeFile(home, ".codex/config.json", JSON.stringify({ apiKey: "sk-from-config" }));
+      await writeFile(home, ".codex/auth.json", JSON.stringify({ apiKey: "sk-from-auth" }));
 
       const keys = await discoverApiKeysInternal(home);
       const openaiKeys = keys.filter((k) => k.provider === "openai" && k.source.includes("Codex"));
@@ -133,7 +134,7 @@ describe("keyDiscoveryService", () => {
 
   describe("scanAiderConf", () => {
     it("discovers keys from ~/.aider.conf.yml", async () => {
-      writeFile(
+      await writeFile(
         home,
         ".aider.conf.yml",
         "openai-api-key: sk-openai-aider\nanthropic-api-key: sk-ant-aider\n"
@@ -147,7 +148,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("handles quoted YAML values", async () => {
-      writeFile(home, ".aider.conf.yml", 'openai-api-key: "sk-quoted-key"\n');
+      await writeFile(home, ".aider.conf.yml", 'openai-api-key: "sk-quoted-key"\n');
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -157,7 +158,7 @@ describe("keyDiscoveryService", () => {
 
   describe("scanContinueDev", () => {
     it("discovers keys from ~/.continue/config.json", async () => {
-      writeFile(
+      await writeFile(
         home,
         ".continue/config.json",
         JSON.stringify({
@@ -174,7 +175,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("deduplicates per provider", async () => {
-      writeFile(
+      await writeFile(
         home,
         ".continue/config.json",
         JSON.stringify({
@@ -194,7 +195,7 @@ describe("keyDiscoveryService", () => {
 
   describe("scanShellRcFiles", () => {
     it("discovers keys from .bashrc", async () => {
-      writeFile(home, ".bashrc", 'export ANTHROPIC_API_KEY="sk-ant-bashrc"\n');
+      await writeFile(home, ".bashrc", 'export ANTHROPIC_API_KEY="sk-ant-bashrc"\n');
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -204,7 +205,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("discovers multiple providers from same file", async () => {
-      writeFile(
+      await writeFile(
         home,
         ".zshrc",
         'export ANTHROPIC_API_KEY="sk-ant-zsh"\nexport OPENAI_API_KEY=sk-openai-zsh\n'
@@ -215,15 +216,15 @@ describe("keyDiscoveryService", () => {
     });
 
     it("skips variable references", async () => {
-      writeFile(home, ".bashrc", "export OPENAI_API_KEY=$SOME_SECRET\n");
+      await writeFile(home, ".bashrc", "export OPENAI_API_KEY=$SOME_SECRET\n");
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(0);
     });
 
     it("prefers first RC file per provider", async () => {
-      writeFile(home, ".bashrc", "export OPENAI_API_KEY=sk-from-bash\n");
-      writeFile(home, ".zshrc", "export OPENAI_API_KEY=sk-from-zsh\n");
+      await writeFile(home, ".bashrc", "export OPENAI_API_KEY=sk-from-bash\n");
+      await writeFile(home, ".zshrc", "export OPENAI_API_KEY=sk-from-zsh\n");
 
       const keys = await discoverApiKeysInternal(home);
       const openaiKeys = keys.filter((k) => k.provider === "openai");
@@ -232,7 +233,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("discovers Google, xAI, DeepSeek, OpenRouter keys", async () => {
-      writeFile(
+      await writeFile(
         home,
         ".bashrc",
         [
@@ -258,8 +259,8 @@ describe("keyDiscoveryService", () => {
 
   describe("deduplication across sources", () => {
     it("returns multiple results for same provider from different sources", async () => {
-      writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-claude" }));
-      writeFile(home, ".bashrc", "export ANTHROPIC_API_KEY=sk-ant-bashrc\n");
+      await writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-claude" }));
+      await writeFile(home, ".bashrc", "export ANTHROPIC_API_KEY=sk-ant-bashrc\n");
 
       const keys = await discoverApiKeysInternal(home);
       const anthropicKeys = keys.filter((k) => k.provider === "anthropic");
@@ -272,7 +273,7 @@ describe("keyDiscoveryService", () => {
 
   describe("key preview masking", () => {
     it("shows prefix and last 4 chars", async () => {
-      writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-api03-abcdefghij1234" }));
+      await writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-api03-abcdefghij1234" }));
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -286,7 +287,7 @@ describe("keyDiscoveryService", () => {
     });
 
     it("masks short keys to ****", async () => {
-      writeFile(home, ".claude.json", JSON.stringify({ apiKey: "short" }));
+      await writeFile(home, ".claude.json", JSON.stringify({ apiKey: "short" }));
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(1);
@@ -298,9 +299,9 @@ describe("keyDiscoveryService", () => {
 
   describe("importDiscoveredKey", () => {
     it("writes key to providers.jsonc", async () => {
-      writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-import-test" }));
+      await writeFile(home, ".claude.json", JSON.stringify({ apiKey: "sk-ant-import-test" }));
 
-      const muxDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-cfg-"));
+      const muxDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "mux-cfg-"));
       try {
         const config = new Config(muxDir);
         const result = await importDiscoveredKey(config, {
@@ -326,12 +327,12 @@ describe("keyDiscoveryService", () => {
           expect(anthropicConfig?.apiKey).toBe("sk-ant-import-test");
         }
       } finally {
-        fs.rmSync(muxDir, { recursive: true, force: true });
+        fsSync.rmSync(muxDir, { recursive: true, force: true });
       }
     });
 
     it("returns error for non-existent source", async () => {
-      const muxDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-cfg-"));
+      const muxDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "mux-cfg-"));
       try {
         const config = new Config(muxDir);
         const result = await importDiscoveredKey(config, {
@@ -344,12 +345,12 @@ describe("keyDiscoveryService", () => {
           expect(result.error).toContain("Key not found");
         }
       } finally {
-        fs.rmSync(muxDir, { recursive: true, force: true });
+        fsSync.rmSync(muxDir, { recursive: true, force: true });
       }
     });
 
-    it("preserves existing provider config when importing", async () => {
-      const muxDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-cfg-"));
+    it("preserves existing provider config when importing", () => {
+      const muxDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "mux-cfg-"));
       try {
         const config = new Config(muxDir);
         // Set up existing config
@@ -362,7 +363,7 @@ describe("keyDiscoveryService", () => {
         const openaiConfig = existing?.openai as { apiKey?: string } | undefined;
         expect(openaiConfig?.apiKey).toBe("sk-existing-openai");
       } finally {
-        fs.rmSync(muxDir, { recursive: true, force: true });
+        fsSync.rmSync(muxDir, { recursive: true, force: true });
       }
     });
   });
@@ -371,7 +372,7 @@ describe("keyDiscoveryService", () => {
 
   describe("error handling", () => {
     it("handles malformed JSON gracefully", async () => {
-      writeFile(home, ".claude.json", "not valid json {{{");
+      await writeFile(home, ".claude.json", "not valid json {{{");
 
       const keys = await discoverApiKeysInternal(home);
       // Should not throw, may return empty or partial results
@@ -380,7 +381,7 @@ describe("keyDiscoveryService", () => {
 
     it("handles unreadable directories gracefully", async () => {
       // Create a file where a directory is expected
-      writeFile(home, ".codex", "not a directory");
+      await writeFile(home, ".codex", "not a directory");
 
       const keys = await discoverApiKeysInternal(home);
       expect(Array.isArray(keys)).toBe(true);
@@ -388,7 +389,7 @@ describe("keyDiscoveryService", () => {
 
     it("handles binary file content gracefully", async () => {
       const binaryContent = Buffer.from([0x00, 0x01, 0xff, 0xfe]).toString();
-      writeFile(home, ".claude.json", binaryContent);
+      await writeFile(home, ".claude.json", binaryContent);
 
       const keys = await discoverApiKeysInternal(home);
       expect(Array.isArray(keys)).toBe(true);
