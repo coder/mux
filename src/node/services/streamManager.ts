@@ -1962,7 +1962,12 @@ export class StreamManager extends EventEmitter {
                   providerMetadata: finishStepPart.providerMetadata,
                   // Cumulative (for live cost display)
                   cumulativeUsage: streamInfo.cumulativeUsage,
-                  cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
+                  // Stamp costsIncluded on cumulative metadata so the frontend
+                  // zeroes costs during streaming (not only at stream-end/abort).
+                  cumulativeProviderMetadata: markProviderMetadataCostsIncluded(
+                    streamInfo.cumulativeProviderMetadata,
+                    streamInfo.initialMetadata?.costsIncluded
+                  ),
                 };
                 streamInfo.currentStepStartIndex = streamInfo.parts.length;
                 this.emit("usage-delta", usageEvent);
