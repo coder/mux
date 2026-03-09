@@ -2257,9 +2257,9 @@ export class WorkspaceService extends EventEmitter {
             this.initAbortControllers.delete(workspaceId);
 
             // Background init will never fully complete, so init-end won’t fire.
-            // Clear init state + re-emit metadata so the sidebar doesn’t stay stuck on isInitializing.
+            // Clear init state + re-emit fresh metadata so the sidebar doesn’t stay stuck on isInitializing.
             this.initStateManager.clearInMemoryState(workspaceId);
-            session.emitMetadata(enrichedMetadata);
+            session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
             return;
           }
 
@@ -2270,9 +2270,9 @@ export class WorkspaceService extends EventEmitter {
         this.initAbortControllers.delete(workspaceId);
 
         // Background init will never run, so init-end won’t fire.
-        // Clear init state + re-emit metadata so the sidebar doesn’t stay stuck on isInitializing.
+        // Clear init state + re-emit fresh metadata so the sidebar doesn’t stay stuck on isInitializing.
         this.initStateManager.clearInMemoryState(workspaceId);
-        session.emitMetadata(enrichedMetadata);
+        session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
       }
 
       return Ok(enrichedMetadata);

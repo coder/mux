@@ -210,10 +210,13 @@ describe("orchestrateFork (multi-project)", () => {
     expect(result.success).toBe(true);
     if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
 
-    expect(result.data.workspacePath).toBe("/tmp/child/project-one");
+    expect(result.data.workspacePath).toBe(CONTAINER_PATH);
     expect(result.data.trunkBranch).toBe("main");
     expect(result.data.forkedFromSource).toBe(true);
     expect(result.data.targetRuntime).toBeInstanceOf(MultiProjectRuntime);
+    expect(result.data.targetRuntime.getWorkspacePath(PROJECT_ONE_PATH, NEW_WORKSPACE_NAME)).toBe(
+      CONTAINER_PATH
+    );
 
     expect(projectOneRuntime.forkWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -286,7 +289,7 @@ describe("orchestrateFork (multi-project)", () => {
     expect(removeContainerMock).not.toHaveBeenCalled();
   });
 
-  it("returns the primary project git root when the primary project falls back to createWorkspace", async () => {
+  it("returns the shared container root when the primary project falls back to createWorkspace", async () => {
     const projectOneRuntime = createProjectRuntimeMocks();
     const projectTwoRuntime = createProjectRuntimeMocks();
     mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
@@ -311,8 +314,11 @@ describe("orchestrateFork (multi-project)", () => {
     expect(result.success).toBe(true);
     if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
 
-    expect(result.data.workspacePath).toBe("/tmp/child/project-one-created");
+    expect(result.data.workspacePath).toBe(CONTAINER_PATH);
     expect(result.data.forkedFromSource).toBe(false);
+    expect(result.data.targetRuntime.getWorkspacePath(PROJECT_ONE_PATH, NEW_WORKSPACE_NAME)).toBe(
+      CONTAINER_PATH
+    );
     expect(projectOneRuntime.createWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({
         projectPath: PROJECT_ONE_PATH,
@@ -355,7 +361,10 @@ describe("orchestrateFork (multi-project)", () => {
     expect(result.success).toBe(true);
     if (!result.success) throw new Error(`Expected success result, got error: ${result.error}`);
 
-    expect(result.data.workspacePath).toBe("/tmp/child/project-one");
+    expect(result.data.workspacePath).toBe(CONTAINER_PATH);
+    expect(result.data.targetRuntime.getWorkspacePath(PROJECT_ONE_PATH, NEW_WORKSPACE_NAME)).toBe(
+      CONTAINER_PATH
+    );
     expect(projectOneRuntime.forkWorkspace).toHaveBeenCalledWith(
       expect.objectContaining({ trusted: true })
     );
