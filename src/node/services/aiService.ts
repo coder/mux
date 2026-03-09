@@ -6,7 +6,6 @@ import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
 import { ensurePrivateDir } from "@/node/utils/fs";
-import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -62,6 +61,7 @@ import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameter
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
+import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
@@ -1091,11 +1091,11 @@ export class AIService extends EventEmitter {
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,
-          // Trust gating: only run hooks/scripts for explicitly trusted projects
-          trusted:
-            this.config
-              .loadConfigOrDefault()
-              .projects.get(stripTrailingSlashes(metadata.projectPath))?.trusted ?? false,
+          // Trust gating: only run hooks/scripts when the full shared workspace runtime is trusted.
+          trusted: isWorkspaceTrustedForSharedExecution(
+            metadata,
+            this.config.loadConfigOrDefault().projects
+          ),
         },
         workspaceId,
         this.initStateManager,

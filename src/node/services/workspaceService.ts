@@ -38,6 +38,7 @@ import { validateWorkspaceName } from "@/common/utils/validation/workspaceValida
 import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
+import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -5303,10 +5304,8 @@ export class WorkspaceService extends EventEmitter {
         runtime
       );
 
-      // Read trust state so tool_env is sourced for trusted projects.
-      const projectConfig = this.config
-        .loadConfigOrDefault()
-        .projects.get(stripTrailingSlashes(metadata.projectPath));
+      // Read trust state so tool_env is sourced only when the shared execution environment is trusted.
+      const configSnapshot = this.config.loadConfigOrDefault();
 
       let scriptToExecute = script;
       if (command != null) {
@@ -5350,7 +5349,7 @@ export class WorkspaceService extends EventEmitter {
         secrets: await secretsToRecord(projectSecrets, this.opResolver),
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
-        trusted: projectConfig?.trusted ?? false,
+        trusted: isWorkspaceTrustedForSharedExecution(metadata, configSnapshot.projects),
       });
 
       // Execute the script
