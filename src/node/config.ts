@@ -92,6 +92,35 @@ function parseOptionalStringArray(value: unknown): string[] | undefined {
 
   return value.filter((item): item is string => typeof item === "string");
 }
+function parseOptionalStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const out: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof item === "string") {
+      out[key] = item;
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function areStringArraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function normalizeOptionalModelString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -260,7 +289,118 @@ export class Config {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
+        const parsed = JSON.parse(data) as Partial<AppConfigOnDisk> & Record<string, unknown>;
+        let configModified = false;
+
+        const normalizeNestedModelStrings = (value: unknown): boolean => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) {
+            return false;
+          }
+
+          let modified = false;
+          for (const entry of Object.values(value as Record<string, unknown>)) {
+            if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+              continue;
+            }
+
+            const modelString = (entry as { modelString?: unknown }).modelString;
+            if (typeof modelString !== "string") {
+              continue;
+            }
+
+            const normalized = normalizeToCanonical(modelString.trim());
+            if (normalized !== modelString) {
+              (entry as { modelString?: string }).modelString = normalized;
+              modified = true;
+            }
+          }
+
+          return modified;
+        };
+
+        // Migrate legacy gateway settings to the new route priority system.
+        if (parsed.muxGatewayModels != null || parsed.muxGatewayEnabled != null) {
+          if (!Array.isArray(parsed.routePriority)) {
+            const priority: string[] = [];
+            if (parsed.muxGatewayEnabled !== false) {
+              priority.push("mux-gateway");
+            }
+            priority.push("direct");
+            parsed.routePriority = priority;
+          }
+
+          delete parsed.muxGatewayEnabled;
+          delete parsed.muxGatewayModels;
+          configModified = true;
+        }
+
+        // Normalize gateway-prefixed model strings so persisted config uses canonical ids.
+        if (typeof parsed.defaultModel === "string") {
+          const normalized = normalizeToCanonical(parsed.defaultModel.trim());
+          if (normalized !== parsed.defaultModel) {
+            parsed.defaultModel = normalized;
+            configModified = true;
+          }
+        }
+
+        if (Array.isArray(parsed.hiddenModels)) {
+          const sourceHiddenModels = parsed.hiddenModels.filter(
+            (model): model is string => typeof model === "string"
+          );
+          const normalizedHiddenModels = sourceHiddenModels.map((model) =>
+            normalizeToCanonical(model.trim())
+          );
+
+          if (
+            sourceHiddenModels.length !== parsed.hiddenModels.length ||
+            !areStringArraysEqual(sourceHiddenModels, normalizedHiddenModels)
+          ) {
+            parsed.hiddenModels = normalizedHiddenModels;
+            configModified = true;
+          }
+        }
+
+        if (normalizeNestedModelStrings(parsed.agentAiDefaults)) {
+          configModified = true;
+        }
+        if (normalizeNestedModelStrings(parsed.subagentAiDefaults)) {
+          configModified = true;
+        }
+
+        if (configModified) {
+          // Invalidate stale usage caches: old files may contain gateway-prefixed model ids.
+          try {
+            if (fs.existsSync(this.sessionsDir)) {
+              for (const sessionEntry of fs.readdirSync(this.sessionsDir, {
+                withFileTypes: true,
+              })) {
+                if (!sessionEntry.isDirectory()) {
+                  continue;
+                }
+
+                const usagePath = path.join(
+                  this.getSessionDir(sessionEntry.name),
+                  "session-usage.json"
+                );
+                if (fs.existsSync(usagePath)) {
+                  fs.rmSync(usagePath, { force: true });
+                }
+              }
+            }
+          } catch (error) {
+            // Best-effort cleanup; never fail startup on cache invalidation issues.
+            log.warn("Failed to invalidate session usage cache during config migration", { error });
+          }
+
+          try {
+            writeFileAtomic.sync(this.configFile, JSON.stringify(parsed, null, 2), {
+              encoding: "utf-8",
+            });
+          } catch (error) {
+            // Keep startup resilient even if persisting migration fails.
+            log.warn("Failed to persist migrated config", { error });
+          }
+        }
 
         // Config is stored as array of [path, config] pairs.
         // Older/newer files may omit `projects`; treat missing/invalid values as an empty map
@@ -290,6 +430,8 @@ export class Config {
 
         const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
         const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
+        const routePriority = parseOptionalStringArray(parsed.routePriority);
+        const routeOverrides = parseOptionalStringRecord(parsed.routeOverrides);
 
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
         const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
@@ -329,6 +471,8 @@ export class Config {
           muxGatewayEnabled,
           llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
           muxGatewayModels,
+          routePriority,
+          routeOverrides,
           defaultModel,
           hiddenModels,
           agentAiDefaults,
