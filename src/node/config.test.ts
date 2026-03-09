@@ -356,6 +356,31 @@ describe("Config", () => {
     });
   });
 
+  describe("config change notifications", () => {
+    it("emits for editConfig saves and stops after unsubscribe", async () => {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      await config.editConfig((cfg) => {
+        cfg.routePriority = ["openai:gpt-4o"];
+        return cfg;
+      });
+
+      expect(notifications).toBe(1);
+
+      unsubscribe();
+
+      await config.editConfig((cfg) => {
+        cfg.routeOverrides = { "openai:gpt-4o": "direct" };
+        return cfg;
+      });
+
+      expect(notifications).toBe(1);
+    });
+  });
+
   describe("generateStableId", () => {
     it("should generate a 10-character hex string", () => {
       const id = config.generateStableId();

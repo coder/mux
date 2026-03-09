@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import * as jsonc from "jsonc-parser";
+import { EventEmitter } from "events";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -291,6 +292,7 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private readonly emitter = new EventEmitter();
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
@@ -299,6 +301,17 @@ export class Config {
     this.configFile = path.join(this.rootDir, "config.json");
     this.providersFile = path.join(this.rootDir, "providers.jsonc");
     this.secretsFile = path.join(this.rootDir, "secrets.json");
+  }
+
+  onConfigChanged(callback: () => void): () => void {
+    this.emitter.on("configChanged", callback);
+    return () => {
+      this.emitter.off("configChanged", callback);
+    };
+  }
+
+  private notifyConfigChanged(): void {
+    this.emitter.emit("configChanged");
   }
 
   loadConfigOrDefault(): ProjectsConfig {
@@ -738,6 +751,9 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+    // Backend-initiated config edits (for example gateway auth changes) use this signal
+    // so frontend subscribers can refresh derived state without polling.
+    this.notifyConfigChanged();
   }
 
   getUpdateChannel(): UpdateChannel {

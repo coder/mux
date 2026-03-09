@@ -1632,6 +1632,10 @@ export const config = {
     }),
     output: z.void(),
   },
+  onConfigChanged: {
+    input: z.void(),
+    output: eventIterator(z.void()),
+  },
   updateAgentAiDefaults: {
     input: z.object({
       agentAiDefaults: AgentAiDefaultsSchema,

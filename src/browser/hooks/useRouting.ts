@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import {
@@ -53,32 +53,69 @@ export function useRouting(): RoutingState {
   const { config: providersConfig } = useProvidersConfig();
   const [routePriority, setRoutePriorityState] = useState<string[]>(DEFAULT_ROUTE_PRIORITY);
   const [routeOverrides, setRouteOverridesState] = useState<Record<string, string>>({});
+  // Ignore stale config fetches so backend refreshes can't overwrite newer optimistic edits.
+  const fetchVersionRef = useRef(0);
 
-  useEffect(() => {
-    if (!api?.config?.getConfig) {
+  const fetchRoutingConfig = useCallback(async () => {
+    const getConfig = api?.config?.getConfig;
+    if (!getConfig) {
       return;
     }
 
-    let cancelled = false;
+    const fetchVersion = ++fetchVersionRef.current;
 
-    void api.config
-      .getConfig()
-      .then((config) => {
-        if (cancelled) {
+    try {
+      const config = await getConfig();
+      if (fetchVersion !== fetchVersionRef.current) {
+        return;
+      }
+
+      setRoutePriorityState(config.routePriority ?? DEFAULT_ROUTE_PRIORITY);
+      setRouteOverridesState(config.routeOverrides ?? {});
+    } catch {
+      // Best-effort only.
+    }
+  }, [api]);
+
+  useEffect(() => {
+    const onConfigChanged = api?.config?.onConfigChanged;
+    if (!onConfigChanged) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    const { signal } = abortController;
+    let iterator: AsyncIterator<unknown> | null = null;
+
+    void fetchRoutingConfig();
+
+    (async () => {
+      try {
+        const subscribedIterator = await onConfigChanged(undefined, { signal });
+
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
           return;
         }
 
-        setRoutePriorityState(config.routePriority ?? DEFAULT_ROUTE_PRIORITY);
-        setRouteOverridesState(config.routeOverrides ?? {});
-      })
-      .catch(() => {
-        // Best-effort only.
-      });
+        iterator = subscribedIterator;
+
+        for await (const _ of subscribedIterator) {
+          if (signal.aborted) {
+            break;
+          }
+          void fetchRoutingConfig();
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
 
     return () => {
-      cancelled = true;
+      abortController.abort();
+      void iterator?.return?.();
     };
-  }, [api]);
+  }, [api, fetchRoutingConfig]);
 
   const isConfigured = useCallback(
     (provider: string) =>
@@ -107,6 +144,7 @@ export function useRouting(): RoutingState {
 
   const setRoutePriority = useCallback(
     (priority: string[]) => {
+      fetchVersionRef.current++;
       setRoutePriorityState(priority);
       persistRoutePreferences(priority, routeOverrides);
     },
@@ -115,6 +153,7 @@ export function useRouting(): RoutingState {
 
   const setRouteOverride = useCallback(
     (canonicalModel: string, route: string | null) => {
+      fetchVersionRef.current++;
       const key = normalizeToCanonical(canonicalModel);
       const nextOverrides = { ...routeOverrides };
       if (route == null) {

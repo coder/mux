@@ -592,6 +592,72 @@ export const router = (authToken?: string) => {
             onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
+      onConfigChanged: t
+        .input(schemas.config.onConfigChanged.input)
+        .output(schemas.config.onConfigChanged.output)
+        .handler(async function* ({ context, signal }) {
+          let resolveNext: (() => void) | null = null;
+          let pendingNotification = false;
+          let ended = false;
+
+          const push = () => {
+            if (ended) return;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            } else {
+              pendingNotification = true;
+            }
+          };
+
+          const unsubscribe = context.config.onConfigChanged(push);
+
+          // Consumers often cancel this subscription while there are no pending config changes.
+          // If we block on a never-resolving Promise, AbortSignal cancellation can't unwind the
+          // generator, and we leak EventEmitter listeners across tests.
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            } else {
+              pendingNotification = true;
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            while (!ended) {
+              if (pendingNotification) {
+                pendingNotification = false;
+                if (ended) break;
+                yield undefined;
+                continue;
+              }
+
+              await new Promise<void>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (ended) break;
+              yield undefined;
+            }
+          } finally {
+            ended = true;
+            signal?.removeEventListener("abort", onAbort);
+            unsubscribe();
+          }
+        }),
       updateAgentAiDefaults: t
         .input(schemas.config.updateAgentAiDefaults.input)
         .output(schemas.config.updateAgentAiDefaults.output)
