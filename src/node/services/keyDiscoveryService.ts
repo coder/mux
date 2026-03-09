@@ -132,7 +132,12 @@ async function scanClaudeEnv(home: string): Promise<DiscoveredKeyInternal[]> {
 
   const match = /^ANTHROPIC_API_KEY=(.+)$/m.exec(content);
   if (match) {
-    const key = match[1].trim().replace(/^["']|["']$/g, "");
+    // Strip surrounding quotes, then inline comments (# ...) and trailing semicolons
+    const key = match[1]
+      .trim()
+      .replace(/^["']|["']$/g, "")
+      .replace(/\s+#.*$/, "")
+      .replace(/;+$/, "");
     if (key) {
       results.push({
         provider: "anthropic",
@@ -287,7 +292,7 @@ async function scanShellRcFiles(home: string): Promise<DiscoveredKeyInternal[]> 
       // Use global flag and iterate to find the *last* match, because later
       // shell assignments override earlier ones (key rotation appends a new export).
       const pattern = new RegExp(
-        `^\\s*export\\s+${mapping.envVar}\\s*=\\s*["']?([^"'\\s#]+)["']?`,
+        `^\\s*export\\s+${mapping.envVar}\\s*=\\s*["']?([^"'\\s#;]+)["']?`,
         "gm"
       );
       let lastKey: string | null = null;

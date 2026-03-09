@@ -97,6 +97,14 @@ describe("keyDiscoveryService", () => {
       expect(keys).toHaveLength(1);
       expect(keys[0].fullKey).toBe("sk-ant-bare");
     });
+
+    it("strips inline comments from value", async () => {
+      await writeFile(home, ".claude/.env", "ANTHROPIC_API_KEY=sk-ant-real # rotated 2026-01\n");
+
+      const keys = await discoverApiKeysInternal(home);
+      expect(keys).toHaveLength(1);
+      expect(keys[0].fullKey).toBe("sk-ant-real");
+    });
   });
 
   describe("scanCodexCli", () => {
@@ -221,6 +229,15 @@ describe("keyDiscoveryService", () => {
 
       const keys = await discoverApiKeysInternal(home);
       expect(keys).toHaveLength(0);
+    });
+
+    it("strips trailing semicolons from command chains", async () => {
+      await writeFile(home, ".bashrc", "export OPENAI_API_KEY=sk-chained;\n");
+
+      const keys = await discoverApiKeysInternal(home);
+      // Semicolon is excluded by the regex character class, so the key stops before it
+      expect(keys).toHaveLength(1);
+      expect(keys[0].fullKey).toBe("sk-chained");
     });
 
     it("prefers first RC file per provider", async () => {
