@@ -26,7 +26,6 @@ import {
   Sparkles,
   PenLine,
   MessageCircleQuestionMark,
-  ChevronRight,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -486,7 +485,14 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     (rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
     (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
   const canToggleCompletedChildren = hasCompletedChildren && onToggleCompletedChildren != null;
-  const isCompletedChildrenExpanded = completedChildrenExpanded ?? false;
+  const isCompletedChildrenExpanded = completedChildrenExpanded === true;
+  const toggleCompletedChildren = () => {
+    if (!canToggleCompletedChildren) {
+      return false;
+    }
+    onToggleCompletedChildren?.(workspaceId);
+    return true;
+  };
 
   const paddingLeft = getItemPaddingLeft(depth);
 
@@ -541,9 +547,53 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
             workspaceId,
           });
         }}
+        onDoubleClick={(event) => {
+          if (isDisabled || isEditing) {
+            return;
+          }
+          const doubleClickTarget =
+            event.target instanceof Element
+              ? event.target
+              : event.target instanceof Node
+                ? event.target.parentElement
+                : null;
+          if (doubleClickTarget?.closest("button,input,textarea,[contenteditable='true']")) {
+            return;
+          }
+          // Completed-child rows no longer render a dedicated chevron, so the row
+          // itself owns the pointer expand/collapse gesture. Rows without completed
+          // children keep double-click rename as their fallback affordance.
+          if (toggleCompletedChildren()) {
+            event.stopPropagation();
+            return;
+          }
+          startEditing();
+          event.stopPropagation();
+        }}
         {...ctxMenu.touchHandlers}
         onKeyDown={(e) => {
           if (isDisabled || isEditing) return;
+          // Only treat these shortcuts as row-level controls when the row itself is
+          // focused so child buttons keep their own keyboard behavior.
+          if (e.target !== e.currentTarget) return;
+          // Keep completed-child expansion reachable from the same focusable row now
+          // that the visible chevron control is gone.
+          if (
+            e.key === "ArrowRight" &&
+            canToggleCompletedChildren &&
+            !isCompletedChildrenExpanded
+          ) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleCompletedChildren();
+            return;
+          }
+          if (e.key === "ArrowLeft" && canToggleCompletedChildren && isCompletedChildrenExpanded) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleCompletedChildren();
+            return;
+          }
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelectWorkspace({
@@ -558,6 +608,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         role="button"
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
+        aria-expanded={canToggleCompletedChildren ? isCompletedChildrenExpanded : undefined}
+        aria-keyshortcuts={canToggleCompletedChildren ? "ArrowRight ArrowLeft" : undefined}
         aria-label={
           isRemoving
             ? `Deleting workspace ${displayTitle}`
@@ -735,40 +787,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
               />
             ) : (
               <div className="flex min-w-0 items-center gap-1">
-                {canToggleCompletedChildren && (
-                  <button
-                    type="button"
-                    // Keep expansion toggles local to this button so row click/selection
-                    // behavior remains unchanged.
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (isDisabled) {
-                        return;
-                      }
-                      onToggleCompletedChildren?.(workspaceId);
-                    }}
-                    onKeyDown={stopKeyboardPropagation}
-                    aria-label={
-                      isCompletedChildrenExpanded
-                        ? `Collapse completed sub-agents for ${displayTitle}`
-                        : `Expand completed sub-agents for ${displayTitle}`
-                    }
-                    aria-expanded={isCompletedChildrenExpanded}
-                    disabled={isDisabled}
-                    className={cn(
-                      "text-muted inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border-none bg-transparent p-0 transition-colors duration-200",
-                      !isDisabled && "cursor-pointer hover:text-foreground",
-                      isDisabled && "cursor-default opacity-60"
-                    )}
-                  >
-                    <ChevronRight
-                      className={cn(
-                        "h-3 w-3 transition-transform duration-200 ease-in-out",
-                        isCompletedChildrenExpanded && "rotate-90"
-                      )}
-                    />
-                  </button>
-                )}
                 <span
                   className={cn(
                     "text-foreground min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
@@ -776,11 +794,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     isGeneratingTitle && "italic",
                     !isSelected && visualState === "seen" && "text-secondary"
                   )}
-                  onDoubleClick={(e) => {
-                    if (isDisabled) return;
-                    e.stopPropagation();
-                    startEditing();
-                  }}
                 >
                   {displayTitle}
                 </span>
