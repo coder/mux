@@ -320,6 +320,24 @@ describe("AgentSession switch_agent target validation", () => {
       expect(followUpOptions.providerOptions?.anthropic?.use1MContext).toBe(true);
     });
 
+    test("does NOT set 1M context when disableBetaFeatures is true", async () => {
+      const followUpOptions = await dispatchSwitchAndCaptureOptions(
+        {
+          agentId: "exec",
+          model: "anthropic:claude-opus-4-6",
+          providerOptions: {
+            anthropic: {
+              use1MContextModels: ["anthropic:claude-opus-4-6"],
+              disableBetaFeatures: true,
+            },
+          },
+        },
+        "anthropic:claude-sonnet-4-6"
+      );
+
+      expect(followUpOptions.providerOptions?.anthropic?.use1MContext).not.toBe(true);
+    });
+
     test("does NOT set 1M context when target model does not support 1M", async () => {
       const followUpOptions = await dispatchSwitchAndCaptureOptions(
         {

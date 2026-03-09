@@ -92,11 +92,11 @@ import {
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
 import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilities";
+import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
 import {
-  normalizeGatewayModel,
-  isValidModelFormat,
-  supports1MContext,
-} from "@/common/utils/ai/models";
+  isAnthropic1MEffectivelyEnabled,
+  preserveAnthropic1MContextForFollowUp,
+} from "@/common/utils/ai/providerOptions";
 import {
   isNonRetryableSendError,
   isNonRetryableStreamError,
@@ -2044,7 +2044,11 @@ export class AgentSession {
       const compactionResult = this.compactionMonitor.checkBeforeSend({
         model: modelForStream,
         usage: this.getUsageState(),
-        use1MContext: this.is1MContextEnabledForModel(modelForStream, optionsForStream),
+        use1MContext: this.is1MContextEnabledForModel(
+          modelForStream,
+          optionsForStream,
+          providersConfigForCompaction
+        ),
         providersConfig: providersConfigForCompaction,
       });
 
@@ -2340,22 +2344,12 @@ export class AgentSession {
     }
   }
 
-  private is1MContextEnabledForModel(modelString: string, options?: SendMessageOptions): boolean {
-    const normalizedModel = normalizeGatewayModel(modelString);
-    if (!supports1MContext(normalizedModel)) {
-      return false;
-    }
-
-    const anthropicOptions = options?.providerOptions?.anthropic;
-    if (!anthropicOptions) {
-      return false;
-    }
-
-    return (
-      anthropicOptions.use1MContext === true ||
-      anthropicOptions.use1MContextModels?.includes(normalizedModel) === true ||
-      anthropicOptions.use1MContextModels?.includes(modelString) === true
-    );
+  private is1MContextEnabledForModel(
+    modelString: string,
+    options?: SendMessageOptions,
+    providersConfig?: ProvidersConfigMap | null
+  ): boolean {
+    return isAnthropic1MEffectivelyEnabled(modelString, options?.providerOptions, providersConfig);
   }
 
   private updateUsageStateFromModelUsage(params: {
@@ -2949,33 +2943,45 @@ export class AgentSession {
   private withAnthropic1MContext(
     modelString: string,
     options: SendMessageOptions | undefined
-  ): SendMessageOptions {
+  ): SendMessageOptions | null {
     if (options) {
       const existingModels = options.providerOptions?.anthropic?.use1MContextModels ?? [];
-      return {
-        ...options,
-        providerOptions: {
-          ...options.providerOptions,
-          anthropic: {
-            ...options.providerOptions?.anthropic,
-            use1MContext: true,
-            use1MContextModels: existingModels.includes(modelString)
-              ? existingModels
-              : [...existingModels, modelString],
-          },
+      const nextProviderOptions = {
+        ...options.providerOptions,
+        anthropic: {
+          ...options.providerOptions?.anthropic,
+          use1MContext: true,
+          use1MContextModels: existingModels.includes(modelString)
+            ? existingModels
+            : [...existingModels, modelString],
         },
       };
+
+      if (!isAnthropic1MEffectivelyEnabled(modelString, nextProviderOptions)) {
+        return null;
+      }
+
+      return {
+        ...options,
+        providerOptions: nextProviderOptions,
+      };
+    }
+
+    const nextProviderOptions = {
+      anthropic: {
+        use1MContext: true,
+        use1MContextModels: [modelString],
+      },
+    };
+
+    if (!isAnthropic1MEffectivelyEnabled(modelString, nextProviderOptions)) {
+      return null;
     }
 
     return {
       model: modelString,
       agentId: WORKSPACE_DEFAULTS.agentId,
-      providerOptions: {
-        anthropic: {
-          use1MContext: true,
-          use1MContextModels: [modelString],
-        },
-      },
+      providerOptions: nextProviderOptions,
     };
   }
 
@@ -3005,15 +3011,17 @@ export class AgentSession {
       return false;
     }
 
+    let retryOptions = context.options;
     if (is1MCapable) {
-      // Skip retry if 1M context is already enabled (via legacy global flag or per-model list)
-      const anthropicOpts = context.options?.providerOptions?.anthropic;
-      const already1M =
-        anthropicOpts?.use1MContext === true ||
-        (anthropicOpts?.use1MContextModels?.includes(context.modelString) ?? false);
-      if (already1M) {
+      if (this.is1MContextEnabledForModel(context.modelString, context.options)) {
         return false;
       }
+
+      const retryOptionsWith1M = this.withAnthropic1MContext(context.modelString, context.options);
+      if (!retryOptionsWith1M) {
+        return false;
+      }
+      retryOptions = retryOptionsWith1M;
     }
 
     if (this.compactionRetryAttempts.has(context.id)) {
@@ -3033,10 +3041,6 @@ export class AgentSession {
     const retryAgentInitiated = this.activeStreamContext?.agentInitiated;
 
     await this.finalizeCompactionRetry(data.messageId);
-
-    const retryOptions = is1MCapable
-      ? this.withAnthropic1MContext(context.modelString, context.options)
-      : context.options;
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -3593,7 +3597,11 @@ export class AgentSession {
       const shouldInterruptForCompaction = this.compactionMonitor.checkMidStream({
         model: modelForUsage,
         usage: payload.usage,
-        use1MContext: this.is1MContextEnabledForModel(modelForUsage, streamOptions),
+        use1MContext: this.is1MContextEnabledForModel(
+          modelForUsage,
+          streamOptions,
+          streamContext?.providersConfig ?? null
+        ),
         providersConfig: streamContext?.providersConfig ?? null,
       });
 
@@ -4345,20 +4353,12 @@ export class AgentSession {
       currentOptions?.thinkingLevel ??
       workspaceAiSettings?.thinkingLevel;
 
-    const sourceAnthropicOptions = currentOptions?.providerOptions?.anthropic;
-    const sourceHasAnthropic1MIntent =
-      sourceAnthropicOptions?.use1MContext === true ||
-      (sourceAnthropicOptions?.use1MContextModels?.length ?? 0) > 0;
-    const followUpProviderOptions =
-      sourceHasAnthropic1MIntent && supports1MContext(effectiveModel)
-        ? {
-            ...currentOptions?.providerOptions,
-            anthropic: {
-              ...sourceAnthropicOptions,
-              use1MContext: true,
-            },
-          }
-        : currentOptions?.providerOptions;
+    const sourceModel = coerceNonEmptyString(currentOptions?.model) ?? fallbackModel.trim();
+    const followUpProviderOptions = preserveAnthropic1MContextForFollowUp(
+      sourceModel,
+      effectiveModel,
+      currentOptions?.providerOptions
+    );
 
     // Build follow-up options from an explicit allowlist.
     // Exclude edit-only fields (editMessageId) to prevent the synthetic

@@ -393,6 +393,98 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("does trigger compaction at the default Anthropic threshold when beta features disable 1M", async () => {
+    const workspaceId = "ws-auto-compaction-disabled-beta-1m";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const appendSeedUsage = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-disabled-beta-usage", "assistant", "existing context", {
+        timestamp: Date.now() - 1_000,
+        model: "anthropic:claude-sonnet-4-6",
+        contextUsage: {
+          inputTokens: 150_000,
+          outputTokens: 0,
+          totalTokens: 150_000,
+        },
+      })
+    );
+    expect(appendSeedUsage.success).toBe(true);
+
+    const aiEmitter = new EventEmitter();
+    const streamRequests: unknown[] = [];
+    const streamMessage = mock((request: unknown) => {
+      streamRequests.push(request);
+      return Promise.resolve(Ok(undefined));
+    });
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const result = await session.sendMessage("hello", {
+      model: "anthropic:claude-sonnet-4-6",
+      agentId: "exec",
+      providerOptions: {
+        anthropic: {
+          use1MContext: true,
+          disableBetaFeatures: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(streamMessage).toHaveBeenCalledTimes(1);
+
+    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
+    const hasCompactionRequest = requestMessages.some(
+      (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+    );
+    expect(hasCompactionRequest).toBe(true);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(`failed to load history: ${String(historyResult.error)}`);
+    }
+
+    const persistedCompactionRequest = historyResult.data.some(
+      (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+    );
+    expect(persistedCompactionRequest).toBe(true);
+
+    session.dispose();
+  });
+
   test("compaction model inherit uses activeStreamContext.modelString over stale baseOptions.model", async () => {
     const workspaceId = "ws-auto-compaction-inherit-active-stream-model";
 

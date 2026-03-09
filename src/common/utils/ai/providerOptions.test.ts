@@ -9,6 +9,7 @@ import { describe, test, expect, mock } from "bun:test";
 import {
   buildProviderOptions,
   buildRequestHeaders,
+  isAnthropic1MEffectivelyEnabled,
   ANTHROPIC_1M_CONTEXT_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
@@ -373,6 +374,60 @@ describe("buildProviderOptions - mappedToModel resolution", () => {
     );
 
     expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+  });
+});
+
+describe("isAnthropic1MEffectivelyEnabled", () => {
+  test("returns true for supported model with global 1M flag", () => {
+    expect(
+      isAnthropic1MEffectivelyEnabled("anthropic:claude-opus-4-6", {
+        anthropic: { use1MContext: true },
+      })
+    ).toBe(true);
+  });
+
+  test("returns true when use1MContextModels includes an alias mapped to a 1M-capable model", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/sonnet": "anthropic:claude-sonnet-4-6-20251022",
+    });
+
+    expect(
+      isAnthropic1MEffectivelyEnabled(
+        "anthropic:claude/sonnet",
+        {
+          anthropic: { use1MContextModels: ["anthropic:claude/sonnet"] },
+        },
+        providersConfig
+      )
+    ).toBe(true);
+  });
+
+  test("returns false when beta features are disabled", () => {
+    expect(
+      isAnthropic1MEffectivelyEnabled("anthropic:claude-opus-4-6", {
+        anthropic: { use1MContext: true, disableBetaFeatures: true },
+      })
+    ).toBe(false);
+  });
+
+  test("returns false for unsupported models", () => {
+    expect(
+      isAnthropic1MEffectivelyEnabled("anthropic:claude-opus-4-1", {
+        anthropic: { use1MContext: true },
+      })
+    ).toBe(false);
+  });
+
+  test("returns false when no 1M intent was provided", () => {
+    expect(
+      isAnthropic1MEffectivelyEnabled("anthropic:claude-opus-4-6", {
+        anthropic: {},
+      })
+    ).toBe(false);
+  });
+
+  test("returns false when provider options are missing", () => {
+    expect(isAnthropic1MEffectivelyEnabled("anthropic:claude-opus-4-6")).toBe(false);
   });
 });
 
