@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/browser/components/Button/Button";
 import { Switch } from "@/browser/components/Switch/Switch";
 import { useAPI } from "@/browser/contexts/API";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   EVENT_SOUND_KEYS,
   EVENT_SOUND_LABELS,
@@ -103,6 +104,11 @@ export function SoundsSection() {
     setEventSoundSettings((prev) => {
       const next = updater(prev);
       queueSettingsSave(next);
+      window.dispatchEvent(
+        createCustomEvent(CUSTOM_EVENTS.EVENT_SOUND_SETTINGS_CHANGED, {
+          eventSoundSettings: next,
+        })
+      );
       return next;
     });
   };

@@ -7,6 +7,7 @@
 
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
+import type { EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
 import type { FilePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
@@ -116,6 +117,11 @@ export const CUSTOM_EVENTS = {
    * Detail: { enabled: boolean }
    */
   LLM_DEBUG_LOGS_CHANGED: "mux:llmDebugLogsChanged",
+  /**
+   * Event emitted when event sound settings are edited in Settings.
+   * Detail: { eventSoundSettings: EventSoundSettings }
+   */
+  EVENT_SOUND_SETTINGS_CHANGED: "mux:eventSoundSettingsChanged",
 } as const;
 
 /**
@@ -174,6 +180,9 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
   [CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED]: {
     enabled: boolean;
+  };
+  [CUSTOM_EVENTS.EVENT_SOUND_SETTINGS_CHANGED]: {
+    eventSoundSettings: EventSoundSettings;
   };
 }
 
