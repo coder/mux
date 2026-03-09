@@ -30,6 +30,41 @@ function getWorkspaceRow(container: HTMLElement, workspaceId: string): HTMLEleme
   return container.querySelector(`[data-workspace-id="${workspaceId}"]`) as HTMLElement | null;
 }
 
+function getSubagentConnector(container: HTMLElement, workspaceId: string): HTMLElement | null {
+  const workspaceRow = getWorkspaceRow(container, workspaceId);
+  if (!workspaceRow) {
+    return null;
+  }
+
+  // Sub-agent connectors are rendered as a sibling wrapper around the row, so
+  // this lookup must walk to the sibling/parent wrapper instead of querying
+  // within the row itself.
+  const siblingConnector = workspaceRow.previousElementSibling;
+  if (
+    siblingConnector instanceof HTMLElement &&
+    siblingConnector.getAttribute("data-testid") === "subagent-connector"
+  ) {
+    return siblingConnector;
+  }
+
+  const wrapper = workspaceRow.parentElement;
+  if (!wrapper) {
+    return null;
+  }
+
+  for (const child of wrapper.children) {
+    if (!(child instanceof HTMLElement)) {
+      continue;
+    }
+
+    if (child.getAttribute("data-testid") === "subagent-connector") {
+      return child;
+    }
+  }
+
+  return null;
+}
+
 async function createWorkspaceWithTitle(params: {
   projectPath: string;
   trunkBranch: string;
@@ -391,7 +426,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
             throw new Error("Expected running child row to be visible");
           }
 
-          const connector = childRow.querySelector('[data-testid="subagent-connector"]');
+          const connector = getSubagentConnector(renderedView.container, runningChild.id);
           if (!connector) {
             throw new Error("Expected running child connector to be rendered");
           }
@@ -492,7 +527,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
             throw new Error("Expected reported child row to be visible");
           }
 
-          const connector = childRow.querySelector('[data-testid="subagent-connector"]');
+          const connector = getSubagentConnector(renderedView.container, reportedChild.id);
           if (!connector) {
             throw new Error("Expected reported child connector to be rendered");
           }
