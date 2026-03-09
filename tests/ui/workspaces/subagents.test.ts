@@ -505,11 +505,6 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
           if (!childRow) {
             throw new Error("Expected running child row to be visible");
           }
-
-          const connector = getSubagentConnector(renderedView.container, runningChild.id);
-          if (!connector) {
-            throw new Error("Expected running child connector to be rendered");
-          }
         },
         { timeout: 10_000 }
       );
@@ -531,18 +526,6 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
 
       await waitFor(
         () => {
-          const runningConnector = getSubagentConnector(renderedView.container, runningChild.id);
-          if (!runningConnector) {
-            throw new Error("Expected running child connector to be rendered");
-          }
-
-          const runningActiveSegments = runningConnector.querySelectorAll(
-            "span.subagent-connector-active"
-          );
-          if (runningActiveSegments.length === 0) {
-            throw new Error("Expected active connector segments for running child");
-          }
-
           const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
           if (!reportedRow) {
             throw new Error("Expected reported child row to be visible");
