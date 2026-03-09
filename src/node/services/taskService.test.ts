@@ -4512,6 +4512,75 @@ describe("TaskService", () => {
     expect(persisted).toEqual({ reportMarkdown: "Interrupted child report", title: "Result" });
   });
 
+  test("handleStreamEnd rejects waiters when interrupted task stream ends without report", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "interrupted",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    let childStreaming = true;
+    const isStreaming = mock(
+      (workspaceId: string): boolean => workspaceId === childId && childStreaming
+    );
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const waiter = taskService.waitForAgentReport(childId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentId,
+    });
+
+    childStreaming = false;
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    const waiterError = await waiter.catch((error: unknown) => error);
+    expect(waiterError).toBeInstanceOf(Error);
+    if (waiterError instanceof Error) {
+      expect(waiterError.message).toMatch(/Task interrupted/);
+      expect(waiterError.message).not.toMatch(/Timed out/);
+    }
+  });
+
   test("missing agent_report triggers one reminder, then posts fallback output and cleans up", async () => {
     const config = await createTestConfig(rootDir);
 
