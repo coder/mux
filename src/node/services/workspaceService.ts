@@ -5268,7 +5268,21 @@ export class WorkspaceService extends EventEmitter {
         return Err(`Workspace ${workspaceId} not found in config`);
       }
 
-      const runtime = createRuntimeForWorkspace(metadata);
+      // Multi-project workspaces execute bash from the container root so sibling repos are addressable.
+      const runtime = isMultiProject(metadata)
+        ? new MultiProjectRuntime(
+            new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
+            getProjects(metadata).map((project) => ({
+              projectPath: project.projectPath,
+              projectName: project.projectName,
+              runtime: createRuntime(metadata.runtimeConfig, {
+                projectPath: project.projectPath,
+                workspaceName: metadata.name,
+              }),
+            })),
+            metadata.name
+          )
+        : createRuntimeForWorkspace(metadata);
 
       // Ensure runtime is ready (e.g., start Docker container if stopped)
       const readyResult = await runtime.ensureReady();
