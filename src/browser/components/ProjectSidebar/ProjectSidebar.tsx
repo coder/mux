@@ -634,6 +634,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [expandedCompletedSubAgents, setExpandedCompletedSubAgents] = usePersistedState<
     Record<string, boolean>
   >("expandedCompletedSubAgents", {});
+  const toggleCompletedChildrenExpansion = useCallback(
+    (workspaceId: string) => {
+      setExpandedCompletedSubAgents((prev) => ({
+        ...prev,
+        [workspaceId]: !prev[workspaceId],
+      }));
+    },
+    [setExpandedCompletedSubAgents]
+  );
+  const expandedCompletedParentIds = new Set(
+    Object.entries(expandedCompletedSubAgents)
+      .filter(([, expanded]) => expanded)
+      .map(([workspaceId]) => workspaceId)
+  );
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
@@ -1001,6 +1015,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }
 
   const multiProjectWorkspaces = Array.from(multiProjectWorkspacesById.values());
+  // Multi-project rows should share the same completed-subagent chevron behavior as
+  // regular workspace rows, so reuse the same visibility + metadata calculations.
+  const multiProjectDepthByWorkspaceId = computeWorkspaceDepthMap(multiProjectWorkspaces);
+  const visibleMultiProjectWorkspaces = filterVisibleAgentRows(
+    multiProjectWorkspaces,
+    expandedCompletedParentIds
+  );
+  const multiProjectRowMetaByWorkspaceId = computeAgentRowRenderMeta(
+    multiProjectWorkspaces,
+    multiProjectDepthByWorkspaceId,
+    expandedCompletedParentIds
+  );
   const isMultiProjectSectionExpanded = expandedProjectsList.includes(
     MULTI_PROJECT_SIDEBAR_SECTION_ID
   );
@@ -1124,10 +1150,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     </div>
                     {isMultiProjectSectionExpanded && (
                       <div className="pt-1 pb-1">
-                        {(() => {
-                          const depthByWorkspaceId =
-                            computeWorkspaceDepthMap(multiProjectWorkspaces);
-                          return multiProjectWorkspaces.map((metadata) => (
+                        {visibleMultiProjectWorkspaces.map((metadata) => {
+                          const rowRenderMeta = multiProjectRowMetaByWorkspaceId.get(metadata.id);
+
+                          return (
                             <AgentListItem
                               key={metadata.id}
                               metadata={metadata}
@@ -1143,10 +1169,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               onForkWorkspace={handleForkWorkspace}
                               onArchiveWorkspace={handleArchiveWorkspace}
                               onCancelCreation={handleCancelWorkspaceCreation}
-                              depth={depthByWorkspaceId[metadata.id] ?? 0}
+                              depth={
+                                rowRenderMeta?.depth ??
+                                multiProjectDepthByWorkspaceId[metadata.id] ??
+                                0
+                              }
+                              rowRenderMeta={rowRenderMeta}
+                              completedChildrenExpanded={
+                                expandedCompletedSubAgents[metadata.id] ?? false
+                              }
+                              onToggleCompletedChildren={toggleCompletedChildrenExpansion}
                             />
-                          ));
-                        })()}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -1334,21 +1369,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const workspacesForNormalRendering = allWorkspaces.filter(
                                 (workspace) => !promotedWorkspaceIds.has(workspace.id)
                               );
-                              const expandedParentIds = new Set(
-                                Object.entries(expandedCompletedSubAgents)
-                                  .filter(([, expanded]) => expanded)
-                                  .map(([workspaceId]) => workspaceId)
-                              );
                               const sections = sortSectionsByLinkedList(config.sections ?? []);
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
                               const visibleWorkspacesForNormalRendering = filterVisibleAgentRows(
                                 workspacesForNormalRendering,
-                                expandedParentIds
+                                expandedCompletedParentIds
                               );
                               const baseRowMetaByWorkspaceId = computeAgentRowRenderMeta(
                                 workspacesForNormalRendering,
                                 depthByWorkspaceId,
-                                expandedParentIds
+                                expandedCompletedParentIds
                               );
                               const sortedDrafts = draftsForProject
                                 .slice()
@@ -1420,12 +1450,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     completedChildrenExpanded={
                                       expandedCompletedSubAgents[metadata.id] ?? false
                                     }
-                                    onToggleCompletedChildren={(workspaceId) => {
-                                      setExpandedCompletedSubAgents((prev) => ({
-                                        ...prev,
-                                        [workspaceId]: !prev[workspaceId],
-                                      }));
-                                    }}
+                                    onToggleCompletedChildren={toggleCompletedChildrenExpansion}
                                   />
                                 );
                               };
