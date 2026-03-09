@@ -243,7 +243,6 @@ export function computeAgentRowRenderMeta(
  * Each tier hides workspaces older than the specified duration.
  */
 export const AGE_THRESHOLDS_DAYS = [1, 7, 30] as const;
-export type AgeThresholdDays = (typeof AGE_THRESHOLDS_DAYS)[number];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -342,7 +341,7 @@ export function formatDaysThreshold(days: number): string {
  *   - buckets[1]: older than 7 days but newer than 30 days
  *   - buckets[2]: older than 30 days
  */
-export interface AgePartitionResult {
+interface AgePartitionResult {
   recent: FrontendWorkspaceMetadata[];
   buckets: FrontendWorkspaceMetadata[][];
 }
@@ -368,7 +367,7 @@ export function findNextNonEmptyTier(
   return -1;
 }
 
-export interface PinnedCompletedChildOptions {
+interface PinnedCompletedChildOptions {
   workspaces: FrontendWorkspaceMetadata[];
   workspaceRecency: Record<string, number>;
   expandedParentIds: ReadonlySet<string>;
@@ -507,7 +506,7 @@ export function partitionWorkspacesByAge(
  * - unsectioned: workspaces not assigned to any section
  * - bySectionId: map of section ID to workspaces in that section
  */
-export interface SectionPartitionResult {
+interface SectionPartitionResult {
   unsectioned: FrontendWorkspaceMetadata[];
   bySectionId: Map<string, FrontendWorkspaceMetadata[]>;
 }
