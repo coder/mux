@@ -2513,7 +2513,10 @@ export class AgentSession {
     sendOptions: SendMessageOptions;
     agentInitiated: boolean;
   } {
-    const compactionModel = this.getPreferredCompactionModel() ?? params.baseOptions.model;
+    const compactionModel =
+      this.getPreferredCompactionModel() ??
+      this.activeStreamContext?.modelString ??
+      params.baseOptions.model;
     assert(
       typeof compactionModel === "string" && compactionModel.trim().length > 0,
       "auto-compaction requires a non-empty model"
@@ -4342,6 +4345,21 @@ export class AgentSession {
       currentOptions?.thinkingLevel ??
       workspaceAiSettings?.thinkingLevel;
 
+    const sourceAnthropicOptions = currentOptions?.providerOptions?.anthropic;
+    const sourceHasAnthropic1MIntent =
+      sourceAnthropicOptions?.use1MContext === true ||
+      (sourceAnthropicOptions?.use1MContextModels?.length ?? 0) > 0;
+    const followUpProviderOptions =
+      sourceHasAnthropic1MIntent && supports1MContext(effectiveModel)
+        ? {
+            ...currentOptions?.providerOptions,
+            anthropic: {
+              ...sourceAnthropicOptions,
+              use1MContext: true,
+            },
+          }
+        : currentOptions?.providerOptions;
+
     // Build follow-up options from an explicit allowlist.
     // Exclude edit-only fields (editMessageId) to prevent the synthetic
     // follow-up from entering edit/truncation logic.
@@ -4354,8 +4372,8 @@ export class AgentSession {
         system1ThinkingLevel: currentOptions.system1ThinkingLevel,
       }),
       ...(currentOptions?.system1Model != null && { system1Model: currentOptions.system1Model }),
-      ...(currentOptions?.providerOptions != null && {
-        providerOptions: currentOptions.providerOptions,
+      ...(followUpProviderOptions != null && {
+        providerOptions: followUpProviderOptions,
       }),
       ...(currentOptions?.experiments != null && { experiments: currentOptions.experiments }),
       ...(currentOptions?.maxOutputTokens != null && {
