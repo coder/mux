@@ -1739,21 +1739,21 @@ export class ProviderModelFactory {
       return canonicalModelString;
     }
 
-    const routeDefinition = PROVIDER_DEFINITIONS[resolvedRouteProvider] as
-      | (typeof PROVIDER_DEFINITIONS)[ProviderName]
-      | undefined;
+    const routeDefinition = PROVIDER_DEFINITIONS[resolvedRouteProvider];
 
-    if (
-      routeDefinition?.kind !== "gateway" ||
-      !routeDefinition.routes?.includes(originProvider) ||
-      !routeDefinition.toGatewayModelId
-    ) {
+    if (routeDefinition.kind !== "gateway") {
       return canonicalModelString;
     }
 
-    return `${resolvedRouteProvider}:${routeDefinition.toGatewayModelId(
-      originProvider,
-      originModelId
-    )}`;
+    const gatewayRoutes: readonly ProviderName[] = routeDefinition.routes;
+    if (!gatewayRoutes.includes(originProvider)) {
+      return canonicalModelString;
+    }
+
+    if (!("toGatewayModelId" in routeDefinition) || !routeDefinition.toGatewayModelId) {
+      return canonicalModelString;
+    }
+
+    return `${resolvedRouteProvider}:${routeDefinition.toGatewayModelId(originProvider, originModelId)}`;
   }
 }
