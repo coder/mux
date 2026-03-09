@@ -171,8 +171,9 @@ export function useRouting(): RoutingState {
   const resolveRoute = useCallback(
     (canonicalModel: string) => {
       const normalized = normalizeToCanonical(canonicalModel);
+      // Resolve routes from the same canonical key space used for per-model overrides.
       const resolved: RouteContext = resolveRouteForModel(
-        canonicalModel,
+        normalized,
         routePriority,
         routeOverrides,
         isConfigured
