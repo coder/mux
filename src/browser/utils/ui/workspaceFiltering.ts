@@ -38,26 +38,17 @@ function flattenWorkspaceTree(
 
   const result: FrontendWorkspaceMetadata[] = [];
   const visited = new Set<string>();
-  const stack = roots
-    .slice()
-    .reverse()
-    .map((workspace) => ({ workspace, depth: 0 }));
+  const stack = roots.slice().reverse();
 
   while (stack.length > 0) {
-    const current = stack.pop();
-    assert(current != null, "flattenWorkspaceTree: stack entries must exist while traversing");
+    const workspace = stack.pop();
+    assert(workspace != null, "flattenWorkspaceTree: stack entries must exist while traversing");
 
-    const { workspace, depth } = current;
     if (visited.has(workspace.id)) {
       continue;
     }
     visited.add(workspace.id);
     result.push(workspace);
-
-    // Cap depth defensively to avoid pathological cycles/graphs.
-    if (depth >= 32) {
-      continue;
-    }
 
     const children = childrenByParent.get(workspace.id);
     if (!children) {
@@ -65,7 +56,7 @@ function flattenWorkspaceTree(
     }
 
     for (let index = children.length - 1; index >= 0; index -= 1) {
-      stack.push({ workspace: children[index], depth: depth + 1 });
+      stack.push(children[index]);
     }
   }
 

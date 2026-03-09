@@ -467,6 +467,30 @@ describe("buildSortedWorkspacesByProject", () => {
     ]);
   });
 
+  it("keeps reachable descendants visible even for deep parent chains", () => {
+    const depth = 40;
+    const workspaces = Array.from({ length: depth + 1 }, (_, index) => ({
+      path: `/a/ws-${index}`,
+      id: `ws-${index}`,
+    }));
+    const projects = new Map<string, ProjectConfig>([["/project/a", { workspaces }]]);
+    const metadata = new Map<string, FrontendWorkspaceMetadata>(
+      Array.from({ length: depth + 1 }, (_, index) => {
+        const parentWorkspaceId = index === 0 ? undefined : `ws-${index - 1}`;
+        return [
+          `ws-${index}`,
+          createWorkspace(`ws-${index}`, "/project/a", undefined, parentWorkspaceId),
+        ] as const;
+      })
+    );
+
+    const result = buildSortedWorkspacesByProject(projects, metadata, {});
+
+    expect(result.get("/project/a")?.map((workspace) => workspace.id)).toEqual(
+      Array.from({ length: depth + 1 }, (_, index) => `ws-${index}`)
+    );
+  });
+
   it("hides orphaned children whose parent is missing from active metadata", () => {
     const projects = new Map<string, ProjectConfig>([
       [
