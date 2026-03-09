@@ -224,16 +224,13 @@ describe("VoiceService.transcribe", () => {
     });
   });
 
-  it("returns error when muxGatewayEnabled is false in main config", async () => {
+  it("returns error when the mux-gateway provider is disabled and OpenAI is unavailable", async () => {
     await withTempConfig(async (config, service) => {
       config.saveProvidersConfig({
         "mux-gateway": {
           couponCode: "gateway-token",
+          enabled: false,
         },
-      });
-      await config.saveConfig({
-        ...config.loadConfigOrDefault(),
-        muxGatewayEnabled: false,
       });
 
       const fetchSpy = spyOn(globalThis, "fetch");

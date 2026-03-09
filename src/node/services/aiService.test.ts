@@ -309,9 +309,14 @@ describe("AIService.setupStreamEventForwarding", () => {
 });
 
 describe("AIService.resolveGatewayModelString", () => {
-  async function writeMuxConfig(
+  async function writeMainConfig(
     root: string,
-    config: { muxGatewayEnabled?: boolean; muxGatewayModels?: string[] }
+    config: {
+      muxGatewayEnabled?: boolean;
+      muxGatewayModels?: string[];
+      routePriority?: string[];
+      routeOverrides?: Record<string, string>;
+    }
   ): Promise<void> {
     await fs.writeFile(
       path.join(root, "config.json"),
@@ -353,7 +358,7 @@ describe("AIService.resolveGatewayModelString", () => {
   it("routes allowlisted models when gateway is enabled + configured", async () => {
     using muxHome = new DisposableTempDir("gateway-routing");
 
-    await writeMuxConfig(muxHome.path, {
+    await writeMainConfig(muxHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [KNOWN_MODELS.SONNET.id],
     });
@@ -369,15 +374,18 @@ describe("AIService.resolveGatewayModelString", () => {
     expect(resolved).toBe(toGatewayModelString(KNOWN_MODELS.SONNET.id));
   });
 
-  it("does not route when gateway is disabled", async () => {
-    using muxHome = new DisposableTempDir("gateway-routing-disabled");
+  it("does not route when the mux-gateway provider is disabled", async () => {
+    using muxHome = new DisposableTempDir("gateway-routing-provider-disabled");
 
-    await writeMuxConfig(muxHome.path, {
-      muxGatewayEnabled: false,
-      muxGatewayModels: [KNOWN_MODELS.SONNET.id],
+    await writeMainConfig(muxHome.path, {
+      routePriority: ["mux-gateway", "direct"],
     });
     await writeProvidersConfig(muxHome.path, {
-      "mux-gateway": { couponCode: "test-coupon" },
+      anthropic: { apiKey: "sk-ant-test" },
+      "mux-gateway": {
+        couponCode: "test-coupon",
+        enabled: false,
+      },
     });
 
     const service = createService(muxHome.path);
@@ -391,7 +399,7 @@ describe("AIService.resolveGatewayModelString", () => {
   it("does not route when gateway is not configured", async () => {
     using muxHome = new DisposableTempDir("gateway-routing-unconfigured");
 
-    await writeMuxConfig(muxHome.path, {
+    await writeMainConfig(muxHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [KNOWN_MODELS.SONNET.id],
     });
@@ -408,7 +416,7 @@ describe("AIService.resolveGatewayModelString", () => {
     using muxHome = new DisposableTempDir("gateway-routing-unsupported-provider");
 
     const modelString = "openrouter:some-model";
-    await writeMuxConfig(muxHome.path, {
+    await writeMainConfig(muxHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [modelString],
     });
@@ -428,7 +436,7 @@ describe("AIService.resolveGatewayModelString", () => {
     using muxHome = new DisposableTempDir("gateway-routing-model-key");
 
     const variant = "xai:grok-4-1-fast-reasoning";
-    await writeMuxConfig(muxHome.path, {
+    await writeMainConfig(muxHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [KNOWN_MODELS.GROK_4_1.id],
     });
@@ -450,7 +458,7 @@ describe("AIService.resolveGatewayModelString", () => {
   it("honors explicit mux-gateway prefixes from legacy clients", async () => {
     using muxHome = new DisposableTempDir("gateway-routing-explicit");
 
-    await writeMuxConfig(muxHome.path, {
+    await writeMainConfig(muxHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [],
     });

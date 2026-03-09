@@ -580,11 +580,17 @@ export class ProviderModelFactory {
       return false;
     }
 
+    // Route resolution must honor the shared provider-level enabled=false switch
+    // before considering legacy gateway-specific config gates.
+    if (isProviderDisabledInConfig(providerConfig as { enabled?: unknown })) {
+      return false;
+    }
+
     if (provider === "mux-gateway") {
       return config.muxGatewayEnabled !== false;
     }
 
-    return !isProviderDisabledInConfig(providerConfig as { enabled?: unknown });
+    return true;
   }
 
   /**
