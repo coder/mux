@@ -367,7 +367,7 @@ export function findNextNonEmptyTier(
   return -1;
 }
 
-interface PinnedCompletedChildOptions {
+export interface PinnedCompletedChildOptions {
   workspaces: FrontendWorkspaceMetadata[];
   workspaceRecency: Record<string, number>;
   expandedParentIds: ReadonlySet<string>;
