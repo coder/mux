@@ -543,6 +543,7 @@ jobs:
     needs:
       - changes
       - static-check
+      - flake-hash-check
       - lint-actions
       - test-unit
       - test-integration
