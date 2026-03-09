@@ -10,6 +10,21 @@
  * Simple providers (requiresApiKey + standard factory pattern) need NO aiService.ts changes.
  */
 
+/**
+ * Union type of all supported provider names
+ */
+export type ProviderName =
+  | "mux-gateway"
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "xai"
+  | "deepseek"
+  | "openrouter"
+  | "github-copilot"
+  | "bedrock"
+  | "ollama";
+
 interface ProviderDefinition {
   /** Display name for UI (proper casing) */
   displayName: string;
@@ -19,9 +34,36 @@ interface ProviderDefinition {
   factoryName: string;
   /** Whether provider requires an API key (false for local services like Ollama) */
   requiresApiKey: boolean;
+  /** Provider category for routing behavior */
+  kind: "direct" | "gateway" | "local";
+  /** Gateways only: which direct providers this gateway routes to */
+  routes?: ProviderName[];
+  /** Transform canonical model identity into a gateway-specific model ID */
+  toGatewayModelId?: (origin: string, modelId: string) => string;
+  /** Parse a gateway-specific model ID back into canonical model identity */
+  fromGatewayModelId?: (gatewayModelId: string) => { origin: string; modelId: string } | null;
+  /** True when gateway is a transparent proxy and preserves canonical identity */
+  passthrough?: boolean;
   /** Whether this provider uses stroke-based icon styling instead of fill */
   strokeBasedIcon?: boolean;
 }
+
+const toSlashSeparatedGatewayModelId = (origin: string, modelId: string): string =>
+  `${origin}/${modelId}`;
+
+const fromSlashSeparatedGatewayModelId = (
+  gatewayModelId: string
+): { origin: string; modelId: string } | null => {
+  const separatorIndex = gatewayModelId.indexOf("/");
+  if (separatorIndex === -1) {
+    return null;
+  }
+
+  return {
+    origin: gatewayModelId.slice(0, separatorIndex),
+    modelId: gatewayModelId.slice(separatorIndex + 1),
+  };
+};
 
 // Order determines display order in UI (Settings, model selectors, etc.)
 export const PROVIDER_DEFINITIONS = {
@@ -30,6 +72,11 @@ export const PROVIDER_DEFINITIONS = {
     import: () => import("ai"),
     factoryName: "createGateway",
     requiresApiKey: true, // Uses couponCode
+    kind: "gateway",
+    routes: ["anthropic", "openai", "google", "xai"],
+    passthrough: true,
+    toGatewayModelId: toSlashSeparatedGatewayModelId,
+    fromGatewayModelId: fromSlashSeparatedGatewayModelId,
     strokeBasedIcon: true,
   },
   anthropic: {
@@ -37,77 +84,94 @@ export const PROVIDER_DEFINITIONS = {
     import: () => import("@ai-sdk/anthropic"),
     factoryName: "createAnthropic",
     requiresApiKey: true,
+    kind: "direct",
   },
   openai: {
     displayName: "OpenAI",
     import: () => import("@ai-sdk/openai"),
     factoryName: "createOpenAI",
     requiresApiKey: true,
+    kind: "direct",
   },
   google: {
     displayName: "Google",
     import: () => import("@ai-sdk/google"),
     factoryName: "createGoogleGenerativeAI",
     requiresApiKey: true,
+    kind: "direct",
   },
   xai: {
     displayName: "xAI",
     import: () => import("@ai-sdk/xai"),
     factoryName: "createXai",
     requiresApiKey: true,
+    kind: "direct",
   },
   deepseek: {
     displayName: "DeepSeek",
     import: () => import("@ai-sdk/deepseek"),
     factoryName: "createDeepSeek",
     requiresApiKey: true,
+    kind: "direct",
   },
   openrouter: {
     displayName: "OpenRouter",
     import: () => import("@openrouter/ai-sdk-provider"),
     factoryName: "createOpenRouter",
     requiresApiKey: true,
+    kind: "gateway",
+    routes: ["anthropic", "openai", "google", "xai", "deepseek"],
+    passthrough: false,
+    toGatewayModelId: toSlashSeparatedGatewayModelId,
+    fromGatewayModelId: fromSlashSeparatedGatewayModelId,
   },
   "github-copilot": {
     displayName: "GitHub Copilot",
     import: () => import("@ai-sdk/openai-compatible"),
     factoryName: "createOpenAICompatible",
     requiresApiKey: true,
+    kind: "gateway",
+    routes: ["openai"],
+    passthrough: false,
   },
   bedrock: {
     displayName: "Bedrock",
     import: () => import("@ai-sdk/amazon-bedrock"),
     factoryName: "createAmazonBedrock",
     requiresApiKey: false, // Uses AWS credential chain
+    kind: "gateway",
+    routes: ["anthropic"],
+    passthrough: false,
   },
   ollama: {
     displayName: "Ollama",
     import: () => import("ollama-ai-provider-v2"),
     factoryName: "createOllama",
     requiresApiKey: false, // Local service
+    kind: "local",
   },
-} as const satisfies Record<string, ProviderDefinition>;
+} as const satisfies Record<ProviderName, ProviderDefinition>;
 
-/**
- * Union type of all supported provider names
- */
-export type ProviderName = keyof typeof PROVIDER_DEFINITIONS;
+export const GATEWAY_PROVIDERS = Object.entries(PROVIDER_DEFINITIONS)
+  .filter(([, def]) => def.kind === "gateway")
+  .map(([name]) => name as ProviderName);
+
+export const DIRECT_PROVIDERS = Object.entries(PROVIDER_DEFINITIONS)
+  .filter(([, def]) => def.kind === "direct")
+  .map(([name]) => name as ProviderName);
+
+/** Which gateways can route a given origin? */
+export function gatewaysForOrigin(origin: ProviderName): ProviderName[] {
+  return GATEWAY_PROVIDERS.filter((gateway) => {
+    const gatewayDefinition = PROVIDER_DEFINITIONS[gateway] as ProviderDefinition;
+    return gatewayDefinition.routes?.includes(origin);
+  });
+}
 
 /**
  * Array of all supported provider names (for UI lists, iteration, etc.)
  */
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_DEFINITIONS) as ProviderName[];
-
-/**
- * Providers that Mux Gateway can route to.
- * Matches the supported providers in the gateway UI.
- */
-export const MUX_GATEWAY_SUPPORTED_PROVIDERS = new Set<ProviderName>([
-  "anthropic",
-  "openai",
-  "google",
-  "xai",
-]);
 
 /**
  * Display names for providers (proper casing for UI)
