@@ -57,8 +57,8 @@ interface OrchestrateForkParams {
 interface OrchestrateForkSuccess {
   /**
    * Path to the new workspace on disk.
-   * Multi-project forks persist the shared container root here so queued tasks and git lookups
-   * execute from the same workspace root as the runtime.
+   * Multi-project forks persist the primary project's git-root checkout here so downstream git
+   * operations and artifact collection always resolve a real repository.
    */
   workspacePath: string;
   /** Trunk branch for init */
@@ -459,16 +459,15 @@ export async function orchestrateFork(
       targetProjectRuntimes,
       newWorkspaceName
     );
-    const workspacePath = targetRuntime.getWorkspacePath(projectPath, newWorkspaceName);
+    const containerWorkspacePath = targetRuntime.getWorkspacePath(projectPath, newWorkspaceName);
     assert(
-      workspacePath === containerManager.getContainerPath(newWorkspaceName),
-      "Expected multi-project target runtime to persist the shared container root"
+      containerWorkspacePath === containerManager.getContainerPath(newWorkspaceName),
+      "Expected multi-project target runtime to keep using the shared container root"
     );
 
     return Ok({
-      // Persist the shared container root so downstream task creation, git-base lookups,
-      // and runtime execution all agree on the multi-project workspace root.
-      workspacePath,
+      // Persist the primary project's checkout so downstream git work stays inside a repo.
+      workspacePath: primaryWorkspacePath,
       trunkBranch,
       forkedRuntimeConfig: normalizedForkedRuntimeConfig,
       targetRuntime,

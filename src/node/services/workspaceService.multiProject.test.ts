@@ -392,6 +392,123 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
+  test("merges multi-project executeBash secrets across all repos with primary-project precedence", async () => {
+    const workspaceId = "ws-multi-bash-secrets";
+    const workspaceName = "feature-multi-bash-secrets";
+    const srcDir = "/tmp/src";
+    const projectAPath = "/tmp/project-a";
+    const projectBPath = "/tmp/project-b";
+    const primaryWorkspacePath = `/tmp/workspaces/project-a/${workspaceName}`;
+    const metadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: workspaceName,
+      projectPath: projectAPath,
+      projectName: "project-a",
+      projects: [
+        { projectPath: projectAPath, projectName: "project-a" },
+        { projectPath: projectBPath, projectName: "project-b" },
+      ],
+      runtimeConfig: { type: "local" },
+    };
+    const waitForInitMock = mock(() => Promise.resolve());
+    const ensureReadyAMock = mock(() => Promise.resolve({ ready: true as const }));
+    const ensureReadyBMock = mock(() => Promise.resolve({ ready: true as const }));
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+      (_runtimeConfig, options) => {
+        if (options?.projectPath === projectAPath) {
+          return {
+            ensureReady: ensureReadyAMock,
+            getWorkspacePath: mock(() => `/tmp/workspaces/project-a/${workspaceName}`),
+          } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+        }
+        if (options?.projectPath === projectBPath) {
+          return {
+            ensureReady: ensureReadyBMock,
+            getWorkspacePath: mock(() => `/tmp/workspaces/project-b/${workspaceName}`),
+          } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+        }
+        throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
+      }
+    );
+    const bashExecuteMock = mock(() =>
+      Promise.resolve({ success: true as const, output: "ok", exitCode: 0, wall_duration_ms: 1 })
+    );
+    let capturedToolConfig: Parameters<typeof bashToolModule.createBashTool>[0] | undefined;
+    const createBashToolSpy = spyOn(bashToolModule, "createBashTool").mockImplementation(
+      (config) => {
+        capturedToolConfig = config;
+        return {
+          execute: bashExecuteMock,
+        } as unknown as ReturnType<typeof bashToolModule.createBashTool>;
+      }
+    );
+    const getEffectiveSecretsMock = mock((projectPath: string) => {
+      if (projectPath === projectAPath) {
+        return [
+          { key: "SHARED_SECRET", value: "primary" },
+          { key: "PRIMARY_ONLY_SECRET", value: "alpha" },
+        ];
+      }
+      if (projectPath === projectBPath) {
+        return [
+          { key: "SHARED_SECRET", value: "secondary" },
+          { key: "SECONDARY_ONLY_SECRET", value: "beta" },
+        ];
+      }
+      throw new Error(`Unexpected secrets lookup: ${projectPath}`);
+    });
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(metadata))),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const workspaceService = new WorkspaceService(
+      {
+        srcDir,
+        getSessionDir: mock(() => "/tmp/test/sessions"),
+        findWorkspace: mock(() => ({
+          projectPath: projectAPath,
+          workspacePath: primaryWorkspacePath,
+        })),
+        loadConfigOrDefault: mock(() => ({
+          projects: new Map([
+            [projectAPath, { workspaces: [], trusted: true }],
+            [projectBPath, { workspaces: [], trusted: true }],
+          ]),
+        })),
+        getEffectiveSecrets: getEffectiveSecretsMock,
+      } as unknown as Config,
+      historyService,
+      aiService,
+      {
+        on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
+        waitForInit: waitForInitMock,
+      } as unknown as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    try {
+      const result = await workspaceService.executeBash(workspaceId, "pwd");
+
+      expect(result.success).toBe(true);
+      assert(capturedToolConfig);
+      expect(capturedToolConfig.secrets).toEqual({
+        SHARED_SECRET: "primary",
+        PRIMARY_ONLY_SECRET: "alpha",
+        SECONDARY_ONLY_SECRET: "beta",
+      });
+      expect(getEffectiveSecretsMock.mock.calls).toEqual([[projectAPath], [projectBPath]]);
+      expect(bashExecuteMock).toHaveBeenCalledTimes(1);
+    } finally {
+      createBashToolSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
   test("keeps multi-project git command mode on the primary repo checkout even when the persisted workspace path points at that checkout", async () => {
     const workspaceId = "ws-multi-git";
     const workspaceName = "feature-multi-git";

@@ -39,6 +39,7 @@ import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
+import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -5354,8 +5355,10 @@ export class WorkspaceService extends EventEmitter {
         assert(cwdForExecution.length > 0, "Multi-project repo-root execution requires a repo cwd");
       }
 
-      // Load project secrets
-      const projectSecrets = this.config.getEffectiveSecrets(metadata.projectPath);
+      // Multi-project bash shares one execution environment, so inject the union of repo secrets.
+      const projectSecrets = isMultiProject(metadata)
+        ? mergeMultiProjectSecrets(metadata, this.config)
+        : this.config.getEffectiveSecrets(metadata.projectPath);
 
       // Create scoped temp directory for this IPC call
       using tempDir = new DisposableTempDir("mux-ipc-bash");

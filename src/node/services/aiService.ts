@@ -27,7 +27,8 @@ import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getSrcBaseDir } from "@/common/types/runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
-import { secretsToRecord, type ExternalSecretResolver, type Secret } from "@/common/types/secrets";
+import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
+import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { PolicyService } from "@/node/services/policyService";
@@ -150,34 +151,6 @@ function mergeProviderExtrasUnderMux(
       isPlainObject(extraValue) && isPlainObject(muxValue)
         ? mergeProviderExtrasUnderMux(extraValue, muxValue)
         : muxValue;
-  }
-
-  return merged;
-}
-
-function mergeMultiProjectSecrets(metadata: WorkspaceMetadata, config: Config): Secret[] {
-  const projects = getProjects(metadata);
-  const primaryProject = projects.find((project) => project.projectPath === metadata.projectPath);
-  const orderedProjects = primaryProject
-    ? [
-        primaryProject,
-        ...projects.filter((project) => project.projectPath !== metadata.projectPath),
-      ]
-    : projects;
-
-  const seen = new Set<string>();
-  const merged: Secret[] = [];
-
-  // Primary project secrets are processed first so existing single-project precedence is preserved.
-  for (const project of orderedProjects) {
-    const secrets = config.getEffectiveSecrets(project.projectPath);
-    for (const secret of secrets) {
-      if (seen.has(secret.key)) {
-        continue;
-      }
-      seen.add(secret.key);
-      merged.push(secret);
-    }
   }
 
   return merged;
