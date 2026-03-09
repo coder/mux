@@ -740,6 +740,14 @@ export function ProvidersSection() {
         if (waitResult.success) {
           setMuxGatewayLoginStatus("success");
           void refreshMuxGatewayAccountStatus();
+
+          // Ensure mux-gateway is in route priority after OAuth login.
+          // OAuth saves credentials directly, bypassing the ORPC setProviderConfig
+          // handler where auto-insert normally happens.
+          if (!routing.routePriority.includes("mux-gateway")) {
+            routing.setRoutePriority(["mux-gateway", ...routing.routePriority]);
+          }
+
           return;
         }
 
@@ -824,6 +832,14 @@ export function ProvidersSection() {
         setMuxGatewayAuthorizeUrl(null);
         setMuxGatewayLoginStatus("success");
         void refreshMuxGatewayAccountStatus();
+
+        // Ensure mux-gateway is in route priority after OAuth login.
+        // OAuth saves credentials directly, bypassing the ORPC setProviderConfig
+        // handler where auto-insert normally happens.
+        if (!routing.routePriority.includes("mux-gateway")) {
+          routing.setRoutePriority(["mux-gateway", ...routing.routePriority]);
+        }
+
         return;
       }
 
@@ -841,6 +857,7 @@ export function ProvidersSection() {
     muxGatewayServerState,
     backendOrigin,
     refreshMuxGatewayAccountStatus,
+    routing,
   ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
   const muxGatewayLoginInProgress =

@@ -34,10 +34,12 @@ import { RUNTIME_ENABLEMENT_IDS, type RuntimeEnablementId } from "@/common/types
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
+import { GATEWAY_PROVIDERS } from "@/common/constants/providers";
 import { PlatformPaths } from "@/common/utils/paths";
 import { isValidModelFormat, normalizeToCanonical } from "@/common/utils/ai/models";
 import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
@@ -332,6 +334,50 @@ export class Config {
           delete parsed.muxGatewayEnabled;
           delete parsed.muxGatewayModels;
           configModified = true;
+        }
+
+        // Ensure configured gateways appear in routePriority.
+        // This catches users who were already logged into a gateway before the
+        // route priority system was introduced (migration only handles the case
+        // where muxGatewayEnabled/muxGatewayModels fields existed in config).
+        if (!Array.isArray(parsed.routePriority)) {
+          // routePriority was never set — build it from currently-configured providers.
+          const providersConfig = this.loadProvidersConfig() ?? {};
+          const priority: string[] = [];
+
+          for (const gw of GATEWAY_PROVIDERS) {
+            const creds = resolveProviderCredentials(gw, providersConfig[gw] ?? {});
+            if (creds.isConfigured) {
+              priority.push(gw);
+            }
+          }
+          priority.push("direct");
+
+          if (priority.length > 1) {
+            // At least one gateway is configured — set the priority.
+            parsed.routePriority = priority;
+            configModified = true;
+          }
+        } else {
+          // routePriority exists but might be missing newly-configured gateways.
+          const providersConfig = this.loadProvidersConfig() ?? {};
+          let modified = false;
+
+          for (const gw of GATEWAY_PROVIDERS) {
+            if (parsed.routePriority.includes(gw)) continue;
+            const creds = resolveProviderCredentials(gw, providersConfig[gw] ?? {});
+            if (creds.isConfigured) {
+              // Insert before "direct" if possible, otherwise at end.
+              const directIdx = parsed.routePriority.indexOf("direct");
+              if (directIdx >= 0) {
+                parsed.routePriority.splice(directIdx, 0, gw);
+              } else {
+                parsed.routePriority.unshift(gw);
+              }
+              modified = true;
+            }
+          }
+          if (modified) configModified = true;
         }
 
         // Normalize gateway-prefixed model strings so persisted config uses canonical ids.
