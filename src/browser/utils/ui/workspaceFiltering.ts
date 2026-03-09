@@ -1,5 +1,6 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
+import { assert } from "@/common/utils/assert";
 
 // Re-export shared section sorting utility
 export { sortSectionsByLinkedList } from "@/common/utils/sections";
@@ -18,48 +19,66 @@ function flattenWorkspaceTree(
   const roots: FrontendWorkspaceMetadata[] = [];
 
   // Preserve input order for both roots and siblings by iterating in-order.
+  // Active sub-workspaces only render when their full parent chain is active.
   for (const workspace of workspaces) {
     const parentId = workspace.parentWorkspaceId;
-    if (parentId && byId.has(parentId)) {
-      const children = childrenByParent.get(parentId) ?? [];
-      children.push(workspace);
-      childrenByParent.set(parentId, children);
-    } else {
+    if (parentId == null) {
       roots.push(workspace);
+      continue;
     }
+
+    if (!byId.has(parentId)) {
+      continue;
+    }
+
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(workspace);
+    childrenByParent.set(parentId, children);
   }
 
   const result: FrontendWorkspaceMetadata[] = [];
   const visited = new Set<string>();
+  const stack = roots
+    .slice()
+    .reverse()
+    .map((workspace) => ({ workspace, depth: 0 }));
 
-  const visit = (workspace: FrontendWorkspaceMetadata, depth: number) => {
-    if (visited.has(workspace.id)) return;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    assert(current != null, "flattenWorkspaceTree: stack entries must exist while traversing");
+
+    const { workspace, depth } = current;
+    if (visited.has(workspace.id)) {
+      continue;
+    }
     visited.add(workspace.id);
+    result.push(workspace);
 
     // Cap depth defensively to avoid pathological cycles/graphs.
-    if (depth > 32) {
-      result.push(workspace);
-      return;
+    if (depth >= 32) {
+      continue;
     }
 
-    result.push(workspace);
     const children = childrenByParent.get(workspace.id);
-    if (children) {
-      for (const child of children) {
-        visit(child, depth + 1);
-      }
+    if (!children) {
+      continue;
     }
-  };
 
-  for (const root of roots) {
-    visit(root, 0);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ workspace: children[index], depth: depth + 1 });
+    }
   }
 
-  // Fallback: ensure we include any remaining nodes (cycles, missing parents, etc.).
   for (const workspace of workspaces) {
-    if (!visited.has(workspace.id)) {
-      visit(workspace, 0);
+    if (visited.has(workspace.id)) {
+      continue;
     }
+
+    assert(
+      workspace.parentWorkspaceId != null,
+      "flattenWorkspaceTree: unvisited root workspaces should have been traversed"
+    );
+    // Intentionally drop orphaned/cyclic descendants instead of promoting them to roots.
   }
 
   return result;
