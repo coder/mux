@@ -5269,18 +5269,22 @@ export class WorkspaceService extends EventEmitter {
         return Err(`Workspace ${workspaceId} not found in config`);
       }
 
+      const multiProjectRuntimes = isMultiProject(metadata)
+        ? getProjects(metadata).map((project) => ({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            runtime: createRuntime(metadata.runtimeConfig, {
+              projectPath: project.projectPath,
+              workspaceName: metadata.name,
+            }),
+          }))
+        : undefined;
+
       // Multi-project workspaces execute bash from the container root so sibling repos are addressable.
-      const runtime = isMultiProject(metadata)
+      const runtime = multiProjectRuntimes
         ? new MultiProjectRuntime(
             new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
-            getProjects(metadata).map((project) => ({
-              projectPath: project.projectPath,
-              projectName: project.projectName,
-              runtime: createRuntime(metadata.runtimeConfig, {
-                projectPath: project.projectPath,
-                workspaceName: metadata.name,
-              }),
-            })),
+            multiProjectRuntimes,
             metadata.name
           )
         : createRuntimeForWorkspace(metadata);
@@ -5317,20 +5321,20 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Multi-project script mode still runs from the container root so sibling repos remain addressable,
-      // but bare git command mode must target the primary workspace checkout to avoid mutating the
-      // user's source repo when worktree metadata.projectPath still points at the repo root.
+      // but bare git command mode must target the primary workspace checkout so git always runs inside
+      // a repo even when the persisted workspace entry points at the container root.
       let cwdForExecution = workspacePath;
-      if (isMultiProject(metadata) && command === "git") {
-        const primaryProject = getProjects(metadata)[0];
-        assert(primaryProject, "Multi-project git command mode requires a primary project");
+      if (multiProjectRuntimes && command === "git") {
+        const primaryProjectRuntime = multiProjectRuntimes[0];
         assert(
-          workspace.workspacePath.length > 0,
-          "Multi-project git command mode requires a repo cwd"
+          primaryProjectRuntime,
+          "Multi-project git command mode requires a primary project runtime"
         );
-        cwdForExecution =
-          workspace.projectPath === MULTI_PROJECT_CONFIG_KEY
-            ? path.join(workspace.workspacePath, primaryProject.projectName)
-            : workspace.workspacePath;
+        cwdForExecution = primaryProjectRuntime.runtime.getWorkspacePath(
+          primaryProjectRuntime.projectPath,
+          metadata.name
+        );
+        assert(cwdForExecution.length > 0, "Multi-project git command mode requires a repo cwd");
       }
 
       // Load project secrets

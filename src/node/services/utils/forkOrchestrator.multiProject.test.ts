@@ -180,8 +180,8 @@ describe("orchestrateFork (multi-project)", () => {
       CONTAINER_PATH
     );
     removeContainerMock = spyOn(ContainerManager.prototype, "removeContainer").mockResolvedValue();
-    listLocalBranchesMock = spyOn(gitModule, "listLocalBranches").mockRejectedValue(
-      new Error("git unavailable in test")
+    listLocalBranchesMock = spyOn(gitModule, "listLocalBranches").mockImplementation(() =>
+      Promise.reject(new Error("git unavailable in test"))
     );
     detectDefaultTrunkBranchMock = spyOn(gitModule, "detectDefaultTrunkBranch").mockResolvedValue(
       "main"
@@ -235,6 +235,55 @@ describe("orchestrateFork (multi-project)", () => {
     expect(removeContainerMock).not.toHaveBeenCalled();
 
     expect(createRuntimeMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("preserves pre-existing containers when createContainer fails with EEXIST", async () => {
+    const projectOneRuntime = createProjectRuntimeMocks();
+    const projectTwoRuntime = createProjectRuntimeMocks();
+    mockProjectRuntimes(projectOneRuntime, projectTwoRuntime);
+
+    projectOneRuntime.forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-one",
+      sourceBranch: "main",
+    } satisfies WorkspaceForkResult);
+    projectTwoRuntime.forkWorkspace.mockResolvedValue({
+      success: true,
+      workspacePath: "/tmp/child/project-two",
+    } satisfies WorkspaceForkResult);
+    projectOneRuntime.deleteWorkspace.mockResolvedValue({ success: true });
+    projectTwoRuntime.deleteWorkspace.mockResolvedValue({ success: true });
+    createContainerMock.mockRejectedValueOnce(
+      Object.assign(new Error(`${NEW_WORKSPACE_NAME} already exists`), { code: "EEXIST" })
+    );
+
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: `Failed to create child workspace container: ${NEW_WORKSPACE_NAME} already exists`,
+    });
+    expect(createContainerMock).toHaveBeenCalledWith(NEW_WORKSPACE_NAME, [
+      { projectName: "project-one", workspacePath: "/tmp/child/project-one" },
+      { projectName: "project-two", workspacePath: "/tmp/child/project-two" },
+    ]);
+    expect(projectOneRuntime.deleteWorkspace).toHaveBeenCalledWith(
+      PROJECT_ONE_PATH,
+      NEW_WORKSPACE_NAME,
+      false,
+      undefined,
+      true
+    );
+    expect(projectTwoRuntime.deleteWorkspace).toHaveBeenCalledWith(
+      PROJECT_TWO_PATH,
+      NEW_WORKSPACE_NAME,
+      false,
+      undefined,
+      true
+    );
+    expect(removeContainerMock).not.toHaveBeenCalled();
   });
 
   it("returns the primary project git root when the primary project falls back to createWorkspace", async () => {

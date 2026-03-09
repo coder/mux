@@ -185,12 +185,13 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
-  test("uses the persisted per-project workspace path for multi-project git command mode", async () => {
+  test("uses the primary project runtime workspace path for multi-project git command mode", async () => {
     const workspaceId = "ws-multi-git";
     const workspaceName = "feature-multi-git";
     const srcDir = "/tmp/src";
     const projectAPath = "/tmp/project-a";
     const projectBPath = "/tmp/project-b";
+    const containerPath = new ContainerManager(srcDir).getContainerPath(workspaceName);
     const metadata: WorkspaceMetadata = {
       id: workspaceId,
       name: workspaceName,
@@ -247,7 +248,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
         getSessionDir: mock(() => "/tmp/test/sessions"),
         findWorkspace: mock(() => ({
           projectPath: projectAPath,
-          workspacePath: `/tmp/workspaces/project-a/${workspaceName}`,
+          workspacePath: containerPath,
         })),
         loadConfigOrDefault: mock(() => ({
           projects: new Map([[projectAPath, { workspaces: [], trusted: true }]]),
@@ -294,7 +295,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
-  test("uses the primary project path inside the container for _multi git command mode", async () => {
+  test("uses the primary project runtime workspace path for _multi git command mode", async () => {
     const workspaceId = "ws-multi-git-container";
     const workspaceName = "feature-multi-git-container";
     const srcDir = "/tmp/src";
@@ -386,7 +387,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
       expect(createRuntimeSpy).toHaveBeenCalledTimes(2);
       assert(capturedToolConfig);
       expect(capturedToolConfig.runtime).toBeInstanceOf(MultiProjectRuntime);
-      expect(capturedToolConfig.cwd).toBe(path.join(containerPath, "project-a"));
+      expect(capturedToolConfig.cwd).toBe(`/tmp/workspaces/project-a/${workspaceName}`);
       expect(bashExecuteMock).toHaveBeenCalledTimes(1);
     } finally {
       createBashToolSpy.mockRestore();
@@ -2321,7 +2322,7 @@ describe("WorkspaceService multi-project lifecycle", () => {
       const createContainerSpy = spyOn(
         ContainerManager.prototype,
         "createContainer"
-      ).mockRejectedValue(new Error("container create failed"));
+      ).mockImplementation(() => Promise.reject(new Error("container create failed")));
 
       try {
         const workspaceService = new WorkspaceService(

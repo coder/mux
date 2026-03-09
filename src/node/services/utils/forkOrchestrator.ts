@@ -186,6 +186,10 @@ function withRollbackErrors(errorMessage: string, rollbackErrors: string[]): str
   return `${errorMessage} Rollback errors: ${rollbackErrors.join("; ")}`;
 }
 
+function isErrnoWithCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
 export async function orchestrateFork(
   params: OrchestrateForkParams
 ): Promise<Result<OrchestrateForkSuccess>> {
@@ -418,15 +422,20 @@ export async function orchestrateFork(
         getProjectTrusted,
         abortSignal
       );
-      try {
-        await containerManager.removeContainer(newWorkspaceName);
-      } catch (cleanupError: unknown) {
-        rollbackErrors.push(`[container] ${getErrorMessage(cleanupError)}`);
+      const containerAlreadyExists = isErrnoWithCode(error, "EEXIST");
+      if (!containerAlreadyExists) {
+        try {
+          await containerManager.removeContainer(newWorkspaceName);
+        } catch (cleanupError: unknown) {
+          rollbackErrors.push(`[container] ${getErrorMessage(cleanupError)}`);
+        }
       }
 
       return Err(
         withRollbackErrors(
-          `Failed to create child workspace container: ${getErrorMessage(error)}`,
+          containerAlreadyExists
+            ? `Failed to create child workspace container: ${newWorkspaceName} already exists`
+            : `Failed to create child workspace container: ${getErrorMessage(error)}`,
           rollbackErrors
         )
       );
