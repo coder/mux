@@ -88,6 +88,8 @@ import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
 import { createProjectRefs } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
+import type { EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
+import { playEventSound } from "@/browser/utils/audio/eventSounds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { LandingPage } from "@/browser/features/LandingPage/LandingPage";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
@@ -990,6 +992,21 @@ function AppInner() {
       // can be drained before compaction finishes.
       if (compaction?.hasContinueMessage) return;
 
+      // Play event sound (independent of notification settings).
+      if (api) {
+        void api.config
+          .getConfig()
+          .then((config) => {
+            playEventSound(
+              (config as { eventSoundSettings?: EventSoundSettings }).eventSoundSettings,
+              "agent_review_ready"
+            );
+          })
+          .catch((error) => {
+            console.debug("Failed to load event sound settings", { error: String(error) });
+          });
+      }
+
       // Skip notification if the selected workspace is focused (Slack-like behavior).
       // Notification suppression intentionally follows selection state, not chat-route visibility.
       const isWorkspaceFocused =
@@ -1043,7 +1060,7 @@ function AppInner() {
     return () => {
       unsubscribe?.();
     };
-  }, [setSelectedWorkspace, workspaceStore]);
+  }, [api, setSelectedWorkspace, workspaceStore]);
 
   // Show auth modal if authentication is required
   if (status === "auth_required") {
