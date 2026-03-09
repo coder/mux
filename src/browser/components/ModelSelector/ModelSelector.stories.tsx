@@ -36,6 +36,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
         return setupSimpleChatStory({
           workspaceId,
           messages: [],
+          routePriority: ["mux-gateway", "direct"],
           providersConfig: {
             "mux-gateway": {
               apiKeySet: false,
@@ -74,7 +75,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
     // Sanity check that the gateway indicator exists (moved to the titlebar).
     const gatewayIndicator = await waitFor(
       () => {
-        const el = canvasElement.querySelector('[aria-label="Mux Gateway"]');
+        const el = canvasElement.querySelector('[aria-label="Mux Gateway routing"]');
         if (!el) throw new Error("Gateway indicator not found");
         return el;
       },

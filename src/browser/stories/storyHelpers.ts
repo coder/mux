@@ -368,6 +368,10 @@ export interface SimpleChatSetupOptions {
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
   /** Idle compaction hours for context meter (null = disabled) */
   idleCompactionHours?: number | null;
+  /** Route priority for routing-aware stories */
+  routePriority?: string[];
+  /** Per-model route overrides for routing-aware stories */
+  routeOverrides?: Record<string, string>;
   /** Override signing capabilities (for testing warning states) */
   signingCapabilities?: {
     publicKey: string | null;
@@ -471,6 +475,8 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     executeBash,
     providersConfig: opts.providersConfig,
     agentAiDefaults: opts.agentAiDefaults,
+    routePriority: opts.routePriority,
+    routeOverrides: opts.routeOverrides,
     backgroundProcesses: bgProcesses,
     sessionUsage: sessionUsageMap,
     subagentTranscripts: opts.subagentTranscripts,
