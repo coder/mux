@@ -17,7 +17,7 @@ import {
   isCodexOauthRequiredModelId,
 } from "@/common/constants/codexOAuth";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
-import type { Config, ProviderConfig } from "@/node/config";
+import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
@@ -569,6 +569,24 @@ export class ProviderModelFactory {
     return this.opResolver(apiKey);
   }
 
+  private isProviderAvailableForRouting(
+    provider: ProviderName,
+    providersConfig: ProvidersConfig,
+    config: ReturnType<Config["loadConfigOrDefault"]>
+  ): boolean {
+    const providerConfig = providersConfig[provider] ?? {};
+    const credentials = resolveProviderCredentials(provider, providerConfig);
+    if (!credentials.isConfigured) {
+      return false;
+    }
+
+    if (provider === "mux-gateway") {
+      return config.muxGatewayEnabled !== false;
+    }
+
+    return !isProviderDisabledInConfig(providerConfig as { enabled?: unknown });
+  }
+
   /**
    * Create an AI SDK model from a model string (e.g., "anthropic:claude-opus-4-1")
    *
@@ -583,7 +601,11 @@ export class ProviderModelFactory {
   async createModel(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions,
-    opts?: { agentInitiated?: boolean; workspaceId?: string }
+    opts?: {
+      agentInitiated?: boolean;
+      workspaceId?: string;
+      routeContext?: RouteContext;
+    }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     const result = await this._createModelCore(modelString, muxProviderOptions, opts);
     if (!result.success) {
@@ -612,16 +634,16 @@ export class ProviderModelFactory {
   private async _createModelCore(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions,
-    opts?: { agentInitiated?: boolean }
+    opts?: { agentInitiated?: boolean; routeContext?: RouteContext }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     try {
-      // Gateway routing is resolved here so every caller gets correct behavior
-      // automatically. resolveGatewayModelString is idempotent — already-resolved
-      // strings (e.g. "mux-gateway:anthropic/model") pass through unchanged.
+      // Route resolution is centralized here so every caller gets identical,
+      // provider-agnostic dispatch behavior. resolveGatewayModelString is idempotent,
+      // so already-routed strings pass through unchanged.
       const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
       modelString = this.resolveGatewayModelString(
         modelString,
-        undefined,
+        opts?.routeContext,
         explicitlyRequestedGateway
       );
 
@@ -1572,7 +1594,7 @@ export class ProviderModelFactory {
     Result<
       {
         model: LanguageModel;
-        /** Model string after gateway routing (may have `mux-gateway:` prefix). */
+        /** Model string after routing (direct provider or gateway provider prefix). */
         effectiveModelString: string;
         /** Model string with gateway prefix stripped (canonical provider:model). */
         canonicalModelString: string;
@@ -1601,21 +1623,24 @@ export class ProviderModelFactory {
       effectiveModelString = `xai:${variant}`;
     }
 
+    const routeContext = this.resolveModelRoute(canonicalModelString);
     effectiveModelString = this.resolveGatewayModelString(
       effectiveModelString,
-      canonicalModelString,
+      routeContext,
       explicitlyRequestedGateway
     );
 
     const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
-    const routeContext = this.resolveModelRoute(canonicalModelString);
     const [effectiveRouteProvider] = parseModelString(effectiveModelString);
     const routeProvider =
       effectiveRouteProvider in PROVIDER_REGISTRY
         ? (effectiveRouteProvider as ProviderName)
         : routeContext.routeProvider;
 
-    const modelResult = await this.createModel(effectiveModelString, muxProviderOptions, opts);
+    const modelResult = await this.createModel(effectiveModelString, muxProviderOptions, {
+      ...opts,
+      routeContext,
+    });
     if (!modelResult.success) {
       return Err(modelResult.error);
     }
@@ -1638,76 +1663,97 @@ export class ProviderModelFactory {
       canonicalModel,
       config.routePriority ?? ["direct"],
       config.routeOverrides ?? {},
-      (provider) =>
-        resolveProviderCredentials(
+      (provider) => {
+        if (!(provider in PROVIDER_REGISTRY)) {
+          return false;
+        }
+
+        return this.isProviderAvailableForRouting(
           provider as ProviderName,
-          providersConfig?.[provider as ProviderName] ?? {}
-        ).isConfigured
+          providersConfig,
+          config
+        );
+      }
     );
   }
 
   resolveGatewayModelString(
     modelString: string,
-    modelKey?: string,
+    modelKeyOrRouteContext?: string | RouteContext,
     explicitlyRequestedGateway = false
   ): string {
     // Backend-authoritative routing avoids frontend localStorage races (issue #1769).
     const canonicalModelString = normalizeToCanonical(modelString);
-    const normalizedModelKey = modelKey ? normalizeToCanonical(modelKey) : canonicalModelString;
-    const [providerName, modelId] = parseModelString(canonicalModelString);
+    const [originProviderName, originModelId] = parseModelString(canonicalModelString);
 
-    if (!providerName || !modelId) {
+    if (!originProviderName || !originModelId) {
       return canonicalModelString;
     }
 
-    if (providerName === "mux-gateway" || !(providerName in PROVIDER_REGISTRY)) {
+    if (originProviderName === "mux-gateway" || !(originProviderName in PROVIDER_REGISTRY)) {
       return canonicalModelString;
     }
 
-    const typedProvider = providerName as ProviderName;
-    const muxGatewayRoutes = (PROVIDER_DEFINITIONS["mux-gateway"].routes ??
-      []) as readonly ProviderName[];
-    if (!muxGatewayRoutes.includes(typedProvider)) {
-      return canonicalModelString;
-    }
-
+    const originProvider = originProviderName as ProviderName;
     const config = this.config.loadConfigOrDefault();
-    const gatewayEnabled = config.muxGatewayEnabled !== false;
-    if (!gatewayEnabled) {
-      return canonicalModelString;
-    }
-
     const providersConfig = this.config.loadProvidersConfig() ?? {};
-    const routeContext = resolveRoute(
-      normalizedModelKey,
-      config.routePriority ?? ["direct"],
-      config.routeOverrides ?? {},
-      (provider) =>
-        resolveProviderCredentials(
-          provider as ProviderName,
-          providersConfig[provider as ProviderName] ?? {}
-        ).isConfigured
-    );
+    const routeContext =
+      typeof modelKeyOrRouteContext === "object" && modelKeyOrRouteContext != null
+        ? modelKeyOrRouteContext
+        : resolveRoute(
+            typeof modelKeyOrRouteContext === "string"
+              ? normalizeToCanonical(modelKeyOrRouteContext)
+              : canonicalModelString,
+            config.routePriority ?? ["direct"],
+            config.routeOverrides ?? {},
+            (provider) => {
+              if (!(provider in PROVIDER_REGISTRY)) {
+                return false;
+              }
+
+              return this.isProviderAvailableForRouting(
+                provider as ProviderName,
+                providersConfig,
+                config
+              );
+            }
+          );
+
+    let resolvedRouteProvider = routeContext.routeProvider;
 
     // Legacy clients may still send mux-gateway model IDs before the backend config
     // has synchronized routePriority, so honor an explicit mux-gateway prefix as
     // an implicit opt-in to avoid first-message API key failures.
-    const shouldRouteThroughGateway =
-      explicitlyRequestedGateway || routeContext.routeProvider === "mux-gateway";
+    if (
+      explicitlyRequestedGateway &&
+      this.isProviderAvailableForRouting("mux-gateway", providersConfig, config)
+    ) {
+      const muxGatewayRoutes = (PROVIDER_DEFINITIONS["mux-gateway"].routes ??
+        []) as readonly ProviderName[];
+      if (muxGatewayRoutes.includes(originProvider)) {
+        resolvedRouteProvider = "mux-gateway";
+      }
+    }
 
-    if (!shouldRouteThroughGateway) {
+    if (resolvedRouteProvider === originProvider) {
       return canonicalModelString;
     }
 
-    const gatewayConfigured = resolveProviderCredentials(
-      "mux-gateway",
-      providersConfig["mux-gateway"] ?? {}
-    ).isConfigured;
+    const routeDefinition = PROVIDER_DEFINITIONS[resolvedRouteProvider] as
+      | (typeof PROVIDER_DEFINITIONS)[ProviderName]
+      | undefined;
 
-    if (!gatewayConfigured) {
+    if (
+      routeDefinition?.kind !== "gateway" ||
+      !routeDefinition.routes?.includes(originProvider) ||
+      !routeDefinition.toGatewayModelId
+    ) {
       return canonicalModelString;
     }
 
-    return `mux-gateway:${providerName}/${modelId}`;
+    return `${resolvedRouteProvider}:${routeDefinition.toGatewayModelId(
+      originProvider,
+      originModelId
+    )}`;
   }
 }
