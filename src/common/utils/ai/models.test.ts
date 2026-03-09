@@ -12,9 +12,7 @@ describe("normalizeToCanonical", () => {
       "anthropic:claude-opus-4-5"
     );
     expect(normalizeToCanonical("mux-gateway:openai/gpt-4o")).toBe("openai:gpt-4o");
-    expect(normalizeToCanonical("mux-gateway:google/gemini-2.5-pro")).toBe(
-      "google:gemini-2.5-pro"
-    );
+    expect(normalizeToCanonical("mux-gateway:google/gemini-2.5-pro")).toBe("google:gemini-2.5-pro");
   });
 
   it("should return non-gateway strings unchanged", () => {
