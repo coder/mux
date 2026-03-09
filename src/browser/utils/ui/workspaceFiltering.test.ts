@@ -82,7 +82,7 @@ describe("partitionWorkspacesByAge", () => {
     expect(buckets.every((b) => b.length === 0)).toBe(true);
   });
 
-  it("should handle workspace at exactly 24 hours (should show as recent due to always-show-one rule)", () => {
+  it("should place a workspace at exactly 24 hours in the older-than-1-day tiers", () => {
     const workspaces = [createWorkspace("exactly-24h")];
 
     const workspaceRecency = {
@@ -92,10 +92,9 @@ describe("partitionWorkspacesByAge", () => {
     const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
     const old = getAllOld(buckets);
 
-    // Even though it's exactly 24 hours old, it should show as recent (always show at least one)
-    expect(recent).toHaveLength(1);
-    expect(recent[0].id).toBe("exactly-24h");
-    expect(old).toHaveLength(0);
+    expect(recent).toHaveLength(0);
+    expect(old).toHaveLength(1);
+    expect(old[0]?.id).toBe("exactly-24h");
   });
 
   it("should preserve workspace order within partitions", () => {
@@ -119,7 +118,7 @@ describe("partitionWorkspacesByAge", () => {
     expect(old.map((w) => w.id)).toEqual(["old1", "old2", "old3"]);
   });
 
-  it("should always show at least one workspace when all are old", () => {
+  it("should keep all workspaces in old tiers when all are older than 1 day", () => {
     const workspaces = [createWorkspace("old1"), createWorkspace("old2"), createWorkspace("old3")];
 
     const workspaceRecency = {
@@ -131,13 +130,24 @@ describe("partitionWorkspacesByAge", () => {
     const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
     const old = getAllOld(buckets);
 
-    // Most recent should be moved to recent section
-    expect(recent).toHaveLength(1);
-    expect(recent[0].id).toBe("old1");
+    expect(recent).toHaveLength(0);
+    expect(old).toHaveLength(3);
+    expect(old.map((w) => w.id)).toEqual(["old1", "old2", "old3"]);
+  });
 
-    // Remaining should stay in old section
-    expect(old).toHaveLength(2);
-    expect(old.map((w) => w.id)).toEqual(["old2", "old3"]);
+  it("should keep a lone workspace older than 1 day out of the recent section", () => {
+    const workspaces = [createWorkspace("only-old")];
+
+    const workspaceRecency = {
+      "only-old": now - 2 * ONE_DAY_MS,
+    };
+
+    const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
+    const old = getAllOld(buckets);
+
+    expect(recent).toHaveLength(0);
+    expect(old).toHaveLength(1);
+    expect(old[0]?.id).toBe("only-old");
   });
 
   it("should partition into correct age buckets", () => {

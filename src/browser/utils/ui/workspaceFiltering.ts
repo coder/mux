@@ -444,7 +444,8 @@ export function computePinnedCompletedChildIdsForAgeTiers(
 
 /**
  * Partition workspaces into age-based buckets.
- * Always shows at least one workspace in the recent section (the most recent one).
+ * Workspaces older than the first threshold remain in old-age tiers, even when
+ * that leaves the recent section empty.
  */
 export function partitionWorkspacesByAge(
   workspaces: FrontendWorkspaceMetadata[],
@@ -480,16 +481,6 @@ export function partitionWorkspacesByAge(
       // Older than the last threshold
       if (!placed) {
         buckets[buckets.length - 1].push(workspace);
-      }
-    }
-  }
-
-  // Always show at least one workspace - move the most recent from first non-empty bucket
-  if (recent.length === 0) {
-    for (const bucket of buckets) {
-      if (bucket.length > 0) {
-        recent.push(bucket.shift()!);
-        break;
       }
     }
   }

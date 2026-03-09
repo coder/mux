@@ -214,6 +214,61 @@ export const ManyWorkspaces: AppStory = {
   ),
 };
 
+/**
+ * Regression test: when all workspaces are older than 1 day, they should still
+ * appear under the "Older than 1 day" tier instead of being forced into recent.
+ */
+export const SingleOldWorkspaceInOlderTier: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/age-tier-demo";
+        const oldWorkspace = createWorkspace({
+          id: "ws-old-only",
+          name: "old-workspace",
+          title: "Old workspace",
+          projectName: "age-tier-demo",
+          projectPath,
+          createdAt: new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString(),
+        });
+
+        expandProjects([projectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject([oldWorkspace]),
+          workspaces: [oldWorkspace],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      const tierToggle = within(canvasElement).getByRole("button", {
+        name: /expand workspaces older than 1 day/i,
+      });
+      if (!tierToggle.textContent?.includes("(1)")) {
+        throw new Error("Expected older-than-1-day tier count to be 1");
+      }
+    });
+
+    if (canvasElement.querySelector('[data-workspace-id="ws-old-only"]')) {
+      throw new Error("Old workspace rendered in recent section before expanding old tier");
+    }
+
+    const tierToggle = within(canvasElement).getByRole("button", {
+      name: /expand workspaces older than 1 day/i,
+    });
+    await userEvent.click(tierToggle);
+
+    await waitFor(() => {
+      const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-old-only"]');
+      if (!row) {
+        throw new Error("Old workspace row did not appear after expanding older-than-1-day tier");
+      }
+    });
+  },
+};
+
 /** Long workspace names - tests truncation and prevents horizontal scroll regression */
 export const LongWorkspaceNames: AppStory = {
   render: () => (
