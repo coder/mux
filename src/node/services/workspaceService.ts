@@ -5296,13 +5296,24 @@ export class WorkspaceService extends EventEmitter {
         return Err(readyResult.error ?? "Runtime not ready");
       }
 
-      const workspacePath = resolveWorkspaceExecutionPath(
-        {
-          ...metadata,
-          namedWorkspacePath: workspace.workspacePath,
-        },
-        runtime
-      );
+      const workspacePath = multiProjectRuntimes
+        ? undefined
+        : resolveWorkspaceExecutionPath(
+            {
+              ...metadata,
+              namedWorkspacePath: workspace.workspacePath,
+            },
+            runtime
+          );
+      const multiProjectContainerPath = multiProjectRuntimes
+        ? runtime.getWorkspacePath(metadata.projectPath, metadata.name)
+        : undefined;
+      if (multiProjectContainerPath != null) {
+        assert(
+          multiProjectContainerPath.length > 0,
+          "Multi-project executeBash requires a shared container cwd"
+        );
+      }
 
       // Read trust state so tool_env is sourced only when the shared execution environment is trusted.
       const configSnapshot = this.config.loadConfigOrDefault();
@@ -5319,10 +5330,11 @@ export class WorkspaceService extends EventEmitter {
         );
       }
 
-      // Multi-project script mode still runs from the container root so sibling repos remain addressable,
-      // but bare git command mode must target the primary workspace checkout so git always runs inside
-      // a repo even when the persisted workspace entry points at the container root.
-      let cwdForExecution = workspacePath;
+      // Multi-project script mode must stay at the shared container root so sibling repos remain
+      // addressable even when task/child workspaces persist their primary-project checkout path.
+      // Bare git command mode stays on the primary repo checkout so git always runs inside a repo.
+      let cwdForExecution = multiProjectContainerPath ?? workspacePath;
+      assert(cwdForExecution?.length, "executeBash requires a resolved execution cwd");
       if (multiProjectRuntimes && command === "git") {
         const primaryProjectRuntime = multiProjectRuntimes[0];
         assert(

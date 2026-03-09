@@ -77,13 +77,13 @@ describe("WorkspaceService executeBash runtime selection", () => {
     await cleanupHistory();
   });
 
-  test("uses the multi-project container runtime and container-root cwd for script mode", async () => {
+  test("uses the shared container-root cwd for multi-project script mode even when the persisted workspace path points at the primary checkout", async () => {
     const workspaceId = "ws-multi-bash";
     const workspaceName = "feature-multi-bash";
     const srcDir = "/tmp/src";
     const projectAPath = "/tmp/project-a";
     const projectBPath = "/tmp/project-b";
-    const containerPath = new ContainerManager(srcDir).getContainerPath(workspaceName);
+    const primaryWorkspacePath = `/tmp/workspaces/project-a/${workspaceName}`;
     const metadata: WorkspaceMetadata = {
       id: workspaceId,
       name: workspaceName,
@@ -140,7 +140,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
         getSessionDir: mock(() => "/tmp/test/sessions"),
         findWorkspace: mock(() => ({
           projectPath: projectAPath,
-          workspacePath: containerPath,
+          workspacePath: primaryWorkspacePath,
         })),
         loadConfigOrDefault: mock(() => ({
           projects: new Map([
@@ -287,13 +287,13 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
-  test("uses the primary project runtime workspace path for multi-project git command mode", async () => {
+  test("keeps multi-project git command mode on the primary repo checkout even when the persisted workspace path points at that checkout", async () => {
     const workspaceId = "ws-multi-git";
     const workspaceName = "feature-multi-git";
     const srcDir = "/tmp/src";
     const projectAPath = "/tmp/project-a";
     const projectBPath = "/tmp/project-b";
-    const containerPath = new ContainerManager(srcDir).getContainerPath(workspaceName);
+    const primaryWorkspacePath = `/tmp/workspaces/project-a/${workspaceName}`;
     const metadata: WorkspaceMetadata = {
       id: workspaceId,
       name: workspaceName,
@@ -350,7 +350,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
         getSessionDir: mock(() => "/tmp/test/sessions"),
         findWorkspace: mock(() => ({
           projectPath: projectAPath,
-          workspacePath: containerPath,
+          workspacePath: primaryWorkspacePath,
         })),
         loadConfigOrDefault: mock(() => ({
           projects: new Map([[projectAPath, { workspaces: [], trusted: true }]]),
