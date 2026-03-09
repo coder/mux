@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
+  getModelContextWindowOverride,
   getProviderModelEntryMappedTo,
   normalizeProviderModelEntry,
   resolveModelForMetadata,
@@ -42,6 +43,74 @@ describe("resolveModelForMetadata", () => {
 
   test("returns original model for unparseable ID", () => {
     expect(resolveModelForMetadata("bare-model", null)).toBe("bare-model");
+  });
+});
+
+describe("gateway-scoped provider model entry lookup", () => {
+  test("getModelContextWindowOverride honors gateway-scoped contextWindowTokens", () => {
+    const config: ProvidersConfigMap = {
+      openrouter: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "anthropic/claude-sonnet-4-6", contextWindowTokens: 50000 }],
+      },
+    };
+
+    expect(getModelContextWindowOverride("openrouter:anthropic/claude-sonnet-4-6", config)).toBe(
+      50000
+    );
+  });
+
+  test("resolveModelForMetadata honors gateway-scoped mappedToModel", () => {
+    const config: ProvidersConfigMap = {
+      openrouter: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "anthropic/claude-sonnet-4-6", mappedToModel: "custom:mapped-model" }],
+      },
+    };
+
+    expect(resolveModelForMetadata("openrouter:anthropic/claude-sonnet-4-6", config)).toBe(
+      "custom:mapped-model"
+    );
+  });
+
+  test("gateway-scoped entry beats canonical when both exist", () => {
+    const config: ProvidersConfigMap = {
+      openrouter: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "anthropic/claude-sonnet-4-6", contextWindowTokens: 50000 }],
+      },
+      anthropic: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "claude-sonnet-4-6", contextWindowTokens: 200000 }],
+      },
+    };
+
+    expect(getModelContextWindowOverride("openrouter:anthropic/claude-sonnet-4-6", config)).toBe(
+      50000
+    );
+  });
+
+  test("canonical fallback works when no gateway-scoped entry exists", () => {
+    const config: ProvidersConfigMap = {
+      anthropic: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "claude-sonnet-4-6", contextWindowTokens: 200000 }],
+      },
+    };
+
+    expect(getModelContextWindowOverride("openrouter:anthropic/claude-sonnet-4-6", config)).toBe(
+      200000
+    );
   });
 });
 

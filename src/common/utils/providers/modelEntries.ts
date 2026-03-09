@@ -55,40 +55,57 @@ export function findProviderModelEntry(
   return null;
 }
 
+/**
+ * Scoped-first provider model entry lookup.
+ *
+ * Checks the raw (possibly gateway-scoped) provider block first so
+ * gateway-local overrides like contextWindowTokens and mappedToModel
+ * take effect. Falls back to canonical lookup only when the scoped
+ * lookup misses.
+ */
+function findProviderModelEntryScoped(
+  fullModelId: string,
+  providersConfig: ProvidersConfigMap | null
+): ProviderModelEntry | null {
+  const rawParsed = parseProviderModelId(fullModelId);
+  if (rawParsed) {
+    const scopedEntry = findProviderModelEntry(
+      providersConfig,
+      rawParsed.provider,
+      rawParsed.modelId
+    );
+    if (scopedEntry) {
+      return scopedEntry;
+    }
+  }
+
+  const canonical = normalizeToCanonical(fullModelId);
+  if (canonical === fullModelId) {
+    return null;
+  }
+
+  const canonicalParsed = parseProviderModelId(canonical);
+  if (!canonicalParsed) {
+    return null;
+  }
+
+  return findProviderModelEntry(providersConfig, canonicalParsed.provider, canonicalParsed.modelId);
+}
+
 export function getModelContextWindowOverride(
   fullModelId: string,
   providersConfig: ProvidersConfigMap | null
 ): number | null {
-  const normalizedModelId = normalizeToCanonical(fullModelId);
-  const parsed = parseProviderModelId(normalizedModelId);
-  if (!parsed) {
-    return null;
-  }
-
-  const modelEntry = findProviderModelEntry(providersConfig, parsed.provider, parsed.modelId);
-  if (!modelEntry) {
-    return null;
-  }
-
-  return getProviderModelEntryContextWindowTokens(modelEntry);
+  const entry = findProviderModelEntryScoped(fullModelId, providersConfig);
+  return entry ? getProviderModelEntryContextWindowTokens(entry) : null;
 }
 
 export function resolveModelForMetadata(
   fullModelId: string,
   providersConfig: ProvidersConfigMap | null
 ): string {
-  const normalized = normalizeToCanonical(fullModelId);
-  const parsed = parseProviderModelId(normalized);
-  if (!parsed) {
-    return fullModelId;
-  }
-
-  const entry = findProviderModelEntry(providersConfig, parsed.provider, parsed.modelId);
-  if (!entry) {
-    return fullModelId;
-  }
-
-  return getProviderModelEntryMappedTo(entry) ?? fullModelId;
+  const entry = findProviderModelEntryScoped(fullModelId, providersConfig);
+  return (entry ? getProviderModelEntryMappedTo(entry) : null) ?? fullModelId;
 }
 
 function parseModelId(rawValue: unknown): string | null {
