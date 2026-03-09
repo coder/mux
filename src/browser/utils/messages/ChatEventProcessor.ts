@@ -112,6 +112,31 @@ function createMuxMessage(
   };
 }
 
+function resolveRouteProvider(
+  routeProvider: string | undefined,
+  routedThroughGateway: boolean | undefined
+): string | undefined {
+  return routeProvider ?? (routedThroughGateway === true ? "mux-gateway" : undefined);
+}
+
+function normalizeMessageRouteProvider(message: MuxMessage): MuxMessage {
+  const routeProvider = resolveRouteProvider(
+    message.metadata?.routeProvider,
+    message.metadata?.routedThroughGateway
+  );
+  if (!message.metadata || routeProvider === message.metadata.routeProvider) {
+    return message;
+  }
+
+  return {
+    ...message,
+    metadata: {
+      ...message.metadata,
+      routeProvider,
+    },
+  };
+}
+
 export function createChatEventProcessor(): ChatEventProcessor {
   const messages = new Map<string, MuxMessage>();
   let initState: InitState | null = null;
@@ -169,11 +194,18 @@ export function createChatEventProcessor(): ChatEventProcessor {
     // Handle stream start
     if (isStreamStart(event)) {
       const start = event as ExtendedStreamStartEvent;
+      const routedThroughGateway =
+        start.metadata?.routedThroughGateway ?? start.routedThroughGateway;
+      const routeProvider = resolveRouteProvider(
+        start.metadata?.routeProvider ?? start.routeProvider,
+        routedThroughGateway
+      );
       const message = createMuxMessage(start.messageId, start.role ?? "assistant", "", {
         historySequence: start.metadata?.historySequence ?? start.historySequence,
         timestamp: start.metadata?.timestamp ?? start.timestamp,
         model: start.metadata?.model ?? start.model,
-        routedThroughGateway: start.metadata?.routedThroughGateway ?? start.routedThroughGateway,
+        routedThroughGateway,
+        routeProvider,
         muxMetadata: start.metadata?.muxMetadata,
         partial: true,
       });
@@ -213,15 +245,21 @@ export function createChatEventProcessor(): ChatEventProcessor {
         return;
       }
       const metadata = (event as ExtendedStreamEndEvent).metadata;
+      const routedThroughGateway =
+        metadata.routedThroughGateway ??
+        message.metadata?.routedThroughGateway ??
+        event.metadata.routedThroughGateway;
+      const routeProvider = resolveRouteProvider(
+        metadata.routeProvider ?? message.metadata?.routeProvider,
+        routedThroughGateway
+      );
       message.metadata = {
         ...message.metadata,
         partial: false,
         timestamp: metadata.timestamp ?? message.metadata?.timestamp,
         model: metadata.model ?? message.metadata?.model ?? event.metadata.model,
-        routedThroughGateway:
-          metadata.routedThroughGateway ??
-          message.metadata?.routedThroughGateway ??
-          event.metadata.routedThroughGateway,
+        routedThroughGateway,
+        routeProvider,
         usage: metadata.usage ?? message.metadata?.usage,
         providerMetadata: metadata.providerMetadata ?? message.metadata?.providerMetadata,
         systemMessageTokens: metadata.systemMessageTokens ?? message.metadata?.systemMessageTokens,
@@ -263,7 +301,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
     }
 
     if (isMuxMessage(event)) {
-      messages.set(event.id, event);
+      messages.set(event.id, normalizeMessageRouteProvider(event));
       return;
     }
 
