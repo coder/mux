@@ -105,6 +105,11 @@ function dispatchAgentsRefreshRequested(): void {
   window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED));
 }
 
+function dispatchSkillsRefreshRequested(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED));
+}
+
 function dispatchMuxGatewaySessionExpired(): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
@@ -182,6 +187,14 @@ export function applyWorkspaceChatEventToAggregator(
       // Keep agent discovery in sync when propose_plan succeeds so conditionally visible
       // agents (for example, orchestrator with ui.requires: ["plan"]) appear immediately.
       dispatchAgentsRefreshRequested();
+    }
+
+    if (
+      allowSideEffects &&
+      event.replay !== true &&
+      (event.toolName === "agent_skill_read" || event.toolName === "agent_skill_list")
+    ) {
+      dispatchSkillsRefreshRequested();
     }
 
     return "immediate";
