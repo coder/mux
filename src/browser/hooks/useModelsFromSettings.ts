@@ -9,10 +9,10 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
-import { isProviderSupported, migrateGatewayModel } from "./useGatewayModels";
 import { isValidProvider } from "@/common/constants/providers";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
-import { getModelProvider } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { isModelAvailable } from "@/common/routing";
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
@@ -36,17 +36,6 @@ function getCustomModels(config: ProvidersConfigMap | null): string[] {
     }
   }
   return models;
-}
-
-/** A provider is available only when it is enabled and has credentials configured. */
-function isProviderAvailable(config: ProvidersConfigMap | null, provider: string): boolean {
-  if (config == null) return true; // Config is loading/unknown; avoid temporary hiding flicker.
-
-  const info = config[provider];
-  // Unknown providers are treated as available so we do not hide valid models by default.
-  if (!info) return true;
-
-  return info.isEnabled && info.isConfigured;
 }
 
 function getAllCustomModels(config: ProvidersConfigMap | null): string[] {
@@ -97,7 +86,7 @@ export function getDefaultModel(): string {
   if (!persisted) return fallback;
 
   // Migrate legacy mux-gateway format to canonical form.
-  const canonical = migrateGatewayModel(persisted).trim();
+  const canonical = normalizeToCanonical(persisted).trim();
   return canonical || fallback;
 }
 
@@ -138,8 +127,8 @@ export function useModelsFromSettings() {
     (next: string | ((prev: string) => string)) => {
       setDefaultModel((prev) => {
         const resolved = typeof next === "function" ? next(prev) : next;
-        const canonical = migrateGatewayModel(resolved).trim();
-        const canonicalPrev = migrateGatewayModel(prev).trim();
+        const canonical = normalizeToCanonical(resolved).trim();
+        const canonicalPrev = normalizeToCanonical(prev).trim();
 
         if (canonical !== canonicalPrev) {
           persistModelPrefs({ defaultModel: canonical });
@@ -155,11 +144,11 @@ export function useModelsFromSettings() {
     listener: true,
   });
 
-  // Gateway state comes from provider config (backend config.json, no localStorage)
-  const gwConfig = config?.["mux-gateway"];
-  const gatewayActive = gwConfig?.couponCodeSet === true && (gwConfig?.isEnabled ?? true);
-  const gatewayModels = useMemo(() => gwConfig?.gatewayModels ?? [], [gwConfig?.gatewayModels]);
-  const gatewayModelSet = useMemo(() => new Set(gatewayModels), [gatewayModels]);
+  const isConfigured = useCallback(
+    (provider: string) =>
+      config?.[provider]?.isConfigured === true && config?.[provider]?.isEnabled !== false,
+    [config]
+  );
 
   const customModels = useMemo(() => {
     const next = filterHiddenModels(getCustomModels(config), hiddenModels);
@@ -185,14 +174,7 @@ export function useModelsFromSettings() {
         return false;
       }
 
-      const provider = getModelProvider(modelId);
-      if (provider === "" || isProviderAvailable(config, provider)) {
-        return false;
-      }
-
-      // Keep models visible when they're actively opted-in to Mux Gateway routing,
-      // even if the native provider is unavailable.
-      if (gatewayActive && isProviderSupported(modelId) && gatewayModelSet.has(modelId)) {
+      if (isModelAvailable(modelId, isConfigured)) {
         return false;
       }
 
@@ -213,15 +195,7 @@ export function useModelsFromSettings() {
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [
-    config,
-    hiddenModels,
-    effectivePolicy,
-    gatewayActive,
-    gatewayModelSet,
-    openaiApiKeySet,
-    codexOauthSet,
-  ]);
+  }, [config, hiddenModels, effectivePolicy, isConfigured, openaiApiKeySet, codexOauthSet]);
 
   const hiddenModelsForSelector = useMemo(
     () => dedupeKeepFirst([...hiddenModels, ...providerHiddenModels]),
@@ -231,19 +205,12 @@ export function useModelsFromSettings() {
   const models = useMemo(() => {
     const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);
 
-    // Hide models from providers that are disabled or not configured.
+    // Hide models that are unavailable from both direct and gateway routes.
     // Keep all models visible while provider config is still loading to avoid UI flicker.
     const providerFiltered =
       config == null
         ? suggested
-        : suggested.filter((modelId) => {
-            if (isProviderAvailable(config, getModelProvider(modelId))) {
-              return true;
-            }
-
-            // Keep models routable through Mux Gateway (per-model opt-in) even if native provider is unavailable.
-            return gatewayActive && isProviderSupported(modelId) && gatewayModelSet.has(modelId);
-          });
+        : suggested.filter((modelId) => isModelAvailable(modelId, isConfigured));
 
     if (config == null) {
       return effectivePolicy
@@ -275,15 +242,7 @@ export function useModelsFromSettings() {
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [
-    config,
-    hiddenModels,
-    effectivePolicy,
-    gatewayActive,
-    gatewayModelSet,
-    openaiApiKeySet,
-    codexOauthSet,
-  ]);
+  }, [config, hiddenModels, effectivePolicy, isConfigured, openaiApiKeySet, codexOauthSet]);
 
   /**
    * If a model is selected that isn't built-in, persist it as a provider custom model.
@@ -292,7 +251,7 @@ export function useModelsFromSettings() {
     (modelString: string) => {
       if (!api) return;
 
-      const canonical = migrateGatewayModel(modelString).trim();
+      const canonical = normalizeToCanonical(modelString).trim();
       if (!canonical) return;
       if (BUILT_IN_MODEL_SET.has(canonical)) return;
 
@@ -327,7 +286,7 @@ export function useModelsFromSettings() {
 
   const hideModel = useCallback(
     (modelString: string) => {
-      const canonical = migrateGatewayModel(modelString).trim();
+      const canonical = normalizeToCanonical(modelString).trim();
       if (!canonical) {
         return;
       }
@@ -347,7 +306,7 @@ export function useModelsFromSettings() {
 
   const unhideModel = useCallback(
     (modelString: string) => {
-      const canonical = migrateGatewayModel(modelString).trim();
+      const canonical = normalizeToCanonical(modelString).trim();
       if (!canonical) {
         return;
       }
