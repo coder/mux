@@ -7,7 +7,6 @@ import {
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
 } from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
-import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
@@ -1176,40 +1175,11 @@ export const router = (authToken?: string) => {
         .input(schemas.providers.setProviderConfig.input)
         .output(schemas.providers.setProviderConfig.output)
         .handler(async ({ context, input }) => {
-          const result = context.providerService.setConfig(
+          const result = await context.providerService.setConfig(
             input.provider,
             input.keyPath,
             input.value
           );
-          if (!result.success) {
-            return result;
-          }
-
-          if (input.provider in PROVIDER_DEFINITIONS) {
-            const providerName = input.provider as ProviderName;
-            const providerDef = PROVIDER_DEFINITIONS[providerName];
-
-            if (providerDef.kind === "gateway") {
-              const providersConfig = context.config.loadProvidersConfig() ?? {};
-              const providerConfig = providersConfig[providerName] ?? {};
-              const creds = resolveProviderCredentials(providerName, providerConfig);
-              const config = context.config.loadConfigOrDefault();
-              const priority = config.routePriority ?? ["direct"];
-
-              if (creds.isConfigured && !priority.includes(providerName)) {
-                await context.config.editConfig((c) => ({
-                  ...c,
-                  routePriority: [providerName, ...priority],
-                }));
-              } else if (!creds.isConfigured && priority.includes(providerName)) {
-                await context.config.editConfig((c) => ({
-                  ...c,
-                  routePriority: priority.filter((p) => p !== providerName),
-                }));
-              }
-            }
-          }
-
           return result;
         }),
       setModels: t
@@ -1401,8 +1371,8 @@ export const router = (authToken?: string) => {
           if (response.status === 401) {
             try {
               // Best-effort auto-logout: clear local mux-gateway creds on session expiry.
-              context.providerService.setConfig("mux-gateway", ["couponCode"], "");
-              context.providerService.setConfig("mux-gateway", ["voucher"], "");
+              await context.providerService.setConfig("mux-gateway", ["couponCode"], "");
+              await context.providerService.setConfig("mux-gateway", ["voucher"], "");
             } catch {
               // Ignore failures clearing local credentials
             }

@@ -17,6 +17,19 @@ function withTempConfig(run: (config: Config, service: ProviderService) => void)
   }
 }
 
+async function withTempConfigAsync(
+  run: (config: Config, service: ProviderService) => Promise<void>
+): Promise<void> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-service-"));
+  try {
+    const config = new Config(tmpDir);
+    const service = new ProviderService(config);
+    await run(config, service);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("ProviderService.getConfig", () => {
   it("surfaces valid OpenAI serviceTier", () => {
     withTempConfig((config, service) => {
@@ -249,8 +262,8 @@ describe("ProviderService model normalization", () => {
 });
 
 describe("ProviderService.setConfig", () => {
-  it("stores enabled=false without deleting existing credentials", () => {
-    withTempConfig((config, service) => {
+  it("stores enabled=false without deleting existing credentials", async () => {
+    await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
         openai: {
           apiKey: "sk-test",
@@ -258,7 +271,7 @@ describe("ProviderService.setConfig", () => {
         },
       });
 
-      const disableResult = service.setConfig("openai", ["enabled"], "false");
+      const disableResult = await service.setConfig("openai", ["enabled"], "false");
       expect(disableResult.success).toBe(true);
 
       const afterDisable = config.loadProvidersConfig();
@@ -266,7 +279,7 @@ describe("ProviderService.setConfig", () => {
       expect(afterDisable?.openai?.baseUrl).toBe("https://api.openai.com/v1");
       expect(afterDisable?.openai?.enabled).toBe(false);
 
-      const enableResult = service.setConfig("openai", ["enabled"], "");
+      const enableResult = await service.setConfig("openai", ["enabled"], "");
       expect(enableResult.success).toBe(true);
 
       const afterEnable = config.loadProvidersConfig();
@@ -344,6 +357,91 @@ describe("ProviderService.setConfig", () => {
       expect(Object.prototype.hasOwnProperty.call(cfg.anthropic, "disableBetaFeatures")).toBe(
         false
       );
+    });
+  });
+});
+
+describe("ProviderService gateway lifecycle", () => {
+  it("auto-inserts gateway into routePriority when configured", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["direct"],
+      });
+
+      const result = await service.setConfig("mux-gateway", ["couponCode"], "gateway-token");
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual(["mux-gateway", "direct"]);
+    });
+  });
+
+  it("auto-removes gateway from routePriority when deconfigured", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["mux-gateway", "direct"],
+      });
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+
+      const result = await service.setConfig("mux-gateway", ["couponCode"], "");
+
+      expect(result.success).toBe(true);
+      const updatedPriority = config.loadConfigOrDefault().routePriority ?? ["direct"];
+      expect(updatedPriority).not.toContain("mux-gateway");
+    });
+  });
+
+  it("does not duplicate gateway already in routePriority", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["mux-gateway", "direct"],
+      });
+
+      const result = await service.setConfig("mux-gateway", ["couponCode"], "gateway-token");
+
+      expect(result.success).toBe(true);
+      const updatedPriority = config.loadConfigOrDefault().routePriority ?? [];
+      expect(updatedPriority.filter((provider) => provider === "mux-gateway")).toHaveLength(1);
+    });
+  });
+
+  it("does not modify routePriority for direct providers", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["direct"],
+      });
+      const initialRoutePriority = config.loadConfigOrDefault().routePriority;
+
+      const result = await service.setConfig("anthropic", ["apiKey"], "sk-ant-test");
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual(initialRoutePriority);
+    });
+  });
+
+  it("setConfigValue also triggers lifecycle", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["direct"],
+      });
+
+      const result = await service.setConfigValue("mux-gateway", ["couponCode"], "gateway-token");
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual(["mux-gateway", "direct"]);
     });
   });
 });

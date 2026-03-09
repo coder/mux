@@ -69,7 +69,11 @@ function createMockConfig(deps: MockDeps): Pick<Config, "loadProvidersConfig"> {
 
 function createMockProviderService(deps: MockDeps): Pick<ProviderService, "setConfigValue"> {
   return {
-    setConfigValue: (provider: string, keyPath: string[], value: unknown): Result<void, string> => {
+    setConfigValue: async (
+      provider: string,
+      keyPath: string[],
+      value: unknown
+    ): Promise<Result<void, string>> => {
       deps.setConfigValueCalls.push({ provider, keyPath, value });
       // Also update the in-memory config so readStoredAuth() sees the write
       if (provider === "openai" && keyPath[0] === "codexOauth") {
@@ -309,8 +313,8 @@ describe("CodexOauthService", () => {
   // -------------------------------------------------------------------------
 
   describe("disconnect", () => {
-    it("clears stored codexOauth via providerService.setConfigValue", () => {
-      const result = service.disconnect();
+    it("clears stored codexOauth via providerService.setConfigValue", async () => {
+      const result = await service.disconnect();
       expect(result.success).toBe(true);
       expect(deps.setConfigValueCalls).toHaveLength(1);
       expect(deps.setConfigValueCalls[0]).toEqual({

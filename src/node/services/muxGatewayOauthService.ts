@@ -203,7 +203,7 @@ export class MuxGatewayOauthService {
       return Err(tokenResult.error);
     }
 
-    const persistResult = this.providerService.setConfig(
+    const persistResult = await this.providerService.setConfig(
       "mux-gateway",
       ["couponCode"],
       tokenResult.data

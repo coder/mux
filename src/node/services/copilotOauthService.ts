@@ -194,7 +194,7 @@ export class CopilotOauthService {
 
         if (data.access_token) {
           // Store token as apiKey for the github-copilot provider
-          const persistResult = this.providerService.setConfig(
+          const persistResult = await this.providerService.setConfig(
             "github-copilot",
             ["apiKey"],
             data.access_token

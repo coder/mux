@@ -109,7 +109,7 @@ export class VoiceService {
     });
 
     if (response.status === 401) {
-      this.clearMuxGatewayCredentials();
+      await this.clearMuxGatewayCredentials();
       return {
         success: false,
         error: "You've been logged out of Mux Gateway. Please login again to use voice input.",
@@ -227,14 +227,14 @@ export class VoiceService {
     return errorMessage;
   }
 
-  private clearMuxGatewayCredentials(): void {
+  private async clearMuxGatewayCredentials(): Promise<void> {
     if (!this.providerService) {
       return;
     }
 
     try {
-      this.providerService.setConfig("mux-gateway", ["couponCode"], "");
-      this.providerService.setConfig("mux-gateway", ["voucher"], "");
+      await this.providerService.setConfig("mux-gateway", ["couponCode"], "");
+      await this.providerService.setConfig("mux-gateway", ["voucher"], "");
     } catch {
       // Ignore failures clearing local credentials.
     }

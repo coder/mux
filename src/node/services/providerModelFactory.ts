@@ -304,8 +304,8 @@ function wrapFetchWithMuxGatewayAutoLogout(
 
     if (response.status === 401) {
       try {
-        providerService.setConfig("mux-gateway", ["couponCode"], "");
-        providerService.setConfig("mux-gateway", ["voucher"], "");
+        await providerService.setConfig("mux-gateway", ["couponCode"], "");
+        await providerService.setConfig("mux-gateway", ["voucher"], "");
       } catch {
         // Ignore failures clearing local credentials
       }

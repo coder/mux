@@ -1,6 +1,10 @@
 import { EventEmitter } from "events";
 import type { Config } from "@/node/config";
-import { SUPPORTED_PROVIDERS, type ProviderName } from "@/common/constants/providers";
+import {
+  PROVIDER_DEFINITIONS,
+  SUPPORTED_PROVIDERS,
+  type ProviderName,
+} from "@/common/constants/providers";
 import type { Result } from "@/common/types/result";
 import type {
   AWSCredentialStatus,
@@ -15,7 +19,10 @@ import {
   normalizeProviderModelEntries,
 } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
-import { checkProviderConfigured } from "@/node/utils/providerRequirements";
+import {
+  checkProviderConfigured,
+  resolveProviderCredentials,
+} from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -285,12 +292,45 @@ export class ProviderService {
   }
 
   /**
+   * After a credential change, sync gateway presence in routePriority.
+   * Configured gateways auto-insert at position 1 (before "direct").
+   * Unconfigured gateways are removed.
+   */
+  private async syncGatewayLifecycle(provider: string): Promise<void> {
+    if (!(provider in PROVIDER_DEFINITIONS)) return;
+    const providerName = provider as ProviderName;
+    const def = PROVIDER_DEFINITIONS[providerName];
+    if (def.kind !== "gateway") return;
+
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    const creds = resolveProviderCredentials(providerName, providersConfig[providerName] ?? {});
+    const config = this.config.loadConfigOrDefault();
+    const priority = config.routePriority ?? ["direct"];
+
+    if (creds.isConfigured && !priority.includes(providerName)) {
+      await this.config.editConfig((c) => ({
+        ...c,
+        routePriority: [providerName, ...priority],
+      }));
+    } else if (!creds.isConfigured && priority.includes(providerName)) {
+      await this.config.editConfig((c) => ({
+        ...c,
+        routePriority: priority.filter((p) => p !== providerName),
+      }));
+    }
+  }
+
+  /**
    * Set provider config values that aren't representable as strings.
    *
    * Intended for persisted auth blobs (e.g. Codex OAuth tokens) that should never
    * cross the frontend boundary.
    */
-  public setConfigValue(provider: string, keyPath: string[], value: unknown): Result<void, string> {
+  public async setConfigValue(
+    provider: string,
+    keyPath: string[],
+    value: unknown
+  ): Promise<Result<void, string>> {
     try {
       // Load current providers config or create empty
       const providersConfig = this.config.loadProvidersConfig() ?? {};
@@ -343,6 +383,7 @@ export class ProviderService {
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
       this.notifyConfigChanged();
+      await this.syncGatewayLifecycle(provider);
 
       return { success: true, data: undefined };
     } catch (error) {
@@ -351,11 +392,11 @@ export class ProviderService {
     }
   }
 
-  public setConfig(
+  public async setConfig(
     provider: string,
     keyPath: string[],
     value: string | boolean
-  ): Result<void, string> {
+  ): Promise<Result<void, string>> {
     try {
       // Load current providers config or create empty
       const providersConfig = this.config.loadProvidersConfig() ?? {};
@@ -431,6 +472,7 @@ export class ProviderService {
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
       this.notifyConfigChanged();
+      await this.syncGatewayLifecycle(provider);
 
       return { success: true, data: undefined };
     } catch (error) {

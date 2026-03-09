@@ -111,10 +111,10 @@ export class CodexOauthService {
     private readonly windowService?: WindowService
   ) {}
 
-  disconnect(): Result<void, string> {
+  async disconnect(): Promise<Result<void, string>> {
     // Clear stored ChatGPT OAuth tokens so Codex-only models are hidden again.
     this.cachedAuth = null;
-    return this.providerService.setConfigValue("openai", ["codexOauth"], undefined);
+    return await this.providerService.setConfigValue("openai", ["codexOauth"], undefined);
   }
 
   async startDesktopFlow(): Promise<Result<{ flowId: string; authorizeUrl: string }, string>> {
@@ -371,8 +371,8 @@ export class CodexOauthService {
     return auth;
   }
 
-  private persistAuth(auth: CodexOauthAuth): Result<void, string> {
-    const result = this.providerService.setConfigValue("openai", ["codexOauth"], auth);
+  private async persistAuth(auth: CodexOauthAuth): Promise<Result<void, string>> {
+    const result = await this.providerService.setConfigValue("openai", ["codexOauth"], auth);
     // Invalidate cache so the next readStoredAuth() picks up the persisted value from disk.
     // We clear rather than set because setConfigValue may have side-effects (e.g. file-write
     // failures) and we want the next read to be authoritative.
@@ -408,7 +408,7 @@ export class CodexOauthService {
       return Err(tokenResult.error);
     }
 
-    const persistResult = this.persistAuth(tokenResult.data);
+    const persistResult = await this.persistAuth(tokenResult.data);
     if (!persistResult.success) {
       return Err(persistResult.error);
     }
@@ -494,7 +494,7 @@ export class CodexOauthService {
         // requests fall back to the existing "not connected" behavior.
         if (isInvalidGrantError(errorText)) {
           log.debug("[Codex OAuth] Refresh token rejected; clearing stored auth");
-          const disconnectResult = this.disconnect();
+          const disconnectResult = await this.disconnect();
           if (!disconnectResult.success) {
             log.warn(
               `[Codex OAuth] Failed to clear stored auth after refresh failure: ${disconnectResult.error}`
@@ -535,7 +535,7 @@ export class CodexOauthService {
         accountId,
       };
 
-      const persistResult = this.persistAuth(next);
+      const persistResult = await this.persistAuth(next);
       if (!persistResult.success) {
         return Err(persistResult.error);
       }
@@ -614,7 +614,7 @@ export class CodexOauthService {
 
       const attempt = await this.pollDeviceTokenOnce(flow);
       if (attempt.kind === "success") {
-        const persistResult = this.persistAuth(attempt.auth);
+        const persistResult = await this.persistAuth(attempt.auth);
         if (!persistResult.success) {
           await this.finishDeviceFlow(flowId, Err(persistResult.error));
           return;
