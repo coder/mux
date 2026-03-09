@@ -1163,7 +1163,17 @@ export function ProvidersSection() {
                   className="text-foreground text-sm font-medium"
                 />
               </div>
-              <div className={`h-2 w-2 rounded-full ${statusDotColor}`} title={statusDotTitle} />
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div
+                      className={`h-2 w-2 rounded-full ${statusDotColor}`}
+                      title={statusDotTitle}
+                    />
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{statusDotTitle}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </Button>
 
             {/* Provider settings */}
