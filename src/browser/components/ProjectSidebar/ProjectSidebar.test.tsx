@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import * as ReactDndModule from "react-dnd";
 import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
+import * as MuxLogoDarkModule from "@/browser/assets/logos/mux-logo-dark.svg?react";
+import * as MuxLogoLightModule from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { installDom } from "../../../../tests/ui/dom";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
@@ -36,6 +38,8 @@ import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
 import * as DraggableSectionModule from "../DraggableSection/DraggableSection";
 import * as AgentListItemModule from "../AgentListItem/AgentListItem";
 
+import ProjectSidebar from "./ProjectSidebar";
+
 const agentItemTestId = (workspaceId: string) => `agent-item-${workspaceId}`;
 const toggleButtonLabel = (workspaceId: string) => `toggle-completed-${workspaceId}`;
 
@@ -54,15 +58,12 @@ interface MockAgentListItemProps {
 }
 
 function installProjectSidebarTestDoubles() {
-  void mock.module("@/browser/assets/logos/mux-logo-dark.svg?react", () => ({
-    __esModule: true,
-    default: () => <svg data-testid="mux-logo-dark" />,
-  }));
-
-  void mock.module("@/browser/assets/logos/mux-logo-light.svg?react", () => ({
-    __esModule: true,
-    default: () => <svg data-testid="mux-logo-light" />,
-  }));
+  spyOn(MuxLogoDarkModule, "default").mockImplementation((() => (
+    <svg data-testid="mux-logo-dark" />
+  )) as typeof MuxLogoDarkModule.default);
+  spyOn(MuxLogoLightModule, "default").mockImplementation((() => (
+    <svg data-testid="mux-logo-light" />
+  )) as typeof MuxLogoLightModule.default);
 
   spyOn(ReactDndModule, "DndProvider").mockImplementation(
     TestWrapper as unknown as typeof ReactDndModule.DndProvider
@@ -264,10 +265,6 @@ function installProjectSidebarTestDoubles() {
   );
 }
 
-async function loadProjectSidebar() {
-  return (await import("./ProjectSidebar")).default;
-}
-
 function createWorkspace(
   id: string,
   opts?: {
@@ -314,7 +311,6 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
   });
 
   test("reuses normal workspace chevron/collapse behavior for multi-project rows", async () => {
-    const ProjectSidebar = await loadProjectSidebar();
     const parentWorkspace = createWorkspace("parent", { title: "Parent workspace" });
     const completedChildWorkspace = createWorkspace("child", {
       parentWorkspaceId: "parent",
