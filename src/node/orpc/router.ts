@@ -1673,7 +1673,11 @@ export const router = (authToken?: string) => {
         .input(schemas.secrets.getInjectedGlobals.input)
         .output(schemas.secrets.getInjectedGlobals.output)
         .handler(({ context, input }) => {
-          const projectPath = input.projectPath.trim();
+          const projectPath =
+            typeof input.projectPath === "string" && input.projectPath.trim().length > 0
+              ? input.projectPath
+              : undefined;
+
           if (!projectPath) {
             return [];
           }
