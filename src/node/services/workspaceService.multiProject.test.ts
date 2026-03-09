@@ -286,12 +286,8 @@ describe("WorkspaceService executeBash runtime selection", () => {
         script: "'git' 'status' '--short'",
         timeout_secs: 120,
       });
-      expect(toolContext).toEqual(
-        expect.objectContaining({
-          toolCallId: expect.stringMatching(/^bash-/),
-          messages: [],
-        })
-      );
+      expect(toolContext.toolCallId).toMatch(/^bash-/);
+      expect(toolContext.messages).toEqual([]);
     } finally {
       createBashToolSpy.mockRestore();
       createRuntimeSpy.mockRestore();
