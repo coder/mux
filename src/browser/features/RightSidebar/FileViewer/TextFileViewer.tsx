@@ -222,6 +222,20 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
 
   const shouldUseSelectable = Boolean(props.onReviewNote) || inlineReviews.length > 0;
 
+  const contentRef = React.useRef<HTMLDivElement>(null);
+
+  // Scope Ctrl+A / Cmd+A to select only the file content,
+  // preventing the browser default which selects the entire page.
+  const handleContentKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (selection && contentRef.current) {
+        selection.selectAllChildren(contentRef.current);
+      }
+    }
+  };
+
   return (
     <div data-testid="text-file-viewer" className="bg-code-bg flex h-full flex-col">
       <div className="border-border-light flex flex-col border-b">
@@ -250,7 +264,14 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
           )}
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* tabIndex={-1}: focusable via click (not Tab) so onKeyDown receives Ctrl+A */}
+      <div
+        ref={contentRef}
+        className="min-h-0 flex-1 overflow-auto outline-none"
+        tabIndex={-1}
+        onKeyDown={handleContentKeyDown}
+        onPointerDown={() => contentRef.current?.focus()}
+      >
         {shouldUseSelectable ? (
           <SelectableDiffRenderer
             {...diffRendererProps}
