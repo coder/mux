@@ -49,6 +49,10 @@ function TestWrapper(props: PropsWithChildren) {
 
 const passthroughRef = <T,>(value: T): T => value;
 
+function resolveVoidResult() {
+  return Promise.resolve({ success: true as const, data: undefined });
+}
+
 interface MockAgentListItemProps {
   metadata: FrontendWorkspaceMetadata;
   depth?: number;
@@ -126,15 +130,15 @@ function installProjectSidebarTestDoubles() {
     },
     openWorkspaceModal: () => Promise.resolve(),
     closeWorkspaceModal: () => undefined,
-    getBranchesForProject: () => Promise.resolve({ success: true, branches: [] }),
+    getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
     getSecrets: () => Promise.resolve([]),
     updateSecrets: () => Promise.resolve(),
     createSection: () =>
       Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
-    updateSection: () => Promise.resolve({ success: true }),
-    removeSection: () => Promise.resolve({ success: true }),
-    reorderSections: () => Promise.resolve({ success: true }),
-    assignWorkspaceToSection: () => Promise.resolve({ success: true }),
+    updateSection: () => resolveVoidResult(),
+    removeSection: () => resolveVoidResult(),
+    reorderSections: () => resolveVoidResult(),
+    assignWorkspaceToSection: () => resolveVoidResult(),
     hasAnyProject: false,
     resolveNewChatProjectPath: () => null,
   }));
@@ -168,30 +172,38 @@ function installProjectSidebarTestDoubles() {
     secretsProjectPath: null,
     setSecretsProjectPath: () => undefined,
   }));
-  spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(() => ({
-    selectedWorkspace: null,
-    setSelectedWorkspace: () => undefined,
-    archiveWorkspace: () => Promise.resolve(),
-    removeWorkspace: () => Promise.resolve(),
-    updateWorkspaceTitle: () => Promise.resolve({ success: true }),
-    refreshWorkspaceMetadata: () => Promise.resolve(),
-    pendingNewWorkspaceProject: null,
-    pendingNewWorkspaceDraftId: null,
-    workspaceDraftsByProject: {},
-    workspaceDraftPromotionsByProject: {},
-    createWorkspaceDraft: () => undefined,
-    openWorkspaceDraft: () => undefined,
-    deleteWorkspaceDraft: () => undefined,
-  }));
+  spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+    () =>
+      ({
+        selectedWorkspace: null,
+        setSelectedWorkspace: () => undefined,
+        archiveWorkspace: () => Promise.resolve({ success: true }),
+        removeWorkspace: () => Promise.resolve({ success: true }),
+        updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+        refreshWorkspaceMetadata: () => Promise.resolve(),
+        pendingNewWorkspaceProject: null,
+        pendingNewWorkspaceDraftId: null,
+        workspaceDraftsByProject: {},
+        workspaceDraftPromotionsByProject: {},
+        createWorkspaceDraft: () => undefined,
+        openWorkspaceDraft: () => undefined,
+        deleteWorkspaceDraft: () => undefined,
+      }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+  );
   spyOn(WorkspaceFallbackModelModule, "useWorkspaceFallbackModel").mockImplementation(
     () => "openai:gpt-5.4"
   );
   spyOn(WorkspaceUnreadModule, "useWorkspaceUnread").mockImplementation(() => ({
     isUnread: false,
+    lastReadTimestamp: null,
+    recencyTimestamp: null,
   }));
-  spyOn(WorkspaceStoreModule, "useWorkspaceStoreRaw").mockImplementation(() => ({
-    getWorkspaceMetadata: () => null,
-  }));
+  spyOn(WorkspaceStoreModule, "useWorkspaceStoreRaw").mockImplementation(
+    () =>
+      ({
+        getWorkspaceMetadata: () => undefined,
+      }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
+  );
 
   spyOn(TooltipModule, "Tooltip").mockImplementation(
     TestWrapper as unknown as typeof TooltipModule.Tooltip
@@ -236,33 +248,33 @@ function installProjectSidebarTestDoubles() {
   spyOn(DraggableSectionModule, "DraggableSection").mockImplementation(
     TestWrapper as unknown as typeof DraggableSectionModule.DraggableSection
   );
-  spyOn(AgentListItemModule, "AgentListItem").mockImplementation(
-    (props: MockAgentListItemProps) => {
-      const hasCompletedChildren =
-        (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
-        (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
+  spyOn(AgentListItemModule, "AgentListItem").mockImplementation(((
+    props: MockAgentListItemProps
+  ) => {
+    const hasCompletedChildren =
+      (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
+      (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
 
-      return (
-        <div
-          data-testid={agentItemTestId(props.metadata.id)}
-          data-depth={String(props.depth ?? -1)}
-          data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
-          data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
-        >
-          <span>{props.metadata.title ?? props.metadata.name}</span>
-          {hasCompletedChildren && props.onToggleCompletedChildren ? (
-            <button
-              type="button"
-              aria-label={toggleButtonLabel(props.metadata.id)}
-              onClick={() => props.onToggleCompletedChildren?.(props.metadata.id)}
-            >
-              Toggle completed children
-            </button>
-          ) : null}
-        </div>
-      );
-    }
-  );
+    return (
+      <div
+        data-testid={agentItemTestId(props.metadata.id)}
+        data-depth={String(props.depth ?? -1)}
+        data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
+        data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
+      >
+        <span>{props.metadata.title ?? props.metadata.name}</span>
+        {hasCompletedChildren && props.onToggleCompletedChildren ? (
+          <button
+            type="button"
+            aria-label={toggleButtonLabel(props.metadata.id)}
+            onClick={() => props.onToggleCompletedChildren?.(props.metadata.id)}
+          >
+            Toggle completed children
+          </button>
+        ) : null}
+      </div>
+    );
+  }) as unknown as typeof AgentListItemModule.AgentListItem);
 }
 
 function createWorkspace(
