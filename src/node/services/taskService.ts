@@ -1289,7 +1289,9 @@ export class TaskService {
         }
 
         this.remindedAwaitingReport.delete(id);
-        this.completedReportsByTaskId.delete(id);
+        // Report monotonicity: hard-interrupt cascades must not erase completed report
+        // evidence. Once cached, a report stays awaitable even if status flips to interrupted
+        // before stream-end finalization persists the artifact.
         this.rejectWaiters(id, interruptionError);
 
         const updated = await this.editWorkspaceEntry(
@@ -1464,6 +1466,8 @@ export class TaskService {
   ): Promise<{ reportMarkdown: string; title?: string }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
+    // Report monotonicity invariant: check the in-memory cache before any status-based
+    // interruption handling so a finalized report stays awaitable once observed.
     const cached = this.completedReportsByTaskId.get(taskId);
     if (cached) {
       return { reportMarkdown: cached.reportMarkdown, title: cached.title };
@@ -1508,17 +1512,27 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const taskWorkspaceEntry = findWorkspaceEntry(cfg, taskId);
     const taskStatus = taskWorkspaceEntry?.workspace.taskStatus;
-    if (!taskWorkspaceEntry || taskStatus === "reported" || taskStatus === "interrupted") {
+
+    if (!taskWorkspaceEntry || taskStatus === "reported") {
       const persisted = await tryReadPersistedReport();
       if (persisted) {
         return persisted;
       }
 
-      if (taskStatus === "interrupted") {
-        throw new Error("Task interrupted");
+      throw new Error("Task not found");
+    }
+
+    if (taskStatus === "interrupted") {
+      const persisted = await tryReadPersistedReport();
+      if (persisted) {
+        return persisted;
       }
 
-      throw new Error("Task not found");
+      // Report monotonicity: interrupted tasks can still be streaming while stream-end
+      // finalization persists agent_report. Waiters should keep waiting in that window.
+      if (!this.aiService.isStreaming(taskId)) {
+        throw new Error("Task interrupted");
+      }
     }
 
     return await new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
@@ -1537,24 +1551,30 @@ export class TaskService {
           return;
         }
 
-        if (
-          taskWorkspaceEntry.workspace.taskStatus === "reported" ||
-          taskWorkspaceEntry.workspace.taskStatus === "interrupted"
-        ) {
+        if (taskWorkspaceEntry.workspace.taskStatus === "reported") {
           const persisted = await tryReadPersistedReport();
           if (persisted) {
             resolve(persisted);
             return;
           }
 
-          reject(
-            new Error(
-              taskWorkspaceEntry.workspace.taskStatus === "interrupted"
-                ? "Task interrupted"
-                : "Task not found"
-            )
-          );
+          reject(new Error("Task not found"));
           return;
+        }
+
+        if (taskWorkspaceEntry.workspace.taskStatus === "interrupted") {
+          const persisted = await tryReadPersistedReport();
+          if (persisted) {
+            resolve(persisted);
+            return;
+          }
+
+          // Report monotonicity: an interrupted task may still be in stream-end teardown,
+          // so keep the waiter alive while the stream is active.
+          if (!this.aiService.isStreaming(taskId)) {
+            reject(new Error("Task interrupted"));
+            return;
+          }
         }
 
         let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -2704,7 +2724,12 @@ export class TaskService {
     }
 
     const status = entry.workspace.taskStatus;
+    const reportArgs = this.findAgentReportArgsInParts(event.parts);
+
+    // Stream-end settlement: interrupted tasks must settle all pending waiters.
+    // Report present → finalize (resolve waiters). No report → reject waiters promptly.
     if (status === "interrupted") {
+      await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, reportArgs);
       return;
     }
     if (status === "reported") {
@@ -2724,7 +2749,6 @@ export class TaskService {
       return;
     }
 
-    const reportArgs = this.findAgentReportArgsInParts(event.parts);
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
       await this.finalizeTerminationPhaseForReportedTask(workspaceId);
@@ -2770,6 +2794,24 @@ export class TaskService {
       },
       { synthetic: true, agentInitiated: true }
     );
+  }
+
+  /**
+   * Stream-end settlement for interrupted tasks. Guarantees every pending waiter
+   * is settled exactly once: resolved if an agent_report exists, rejected otherwise.
+   * No waiter should depend on timeout to discover terminal interruption.
+   */
+  private async settleInterruptedTaskAtStreamEnd(
+    workspaceId: string,
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    reportArgs: { reportMarkdown: string; title?: string } | null
+  ): Promise<void> {
+    if (reportArgs) {
+      await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      return;
+    }
+
+    this.rejectWaiters(workspaceId, new Error("Task interrupted"));
   }
 
   private async handleSuccessfulProposePlanAutoHandoff(args: {
