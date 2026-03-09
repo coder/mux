@@ -234,6 +234,32 @@ function AppInner() {
     workspaceMetadataRef.current = workspaceMetadata;
   }, [workspaceMetadata]);
 
+  const eventSoundSettingsRef = useRef<EventSoundSettings | undefined>(undefined);
+  useEffect(() => {
+    if (!api) {
+      eventSoundSettingsRef.current = undefined;
+      return;
+    }
+
+    let isCancelled = false;
+    void api.config
+      .getConfig()
+      .then((config) => {
+        if (!isCancelled) {
+          eventSoundSettingsRef.current = config.eventSoundSettings;
+        }
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          console.debug("Failed to load event sound settings", { error: String(error) });
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [api]);
+
   const handleOpenMuxChat = useCallback(() => {
     // User requested an F1 shortcut to jump straight into Chat with Mux.
     const metadata = workspaceMetadataRef.current.get(MUX_HELP_CHAT_WORKSPACE_ID);
@@ -993,16 +1019,7 @@ function AppInner() {
       if (compaction?.hasContinueMessage) return;
 
       // Play event sound (independent of notification settings).
-      if (api) {
-        void api.config
-          .getConfig()
-          .then((config) => {
-            playEventSound(config.eventSoundSettings, "agent_review_ready");
-          })
-          .catch((error) => {
-            console.debug("Failed to load event sound settings", { error: String(error) });
-          });
-      }
+      playEventSound(eventSoundSettingsRef.current, "agent_review_ready");
 
       // Skip notification if the selected workspace is focused (Slack-like behavior).
       // Notification suppression intentionally follows selection state, not chat-route visibility.
