@@ -288,9 +288,8 @@ export class StreamingMessageAggregator {
     }
   >();
 
-  // Current TODO list (updated when todo_write succeeds, cleared on stream end)
-  // Stream-scoped: automatically reset when stream completes
-  // On reload: only reconstructed if reconnecting to active stream
+  // Current TODO list (updated when todo_write succeeds)
+  // Session-scoped: persists across streams, reconstructed from history on reload
   private currentTodos: TodoItem[] = [];
 
   // Current agent status (updated when status_set is called)
@@ -778,9 +777,6 @@ export class StreamingMessageAggregator {
     }
 
     this.activeStreams.delete(messageId);
-    // Clear todos when stream ends - they're stream-scoped state
-    // On reload, todos will be reconstructed from completed tool_write calls in history
-    this.currentTodos = [];
     // Restore persisted status - clears transient displayStatus, preserves status_set values
     this.agentStatus = this.loadPersistedAgentStatus();
   }
@@ -927,9 +923,8 @@ export class StreamingMessageAggregator {
         this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
 
         if (message.role === "user") {
-          // Mirror live behavior: clear stream-scoped state on new user turn
+          // Mirror live behavior for status: clear transient status on new user turn
           // but keep persisted status for fallback on reload.
-          this.currentTodos = [];
           this.agentStatus = undefined;
           continue;
         }
@@ -1878,14 +1873,20 @@ export class StreamingMessageAggregator {
     toolName: string,
     input: unknown,
     output: unknown,
-    context: "streaming" | "historical"
+    _context: "streaming" | "historical"
   ): void {
     // Update TODO state if this was a successful todo_write
-    // TODOs are stream-scoped: only update during live streaming, not on historical reload
-    if (toolName === "todo_write" && hasSuccessResult(output) && context === "streaming") {
+    // TODOs are session-scoped: update during both live streaming and historical reload
+    if (
+      toolName === "todo_write" &&
+      hasSuccessResult(output) &&
+      input != null &&
+      typeof input === "object"
+    ) {
       const args = input as { todos: TodoItem[] };
-      // Only update if todos actually changed (prevents flickering from reference changes)
-      if (!this.todosEqual(this.currentTodos, args.todos)) {
+      // Guard against malformed historical data - skip silently for self-healing
+      if (Array.isArray(args.todos) && !this.todosEqual(this.currentTodos, args.todos)) {
+        // Only update if todos actually changed (prevents flickering from reference changes)
         this.currentTodos = args.todos;
       }
     }
@@ -2205,9 +2206,6 @@ export class StreamingMessageAggregator {
         const muxMeta = incomingMessage.metadata?.muxMetadata as
           | { displayStatus?: { emoji: string; message: string } }
           | undefined;
-
-        // Always clear todos (stream-scoped state)
-        this.currentTodos = [];
 
         // Capture pending compaction metadata for pre-stream UI ("starting" phase).
         const muxMetadata = incomingMessage.metadata?.muxMetadata as MuxMessageMetadata | undefined;
