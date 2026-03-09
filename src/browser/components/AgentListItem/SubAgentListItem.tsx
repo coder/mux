@@ -13,6 +13,7 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
   const connectorLeft = props.indentLeft - 10;
   const connectorFillClass = props.isSelected ? "bg-border" : "bg-border-light";
   const connectorBorderClass = props.isSelected ? "border-border" : "border-border-light";
+  const connectorColor = props.isSelected ? "var(--color-border)" : "var(--color-border-light)";
   const connectorTurnSizePx = 6;
 
   // Even when a sub-agent is an only child, we still need the top segment to
@@ -33,7 +34,13 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
         // Keep connectors above the row background so lines remain visible for
         // both selected and unselected sub-agent variants.
         className="pointer-events-none absolute inset-y-0 z-10"
-        style={{ left: connectorLeft, width: 14 }}
+        style={
+          {
+            left: connectorLeft,
+            width: 14,
+            "--connector-color": connectorColor,
+          } as React.CSSProperties
+        }
       >
         {showTopSegment && (
           <span

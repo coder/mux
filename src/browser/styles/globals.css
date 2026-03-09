@@ -2206,8 +2206,8 @@ input[type="checkbox"] {
   height: calc(100% + 6px);
   background: repeating-linear-gradient(
     to bottom,
-    var(--color-border) 0px,
-    var(--color-border) 3px,
+    var(--connector-color) 0px,
+    var(--connector-color) 3px,
     transparent 3px,
     transparent 6px
   );
