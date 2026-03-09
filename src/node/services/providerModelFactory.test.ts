@@ -137,12 +137,52 @@ describe("ProviderModelFactory modelCostsIncluded", () => {
     });
   });
 });
-describe("ProviderModelFactory.resolveGatewayModelString", () => {
-  it("routes through gateway when provider is disabled but gateway is configured and model is allowlisted", async () => {
+describe("ProviderModelFactory routing", () => {
+  it("honors non-mux gateway routes end-to-end", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
         openai: {
           apiKey: "sk-test",
+          enabled: false,
+        },
+        openrouter: {
+          apiKey: "or-test",
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["openrouter", "direct"],
+      });
+
+      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);
+      expect(resolved).toBe("openrouter:openai/gpt-5");
+
+      const created = await factory.createModel("openai:gpt-5");
+      expect(created.success).toBe(true);
+
+      const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
+      expect(result.data.routeProvider).toBe("openrouter");
+      expect(result.data.routedThroughGateway).toBe(false);
+    });
+  });
+
+  it("skips disabled gateway providers even when credentials exist", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          enabled: false,
+        },
+        openrouter: {
+          apiKey: "or-test",
           enabled: false,
         },
         "mux-gateway": {
@@ -154,21 +194,48 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
       await config.saveConfig({
         ...projectConfig,
         muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
+        routePriority: ["openrouter", "mux-gateway", "direct"],
       });
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);
-
       expect(resolved).toBe("mux-gateway:openai/gpt-5");
     });
   });
 
-  it("keeps disabled provider blocked when gateway is not configured", async () => {
+  it("falls back deterministically to the next configured route", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
         openai: {
           apiKey: "sk-test",
           enabled: false,
+        },
+        openrouter: {
+          apiKey: "or-test",
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["mux-gateway", "openrouter", "direct"],
+      });
+
+      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);
+      expect(resolved).toBe("openrouter:openai/gpt-5");
+
+      const created = await factory.createModel("openai:gpt-5");
+      expect(created.success).toBe(true);
+    });
+  });
+
+  it("honors explicit mux-gateway prefixes for compatibility", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+        "mux-gateway": {
+          couponCode: "test-coupon",
         },
       });
 
@@ -176,20 +243,11 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
       await config.saveConfig({
         ...projectConfig,
         muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
+        routePriority: ["direct"],
       });
 
-      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", false);
-      expect(resolved).toBe("openai:gpt-5");
-
-      const result = await factory.createModel(resolved);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toEqual({
-          type: "provider_disabled",
-          provider: "openai",
-        });
-      }
+      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5", true);
+      expect(resolved).toBe("mux-gateway:openai/gpt-5");
     });
   });
 });
