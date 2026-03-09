@@ -236,7 +236,7 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
   });
 
-  test("keeps gateway-opted-in models visible when gateway is active", () => {
+  test("keeps routed provider models visible when a gateway route is active", () => {
     providersConfig = {
       anthropic: { apiKeySet: false, isEnabled: true, isConfigured: false },
       "mux-gateway": {
@@ -244,22 +244,20 @@ describe("useModelsFromSettings provider availability gating", () => {
         isEnabled: true,
         isConfigured: true,
         couponCodeSet: true,
-        // Only OPUS is opted-in to gateway routing (via backend config, not localStorage)
-        gatewayModels: [KNOWN_MODELS.OPUS.id],
       },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    // OPUS is opted-in to gateway — should stay visible
+    // Routing availability is provider-level: a configured mux-gateway makes
+    // all built-in Anthropic models visible, not just a per-model allowlist.
     expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
-    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.HAIKU.id);
 
-    // SONNET and HAIKU are NOT opted-in — should be hidden despite gateway being active
-    expect(result.current.models).not.toContain(KNOWN_MODELS.SONNET.id);
-    expect(result.current.models).not.toContain(KNOWN_MODELS.HAIKU.id);
-    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.SONNET.id);
-    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.HAIKU.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.SONNET.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.HAIKU.id);
   });
 
   test("excludes OAuth-gated OpenAI models from hidden bucket when unconfigured", () => {
@@ -324,7 +322,7 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector.length).toBe(0);
   });
 
-  test("provider missing from config is treated as available", () => {
+  test("provider missing from config is treated as unavailable without a route", () => {
     providersConfig = {
       anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
@@ -332,6 +330,7 @@ describe("useModelsFromSettings provider availability gating", () => {
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
-    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.models).not.toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
   });
 });
