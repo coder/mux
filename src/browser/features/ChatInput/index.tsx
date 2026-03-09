@@ -29,7 +29,7 @@ import {
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -620,7 +620,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
-      const canonicalModel = migrateGatewayModel(model);
+      const canonicalModel = normalizeToCanonical(model);
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
 
       if (onModelChange) {

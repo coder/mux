@@ -2,7 +2,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { coerceThinkingLevel } from "@/common/types/thinking";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 
 export interface ExperimentValues {
   programmaticToolCalling: boolean | undefined;
@@ -26,7 +26,7 @@ export interface SendMessageOptionsInput {
 export function normalizeModelPreference(rawModel: unknown, fallbackModel: string): string {
   const trimmed =
     typeof rawModel === "string" && rawModel.trim().length > 0 ? rawModel.trim() : null;
-  return migrateGatewayModel(trimmed ?? fallbackModel);
+  return normalizeToCanonical(trimmed ?? fallbackModel);
 }
 
 export function normalizeSystem1Model(rawModel: unknown): string | undefined {
@@ -44,7 +44,7 @@ export function normalizeSystem1ThinkingLevel(rawLevel: unknown): ThinkingLevel 
  * Single source of truth for the send-option shape — backend enforces per-model policy.
  */
 export function buildSendMessageOptions(input: SendMessageOptionsInput): SendMessageOptions {
-  const system1Model = input.system1Model ? migrateGatewayModel(input.system1Model) : undefined;
+  const system1Model = input.system1Model ? normalizeToCanonical(input.system1Model) : undefined;
   const system1ThinkingLevel =
     input.system1ThinkingLevel && input.system1ThinkingLevel !== "off"
       ? input.system1ThinkingLevel

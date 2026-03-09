@@ -9,7 +9,6 @@ import type { SendMessageError } from "@/common/types/errors";
 import {
   PROVIDER_REGISTRY,
   PROVIDER_DEFINITIONS,
-  MUX_GATEWAY_SUPPORTED_PROVIDERS,
   type ProviderName,
 } from "@/common/constants/providers";
 import {
@@ -1666,7 +1665,9 @@ export class ProviderModelFactory {
     }
 
     const typedProvider = providerName as ProviderName;
-    if (!MUX_GATEWAY_SUPPORTED_PROVIDERS.has(typedProvider)) {
+    const muxGatewayRoutes = (PROVIDER_DEFINITIONS["mux-gateway"].routes ??
+      []) as readonly ProviderName[];
+    if (!muxGatewayRoutes.includes(typedProvider)) {
       return canonicalModelString;
     }
 

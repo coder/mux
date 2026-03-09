@@ -12,7 +12,7 @@ import { ThinkingProvider } from "mux/browser/contexts/ThinkingContext";
 import { useThinkingLevel } from "mux/browser/hooks/useThinkingLevel";
 import { usePersistedState } from "mux/browser/hooks/usePersistedState";
 import { useModelsFromSettings } from "mux/browser/hooks/useModelsFromSettings";
-import { migrateGatewayModel } from "mux/browser/hooks/useGatewayModels";
+import { normalizeToCanonical } from "mux/common/utils/ai/models";
 import { useProviderOptions } from "mux/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "mux/browser/hooks/useAutoCompactionSettings";
 
@@ -127,7 +127,7 @@ function ChatComposerInner(props: {
     listener: true,
   });
 
-  const baseModel = migrateGatewayModel(preferredModel);
+  const baseModel = normalizeToCanonical(preferredModel);
 
   const inputKey = getInputKey(props.workspaceId);
   const [input, setInput] = usePersistedState<string>(inputKey, "", { listener: true });
@@ -188,7 +188,7 @@ function ChatComposerInner(props: {
     Boolean(api);
 
   const onModelChange = (model: string) => {
-    const canonicalModel = migrateGatewayModel(model);
+    const canonicalModel = normalizeToCanonical(model);
     ensureModelInSettings(canonicalModel);
     setPreferredModel(canonicalModel);
 

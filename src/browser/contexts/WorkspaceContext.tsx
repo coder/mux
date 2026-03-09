@@ -65,7 +65,7 @@ import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/works
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { findAdjacentWorkspaceId } from "@/browser/utils/ui/workspaceDomNav";
 import { useRouter } from "@/browser/contexts/RouterContext";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { APIClient } from "@/browser/contexts/API";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -84,7 +84,7 @@ function migrateLocalModelPrefsToBackend(
   const localDefaultModelRaw = readPersistedString(DEFAULT_MODEL_KEY);
   const localDefaultModel =
     typeof localDefaultModelRaw === "string"
-      ? migrateGatewayModel(localDefaultModelRaw).trim()
+      ? normalizeToCanonical(localDefaultModelRaw).trim()
       : undefined;
   const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
 

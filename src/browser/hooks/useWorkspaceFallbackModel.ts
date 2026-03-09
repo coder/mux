@@ -1,5 +1,5 @@
 import { usePersistedState } from "./usePersistedState";
-import { migrateGatewayModel } from "./useGatewayModels";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
 
@@ -20,7 +20,7 @@ export function useWorkspaceFallbackModel(workspaceId: string): string {
       listener: true,
     }
   );
-  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
+  const defaultModel = normalizeToCanonical(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
 
   // Workspace-scoped model preference. If unset, fall back to the global default model.
   // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
@@ -30,7 +30,7 @@ export function useWorkspaceFallbackModel(workspaceId: string): string {
   });
 
   if (typeof preferredModel === "string" && preferredModel.trim().length > 0) {
-    return migrateGatewayModel(preferredModel.trim());
+    return normalizeToCanonical(preferredModel.trim());
   }
   return defaultModel;
 }

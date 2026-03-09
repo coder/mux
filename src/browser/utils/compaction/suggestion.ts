@@ -4,9 +4,9 @@
  * Used by RetryBarrier to offer "Compact & retry" when we hit context limits.
  */
 
-import { isGatewayFormat, toGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { isModelAvailable } from "@/common/routing";
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
@@ -27,6 +27,14 @@ export interface CompactionSuggestion {
   maxInputTokens: number | null;
 }
 
+function buildIsConfigured(
+  providersConfig: ProvidersConfigMap | null
+): (provider: string) => boolean {
+  return (provider: string) =>
+    providersConfig?.[provider]?.isConfigured === true &&
+    providersConfig?.[provider]?.isEnabled !== false;
+}
+
 export function getExplicitCompactionSuggestion(options: {
   modelId: string;
   providersConfig: ProvidersConfigMap | null;
@@ -38,18 +46,12 @@ export function getExplicitCompactionSuggestion(options: {
   }
 
   const normalized = normalizeToCanonical(modelId);
-  const colonIndex = normalized.indexOf(":");
-  const provider = colonIndex === -1 ? null : normalized.slice(0, colonIndex);
-  const isProviderConfigured = provider
-    ? options.providersConfig?.[provider]?.isConfigured === true
-    : false;
-
-  // "Configured" is intentionally fuzzy: we require either provider credentials,
-  // or gateway routing enabled for that model (avoids suggesting unusable models).
-  const routesThroughGateway = isGatewayFormat(toGatewayModel(modelId, options.providersConfig));
-  if (!isProviderConfigured && !routesThroughGateway) {
+  const isConfigured = buildIsConfigured(options.providersConfig);
+  if (!isModelAvailable(normalized, isConfigured)) {
     return null;
   }
+
+  const colonIndex = normalized.indexOf(":");
 
   // Validate against policy if provided
   if (!isModelAllowedByPolicy(options.policy ?? null, normalized)) {
@@ -90,13 +92,10 @@ export function getHigherContextCompactionSuggestion(options: {
   }
 
   let best: CompactionSuggestion | null = null;
+  const isConfigured = buildIsConfigured(options.providersConfig);
 
   for (const known of Object.values(KNOWN_MODELS)) {
-    // "Configured" is intentionally fuzzy: we require either provider credentials,
-    // or gateway routing enabled for that model (avoids suggesting unusable models).
-    const isProviderConfigured = options.providersConfig?.[known.provider]?.isConfigured === true;
-    const routesThroughGateway = isGatewayFormat(toGatewayModel(known.id, options.providersConfig));
-    if (!isProviderConfigured && !routesThroughGateway) {
+    if (!isModelAvailable(known.id, isConfigured)) {
       continue;
     }
 

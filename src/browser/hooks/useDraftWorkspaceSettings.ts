@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { readPersistedState, usePersistedState } from "./usePersistedState";
 import { useThinkingLevel } from "./useThinkingLevel";
-import { migrateGatewayModel } from "./useGatewayModels";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
   type RuntimeMode,
@@ -250,14 +250,14 @@ export function useDraftWorkspaceSettings(
     WORKSPACE_DEFAULTS.model,
     { listener: true }
   );
-  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
+  const defaultModel = normalizeToCanonical(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
 
   // Project-scoped model preference (persisted per project). If unset, fall back to the global
   // default model preference.
   const [modelOverride] = usePersistedState<string | null>(getModelKey(projectScopeId), null, {
     listener: true,
   });
-  const model = migrateGatewayModel(
+  const model = normalizeToCanonical(
     typeof modelOverride === "string" && modelOverride.trim().length > 0
       ? modelOverride.trim()
       : defaultModel

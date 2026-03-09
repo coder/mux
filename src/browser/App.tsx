@@ -47,7 +47,7 @@ import {
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -359,7 +359,7 @@ function AppInner() {
   const getModelForWorkspace = useCallback((workspaceId: string): string => {
     const defaultModel = getDefaultModel();
     const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
-    return migrateGatewayModel(rawModel || defaultModel);
+    return normalizeToCanonical(rawModel || defaultModel);
   }, []);
 
   const getThinkingLevelForWorkspace = useCallback(

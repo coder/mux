@@ -1,5 +1,8 @@
-import { resolveModelAlias, isValidModelFormat } from "@/common/utils/ai/models";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import {
+  resolveModelAlias,
+  isValidModelFormat,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
 
 export interface ModelInputResult {
   model: string | null;
@@ -16,7 +19,7 @@ export function normalizeModelInput(raw: string | null | undefined): ModelInputR
 
   const resolved = resolveModelAlias(trimmed);
   const isAlias = resolved !== trimmed;
-  const canonical = migrateGatewayModel(resolved).trim();
+  const canonical = normalizeToCanonical(resolved).trim();
 
   if (!isValidModelFormat(canonical)) {
     return { model: null, isAlias, error: "invalid-format" };
