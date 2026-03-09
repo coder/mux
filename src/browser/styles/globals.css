@@ -2186,21 +2186,22 @@ input[type="checkbox"] {
     background-position-y: 0;
   }
   to {
-    background-position-y: 8px;
+    background-position-y: 6px;
   }
 }
 
 .subagent-connector-active {
   /* Replace solid bg with animated dashed pattern */
   background: none !important;
-  background-image: repeating-linear-gradient(
+  background-image: linear-gradient(
     to bottom,
     var(--color-border) 0px,
     var(--color-border) 3px,
     transparent 3px,
-    transparent 5px
+    transparent 6px
   ) !important;
-  background-size: 1px 8px !important;
+  background-size: 1px 6px !important;
+  background-repeat: repeat !important;
   animation: connector-dash-scroll 0.4s linear infinite;
 }
 
