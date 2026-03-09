@@ -782,7 +782,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       discoveredKeys.length > 0 &&
       !discoveredKeysLoading
     ) {
-      const importedCount = Object.values(importResults).filter((r) => r === "success").length;
       // Check whether all *selected* entries have been imported.
       const allSelectedImported =
         selectedKeys.size > 0 && [...selectedKeys].every((id) => importResults[id] === "success");
