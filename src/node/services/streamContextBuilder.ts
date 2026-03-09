@@ -13,6 +13,8 @@
  * All functions are pure — no service dependencies (`this.*`).
  */
 
+import * as path from "node:path";
+
 import assert from "@/common/utils/assert";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -241,6 +243,133 @@ export interface StreamSystemContextResult {
   availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
 }
 
+const MAX_ANCESTOR_PLAN_PATH_HOPS = 32;
+
+interface WorkspaceConfigLookupEntry {
+  workspaceName: string;
+  projectName: string;
+  parentWorkspaceId: string | undefined;
+}
+
+interface AncestorPlanPathEntry {
+  workspaceName: string;
+  planFilePath: string;
+}
+
+function buildWorkspaceConfigLookup(cfg: ProjectsConfig): Map<string, WorkspaceConfigLookupEntry> {
+  const workspaceLookup = new Map<string, WorkspaceConfigLookupEntry>();
+
+  for (const [projectPath, project] of cfg.projects) {
+    const projectName = path.basename(projectPath) || projectPath || "unknown-project";
+    for (const workspace of project.workspaces) {
+      if (!workspace.id) continue;
+      if (!workspace.name) continue;
+      workspaceLookup.set(workspace.id, {
+        workspaceName: workspace.name,
+        projectName,
+        parentWorkspaceId: workspace.parentWorkspaceId,
+      });
+    }
+  }
+
+  return workspaceLookup;
+}
+
+function formatAncestorPlanPathInstructions(
+  entries: readonly AncestorPlanPathEntry[]
+): string | undefined {
+  if (entries.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "Ancestor plan file paths (nearest parent first):",
+    ...entries.map((entry) => `- ${entry.workspaceName}: ${entry.planFilePath}`),
+  ].join("\n");
+}
+
+// Keep ancestor plan paths in the system prompt only so queued user prompts stay unchanged.
+function resolveAncestorPlanPathInstructions(args: {
+  metadata: WorkspaceMetadata;
+  workspaceId: string;
+  runtime: Runtime;
+  cfg: ProjectsConfig;
+  isSubagentWorkspace: boolean;
+}): string | undefined {
+  if (!args.isSubagentWorkspace) {
+    return undefined;
+  }
+
+  const parentWorkspaceId = args.metadata.parentWorkspaceId;
+  if (!parentWorkspaceId) {
+    return undefined;
+  }
+
+  const workspaceLookup = buildWorkspaceConfigLookup(args.cfg);
+  const ancestorEntries: AncestorPlanPathEntry[] = [];
+  const visitedWorkspaceIds = new Set([args.workspaceId]);
+  let currentWorkspaceId: string | undefined = parentWorkspaceId;
+
+  for (let hopCount = 0; currentWorkspaceId; hopCount += 1) {
+    if (hopCount >= MAX_ANCESTOR_PLAN_PATH_HOPS) {
+      log.debug("Stopping ancestor plan path resolution after maximum hop count", {
+        workspaceId: args.workspaceId,
+        workspaceName: args.metadata.name,
+        currentWorkspaceId,
+        maxAncestorPlanPathHops: MAX_ANCESTOR_PLAN_PATH_HOPS,
+      });
+      break;
+    }
+
+    if (visitedWorkspaceIds.has(currentWorkspaceId)) {
+      log.debug("Stopping ancestor plan path resolution due to parentWorkspaceId cycle", {
+        workspaceId: args.workspaceId,
+        workspaceName: args.metadata.name,
+        currentWorkspaceId,
+      });
+      break;
+    }
+    visitedWorkspaceIds.add(currentWorkspaceId);
+
+    const currentWorkspace = workspaceLookup.get(currentWorkspaceId);
+    if (!currentWorkspace) {
+      log.debug(
+        "Stopping ancestor plan path resolution because parent workspace metadata is missing",
+        {
+          workspaceId: args.workspaceId,
+          workspaceName: args.metadata.name,
+          missingWorkspaceId: currentWorkspaceId,
+        }
+      );
+      break;
+    }
+
+    ancestorEntries.push({
+      workspaceName: currentWorkspace.workspaceName,
+      planFilePath: getPlanFilePath(
+        currentWorkspace.workspaceName,
+        currentWorkspace.projectName,
+        args.runtime.getMuxHome()
+      ),
+    });
+
+    currentWorkspaceId = currentWorkspace.parentWorkspaceId;
+  }
+
+  return formatAncestorPlanPathInstructions(ancestorEntries);
+}
+
+function mergeAdditionalInstructions(
+  primaryInstructions: string | undefined,
+  secondaryInstructions: string | undefined
+): string | undefined {
+  if (primaryInstructions && secondaryInstructions) {
+    return `${primaryInstructions}\n\n${secondaryInstructions}`;
+  }
+
+  return primaryInstructions ?? secondaryInstructions;
+}
+
 /**
  * Build the agent system prompt, system message, and discover available agents/skills.
  *
@@ -319,12 +448,24 @@ export async function buildStreamSystemContext(
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
   }
 
+  const ancestorPlanPathInstructions = resolveAncestorPlanPathInstructions({
+    metadata,
+    workspaceId,
+    runtime,
+    cfg,
+    isSubagentWorkspace,
+  });
+  const mergedAdditionalInstructions = mergeAdditionalInstructions(
+    ancestorPlanPathInstructions,
+    effectiveAdditionalInstructions
+  );
+
   // Build system message from workspace metadata
   const systemMessage = await buildSystemMessage(
     metadata,
     runtime,
     workspacePath,
-    effectiveAdditionalInstructions,
+    mergedAdditionalInstructions,
     modelString,
     mcpServers,
     { agentSystemPrompt }

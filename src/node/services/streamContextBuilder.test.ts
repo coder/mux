@@ -7,12 +7,13 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 import { createMuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { ProjectsConfig } from "@/common/types/project";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 
-import { buildPlanInstructions } from "./streamContextBuilder";
+import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
 
 class TestRuntime extends LocalRuntime {
   constructor(
@@ -25,6 +26,75 @@ class TestRuntime extends LocalRuntime {
   override getMuxHome(): string {
     return this.muxHomePath;
   }
+}
+
+function createWorkspaceMetadata(args: {
+  id: string;
+  name: string;
+  projectName: string;
+  projectPath: string;
+  parentWorkspaceId?: string;
+}): WorkspaceMetadata {
+  return {
+    id: args.id,
+    name: args.name,
+    projectName: args.projectName,
+    projectPath: args.projectPath,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    parentWorkspaceId: args.parentWorkspaceId,
+  };
+}
+
+function createProjectsConfig(args: {
+  projectPath: string;
+  workspaces: Array<{
+    id: string;
+    name: string;
+    parentWorkspaceId?: string;
+  }>;
+}): ProjectsConfig {
+  return {
+    projects: new Map([
+      [
+        args.projectPath,
+        {
+          trusted: true,
+          workspaces: args.workspaces.map((workspace) => ({
+            path: path.join(args.projectPath, workspace.name),
+            id: workspace.id,
+            name: workspace.name,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            parentWorkspaceId: workspace.parentWorkspaceId,
+          })),
+        },
+      ],
+    ]),
+  };
+}
+
+async function buildSystemContextForTest(args: {
+  runtime: TestRuntime;
+  metadata: WorkspaceMetadata;
+  workspacePath: string;
+  cfg: ProjectsConfig;
+  isSubagentWorkspace: boolean;
+  effectiveAdditionalInstructions?: string;
+}) {
+  return buildStreamSystemContext({
+    runtime: args.runtime,
+    metadata: args.metadata,
+    workspacePath: args.workspacePath,
+    workspaceId: args.metadata.id,
+    agentDefinition: { id: "exec" },
+    agentDiscoveryPath: args.workspacePath,
+    isSubagentWorkspace: args.isSubagentWorkspace,
+    effectiveAdditionalInstructions: args.effectiveAdditionalInstructions,
+    modelString: "openai:gpt-5.2",
+    cfg: args.cfg,
+    providersConfig: null,
+    mcpServers: {},
+  });
 }
 
 describe("buildPlanInstructions", () => {
@@ -160,5 +230,195 @@ describe("buildPlanInstructions", () => {
       `A plan file exists at: ${fromSlicedPayload.planFilePath}`
     );
     expect(fromFullHistory.effectiveAdditionalInstructions).toBeUndefined();
+  });
+});
+
+describe("buildStreamSystemContext", () => {
+  test("includes the direct parent plan path ahead of caller instructions", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata = createWorkspaceMetadata({
+      id: "child-ws",
+      name: "child-workspace",
+      projectName: "project",
+      projectPath,
+      parentWorkspaceId: "parent-ws",
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [
+        { id: "parent-ws", name: "parent-workspace" },
+        { id: metadata.id, name: metadata.name, parentWorkspaceId: metadata.parentWorkspaceId },
+      ],
+    });
+
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const result = await buildSystemContextForTest({
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: true,
+      effectiveAdditionalInstructions: "Caller-specific note",
+    });
+
+    expect(result.systemMessage).toContain("Ancestor plan file paths (nearest parent first):");
+    expect(result.systemMessage).toContain(`- parent-workspace: ${parentPlanPath}`);
+    expect(result.systemMessage).toContain("Caller-specific note");
+    expect(result.systemMessage.indexOf(parentPlanPath)).toBeLessThan(
+      result.systemMessage.indexOf("Caller-specific note")
+    );
+  });
+
+  test("lists nested ancestor plan paths in nearest-parent-first order", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata = createWorkspaceMetadata({
+      id: "grandchild-ws",
+      name: "grandchild-workspace",
+      projectName: "project",
+      projectPath,
+      parentWorkspaceId: "child-ws",
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [
+        { id: "parent-ws", name: "parent-workspace" },
+        { id: "child-ws", name: "child-workspace", parentWorkspaceId: "parent-ws" },
+        { id: metadata.id, name: metadata.name, parentWorkspaceId: metadata.parentWorkspaceId },
+      ],
+    });
+
+    const childPlanPath = getPlanFilePath("child-workspace", "project", muxHome);
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const result = await buildSystemContextForTest({
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: true,
+    });
+
+    expect(result.systemMessage).toContain(`- child-workspace: ${childPlanPath}`);
+    expect(result.systemMessage).toContain(`- parent-workspace: ${parentPlanPath}`);
+    expect(result.systemMessage.indexOf(childPlanPath)).toBeLessThan(
+      result.systemMessage.indexOf(parentPlanPath)
+    );
+  });
+
+  test("omits ancestor plan paths for top-level workspaces", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata = createWorkspaceMetadata({
+      id: "top-level-ws",
+      name: "top-level-workspace",
+      projectName: "project",
+      projectPath,
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [{ id: metadata.id, name: metadata.name }],
+    });
+
+    const result = await buildSystemContextForTest({
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: false,
+      effectiveAdditionalInstructions: "Top-level note",
+    });
+
+    expect(result.systemMessage).not.toContain("Ancestor plan file paths (nearest parent first):");
+    expect(result.systemMessage).toContain("Top-level note");
+  });
+
+  test("omits the ancestor section when the parent metadata is missing", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata = createWorkspaceMetadata({
+      id: "child-ws",
+      name: "child-workspace",
+      projectName: "project",
+      projectPath,
+      parentWorkspaceId: "missing-parent-ws",
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [
+        { id: metadata.id, name: metadata.name, parentWorkspaceId: metadata.parentWorkspaceId },
+      ],
+    });
+
+    const result = await buildSystemContextForTest({
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: true,
+      effectiveAdditionalInstructions: "Existing note",
+    });
+
+    expect(result.systemMessage).not.toContain("Ancestor plan file paths (nearest parent first):");
+    expect(result.systemMessage).toContain("Existing note");
+  });
+
+  test("truncates cyclic ancestry without crashing", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata = createWorkspaceMetadata({
+      id: "child-ws",
+      name: "child-workspace",
+      projectName: "project",
+      projectPath,
+      parentWorkspaceId: "parent-ws",
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [
+        { id: "parent-ws", name: "parent-workspace", parentWorkspaceId: metadata.id },
+        { id: metadata.id, name: metadata.name, parentWorkspaceId: metadata.parentWorkspaceId },
+      ],
+    });
+
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const result = await buildSystemContextForTest({
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: true,
+    });
+
+    expect(result.systemMessage).toContain("Ancestor plan file paths (nearest parent first):");
+    expect(result.systemMessage).toContain(`- parent-workspace: ${parentPlanPath}`);
+    expect(result.systemMessage).not.toContain(
+      `- child-workspace: ${getPlanFilePath(metadata.name, "project", muxHome)}`
+    );
   });
 });
