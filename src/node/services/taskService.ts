@@ -2726,13 +2726,10 @@ export class TaskService {
     const status = entry.workspace.taskStatus;
     const reportArgs = this.findAgentReportArgsInParts(event.parts);
 
-    // Report monotonicity: once a successful agent_report is present in stream parts,
-    // interruption must not make the report unreachable. Finalize it, then skip the
-    // rest of stream-end handling for interrupted tasks (auto-resume/reminders/etc).
+    // Stream-end settlement: interrupted tasks must settle all pending waiters.
+    // Report present → finalize (resolve waiters). No report → reject waiters promptly.
     if (status === "interrupted") {
-      if (reportArgs) {
-        await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
-      }
+      await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, reportArgs);
       return;
     }
     if (status === "reported") {
@@ -2797,6 +2794,24 @@ export class TaskService {
       },
       { synthetic: true, agentInitiated: true }
     );
+  }
+
+  /**
+   * Stream-end settlement for interrupted tasks. Guarantees every pending waiter
+   * is settled exactly once: resolved if an agent_report exists, rejected otherwise.
+   * No waiter should depend on timeout to discover terminal interruption.
+   */
+  private async settleInterruptedTaskAtStreamEnd(
+    workspaceId: string,
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    reportArgs: { reportMarkdown: string; title?: string } | null
+  ): Promise<void> {
+    if (reportArgs) {
+      await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      return;
+    }
+
+    this.rejectWaiters(workspaceId, new Error("Task interrupted"));
   }
 
   private async handleSuccessfulProposePlanAutoHandoff(args: {
