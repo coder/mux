@@ -279,6 +279,9 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
         ];
 
         expandProjects([projectPath]);
+        // Keep this regression deterministic even when Storybook reuses localStorage
+        // across stories/runs and a prior interaction expanded an old-age tier.
+        localStorage.setItem("expandedOldWorkspaces", JSON.stringify({}));
         // Pre-expand completed children so this regression also covers nested reported rows.
         localStorage.setItem(
           "expandedCompletedSubAgents",
@@ -293,12 +296,28 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitFor(() => {
-      const tierToggle = within(canvasElement).getByRole("button", {
-        name: /expand workspaces older than 1 day/i,
+    const getTierToggle = () =>
+      within(canvasElement).getByRole("button", {
+        name: /workspaces older than 1 day/i,
       });
+
+    await waitFor(() => {
+      const tierToggle = getTierToggle();
       if (!tierToggle.textContent?.includes("(4)")) {
         throw new Error("Expected older-than-1-day tier count to be 4");
+      }
+    });
+
+    // Storybook can reuse storage between stories/runs, so force a known collapsed
+    // starting point before asserting that old rows are still hidden.
+    if (getTierToggle().getAttribute("aria-expanded") === "true") {
+      await userEvent.click(getTierToggle());
+    }
+
+    await waitFor(() => {
+      const tierToggle = getTierToggle();
+      if (tierToggle.getAttribute("aria-expanded") !== "false") {
+        throw new Error("Expected older-than-1-day tier to be collapsed before expansion");
       }
     });
 
@@ -313,10 +332,7 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
       }
     }
 
-    const tierToggle = within(canvasElement).getByRole("button", {
-      name: /expand workspaces older than 1 day/i,
-    });
-    await userEvent.click(tierToggle);
+    await userEvent.click(getTierToggle());
 
     await waitFor(() => {
       for (const workspaceId of [
