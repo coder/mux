@@ -5,10 +5,6 @@ const URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 const WINDOWS_DRIVE_PATH_RE = /^[a-zA-Z]:\//;
 
 function toAudioSource(filePath: string): string {
-  if (URI_SCHEME_RE.test(filePath)) {
-    return filePath;
-  }
-
   if (filePath.startsWith("\\\\")) {
     const normalizedUncPath = filePath.replace(/\\/g, "/");
     return `file:${encodeURI(normalizedUncPath)}`;
@@ -17,6 +13,10 @@ function toAudioSource(filePath: string): string {
   const normalizedPath = filePath.replace(/\\/g, "/");
   if (WINDOWS_DRIVE_PATH_RE.test(normalizedPath)) {
     return `file:///${encodeURI(normalizedPath)}`;
+  }
+
+  if (URI_SCHEME_RE.test(filePath)) {
+    return filePath;
   }
 
   if (normalizedPath.startsWith("/")) {
