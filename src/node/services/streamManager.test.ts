@@ -1159,6 +1159,10 @@ describe("StreamManager - TTFT metadata persistence", () => {
     historySequence: number;
     startTime: number;
     parts: unknown[];
+    initialMetadata?: Record<string, unknown>;
+    emitStartEvent?: boolean;
+    onStreamStart?: (event: Record<string, unknown>) => void;
+    onStreamEnd?: (event: { metadata?: Record<string, unknown> }) => void;
     usage?: {
       inputTokens: number;
       outputTokens: number;
@@ -1169,6 +1173,13 @@ describe("StreamManager - TTFT metadata persistence", () => {
     const streamManager = new StreamManager(historyService);
     // Suppress error events from bubbling up as uncaught exceptions during tests
     streamManager.on("error", () => undefined);
+
+    if (params.onStreamStart) {
+      streamManager.on("stream-start", params.onStreamStart);
+    }
+    if (params.onStreamEnd) {
+      streamManager.on("stream-end", params.onStreamEnd);
+    }
 
     const replaceTokenTrackerResult = Reflect.set(streamManager, "tokenTracker", {
       setModel: () => Promise.resolve(undefined),
@@ -1220,6 +1231,7 @@ describe("StreamManager - TTFT metadata persistence", () => {
       toolCompletionTimestamps: new Map<string, number>(),
       model: KNOWN_MODELS.SONNET.id,
       historySequence: params.historySequence,
+      initialMetadata: params.initialMetadata,
       parts: params.parts,
       lastPartialWriteTime: 0,
       partialWriteTimer: undefined,
@@ -1234,6 +1246,16 @@ describe("StreamManager - TTFT metadata persistence", () => {
       currentStepStartIndex: 0,
       stepTracker: {},
     };
+
+    if (params.emitStartEvent) {
+      const emitStreamStart = Reflect.get(streamManager, "emitStreamStart") as (
+        workspaceId: string,
+        streamInfo: unknown,
+        historySequence: number
+      ) => void;
+      expect(typeof emitStreamStart).toBe("function");
+      emitStreamStart.call(streamManager, params.workspaceId, streamInfo, params.historySequence);
+    }
 
     await processStreamWithCleanup.call(
       streamManager,
@@ -1300,6 +1322,48 @@ describe("StreamManager - TTFT metadata persistence", () => {
     expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "ttftMs")).toBe(
       false
     );
+  });
+
+  test("emits and persists routeProvider from initial stream metadata", async () => {
+    const startTime = Date.now() - 1000;
+    let streamStartEvent: Record<string, unknown> | undefined;
+    let streamEndEvent: { metadata?: Record<string, unknown> } | undefined;
+
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "route-provider-workspace",
+      messageId: "route-provider-message",
+      historySequence: 1,
+      startTime,
+      initialMetadata: {
+        routeProvider: "openrouter",
+        routedThroughGateway: true,
+      },
+      emitStartEvent: true,
+      onStreamStart: (event) => {
+        streamStartEvent = event;
+      },
+      onStreamEnd: (event) => {
+        streamEndEvent = event;
+      },
+      parts: [
+        {
+          type: "text",
+          text: "hello",
+          timestamp: startTime + 100,
+        },
+      ],
+    });
+
+    expect(streamStartEvent).toMatchObject({
+      routeProvider: "openrouter",
+      routedThroughGateway: true,
+    });
+    expect(streamEndEvent?.metadata).toMatchObject({
+      routeProvider: "openrouter",
+      routedThroughGateway: true,
+    });
+    expect(updatedMessage.metadata?.routeProvider).toBe("openrouter");
+    expect(updatedMessage.metadata?.routedThroughGateway).toBe(true);
   });
 
   describe("StreamManager - reasoning token backfill", () => {

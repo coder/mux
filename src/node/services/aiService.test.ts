@@ -26,6 +26,7 @@ import { DisposableTempDir } from "@/node/services/tempDir";
 import { createTaskTool } from "./tools/task";
 import { createTestToolConfig } from "./tools/testHelpers";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
+import type { ProviderName } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
@@ -1125,7 +1126,20 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     return openai as Record<string, unknown>;
   }
 
-  function createHarness(muxHomePath: string, metadata: WorkspaceMetadata): StreamMessageHarness {
+  function initialMetadataFromStartStreamCall(startStreamArgs: unknown[]): Record<string, unknown> {
+    const initialMetadata = startStreamArgs[10];
+    if (!initialMetadata || typeof initialMetadata !== "object" || Array.isArray(initialMetadata)) {
+      throw new Error("Expected initial metadata object at startStream arg index 10");
+    }
+
+    return initialMetadata as Record<string, unknown>;
+  }
+
+  function createHarness(
+    muxHomePath: string,
+    metadata: WorkspaceMetadata,
+    options?: { routeProvider?: ProviderName }
+  ): StreamMessageHarness {
     const config = new Config(muxHomePath);
     const historyService = new HistoryService(config);
     const initStateManager = new InitStateManager(config);
@@ -1213,6 +1227,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         canonicalProviderName: "openai",
         canonicalModelId: "gpt-5.2",
         routedThroughGateway: false,
+        ...(options?.routeProvider != null ? { routeProvider: options.routeProvider } : {}),
       },
     };
     spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
@@ -1339,6 +1354,64 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
     expect(openaiOptions.previousResponseId).toBeUndefined();
     expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
+  });
+
+  it("passes the resolved routeProvider into initial stream metadata", async () => {
+    using muxHome = new DisposableTempDir("ai-service-route-provider-present");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-route-provider-present";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const startStreamCall = harness.startStreamCalls[0];
+    expect(startStreamCall).toBeDefined();
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+
+    const initialMetadata = initialMetadataFromStartStreamCall(startStreamCall);
+    expect(initialMetadata.routeProvider).toBe("openrouter");
+  });
+
+  it("omits routeProvider from initial stream metadata when unresolved", async () => {
+    using muxHome = new DisposableTempDir("ai-service-route-provider-absent");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-route-provider-absent";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const startStreamCall = harness.startStreamCalls[0];
+    expect(startStreamCall).toBeDefined();
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+
+    const initialMetadata = initialMetadataFromStartStreamCall(startStreamCall);
+    expect(Object.prototype.hasOwnProperty.call(initialMetadata, "routeProvider")).toBe(false);
   });
 
   it("falls back safely when boundary metadata is malformed", async () => {

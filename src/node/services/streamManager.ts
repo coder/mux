@@ -1571,6 +1571,7 @@ export class StreamManager extends EventEmitter {
     const routedThroughGateway =
       streamInfo.initialMetadata?.routedThroughGateway ??
       streamInfo.model.startsWith("mux-gateway:");
+    const routeProvider = streamInfo.initialMetadata?.routeProvider;
 
     this.emit("stream-start", {
       type: "stream-start",
@@ -1579,6 +1580,7 @@ export class StreamManager extends EventEmitter {
       ...(options?.replay && { replay: true }),
       model: canonicalModel,
       routedThroughGateway,
+      ...(routeProvider != null && { routeProvider }),
       historySequence,
       startTime: streamInfo.startTime,
       ...(streamStartAgentId && { agentId: streamStartAgentId }),

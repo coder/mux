@@ -1108,6 +1108,7 @@ export class AIService extends EventEmitter {
           assistantMessageId,
           canonicalModelString,
           routedThroughGateway,
+          ...(routeProvider != null ? { routeProvider } : {}),
           historySequence,
           systemMessageTokens,
           effectiveAgentId,
@@ -1318,6 +1319,9 @@ export class AIService extends EventEmitter {
           agentId: effectiveAgentId,
           mode: effectiveMode,
           routedThroughGateway,
+          // Preserve the resolved route source so stream events and persisted messages
+          // keep non-gateway attribution even when the model ID itself is gateway-agnostic.
+          ...(routeProvider != null ? { routeProvider } : {}),
           ...(acpPromptId != null ? { acpPromptId } : {}),
           ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },

@@ -27,6 +27,7 @@ export interface SimulationContext {
   assistantMessageId: string;
   canonicalModelString: string;
   routedThroughGateway: boolean;
+  routeProvider?: string;
   historySequence: number;
   systemMessageTokens: number;
   effectiveAgentId: string;
@@ -44,6 +45,7 @@ function createSimulatedStreamStart(ctx: SimulationContext): StreamStartEvent {
     messageId: ctx.assistantMessageId,
     model: ctx.canonicalModelString,
     routedThroughGateway: ctx.routedThroughGateway,
+    ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
     historySequence: ctx.historySequence,
     startTime: Date.now(),
     agentId: ctx.effectiveAgentId,
@@ -77,6 +79,7 @@ export async function simulateContextLimitError(
       timestamp: Date.now(),
       model: ctx.canonicalModelString,
       routedThroughGateway: ctx.routedThroughGateway,
+      ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
       systemMessageTokens: ctx.systemMessageTokens,
       agentId: ctx.effectiveAgentId,
       thinkingLevel: ctx.effectiveThinkingLevel,
@@ -119,6 +122,7 @@ export async function simulateToolPolicyNoop(
     timestamp: Date.now(),
     model: ctx.canonicalModelString,
     routedThroughGateway: ctx.routedThroughGateway,
+    ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
     systemMessageTokens: ctx.systemMessageTokens,
     agentId: ctx.effectiveAgentId,
     thinkingLevel: ctx.effectiveThinkingLevel,
@@ -164,6 +168,7 @@ export async function simulateToolPolicyNoop(
       agentId: ctx.effectiveAgentId,
       thinkingLevel: ctx.effectiveThinkingLevel,
       routedThroughGateway: ctx.routedThroughGateway,
+      ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
       systemMessageTokens: ctx.systemMessageTokens,
     },
     parts,
