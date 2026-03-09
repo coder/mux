@@ -875,7 +875,9 @@ export const workspace = {
   },
   createMultiProject: {
     input: z.object({
-      projects: z.array(ProjectRefSchema),
+      projects: z
+        .array(ProjectRefSchema)
+        .min(2, "createMultiProject requires at least two projects"),
       branchName: z.string(),
       trunkBranch: z.string().optional(),
       title: z.string().optional(),

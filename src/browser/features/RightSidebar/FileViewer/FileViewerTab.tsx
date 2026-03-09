@@ -112,11 +112,12 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     async function fetchFile() {
       try {
         // Fetch file contents and diff in parallel via bash
+        // Plain reads must stay on the shared container root so sibling-project paths resolve.
+        // Only the diff script needs primary-repo git context.
         const [fileResult, diffResult] = await Promise.all([
           api!.workspace.executeBash({
             workspaceId: props.workspaceId,
             script: buildReadFileScript(props.relativePath),
-            options: repoRootBashOptions(),
           }),
           api!.workspace.executeBash({
             workspaceId: props.workspaceId,

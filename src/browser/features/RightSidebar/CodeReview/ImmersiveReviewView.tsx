@@ -36,7 +36,6 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { buildReadFileScript, processFileContents } from "@/browser/utils/fileExplorer";
-import { repoRootBashOptions } from "@/browser/utils/executeBash";
 import {
   parseReviewLineRange,
   type DiffHunk,
@@ -509,10 +508,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     async function loadActiveFileContent() {
       try {
+        // Keep plain file reads on the shared container root so immersive review can open
+        // sibling-project files without forcing the primary repo checkout.
         const fileResult = await resolvedApi.workspace.executeBash({
           workspaceId: props.workspaceId,
           script: buildReadFileScript(resolvedFilePath),
-          options: repoRootBashOptions(),
         });
 
         if (cancelled) {

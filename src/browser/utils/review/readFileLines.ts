@@ -27,10 +27,12 @@ export async function readFileLines(
     ? `git show "${gitRef}:${filePath.replace(/"/g, '\\"')}" 2>/dev/null | sed -n '${startLine},${endLine}p'`
     : `sed -n '${startLine},${endLine}p' "${filePath.replace(/"/g, '\\"')}"`;
 
+  // Plain reads must stay on the shared container root for sibling-project paths, while
+  // git-ref lookups still need explicit primary-repo context for `git show`.
   const result = await api.workspace.executeBash({
     workspaceId,
     script,
-    options: repoRootBashOptions(3),
+    options: gitRef ? repoRootBashOptions(3) : { timeout_secs: 3 },
   });
 
   if (!result?.success) return null;
