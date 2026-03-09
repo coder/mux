@@ -572,13 +572,12 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
             return;
           }
           // Completed-child rows no longer render a dedicated chevron, so the row
-          // itself owns the pointer expand/collapse gesture. Rows without completed
-          // children keep double-click rename as their fallback affordance.
-          if (toggleCompletedChildren()) {
-            event.stopPropagation();
+          // itself owns the pointer expand/collapse gesture. Rows without hidden
+          // completed children intentionally leave double-click as a no-op because
+          // rename already has a dedicated menu action.
+          if (!toggleCompletedChildren()) {
             return;
           }
-          startEditing();
           event.stopPropagation();
         }}
         {...ctxMenu.touchHandlers}

@@ -5,7 +5,7 @@
  * - Completed child sub-agents (taskStatus=reported) are hidden by default.
  * - Double-clicking the parent row reveals completed children.
  * - Keyboard users can still expand/collapse completed children from the row.
- * - Double-clicking a workspace without completed children still enters rename mode.
+ * - Double-clicking a workspace without sub-agents is a no-op.
  * - Double-clicking again hides completed children.
  */
 
@@ -318,7 +318,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
     }
   }, 90_000);
 
-  test("double-clicking a workspace without completed children still enters rename mode", async () => {
+  test("double-clicking a workspace without sub-agents leaves rename closed", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
 
@@ -362,17 +362,11 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
 
       fireEvent.doubleClick(row);
 
-      await waitFor(
-        () => {
-          const editInput = renderedView.container.querySelector(
-            `input[aria-label="Edit title for workspace ${displayTitle}"]`
-          );
-          if (!editInput) {
-            throw new Error("Expected rename input to appear after double-clicking a leaf row");
-          }
-        },
-        { timeout: 10_000 }
-      );
+      expect(
+        renderedView.container.querySelector(
+          `input[aria-label="Edit title for workspace ${displayTitle}"]`
+        )
+      ).toBeNull();
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);
