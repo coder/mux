@@ -82,13 +82,13 @@ function createMockProviderService(
   deps: MockDeps
 ): Pick<ProviderService, "setConfig" | "setModels"> {
   return {
-    setConfig: async (
+    setConfig: (
       provider: string,
       keyPath: string[],
       value: string
     ): Promise<Result<void, string>> => {
       deps.setConfigCalls.push({ provider, keyPath, value });
-      return deps.setConfigResult;
+      return Promise.resolve(deps.setConfigResult);
     },
     setModels: (provider: string, models: ProviderModelEntry[]): Result<void, string> => {
       deps.setModelsCalls.push({ provider, models });

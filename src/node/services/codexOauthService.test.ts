@@ -69,7 +69,7 @@ function createMockConfig(deps: MockDeps): Pick<Config, "loadProvidersConfig"> {
 
 function createMockProviderService(deps: MockDeps): Pick<ProviderService, "setConfigValue"> {
   return {
-    setConfigValue: async (
+    setConfigValue: (
       provider: string,
       keyPath: string[],
       value: unknown
@@ -87,7 +87,7 @@ function createMockProviderService(deps: MockDeps): Pick<ProviderService, "setCo
           deps.providersConfig.openai.codexOauth = value;
         }
       }
-      return Ok(undefined);
+      return Promise.resolve(Ok(undefined));
     },
   };
 }
