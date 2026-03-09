@@ -30,17 +30,19 @@ import { getStoredAuthToken } from "@/browser/components/AuthTokenModal/AuthToke
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { useAPI } from "@/browser/contexts/API";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { useRouting } from "@/browser/hooks/useRouting";
 import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { getAgentsInitNudgeKey } from "@/common/constants/storage";
-import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import {
+  PROVIDER_DEFINITIONS,
+  PROVIDER_DISPLAY_NAMES,
+  type ProviderName,
+} from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -233,28 +235,26 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [muxGatewayLoginStatus, setMuxGatewayLoginStatus] = useState<MuxGatewayLoginStatus>("idle");
   const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
 
-  const muxGatewayApplyDefaultModelsOnSuccessRef = useRef(false);
   const muxGatewayLoginAttemptRef = useRef(0);
   const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
 
-  const gateway = useGateway();
+  const routing = useRouting();
 
-  const applyDefaultGatewayModels = useCallback(
-    (configSnapshot: ProvidersConfigMap | null) => {
-      const existingModels =
-        configSnapshot?.["mux-gateway"]?.gatewayModels ??
-        providersConfig?.["mux-gateway"]?.gatewayModels ??
-        [];
-      const nextModels =
-        existingModels.length > 0 ? existingModels : getEligibleGatewayModels(configSnapshot);
-      gateway.setEnabledModels(nextModels);
-    },
-    [gateway, providersConfig]
-  );
+  const disableMuxGatewayRoute = useCallback(() => {
+    if (!routing.routePriority.includes("mux-gateway")) {
+      return;
+    }
+
+    const nextPriority = routing.routePriority.filter((route) => route !== "mux-gateway");
+    if (!nextPriority.includes("direct")) {
+      nextPriority.push("direct");
+    }
+
+    routing.setRoutePriority(nextPriority);
+  }, [routing]);
 
   const cancelMuxGatewayLogin = useCallback(() => {
-    muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
     muxGatewayLoginAttemptRef.current++;
 
     if (isDesktop && api && muxGatewayDesktopFlowId) {
@@ -271,22 +271,6 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
     try {
-      // Apply default enrollment only for confirmed first-time setup. If config
-      // hydration is unknown, prefer preserving the current backend selection.
-      let gatewayConfig = providersConfig?.["mux-gateway"];
-      if (gatewayConfig?.couponCodeSet == null && api?.providers?.getConfig) {
-        try {
-          const latestConfig = await api.providers.getConfig();
-          if (attempt !== muxGatewayLoginAttemptRef.current) {
-            return;
-          }
-          gatewayConfig = latestConfig?.["mux-gateway"];
-        } catch {
-          // Ignore pre-login fetch failures; fall back to current snapshot.
-        }
-      }
-      muxGatewayApplyDefaultModelsOnSuccessRef.current = gatewayConfig?.couponCodeSet === false;
-
       setMuxGatewayLoginError(null);
       setMuxGatewayDesktopFlowId(null);
       setMuxGatewayServerState(null);
@@ -348,34 +332,17 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           const hasCredits = accountStatus == null || accountStatus.remaining_microdollars > 0;
 
-          if (hasCredits && muxGatewayApplyDefaultModelsOnSuccessRef.current) {
-            let latestConfig: ProvidersConfigMap | null = providersConfig;
-            try {
-              latestConfig = await api.providers.getConfig();
-            } catch {
-              // Ignore errors fetching config; fall back to the current snapshot.
-            }
-
-            if (attempt !== muxGatewayLoginAttemptRef.current) {
-              return;
-            }
-
-            // Persist gateway models via backend config (no localStorage).
-            applyDefaultGatewayModels(latestConfig);
-            muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
-          }
-
-          if (!hasCredits && gateway.isEnabled) {
-            gateway.toggleEnabled();
+          if (!hasCredits) {
+            disableMuxGatewayRoute();
           }
 
           // If the timeout won the race, the balance check is still in flight.
-          // When it eventually resolves with depleted credits, disable gateway.
+          // When it eventually resolves with depleted credits, disable gateway routing.
           if (accountStatus == null) {
             void refreshPromise.then((laterStatus) => {
               if (muxGatewayLoginAttemptRef.current !== attempt) return;
-              if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
-                gateway.toggleEnabled();
+              if (laterStatus?.remaining_microdollars === 0) {
+                disableMuxGatewayRoute();
               }
             });
           }
@@ -449,15 +416,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
     }
-  }, [
-    api,
-    backendBaseUrl,
-    gateway,
-    isDesktop,
-    providersConfig,
-    applyDefaultGatewayModels,
-    refreshMuxGatewayAccountStatus,
-  ]);
+  }, [api, backendBaseUrl, disableMuxGatewayRoute, isDesktop, refreshMuxGatewayAccountStatus]);
 
   useEffect(() => {
     const attempt = muxGatewayLoginAttemptRef.current;
@@ -489,36 +448,17 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           const hasCredits = accountStatus == null || accountStatus.remaining_microdollars > 0;
 
-          if (hasCredits && muxGatewayApplyDefaultModelsOnSuccessRef.current) {
-            muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
-
-            const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
-              if (muxGatewayLoginAttemptRef.current !== attempt) return;
-              // Persist gateway models via backend config (no localStorage).
-              applyDefaultGatewayModels(latestConfig);
-            };
-
-            if (api) {
-              api.providers
-                .getConfig()
-                .then(applyLatest)
-                .catch(() => applyLatest(providersConfig));
-            } else {
-              applyLatest(providersConfig);
-            }
-          }
-
-          if (!hasCredits && gateway.isEnabled) {
-            gateway.toggleEnabled();
+          if (!hasCredits) {
+            disableMuxGatewayRoute();
           }
 
           // If the timeout won the race, the balance check is still in flight.
-          // When it eventually resolves with depleted credits, disable gateway.
+          // When it eventually resolves with depleted credits, disable gateway routing.
           if (accountStatus == null) {
             void refreshPromise.then((laterStatus) => {
               if (muxGatewayLoginAttemptRef.current !== attempt) return;
-              if (laterStatus?.remaining_microdollars === 0 && gateway.isEnabled) {
-                gateway.toggleEnabled();
+              if (laterStatus?.remaining_microdollars === 0) {
+                disableMuxGatewayRoute();
               }
             });
           }
@@ -534,14 +474,11 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [
-    api,
     backendOrigin,
-    gateway,
+    disableMuxGatewayRoute,
     isDesktop,
     muxGatewayLoginStatus,
     muxGatewayServerState,
-    providersConfig,
-    applyDefaultGatewayModels,
     refreshMuxGatewayAccountStatus,
   ]);
 
@@ -558,6 +495,30 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         : muxGatewayIsLoggedIn
           ? "Re-login to Mux Gateway"
           : "Login with Mux Gateway";
+
+  const onboardingProviders = useMemo(() => {
+    const gatewayPriority: ProviderName[] = ["mux-gateway", "openrouter"];
+    const directProviders: ProviderName[] = [];
+    const localProviders: ProviderName[] = [];
+    const otherGateways: ProviderName[] = [];
+
+    for (const provider of visibleProviders) {
+      const providerDef = PROVIDER_DEFINITIONS[provider];
+      if (providerDef.kind === "direct") {
+        directProviders.push(provider);
+      } else if (providerDef.kind === "local") {
+        localProviders.push(provider);
+      } else if (!gatewayPriority.includes(provider)) {
+        otherGateways.push(provider);
+      }
+    }
+
+    const prioritizedGateways = gatewayPriority.filter((provider) =>
+      visibleProviders.includes(provider)
+    );
+
+    return [...prioritizedGateways, ...otherGateways, ...directProviders, ...localProviders];
+  }, [visibleProviders]);
 
   const configuredProviders = useMemo(
     () => visibleProviders.filter((provider) => providersConfig?.[provider]?.isConfigured === true),
@@ -791,7 +752,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           <div className="mt-3">
             <div className="text-foreground mb-2 text-xs font-medium">Available providers</div>
             <div className="grid grid-cols-2 gap-2">
-              {visibleProviders.map((provider) => {
+              {onboardingProviders.map((provider) => {
                 const configured = providersConfig?.[provider]?.isConfigured === true;
 
                 return (
@@ -1038,7 +999,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     providersConfig,
     refreshMuxGatewayAccountStatus,
     startMuxGatewayLogin,
-    visibleProviders,
+    onboardingProviders,
   ]);
 
   // Clamp stepIndex to valid range when the step list changes. Skip while still

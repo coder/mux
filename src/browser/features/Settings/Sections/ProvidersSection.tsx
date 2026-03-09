@@ -1,21 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
-  Check,
+  ExternalLink,
   Eye,
   EyeOff,
-  ExternalLink,
-  Loader2,
+  GripVertical,
   KeyRound,
+  Loader2,
   ShieldCheck,
   X,
 } from "lucide-react";
+import {
+  type DragEndEvent,
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
-import type { ProviderName } from "@/common/constants/providers";
+import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
@@ -27,8 +42,7 @@ import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
-import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
+import { useRouting } from "@/browser/hooks/useRouting";
 import { Button } from "@/browser/components/Button/Button";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
 import {
@@ -156,6 +170,129 @@ const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
   // ollama: local service, no key needed
 };
 
+interface RoutePriorityItem {
+  route: string;
+  displayName: string;
+  provider: ProviderName | null;
+}
+
+function SortableRoutePriorityItem(props: { item: RoutePriorityItem }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.item.route,
+  });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className="border-border-light bg-background-secondary flex items-center gap-2 rounded-md border px-2 py-1.5"
+    >
+      <button
+        type="button"
+        className="text-muted hover:text-foreground cursor-grab rounded p-0.5 active:cursor-grabbing"
+        aria-label={`Reorder ${props.item.displayName}`}
+        {...attributes}
+        {...(listeners ?? {})}
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      {props.item.provider ? (
+        <ProviderWithIcon
+          provider={props.item.provider}
+          displayName
+          className="text-foreground text-xs font-medium"
+        />
+      ) : (
+        <span className="text-foreground text-xs font-medium">{props.item.displayName}</span>
+      )}
+      {isDragging && <span className="text-muted ml-auto text-[10px]">Moving…</span>}
+    </li>
+  );
+}
+
+function GatewayRoutePriorityList({
+  routePriority,
+  onChangeRoutePriority,
+}: {
+  routePriority: string[];
+  onChangeRoutePriority: (priority: string[]) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    })
+  );
+
+  const routeItems = useMemo<RoutePriorityItem[]>(() => {
+    return routePriority.map((route) => {
+      if (route === "direct") {
+        return {
+          route,
+          displayName: "Direct",
+          provider: null,
+        };
+      }
+
+      if (!(route in PROVIDER_DEFINITIONS)) {
+        return {
+          route,
+          displayName: route,
+          provider: null,
+        };
+      }
+
+      return {
+        route,
+        displayName: PROVIDER_DEFINITIONS[route as ProviderName].displayName,
+        provider: route as ProviderName,
+      };
+    });
+  }, [routePriority]);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) {
+        return;
+      }
+
+      const fromIndex = routePriority.indexOf(String(active.id));
+      const toIndex = routePriority.indexOf(String(over.id));
+      if (fromIndex === -1 || toIndex === -1) {
+        return;
+      }
+
+      onChangeRoutePriority(arrayMove(routePriority, fromIndex, toIndex));
+    },
+    [onChangeRoutePriority, routePriority]
+  );
+
+  return (
+    <div className="border-border-medium bg-background-secondary/50 space-y-2 rounded-md border px-3 py-2">
+      <div>
+        <div className="text-foreground text-xs font-medium">Route priority</div>
+        <div className="text-muted text-xs">Drag to choose gateway order for auto routing.</div>
+      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={routePriority} strategy={verticalListSortingStrategy}>
+          <ul className="space-y-1">
+            {routeItems.map((item) => (
+              <SortableRoutePriorityItem key={item.route} item={item} />
+            ))}
+          </ul>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
+
 export function ProvidersSection() {
   const policyState = usePolicy();
   const effectivePolicy =
@@ -176,26 +313,45 @@ export function ProvidersSection() {
     refresh: refreshMuxGatewayAccountStatus,
   } = useMuxGatewayAccountStatus();
 
-  const gateway = useGateway();
+  const routing = useRouting();
 
-  const eligibleGatewayModels = useMemo(() => getEligibleGatewayModels(config), [config]);
+  const providerGroups = useMemo(() => {
+    const groups: Record<"direct" | "gateway" | "local", ProviderName[]> = {
+      direct: [],
+      gateway: [],
+      local: [],
+    };
 
-  const canEnableGatewayForAllModels = useMemo(
-    () =>
-      eligibleGatewayModels.length > 0 &&
-      !eligibleGatewayModels.every((modelId) => gateway.enabledModels.includes(modelId)),
-    [eligibleGatewayModels, gateway.enabledModels]
-  );
-
-  const enableGatewayForAllModels = useCallback(() => {
-    if (!canEnableGatewayForAllModels) {
-      return;
+    for (const provider of visibleProviders) {
+      groups[PROVIDER_DEFINITIONS[provider].kind].push(provider);
     }
 
-    // Keep gateway model writes centralized in useGateway so this action and the
-    // global gateway toggle persist from the same config snapshot.
-    gateway.setEnabledModels(eligibleGatewayModels);
-  }, [canEnableGatewayForAllModels, eligibleGatewayModels, gateway]);
+    return groups;
+  }, [visibleProviders]);
+
+  const displayedRoutePriority = useMemo(() => {
+    const priority = routing.routePriority.filter(
+      (route) => route === "direct" || providerGroups.gateway.includes(route as ProviderName)
+    );
+
+    if (!priority.includes("direct")) {
+      priority.push("direct");
+    }
+
+    return priority;
+  }, [providerGroups.gateway, routing.routePriority]);
+
+  const hiddenRoutePriority = useMemo(
+    () => routing.routePriority.filter((route) => !displayedRoutePriority.includes(route)),
+    [displayedRoutePriority, routing.routePriority]
+  );
+
+  const handleRoutePriorityChange = useCallback(
+    (priority: string[]) => {
+      routing.setRoutePriority([...priority, ...hiddenRoutePriority]);
+    },
+    [hiddenRoutePriority, routing]
+  );
 
   const backendBaseUrl = getBrowserBackendBaseUrl();
   const backendOrigin = (() => {
@@ -494,7 +650,6 @@ export function ProvidersSection() {
 
   const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
 
-  const muxGatewayApplyDefaultModelsOnSuccessRef = useRef(false);
   const muxGatewayLoginAttemptRef = useRef(0);
   const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
@@ -502,7 +657,6 @@ export function ProvidersSection() {
   const [muxGatewayAuthorizeUrl, setMuxGatewayAuthorizeUrl] = useState<string | null>(null);
 
   const cancelMuxGatewayLogin = () => {
-    muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
     muxGatewayLoginAttemptRef.current++;
 
     if (isDesktop && api && muxGatewayDesktopFlowId) {
@@ -540,23 +694,6 @@ export function ProvidersSection() {
     const attempt = ++muxGatewayLoginAttemptRef.current;
 
     try {
-      // Enable default gateway models only for confirmed first-time setup.
-      // If config hydration is unknown, prefer preserving current selections.
-      let gatewayConfig = config?.["mux-gateway"];
-      if (gatewayConfig?.couponCodeSet == null && api) {
-        try {
-          const latestConfig = await api.providers.getConfig();
-          if (attempt !== muxGatewayLoginAttemptRef.current) {
-            return;
-          }
-          gatewayConfig = latestConfig?.["mux-gateway"];
-        } catch {
-          // If pre-login config fetch fails, avoid defaulting so we don't
-          // overwrite an intentional empty model selection.
-        }
-      }
-      muxGatewayApplyDefaultModelsOnSuccessRef.current = gatewayConfig?.couponCodeSet === false;
-
       setMuxGatewayLoginError(null);
       setMuxGatewayDesktopFlowId(null);
       setMuxGatewayServerState(null);
@@ -601,25 +738,6 @@ export function ProvidersSection() {
         }
 
         if (waitResult.success) {
-          if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
-            let latestConfig = config;
-            try {
-              latestConfig = await api.providers.getConfig();
-            } catch {
-              // Ignore errors fetching config; fall back to the current snapshot.
-            }
-
-            if (attempt !== muxGatewayLoginAttemptRef.current) {
-              return;
-            }
-
-            const latestGatewayModels = latestConfig?.["mux-gateway"]?.gatewayModels ?? [];
-            if (latestGatewayModels.length === 0) {
-              gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
-            }
-            muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
-          }
-
           setMuxGatewayLoginStatus("success");
           void refreshMuxGatewayAccountStatus();
           return;
@@ -703,27 +821,6 @@ export function ProvidersSection() {
       if (data.state !== muxGatewayServerState) return;
 
       if (data.ok === true) {
-        if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
-          muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
-
-          const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
-            if (muxGatewayLoginAttemptRef.current !== attempt) return;
-            const latestGatewayModels = latestConfig?.["mux-gateway"]?.gatewayModels ?? [];
-            if (latestGatewayModels.length === 0) {
-              gateway.setEnabledModels(getEligibleGatewayModels(latestConfig));
-            }
-          };
-
-          if (api) {
-            api.providers
-              .getConfig()
-              .then(applyLatest)
-              .catch(() => applyLatest(config));
-          } else {
-            applyLatest(config);
-          }
-        }
-
         setMuxGatewayAuthorizeUrl(null);
         setMuxGatewayLoginStatus("success");
         void refreshMuxGatewayAccountStatus();
@@ -743,9 +840,6 @@ export function ProvidersSection() {
     muxGatewayLoginStatus,
     muxGatewayServerState,
     backendOrigin,
-    api,
-    config,
-    gateway,
     refreshMuxGatewayAccountStatus,
   ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
@@ -1126,942 +1220,973 @@ export function ProvidersSection() {
         </div>
       )}
 
-      {visibleProviders.map((provider) => {
-        const isExpanded = expandedProvider === provider;
-        // mux-gateway enabled/models are sourced from backend config.json via
-        // useGateway/useProvidersConfig, so read the gateway hook's state directly.
-        const enabled = provider === "mux-gateway" ? gateway.isEnabled : isEnabled(provider);
-        const configured = isConfigured(provider);
-        const fields = getProviderFields(provider);
-        const statusDotColor = !enabled
-          ? "bg-warning"
-          : configured
-            ? "bg-success"
-            : "bg-border-medium";
-        const statusDotTitle = !enabled ? "Disabled" : configured ? "Configured" : "Not configured";
+      {(
+        [
+          { key: "direct", label: "Direct Providers", providers: providerGroups.direct },
+          { key: "gateway", label: "Gateways", providers: providerGroups.gateway },
+          { key: "local", label: "Local", providers: providerGroups.local },
+        ] as const
+      ).map((section) => {
+        if (section.providers.length === 0) {
+          return null;
+        }
 
         return (
-          <div
-            key={provider}
-            className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
-          >
-            {/* Provider header */}
-            <Button
-              variant="ghost"
-              onClick={() => handleToggleProvider(provider)}
-              className="flex h-auto w-full items-center justify-between rounded-none px-4 py-3 text-left"
-            >
-              <div className="flex items-center gap-3">
-                {isExpanded ? (
-                  <ChevronDown className="text-muted h-4 w-4" />
-                ) : (
-                  <ChevronRight className="text-muted h-4 w-4" />
-                )}
-                <ProviderWithIcon
-                  provider={provider}
-                  displayName
-                  className="text-foreground text-sm font-medium"
-                />
-              </div>
-              <div className={`h-2 w-2 rounded-full ${statusDotColor}`} title={statusDotTitle} />
-            </Button>
+          <div key={section.key} className="space-y-2">
+            <div className="text-muted text-xs font-medium tracking-wide uppercase">
+              {section.label}
+            </div>
+            {section.key === "gateway" && displayedRoutePriority.length > 0 && (
+              <GatewayRoutePriorityList
+                routePriority={displayedRoutePriority}
+                onChangeRoutePriority={handleRoutePriorityChange}
+              />
+            )}
+            {section.providers.map((provider) => {
+              const isExpanded = expandedProvider === provider;
+              const enabled = isEnabled(provider);
+              const configured = isConfigured(provider);
+              const fields = getProviderFields(provider);
+              const providerDefinition = PROVIDER_DEFINITIONS[provider];
+              const gatewayRouteTargets =
+                providerDefinition.kind === "gateway" ? (providerDefinition.routes ?? []) : [];
+              const statusDotColor = !enabled
+                ? "bg-warning"
+                : configured
+                  ? "bg-success"
+                  : "bg-border-medium";
+              const statusDotTitle = !enabled
+                ? "Disabled"
+                : configured
+                  ? "Configured"
+                  : "Not configured";
 
-            {/* Provider settings */}
-            {isExpanded && (
-              <div className="border-border-medium space-y-3 border-t px-4 py-3">
-                {provider !== "mux-gateway" && (
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <label className="text-foreground block text-xs font-medium">Enabled</label>
-                      <span className="text-muted text-xs">
-                        Disable this provider without deleting saved credentials.
-                      </span>
-                    </div>
-                    <Switch
-                      checked={enabled}
-                      onCheckedChange={(nextChecked) =>
-                        handleProviderEnabledChange(provider, nextChecked)
-                      }
-                      aria-label={`Toggle ${provider} provider`}
-                      disabled={!api}
-                    />
-                  </div>
-                )}
-
-                {/* Quick link to get API key */}
-                {PROVIDER_KEY_URLS[provider] && (
-                  <div className="space-y-1">
-                    <a
-                      href={PROVIDER_KEY_URLS[provider]}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-muted hover:text-accent inline-flex items-center gap-1 text-xs transition-colors"
-                    >
-                      Get API Key
-                      <ExternalLink className="h-2.5 w-2.5" />
-                    </a>
-                    {configured &&
-                      config?.[provider]?.apiKeySet === false &&
-                      // OpenAI can be configured via ChatGPT OAuth, not just env vars
-                      !(provider === "openai" && codexOauthIsConnected) && (
-                        <div className="text-muted text-xs">
-                          Configured via environment variables.
-                        </div>
-                      )}
-                  </div>
-                )}
-
-                {provider === "mux-gateway" && (
-                  <div className="space-y-2">
-                    <div>
-                      <label className="text-foreground block text-xs font-medium">
-                        Authentication
-                      </label>
-                      <span className="text-muted text-xs">{muxGatewayAuthStatusText}</span>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            void startMuxGatewayLogin();
-                          }}
-                          disabled={muxGatewayLoginInProgress}
-                        >
-                          {muxGatewayLoginButtonLabel}
-                        </Button>
-
-                        {muxGatewayLoginStatus === "waiting" && muxGatewayAuthorizeUrl && (
-                          <Button
-                            size="sm"
-                            aria-label="Copy and open Mux Gateway authorization page"
-                            onClick={() => {
-                              void navigator.clipboard.writeText(muxGatewayAuthorizeUrl);
-                              window.open(muxGatewayAuthorizeUrl, "_blank", "noopener");
-                            }}
-                            className="h-8 px-3 text-xs"
-                          >
-                            Copy & Open Mux Gateway
-                          </Button>
-                        )}
-
-                        {muxGatewayLoginInProgress && (
-                          <Button variant="secondary" size="sm" onClick={cancelMuxGatewayLogin}>
-                            Cancel
-                          </Button>
-                        )}
-
-                        {muxGatewayIsLoggedIn && (
-                          <Button variant="ghost" size="sm" onClick={clearMuxGatewayCredentials}>
-                            Log out
-                          </Button>
-                        )}
-                      </div>
-
-                      {muxGatewayLoginStatus === "waiting" && (
-                        <p className="text-muted inline-flex items-center gap-2 text-xs">
-                          <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
-                          Waiting for authorization...
-                        </p>
-                      )}
-
-                      {muxGatewayLoginStatus === "error" && muxGatewayLoginError && (
-                        <p className="text-destructive text-xs">
-                          Login failed: {muxGatewayLoginError}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {provider === "mux-gateway" && muxGatewayIsLoggedIn && (
-                  <div className="border-border-light space-y-2 border-t pt-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <label className="text-foreground block text-xs font-medium">Account</label>
-                        <span className="text-muted text-xs">
-                          Balance and limits from Mux Gateway
-                        </span>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          void refreshMuxGatewayAccountStatus();
-                        }}
-                        disabled={muxGatewayAccountLoading}
-                      >
-                        {muxGatewayAccountLoading ? "Refreshing..." : "Refresh"}
-                      </Button>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-muted text-xs">Balance</span>
-                      <span className="text-foreground font-mono text-xs">
-                        {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-muted text-xs">Concurrent requests per user</span>
-                      <span className="text-foreground font-mono text-xs">
-                        {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
-                      </span>
-                    </div>
-
-                    {muxGatewayAccountError && (
-                      <p className="text-destructive text-xs">{muxGatewayAccountError}</p>
-                    )}
-                  </div>
-                )}
-
-                {provider === "github-copilot" && (
-                  <div className="space-y-2">
-                    <div>
-                      <label className="text-foreground block text-xs font-medium">
-                        Authentication
-                      </label>
-                      <span className="text-muted text-xs">
-                        {copilotIsLoggedIn ? "Logged in" : "Not logged in"}
-                      </span>
-                    </div>
-
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            void startCopilotLogin();
-                          }}
-                          disabled={copilotLoginInProgress}
-                        >
-                          {copilotLoginStatus === "error"
-                            ? "Try again"
-                            : copilotLoginInProgress
-                              ? "Waiting for authorization..."
-                              : copilotIsLoggedIn
-                                ? "Re-login with GitHub"
-                                : "Login with GitHub"}
-                        </Button>
-
-                        {copilotLoginInProgress && (
-                          <Button variant="secondary" size="sm" onClick={cancelCopilotLogin}>
-                            Cancel
-                          </Button>
-                        )}
-
-                        {copilotIsLoggedIn && (
-                          <Button variant="ghost" size="sm" onClick={clearCopilotCredentials}>
-                            Log out
-                          </Button>
-                        )}
-                      </div>
-
-                      {copilotLoginStatus === "waiting" && copilotUserCode && (
-                        <div className="bg-background-tertiary space-y-2 rounded-md p-3">
-                          <p className="text-muted text-xs">Enter this code on GitHub:</p>
-                          <div className="flex items-center gap-2">
-                            <code className="text-foreground text-lg font-bold tracking-widest">
-                              {copilotUserCode}
-                            </code>
-                            <Button
-                              size="sm"
-                              aria-label="Copy and open GitHub verification page"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(copilotUserCode);
-                                if (copilotVerificationUri) {
-                                  window.open(copilotVerificationUri, "_blank", "noopener");
-                                }
-                              }}
-                              className="h-8 px-3 text-xs"
-                              disabled={!copilotVerificationUri}
-                            >
-                              Copy & Open GitHub
-                            </Button>
-                          </div>
-                          <p className="text-muted inline-flex items-center gap-2 text-xs">
-                            <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
-                            Waiting for authorization...
-                          </p>
-                        </div>
-                      )}
-
-                      {copilotLoginStatus === "error" && copilotLoginError && (
-                        <p className="text-destructive text-xs">
-                          Login failed: {copilotLoginError}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {fields.map((fieldConfig) => {
-                  const isEditing =
-                    editingField?.provider === provider && editingField?.field === fieldConfig.key;
-                  const fieldValue = getFieldValue(provider, fieldConfig.key);
-                  const fieldIsSet = isFieldSet(provider, fieldConfig.key, fieldConfig);
-
-                  return (
-                    <div key={fieldConfig.key}>
-                      <label className="text-muted mb-1 block text-xs">
-                        {fieldConfig.label}
-                        {fieldConfig.optional && <span className="text-dim"> (optional)</span>}
-                      </label>
-                      {isEditing ? (
-                        <div className="flex gap-2">
-                          <input
-                            type={
-                              fieldConfig.type === "secret" && !showPassword ? "password" : "text"
-                            }
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            placeholder={fieldConfig.placeholder}
-                            className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
-                            autoFocus
-                            onKeyDown={createEditKeyHandler({
-                              onSave: handleSaveEdit,
-                              onCancel: handleCancelEdit,
-                            })}
-                          />
-                          {fieldConfig.type === "secret" && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setShowPassword(!showPassword)}
-                              className="text-muted hover:text-foreground h-6 w-6"
-                              title={showPassword ? "Hide password" : "Show password"}
-                            >
-                              {showPassword ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={handleSaveEdit}
-                            className="h-6 w-6 text-green-500 hover:text-green-400"
-                          >
-                            <Check className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={handleCancelEdit}
-                            className="text-muted hover:text-foreground h-6 w-6"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
+              return (
+                <div
+                  key={provider}
+                  className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
+                >
+                  {/* Provider header */}
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleToggleProvider(provider)}
+                    className="flex h-auto w-full items-center justify-between rounded-none px-4 py-3 text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      {isExpanded ? (
+                        <ChevronDown className="text-muted h-4 w-4" />
                       ) : (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-foreground flex items-center gap-1 font-mono text-xs">
-                              {fieldConfig.type === "secret" ? (
-                                fieldIsSet ? (
-                                  fieldConfig.key === "apiKey" &&
-                                  config?.[provider]?.apiKeyIsOpRef ? (
-                                    config?.[provider]?.apiKeyOpRef ? (
-                                      <span className="text-muted inline-flex max-w-[260px] min-w-0 items-center gap-1">
-                                        <KeyRound className="h-3 w-3 shrink-0" />
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <span className="truncate">
-                                              {config?.[provider]?.apiKeyOpLabel ??
-                                                config?.[provider]?.apiKeyOpRef}
-                                            </span>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="top">
-                                            {config?.[provider]?.apiKeyOpRef}
-                                          </TooltipContent>
-                                        </Tooltip>
-                                      </span>
-                                    ) : (
-                                      <>
-                                        <KeyRound className="h-3 w-3" />
-                                        Linked to 1Password
-                                      </>
-                                    )
-                                  ) : (
-                                    "••••••••"
-                                  )
-                                ) : (
-                                  "Not set"
-                                )
-                              ) : (
-                                (fieldValue ?? "Default")
-                              )}
+                        <ChevronRight className="text-muted h-4 w-4" />
+                      )}
+                      <ProviderWithIcon
+                        provider={provider}
+                        displayName
+                        className="text-foreground text-sm font-medium"
+                      />
+                    </div>
+                    <div
+                      className={`h-2 w-2 rounded-full ${statusDotColor}`}
+                      title={statusDotTitle}
+                    />
+                  </Button>
+
+                  {/* Provider settings */}
+                  {isExpanded && (
+                    <div className="border-border-medium space-y-3 border-t px-4 py-3">
+                      {provider !== "mux-gateway" && (
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <label className="text-foreground block text-xs font-medium">
+                              Enabled
+                            </label>
+                            <span className="text-muted text-xs">
+                              Disable this provider without deleting saved credentials.
                             </span>
-                            <div className="flex gap-2">
-                              {(fieldConfig.type === "text"
-                                ? !!fieldValue
-                                : fieldConfig.type === "secret" && fieldIsSet) && (
+                          </div>
+                          <Switch
+                            checked={enabled}
+                            onCheckedChange={(nextChecked) =>
+                              handleProviderEnabledChange(provider, nextChecked)
+                            }
+                            aria-label={`Toggle ${provider} provider`}
+                            disabled={!api}
+                          />
+                        </div>
+                      )}
+
+                      {/* Quick link to get API key */}
+                      {PROVIDER_KEY_URLS[provider] && (
+                        <div className="space-y-1">
+                          <a
+                            href={PROVIDER_KEY_URLS[provider]}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-muted hover:text-accent inline-flex items-center gap-1 text-xs transition-colors"
+                          >
+                            Get API Key
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </a>
+                          {configured &&
+                            config?.[provider]?.apiKeySet === false &&
+                            // OpenAI can be configured via ChatGPT OAuth, not just env vars
+                            !(provider === "openai" && codexOauthIsConnected) && (
+                              <div className="text-muted text-xs">
+                                Configured via environment variables.
+                              </div>
+                            )}
+                        </div>
+                      )}
+
+                      {gatewayRouteTargets.length > 0 && (
+                        <div>
+                          <label className="text-foreground block text-xs font-medium">
+                            Routes to
+                          </label>
+                          <span className="text-muted text-xs">
+                            {gatewayRouteTargets
+                              .map(
+                                (targetProvider) => PROVIDER_DEFINITIONS[targetProvider].displayName
+                              )
+                              .join(", ")}
+                          </span>
+                        </div>
+                      )}
+
+                      {provider === "mux-gateway" && (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-foreground block text-xs font-medium">
+                              Authentication
+                            </label>
+                            <span className="text-muted text-xs">{muxGatewayAuthStatusText}</span>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  void startMuxGatewayLogin();
+                                }}
+                                disabled={muxGatewayLoginInProgress}
+                              >
+                                {muxGatewayLoginButtonLabel}
+                              </Button>
+
+                              {muxGatewayLoginStatus === "waiting" && muxGatewayAuthorizeUrl && (
                                 <Button
-                                  variant="ghost"
                                   size="sm"
-                                  onClick={() => handleClearField(provider, fieldConfig.key)}
-                                  className="text-muted hover:text-error h-auto px-1 py-0 text-xs"
+                                  aria-label="Copy and open Mux Gateway authorization page"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(muxGatewayAuthorizeUrl);
+                                    window.open(muxGatewayAuthorizeUrl, "_blank", "noopener");
+                                  }}
+                                  className="h-8 px-3 text-xs"
                                 >
-                                  Clear
+                                  Copy & Open Mux Gateway
                                 </Button>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  handleStartEdit(provider, fieldConfig.key, fieldConfig)
-                                }
-                                className="text-accent hover:text-accent-light h-auto px-1 py-0 text-xs"
-                              >
-                                {fieldIsSet || fieldValue ? "Change" : "Set"}
-                              </Button>
-                              {opAvailable && fieldConfig.key === "apiKey" && (
+
+                              {muxGatewayLoginInProgress && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={cancelMuxGatewayLogin}
+                                >
+                                  Cancel
+                                </Button>
+                              )}
+
+                              {muxGatewayIsLoggedIn && (
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => setOpPickerProvider(provider)}
-                                  className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
-                                  title="Link to 1Password"
+                                  onClick={clearMuxGatewayCredentials}
                                 >
-                                  <KeyRound className="h-3.5 w-3.5" />
+                                  Log out
                                 </Button>
                               )}
                             </div>
-                          </div>
-                          {opPickerProvider === provider && fieldConfig.key === "apiKey" && (
-                            <OnePasswordPicker
-                              onSelect={(opRef, opLabel) => {
-                                setOpPickerProvider(null);
-                                updateOptimistically(provider, {
-                                  apiKeySet: true,
-                                  apiKeyIsOpRef: true,
-                                  apiKeyOpRef: opRef,
-                                  apiKeyOpLabel: opLabel,
-                                });
 
+                            {muxGatewayLoginStatus === "waiting" && (
+                              <p className="text-muted inline-flex items-center gap-2 text-xs">
+                                <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                                Waiting for authorization...
+                              </p>
+                            )}
+
+                            {muxGatewayLoginStatus === "error" && muxGatewayLoginError && (
+                              <p className="text-destructive text-xs">
+                                Login failed: {muxGatewayLoginError}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {provider === "mux-gateway" && muxGatewayIsLoggedIn && (
+                        <div className="border-border-light space-y-2 border-t pt-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <label className="text-foreground block text-xs font-medium">
+                                Account
+                              </label>
+                              <span className="text-muted text-xs">
+                                Balance and limits from Mux Gateway
+                              </span>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                void refreshMuxGatewayAccountStatus();
+                              }}
+                              disabled={muxGatewayAccountLoading}
+                            >
+                              {muxGatewayAccountLoading ? "Refreshing..." : "Refresh"}
+                            </Button>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-muted text-xs">Balance</span>
+                            <span className="text-foreground font-mono text-xs">
+                              {formatMuxGatewayBalance(
+                                muxGatewayAccountStatus?.remaining_microdollars
+                              )}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-muted text-xs">Concurrent requests per user</span>
+                            <span className="text-foreground font-mono text-xs">
+                              {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ??
+                                "—"}
+                            </span>
+                          </div>
+
+                          {muxGatewayAccountError && (
+                            <p className="text-destructive text-xs">{muxGatewayAccountError}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {provider === "github-copilot" && (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-foreground block text-xs font-medium">
+                              Authentication
+                            </label>
+                            <span className="text-muted text-xs">
+                              {copilotIsLoggedIn ? "Logged in" : "Not logged in"}
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  void startCopilotLogin();
+                                }}
+                                disabled={copilotLoginInProgress}
+                              >
+                                {copilotLoginStatus === "error"
+                                  ? "Try again"
+                                  : copilotLoginInProgress
+                                    ? "Waiting for authorization..."
+                                    : copilotIsLoggedIn
+                                      ? "Re-login with GitHub"
+                                      : "Login with GitHub"}
+                              </Button>
+
+                              {copilotLoginInProgress && (
+                                <Button variant="secondary" size="sm" onClick={cancelCopilotLogin}>
+                                  Cancel
+                                </Button>
+                              )}
+
+                              {copilotIsLoggedIn && (
+                                <Button variant="ghost" size="sm" onClick={clearCopilotCredentials}>
+                                  Log out
+                                </Button>
+                              )}
+                            </div>
+
+                            {copilotLoginStatus === "waiting" && copilotUserCode && (
+                              <div className="bg-background-tertiary space-y-2 rounded-md p-3">
+                                <p className="text-muted text-xs">Enter this code on GitHub:</p>
+                                <div className="flex items-center gap-2">
+                                  <code className="text-foreground text-lg font-bold tracking-widest">
+                                    {copilotUserCode}
+                                  </code>
+                                  <Button
+                                    size="sm"
+                                    aria-label="Copy and open GitHub verification page"
+                                    onClick={() => {
+                                      void navigator.clipboard.writeText(copilotUserCode);
+                                      if (copilotVerificationUri) {
+                                        window.open(copilotVerificationUri, "_blank", "noopener");
+                                      }
+                                    }}
+                                    className="h-8 px-3 text-xs"
+                                    disabled={!copilotVerificationUri}
+                                  >
+                                    Copy & Open GitHub
+                                  </Button>
+                                </div>
+                                <p className="text-muted inline-flex items-center gap-2 text-xs">
+                                  <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                                  Waiting for authorization...
+                                </p>
+                              </div>
+                            )}
+
+                            {copilotLoginStatus === "error" && copilotLoginError && (
+                              <p className="text-destructive text-xs">
+                                Login failed: {copilotLoginError}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {fields.map((fieldConfig) => {
+                        const isEditing =
+                          editingField?.provider === provider &&
+                          editingField?.field === fieldConfig.key;
+                        const fieldValue = getFieldValue(provider, fieldConfig.key);
+                        const fieldIsSet = isFieldSet(provider, fieldConfig.key, fieldConfig);
+
+                        return (
+                          <div key={fieldConfig.key}>
+                            <label className="text-muted mb-1 block text-xs">
+                              {fieldConfig.label}
+                              {fieldConfig.optional && (
+                                <span className="text-dim"> (optional)</span>
+                              )}
+                            </label>
+                            {isEditing ? (
+                              <div className="flex gap-2">
+                                <input
+                                  type={
+                                    fieldConfig.type === "secret" && !showPassword
+                                      ? "password"
+                                      : "text"
+                                  }
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  placeholder={fieldConfig.placeholder}
+                                  className="bg-modal-bg border-border-medium focus:border-accent flex-1 rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
+                                  autoFocus
+                                  onKeyDown={createEditKeyHandler({
+                                    onSave: handleSaveEdit,
+                                    onCancel: handleCancelEdit,
+                                  })}
+                                />
+                                {fieldConfig.type === "secret" && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    className="text-muted hover:text-foreground h-6 w-6"
+                                    title={showPassword ? "Hide password" : "Show password"}
+                                  >
+                                    {showPassword ? (
+                                      <EyeOff className="h-4 w-4" />
+                                    ) : (
+                                      <Eye className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={handleSaveEdit}
+                                  className="h-6 w-6 text-green-500 hover:text-green-400"
+                                >
+                                  <Check className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={handleCancelEdit}
+                                  className="text-muted hover:text-foreground h-6 w-6"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-foreground flex items-center gap-1 font-mono text-xs">
+                                    {fieldConfig.type === "secret" ? (
+                                      fieldIsSet ? (
+                                        fieldConfig.key === "apiKey" &&
+                                        config?.[provider]?.apiKeyIsOpRef ? (
+                                          config?.[provider]?.apiKeyOpRef ? (
+                                            <span className="text-muted inline-flex max-w-[260px] min-w-0 items-center gap-1">
+                                              <KeyRound className="h-3 w-3 shrink-0" />
+                                              <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                  <span className="truncate">
+                                                    {config?.[provider]?.apiKeyOpLabel ??
+                                                      config?.[provider]?.apiKeyOpRef}
+                                                  </span>
+                                                </TooltipTrigger>
+                                                <TooltipContent side="top">
+                                                  {config?.[provider]?.apiKeyOpRef}
+                                                </TooltipContent>
+                                              </Tooltip>
+                                            </span>
+                                          ) : (
+                                            <>
+                                              <KeyRound className="h-3 w-3" />
+                                              Linked to 1Password
+                                            </>
+                                          )
+                                        ) : (
+                                          "••••••••"
+                                        )
+                                      ) : (
+                                        "Not set"
+                                      )
+                                    ) : (
+                                      (fieldValue ?? "Default")
+                                    )}
+                                  </span>
+                                  <div className="flex gap-2">
+                                    {(fieldConfig.type === "text"
+                                      ? !!fieldValue
+                                      : fieldConfig.type === "secret" && fieldIsSet) && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleClearField(provider, fieldConfig.key)}
+                                        className="text-muted hover:text-error h-auto px-1 py-0 text-xs"
+                                      >
+                                        Clear
+                                      </Button>
+                                    )}
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        handleStartEdit(provider, fieldConfig.key, fieldConfig)
+                                      }
+                                      className="text-accent hover:text-accent-light h-auto px-1 py-0 text-xs"
+                                    >
+                                      {fieldIsSet || fieldValue ? "Change" : "Set"}
+                                    </Button>
+                                    {opAvailable && fieldConfig.key === "apiKey" && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setOpPickerProvider(provider)}
+                                        className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
+                                        title="Link to 1Password"
+                                      >
+                                        <KeyRound className="h-3.5 w-3.5" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                                {opPickerProvider === provider && fieldConfig.key === "apiKey" && (
+                                  <OnePasswordPicker
+                                    onSelect={(opRef, opLabel) => {
+                                      setOpPickerProvider(null);
+                                      updateOptimistically(provider, {
+                                        apiKeySet: true,
+                                        apiKeyIsOpRef: true,
+                                        apiKeyOpRef: opRef,
+                                        apiKeyOpLabel: opLabel,
+                                      });
+
+                                      if (!api) {
+                                        return;
+                                      }
+
+                                      void api.providers.setProviderConfig({
+                                        provider,
+                                        keyPath: ["apiKey"],
+                                        value: opRef,
+                                      });
+                                      void api.providers.setProviderConfig({
+                                        provider,
+                                        keyPath: ["apiKeyOpLabel"],
+                                        value: opLabel,
+                                      });
+                                    }}
+                                    onCancel={() => setOpPickerProvider(null)}
+                                  />
+                                )}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Anthropic: prompt cache TTL */}
+                      {provider === "anthropic" && (
+                        <>
+                          <div className="border-border-light border-t pt-3">
+                            <div className="mb-1 flex items-center gap-1">
+                              <label className="text-muted block text-xs">Prompt cache TTL</label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <HelpIndicator aria-label="Anthropic prompt cache TTL help">
+                                      ?
+                                    </HelpIndicator>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="max-w-[280px]">
+                                      <div className="font-semibold">Prompt cache TTL</div>
+                                      <div className="mt-1">
+                                        Default is <span className="font-semibold">5m</span>. Use{" "}
+                                        <span className="font-semibold">1h</span> for longer
+                                        workflows at a higher cache-write cost.
+                                      </div>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+
+                            <Select
+                              value={config?.anthropic?.cacheTtl === "1h" ? "1h" : "default"}
+                              onValueChange={(next) => {
                                 if (!api) {
                                   return;
                                 }
+                                if (next !== "default" && next !== "1h") {
+                                  return;
+                                }
 
+                                const cacheTtl = next === "1h" ? "1h" : undefined;
+                                updateOptimistically("anthropic", { cacheTtl });
                                 void api.providers.setProviderConfig({
-                                  provider,
-                                  keyPath: ["apiKey"],
-                                  value: opRef,
-                                });
-                                void api.providers.setProviderConfig({
-                                  provider,
-                                  keyPath: ["apiKeyOpLabel"],
-                                  value: opLabel,
+                                  provider: "anthropic",
+                                  keyPath: ["cacheTtl"],
+                                  // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
+                                  value: next === "1h" ? "1h" : "",
                                 });
                               }}
-                              onCancel={() => setOpPickerProvider(null)}
-                            />
-                          )}
+                            >
+                              <SelectTrigger className="w-40">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="default">Default (5m)</SelectItem>
+                                <SelectItem value="1h">1 hour</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="border-border-light border-t pt-3">
+                            <div className="mb-1 flex items-center gap-1">
+                              <label className="text-muted block text-xs">Beta features</label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <HelpIndicator aria-label="Anthropic beta features help">
+                                      ?
+                                    </HelpIndicator>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="max-w-[260px]">
+                                      <div className="font-semibold">Anthropic beta features</div>
+                                      <div className="mt-1">
+                                        Controls 1M context window and prompt caching. Disable for
+                                        zero data retention (ZDR) environments where beta features
+                                        are not eligible.
+                                      </div>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            <Select
+                              value={
+                                config?.anthropic?.disableBetaFeatures ? "disabled" : "enabled"
+                              }
+                              onValueChange={(next) => {
+                                if (!api) return;
+                                if (next !== "enabled" && next !== "disabled") return;
+
+                                const disableBetaFeatures = next === "disabled" ? true : undefined;
+                                updateOptimistically("anthropic", { disableBetaFeatures });
+                                void api.providers.setProviderConfig({
+                                  provider: "anthropic",
+                                  keyPath: ["disableBetaFeatures"],
+                                  value: next === "disabled" ? true : "",
+                                });
+                              }}
+                            >
+                              <SelectTrigger className="w-40">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="enabled">enabled</SelectItem>
+                                <SelectItem value="disabled">disabled</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </>
                       )}
-                    </div>
-                  );
-                })}
 
-                {/* Anthropic: prompt cache TTL */}
-                {provider === "anthropic" && (
-                  <>
-                    <div className="border-border-light border-t pt-3">
-                      <div className="mb-1 flex items-center gap-1">
-                        <label className="text-muted block text-xs">Prompt cache TTL</label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <HelpIndicator aria-label="Anthropic prompt cache TTL help">
-                                ?
-                              </HelpIndicator>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="max-w-[280px]">
-                                <div className="font-semibold">Prompt cache TTL</div>
-                                <div className="mt-1">
-                                  Default is <span className="font-semibold">5m</span>. Use{" "}
-                                  <span className="font-semibold">1h</span> for longer workflows at
-                                  a higher cache-write cost.
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
+                      {/* OpenAI: ChatGPT OAuth + service tier */}
+                      {provider === "openai" && (
+                        <div className="border-border-light space-y-3 border-t pt-3">
+                          <div>
+                            <label className="text-foreground block text-xs font-medium">
+                              ChatGPT (Codex) OAuth
+                            </label>
+                            <span className="text-muted text-xs">
+                              {codexOauthStatus === "starting"
+                                ? "Starting..."
+                                : codexOauthStatus === "waiting"
+                                  ? "Waiting for login..."
+                                  : codexOauthIsConnected
+                                    ? "Connected"
+                                    : "Not connected"}
+                            </span>
+                          </div>
 
-                      <Select
-                        value={config?.anthropic?.cacheTtl === "1h" ? "1h" : "default"}
-                        onValueChange={(next) => {
-                          if (!api) {
-                            return;
-                          }
-                          if (next !== "default" && next !== "1h") {
-                            return;
-                          }
+                          <div className="flex flex-wrap items-center gap-2">
+                            {!isRemoteServer && (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  void startCodexOauthBrowserConnect();
+                                }}
+                                disabled={!api || codexOauthLoginInProgress}
+                              >
+                                Connect (Browser)
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                void startCodexOauthDeviceConnect();
+                              }}
+                              disabled={!api || codexOauthLoginInProgress}
+                            >
+                              Connect (Device)
+                            </Button>
 
-                          const cacheTtl = next === "1h" ? "1h" : undefined;
-                          updateOptimistically("anthropic", { cacheTtl });
-                          void api.providers.setProviderConfig({
-                            provider: "anthropic",
-                            keyPath: ["cacheTtl"],
-                            // Empty string clears providers.jsonc key; backend defaults to 5m when unset.
-                            value: next === "1h" ? "1h" : "",
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="w-40">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default (5m)</SelectItem>
-                          <SelectItem value="1h">1 hour</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="border-border-light border-t pt-3">
-                      <div className="mb-1 flex items-center gap-1">
-                        <label className="text-muted block text-xs">Beta features</label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <HelpIndicator aria-label="Anthropic beta features help">
-                                ?
-                              </HelpIndicator>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="max-w-[260px]">
-                                <div className="font-semibold">Anthropic beta features</div>
-                                <div className="mt-1">
-                                  Controls 1M context window and prompt caching. Disable for zero
-                                  data retention (ZDR) environments where beta features are not
-                                  eligible.
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <Select
-                        value={config?.anthropic?.disableBetaFeatures ? "disabled" : "enabled"}
-                        onValueChange={(next) => {
-                          if (!api) return;
-                          if (next !== "enabled" && next !== "disabled") return;
-
-                          const disableBetaFeatures = next === "disabled" ? true : undefined;
-                          updateOptimistically("anthropic", { disableBetaFeatures });
-                          void api.providers.setProviderConfig({
-                            provider: "anthropic",
-                            keyPath: ["disableBetaFeatures"],
-                            value: next === "disabled" ? true : "",
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="w-40">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="enabled">enabled</SelectItem>
-                          <SelectItem value="disabled">disabled</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                )}
-
-                {/* OpenAI: ChatGPT OAuth + service tier */}
-                {provider === "openai" && (
-                  <div className="border-border-light space-y-3 border-t pt-3">
-                    <div>
-                      <label className="text-foreground block text-xs font-medium">
-                        ChatGPT (Codex) OAuth
-                      </label>
-                      <span className="text-muted text-xs">
-                        {codexOauthStatus === "starting"
-                          ? "Starting..."
-                          : codexOauthStatus === "waiting"
-                            ? "Waiting for login..."
-                            : codexOauthIsConnected
-                              ? "Connected"
-                              : "Not connected"}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {!isRemoteServer && (
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            void startCodexOauthBrowserConnect();
-                          }}
-                          disabled={!api || codexOauthLoginInProgress}
-                        >
-                          Connect (Browser)
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => {
-                          void startCodexOauthDeviceConnect();
-                        }}
-                        disabled={!api || codexOauthLoginInProgress}
-                      >
-                        Connect (Device)
-                      </Button>
-
-                      {codexOauthStatus === "waiting" &&
-                        !codexOauthDeviceFlow &&
-                        codexOauthAuthorizeUrl && (
-                          <Button
-                            size="sm"
-                            aria-label="Copy and open OpenAI authorization page"
-                            onClick={() => {
-                              void navigator.clipboard.writeText(codexOauthAuthorizeUrl);
-                              window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
-                            }}
-                            className="h-8 px-3 text-xs"
-                          >
-                            Copy & Open OpenAI
-                          </Button>
-                        )}
-
-                      {codexOauthLoginInProgress && (
-                        <Button variant="secondary" size="sm" onClick={cancelCodexOauth}>
-                          Cancel
-                        </Button>
-                      )}
-
-                      {codexOauthIsConnected && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            void disconnectCodexOauth();
-                          }}
-                          disabled={!api || codexOauthLoginInProgress}
-                        >
-                          Disconnect
-                        </Button>
-                      )}
-                    </div>
-
-                    {codexOauthDeviceFlow && (
-                      <div className="bg-background-tertiary space-y-2 rounded-md p-3">
-                        <p className="text-muted text-xs">
-                          Enter this code on the OpenAI verification page:
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <code className="text-foreground text-lg font-bold tracking-widest">
-                            {codexOauthDeviceFlow.userCode}
-                          </code>
-                          <Button
-                            size="sm"
-                            aria-label="Copy and open OpenAI verification page"
-                            onClick={() => {
-                              void navigator.clipboard.writeText(codexOauthDeviceFlow.userCode);
-                              window.open(codexOauthDeviceFlow.verifyUrl, "_blank", "noopener");
-                            }}
-                            className="h-8 px-3 text-xs"
-                          >
-                            Copy & Open OpenAI
-                          </Button>
-                        </div>
-                        <p className="text-muted inline-flex items-center gap-2 text-xs">
-                          <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
-                          Waiting for authorization...
-                        </p>
-                      </div>
-                    )}
-
-                    {codexOauthStatus === "waiting" && !codexOauthDeviceFlow && (
-                      <p className="text-muted inline-flex items-center gap-2 text-xs">
-                        <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
-                        Waiting for authorization...
-                      </p>
-                    )}
-
-                    {codexOauthStatus === "error" && codexOauthError && (
-                      <p className="text-destructive text-xs">{codexOauthError}</p>
-                    )}
-
-                    <div className="border-border-light space-y-2 border-t pt-3">
-                      <div>
-                        <label className="text-muted block text-xs">
-                          Default auth (when both are set)
-                        </label>
-                        <p className="text-muted text-xs">
-                          Applies to models that support both ChatGPT OAuth and API keys (e.g.{" "}
-                          <code className="text-accent">gpt-5.2</code>).
-                        </p>
-                      </div>
-
-                      <ToggleGroup
-                        type="single"
-                        value={codexOauthDefaultAuth}
-                        onValueChange={(next) => {
-                          if (!api) return;
-                          if (next !== "oauth" && next !== "apiKey") {
-                            return;
-                          }
-
-                          updateOptimistically("openai", { codexOauthDefaultAuth: next });
-                          void api.providers.setProviderConfig({
-                            provider: "openai",
-                            keyPath: ["codexOauthDefaultAuth"],
-                            value: next,
-                          });
-                        }}
-                        size="sm"
-                        className="h-9"
-                        disabled={!api || !codexOauthDefaultAuthIsEditable}
-                      >
-                        <ToggleGroupItem value="oauth" size="sm" className="h-7 px-3 text-[13px]">
-                          Use ChatGPT OAuth by default
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value="apiKey" size="sm" className="h-7 px-3 text-[13px]">
-                          Use OpenAI API key by default
-                        </ToggleGroupItem>
-                      </ToggleGroup>
-
-                      <p className="text-muted text-xs">
-                        ChatGPT OAuth uses subscription billing (costs included). API key uses
-                        OpenAI platform billing.
-                      </p>
-
-                      {!codexOauthDefaultAuthIsEditable && (
-                        <p className="text-muted text-xs">
-                          Connect ChatGPT OAuth and set an OpenAI API key to change this setting.
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="border-border-light border-t pt-3">
-                      <div className="mb-1 flex items-center gap-1">
-                        <label className="text-muted block text-xs">Service tier</label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <HelpIndicator aria-label="OpenAI service tier help">?</HelpIndicator>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="max-w-[260px]">
-                                <div className="font-semibold">OpenAI service tier</div>
-                                <div className="mt-1">
-                                  <span className="font-semibold">auto</span>: standard behavior.
-                                </div>
-                                <div>
-                                  <span className="font-semibold">priority</span>: lower latency,
-                                  higher cost.
-                                </div>
-                                <div>
-                                  <span className="font-semibold">flex</span>: lower cost, higher
-                                  latency.
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <Select
-                        value={config?.openai?.serviceTier ?? "auto"}
-                        onValueChange={(next) => {
-                          if (!api) return;
-                          if (
-                            next !== "auto" &&
-                            next !== "default" &&
-                            next !== "flex" &&
-                            next !== "priority"
-                          ) {
-                            return;
-                          }
-
-                          updateOptimistically("openai", { serviceTier: next });
-                          void api.providers.setProviderConfig({
-                            provider: "openai",
-                            keyPath: ["serviceTier"],
-                            value: next,
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="w-40">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="auto">auto</SelectItem>
-                          <SelectItem value="default">default</SelectItem>
-                          <SelectItem value="flex">flex</SelectItem>
-                          <SelectItem value="priority">priority</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="border-border-light border-t pt-3">
-                      <div className="mb-1 flex items-center gap-1">
-                        <label className="text-muted block text-xs">Wire format</label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <HelpIndicator aria-label="OpenAI wire format help">?</HelpIndicator>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="max-w-[260px]">
-                                <div className="font-semibold">OpenAI wire format</div>
-                                <div className="mt-1">
-                                  <span className="font-semibold">responses</span>: modern API with
-                                  persistence and built-in tools (default).
-                                </div>
-                                <div>
-                                  <span className="font-semibold">chat completions</span>: legacy
-                                  /chat/completions endpoint. Use if your provider doesn&apos;t
-                                  support the Responses API (e.g. Azure Gov).
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <Select
-                        value={config?.openai?.wireFormat ?? "responses"}
-                        onValueChange={(next) => {
-                          if (!api) return;
-                          if (next !== "responses" && next !== "chatCompletions") return;
-
-                          updateOptimistically("openai", { wireFormat: next });
-                          void api.providers.setProviderConfig({
-                            provider: "openai",
-                            keyPath: ["wireFormat"],
-                            value: next,
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="w-40">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="responses">responses</SelectItem>
-                          <SelectItem value="chatCompletions">chat completions</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="border-border-light border-t pt-3">
-                      <div className="mb-1 flex items-center gap-1">
-                        <label className="text-muted block text-xs">Response storage</label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <HelpIndicator aria-label="OpenAI response storage help">
-                                ?
-                              </HelpIndicator>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="max-w-[260px]">
-                                <div className="font-semibold">OpenAI response storage</div>
-                                <div className="mt-1">
-                                  <span className="font-semibold">enabled</span>: OpenAI stores
-                                  responses for retrieval and context (default).
-                                </div>
-                                <div>
-                                  <span className="font-semibold">disabled</span>: responses are not
-                                  stored. Required for zero data retention (ZDR) endpoints.
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <Select
-                        value={config?.openai?.store === false ? "disabled" : "enabled"}
-                        onValueChange={(next) => {
-                          if (!api) return;
-                          if (next !== "enabled" && next !== "disabled") return;
-
-                          const store = next === "disabled" ? false : undefined;
-                          updateOptimistically("openai", { store });
-                          void api.providers.setProviderConfig({
-                            provider: "openai",
-                            keyPath: ["store"],
-                            value: next === "disabled" ? false : "",
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="w-40">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="enabled">enabled</SelectItem>
-                          <SelectItem value="disabled">disabled</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                )}
-                {/* Gateway toggles - only for mux-gateway when configured */}
-                {provider === "mux-gateway" && gateway.isConfigured && (
-                  <div className="border-border-light space-y-3 border-t pt-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <label className="text-foreground block text-xs font-medium">Enabled</label>
-                        <span className="text-muted text-xs">
-                          Route requests through Mux Gateway
-                        </span>
-                      </div>
-                      <Switch
-                        checked={gateway.isEnabled}
-                        onCheckedChange={() => gateway.toggleEnabled()}
-                        aria-label="Toggle Mux Gateway"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <label className="text-foreground block text-xs font-medium">
-                          Enable for all models
-                        </label>
-                        <span className="text-muted text-xs">
-                          Turn on Mux Gateway for every eligible model.
-                        </span>
-                      </div>
-                      {canEnableGatewayForAllModels ? (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={enableGatewayForAllModels}
-                          aria-label="Enable Mux Gateway for all models"
-                        >
-                          Enable all
-                        </Button>
-                      ) : (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex">
+                            {codexOauthStatus === "waiting" &&
+                              !codexOauthDeviceFlow &&
+                              codexOauthAuthorizeUrl && (
                                 <Button
                                   size="sm"
-                                  variant="secondary"
-                                  onClick={enableGatewayForAllModels}
-                                  disabled
-                                  aria-label="Enable Mux Gateway for all models"
+                                  aria-label="Copy and open OpenAI authorization page"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(codexOauthAuthorizeUrl);
+                                    window.open(codexOauthAuthorizeUrl, "_blank", "noopener");
+                                  }}
+                                  className="h-8 px-3 text-xs"
                                 >
-                                  Enable all
+                                  Copy & Open OpenAI
                                 </Button>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              All eligible models are already enabled.
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
+                              )}
+
+                            {codexOauthLoginInProgress && (
+                              <Button variant="secondary" size="sm" onClick={cancelCodexOauth}>
+                                Cancel
+                              </Button>
+                            )}
+
+                            {codexOauthIsConnected && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  void disconnectCodexOauth();
+                                }}
+                                disabled={!api || codexOauthLoginInProgress}
+                              >
+                                Disconnect
+                              </Button>
+                            )}
+                          </div>
+
+                          {codexOauthDeviceFlow && (
+                            <div className="bg-background-tertiary space-y-2 rounded-md p-3">
+                              <p className="text-muted text-xs">
+                                Enter this code on the OpenAI verification page:
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <code className="text-foreground text-lg font-bold tracking-widest">
+                                  {codexOauthDeviceFlow.userCode}
+                                </code>
+                                <Button
+                                  size="sm"
+                                  aria-label="Copy and open OpenAI verification page"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(
+                                      codexOauthDeviceFlow.userCode
+                                    );
+                                    window.open(
+                                      codexOauthDeviceFlow.verifyUrl,
+                                      "_blank",
+                                      "noopener"
+                                    );
+                                  }}
+                                  className="h-8 px-3 text-xs"
+                                >
+                                  Copy & Open OpenAI
+                                </Button>
+                              </div>
+                              <p className="text-muted inline-flex items-center gap-2 text-xs">
+                                <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                                Waiting for authorization...
+                              </p>
+                            </div>
+                          )}
+
+                          {codexOauthStatus === "waiting" && !codexOauthDeviceFlow && (
+                            <p className="text-muted inline-flex items-center gap-2 text-xs">
+                              <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                              Waiting for authorization...
+                            </p>
+                          )}
+
+                          {codexOauthStatus === "error" && codexOauthError && (
+                            <p className="text-destructive text-xs">{codexOauthError}</p>
+                          )}
+
+                          <div className="border-border-light space-y-2 border-t pt-3">
+                            <div>
+                              <label className="text-muted block text-xs">
+                                Default auth (when both are set)
+                              </label>
+                              <p className="text-muted text-xs">
+                                Applies to models that support both ChatGPT OAuth and API keys (e.g.{" "}
+                                <code className="text-accent">gpt-5.2</code>).
+                              </p>
+                            </div>
+
+                            <ToggleGroup
+                              type="single"
+                              value={codexOauthDefaultAuth}
+                              onValueChange={(next) => {
+                                if (!api) return;
+                                if (next !== "oauth" && next !== "apiKey") {
+                                  return;
+                                }
+
+                                updateOptimistically("openai", { codexOauthDefaultAuth: next });
+                                void api.providers.setProviderConfig({
+                                  provider: "openai",
+                                  keyPath: ["codexOauthDefaultAuth"],
+                                  value: next,
+                                });
+                              }}
+                              size="sm"
+                              className="h-9"
+                              disabled={!api || !codexOauthDefaultAuthIsEditable}
+                            >
+                              <ToggleGroupItem
+                                value="oauth"
+                                size="sm"
+                                className="h-7 px-3 text-[13px]"
+                              >
+                                Use ChatGPT OAuth by default
+                              </ToggleGroupItem>
+                              <ToggleGroupItem
+                                value="apiKey"
+                                size="sm"
+                                className="h-7 px-3 text-[13px]"
+                              >
+                                Use OpenAI API key by default
+                              </ToggleGroupItem>
+                            </ToggleGroup>
+
+                            <p className="text-muted text-xs">
+                              ChatGPT OAuth uses subscription billing (costs included). API key uses
+                              OpenAI platform billing.
+                            </p>
+
+                            {!codexOauthDefaultAuthIsEditable && (
+                              <p className="text-muted text-xs">
+                                Connect ChatGPT OAuth and set an OpenAI API key to change this
+                                setting.
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="border-border-light border-t pt-3">
+                            <div className="mb-1 flex items-center gap-1">
+                              <label className="text-muted block text-xs">Service tier</label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <HelpIndicator aria-label="OpenAI service tier help">
+                                      ?
+                                    </HelpIndicator>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="max-w-[260px]">
+                                      <div className="font-semibold">OpenAI service tier</div>
+                                      <div className="mt-1">
+                                        <span className="font-semibold">auto</span>: standard
+                                        behavior.
+                                      </div>
+                                      <div>
+                                        <span className="font-semibold">priority</span>: lower
+                                        latency, higher cost.
+                                      </div>
+                                      <div>
+                                        <span className="font-semibold">flex</span>: lower cost,
+                                        higher latency.
+                                      </div>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            <Select
+                              value={config?.openai?.serviceTier ?? "auto"}
+                              onValueChange={(next) => {
+                                if (!api) return;
+                                if (
+                                  next !== "auto" &&
+                                  next !== "default" &&
+                                  next !== "flex" &&
+                                  next !== "priority"
+                                ) {
+                                  return;
+                                }
+
+                                updateOptimistically("openai", { serviceTier: next });
+                                void api.providers.setProviderConfig({
+                                  provider: "openai",
+                                  keyPath: ["serviceTier"],
+                                  value: next,
+                                });
+                              }}
+                            >
+                              <SelectTrigger className="w-40">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="auto">auto</SelectItem>
+                                <SelectItem value="default">default</SelectItem>
+                                <SelectItem value="flex">flex</SelectItem>
+                                <SelectItem value="priority">priority</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="border-border-light border-t pt-3">
+                            <div className="mb-1 flex items-center gap-1">
+                              <label className="text-muted block text-xs">Wire format</label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <HelpIndicator aria-label="OpenAI wire format help">
+                                      ?
+                                    </HelpIndicator>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="max-w-[260px]">
+                                      <div className="font-semibold">OpenAI wire format</div>
+                                      <div className="mt-1">
+                                        <span className="font-semibold">responses</span>: modern API
+                                        with persistence and built-in tools (default).
+                                      </div>
+                                      <div>
+                                        <span className="font-semibold">chat completions</span>:
+                                        legacy /chat/completions endpoint. Use if your provider
+                                        doesn&apos;t support the Responses API (e.g. Azure Gov).
+                                      </div>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            <Select
+                              value={config?.openai?.wireFormat ?? "responses"}
+                              onValueChange={(next) => {
+                                if (!api) return;
+                                if (next !== "responses" && next !== "chatCompletions") return;
+
+                                updateOptimistically("openai", { wireFormat: next });
+                                void api.providers.setProviderConfig({
+                                  provider: "openai",
+                                  keyPath: ["wireFormat"],
+                                  value: next,
+                                });
+                              }}
+                            >
+                              <SelectTrigger className="w-40">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="responses">responses</SelectItem>
+                                <SelectItem value="chatCompletions">chat completions</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="border-border-light border-t pt-3">
+                            <div className="mb-1 flex items-center gap-1">
+                              <label className="text-muted block text-xs">Response storage</label>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <HelpIndicator aria-label="OpenAI response storage help">
+                                      ?
+                                    </HelpIndicator>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="max-w-[260px]">
+                                      <div className="font-semibold">OpenAI response storage</div>
+                                      <div className="mt-1">
+                                        <span className="font-semibold">enabled</span>: OpenAI
+                                        stores responses for retrieval and context (default).
+                                      </div>
+                                      <div>
+                                        <span className="font-semibold">disabled</span>: responses
+                                        are not stored. Required for zero data retention (ZDR)
+                                        endpoints.
+                                      </div>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                            <Select
+                              value={config?.openai?.store === false ? "disabled" : "enabled"}
+                              onValueChange={(next) => {
+                                if (!api) return;
+                                if (next !== "enabled" && next !== "disabled") return;
+
+                                const store = next === "disabled" ? false : undefined;
+                                updateOptimistically("openai", { store });
+                                void api.providers.setProviderConfig({
+                                  provider: "openai",
+                                  keyPath: ["store"],
+                                  value: next === "disabled" ? false : "",
+                                });
+                              }}
+                            >
+                              <SelectTrigger className="w-40">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="enabled">enabled</SelectItem>
+                                <SelectItem value="disabled">disabled</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
                       )}
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              );
+            })}
           </div>
         );
       })}
