@@ -56,7 +56,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
     await preloadTestModules();
   });
 
-  test("reported children are hidden by default and toggle with parent expansion", async () => {
+  test("completed children with stale interrupted status stay hidden by default and toggle with parent expansion", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
 
@@ -95,6 +95,15 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       });
       workspaceIdsToRemove.push(activeChildTwo.id);
 
+      const interruptedCompletedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Interrupted Completed Child",
+        branchPrefix: "subagent-interrupted-completed",
+      });
+      workspaceIdsToRemove.push(interruptedCompletedChild.id);
+
       const reportedChild = await createWorkspaceWithTitle({
         env,
         projectPath: repoPath,
@@ -115,11 +124,18 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         parentWorkspaceId: parentWorkspace.id,
         taskStatus: "queued",
       });
+      const completedAt = new Date().toISOString();
+      await env.config.addWorkspace(repoPath, {
+        ...interruptedCompletedChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "interrupted",
+        reportedAt: completedAt,
+      });
       await env.config.addWorkspace(repoPath, {
         ...reportedChild,
         parentWorkspaceId: parentWorkspace.id,
         taskStatus: "reported",
-        reportedAt: new Date().toISOString(),
+        reportedAt: completedAt,
       });
 
       cleanupDom = installDom();
@@ -132,7 +148,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       }
       const renderedView = view;
 
-      // Scenario 1: active children are visible, reported child is hidden by default.
+      // Scenario 1: active children are visible, while both completed children stay hidden.
       await waitFor(
         () => {
           if (!getWorkspaceRow(renderedView.container, activeChildOne.id)) {
@@ -144,11 +160,12 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
+      expect(getWorkspaceRow(renderedView.container, interruptedCompletedChild.id)).toBeNull();
       expect(getWorkspaceRow(renderedView.container, reportedChild.id)).toBeNull();
 
       const parentDisplayTitle = parentWorkspace.title ?? parentWorkspace.name;
 
-      // Scenario 2: expanding the parent reveals reported children.
+      // Scenario 2: expanding the parent reveals both completed children.
       const expandButton = await waitFor(
         () => {
           const button = renderedView.container.querySelector(
@@ -165,6 +182,13 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
 
       await waitFor(
         () => {
+          const interruptedCompletedRow = getWorkspaceRow(
+            renderedView.container,
+            interruptedCompletedChild.id
+          );
+          if (!interruptedCompletedRow) {
+            throw new Error("Expected interrupted completed child to be visible after expansion");
+          }
           const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
           if (!reportedRow) {
             throw new Error("Expected reported child to be visible after expansion");
@@ -173,7 +197,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
 
-      // Scenario 3: collapsing the parent hides reported children again.
+      // Scenario 3: collapsing the parent hides both completed children again.
       const collapseButton = await waitFor(
         () => {
           const button = renderedView.container.querySelector(
@@ -190,6 +214,13 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
 
       await waitFor(
         () => {
+          const interruptedCompletedRow = getWorkspaceRow(
+            renderedView.container,
+            interruptedCompletedChild.id
+          );
+          if (interruptedCompletedRow) {
+            throw new Error("Expected interrupted completed child to be hidden after collapsing");
+          }
           const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
           if (reportedRow) {
             throw new Error("Expected reported child to be hidden after collapsing");

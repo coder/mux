@@ -629,6 +629,7 @@ describe("sub-agent row render metadata", () => {
     options?: {
       parentWorkspaceId?: string;
       taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
+      reportedAt?: string;
     }
   ): FrontendWorkspaceMetadata => ({
     id,
@@ -639,6 +640,7 @@ describe("sub-agent row render metadata", () => {
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     parentWorkspaceId: options?.parentWorkspaceId,
     taskStatus: options?.taskStatus,
+    reportedAt: options?.reportedAt,
   });
 
   it("assigns middle/last connector positions for a parent with three active children", () => {
@@ -718,6 +720,92 @@ describe("sub-agent row render metadata", () => {
 
     expect(metadataByWorkspaceId.get("parent")?.hasHiddenCompletedChildren).toBe(false);
     expect(metadataByWorkspaceId.get("parent")?.visibleCompletedChildrenCount).toBe(2);
+  });
+
+  it("treats interrupted children with reportedAt as completed children", () => {
+    const completedAt = "2026-03-09T11:05:58.780Z";
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("active-child", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("corrupted-completed-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "interrupted",
+        reportedAt: completedAt,
+      }),
+      createWorkspace("reported-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+        reportedAt: completedAt,
+      }),
+    ];
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const collapsedVisible = filterVisibleAgentRows(flattened);
+    expect(collapsedVisible.map((workspace) => workspace.id)).toEqual(["parent", "active-child"]);
+
+    const collapsedMeta = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+    expect(collapsedMeta.get("parent")?.hasHiddenCompletedChildren).toBe(true);
+    expect(collapsedMeta.get("parent")?.visibleCompletedChildrenCount).toBe(0);
+    expect(collapsedMeta.has("corrupted-completed-child")).toBe(false);
+
+    const expandedParentIds = new Set<string>(["parent"]);
+    const expandedVisible = filterVisibleAgentRows(flattened, expandedParentIds);
+    expect(expandedVisible.map((workspace) => workspace.id)).toEqual([
+      "parent",
+      "active-child",
+      "corrupted-completed-child",
+      "reported-child",
+    ]);
+
+    const expandedMeta = computeAgentRowRenderMeta(
+      flattened,
+      depthByWorkspaceId,
+      expandedParentIds
+    );
+    expect(expandedMeta.get("parent")?.hasHiddenCompletedChildren).toBe(false);
+    expect(expandedMeta.get("parent")?.visibleCompletedChildrenCount).toBe(2);
+  });
+
+  it("keeps running children with stale reportedAt visible and out of completed counts", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("resumed-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        reportedAt: "2026-03-09T11:05:58.780Z",
+      }),
+    ];
+
+    const visible = filterVisibleAgentRows(flattened);
+    expect(visible.map((workspace) => workspace.id)).toEqual(["parent", "resumed-child"]);
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+    expect(metadataByWorkspaceId.get("parent")?.hasHiddenCompletedChildren).toBe(false);
+    expect(metadataByWorkspaceId.get("parent")?.visibleCompletedChildrenCount).toBe(0);
+    expect(metadataByWorkspaceId.has("resumed-child")).toBe(true);
+  });
+
+  it("keeps unfinished interrupted children visible and out of completed counts", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("unfinished-interrupted-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "interrupted",
+      }),
+    ];
+
+    const visible = filterVisibleAgentRows(flattened);
+    expect(visible.map((workspace) => workspace.id)).toEqual([
+      "parent",
+      "unfinished-interrupted-child",
+    ]);
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+    expect(metadataByWorkspaceId.get("parent")?.hasHiddenCompletedChildren).toBe(false);
+    expect(metadataByWorkspaceId.get("parent")?.visibleCompletedChildrenCount).toBe(0);
+    expect(metadataByWorkspaceId.has("unfinished-interrupted-child")).toBe(true);
   });
 
   it("tracks hidden-completed state correctly across collapsed and expanded parent rows", () => {

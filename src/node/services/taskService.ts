@@ -70,6 +70,7 @@ import {
 } from "@/node/services/subagentReportArtifacts";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
+import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 
 export type TaskKind = "agent";
 
@@ -819,13 +820,13 @@ export class TaskService {
 
     // Restart-safety for git patch artifacts:
     // - If mux crashed mid-generation, patch artifacts can be left "pending".
-    // - Reported tasks remain in config and keep their runtime on disk so completed sub-agents
-    //   stay visible/selectable in the sidebar.
-    const reportedTasks = this.listAgentTaskWorkspaces(config).filter(
-      (t) => t.taskStatus === "reported" && typeof t.id === "string" && t.id.length > 0
+    // - Tasks with completed reports remain in config and keep their runtime on disk so
+    //   completed sub-agents stay visible/selectable in the sidebar.
+    const completedReportTasks = this.listAgentTaskWorkspaces(config).filter(
+      (task) => hasCompletedAgentReport(task) && typeof task.id === "string" && task.id.length > 0
     );
 
-    for (const task of reportedTasks) {
+    for (const task of completedReportTasks) {
       if (!task.parentWorkspaceId) continue;
       try {
         await this.gitPatchArtifactService.maybeStartGeneration(
@@ -842,8 +843,8 @@ export class TaskService {
       }
     }
 
-    // Best-effort reported-task ancestor recheck after restart.
-    for (const task of reportedTasks) {
+    // Best-effort completed-report ancestor recheck after restart.
+    for (const task of completedReportTasks) {
       if (!task.id) continue;
       await this.cleanupReportedLeafTask(task.id);
     }
@@ -1399,17 +1400,21 @@ export class TaskService {
         }
 
         this.remindedAwaitingReport.delete(id);
-        // Report monotonicity: hard-interrupt cascades must not erase completed report
-        // evidence. Once cached, a report stays awaitable even if status flips to interrupted
-        // before stream-end finalization persists the artifact.
-        this.rejectWaiters(id, interruptionError);
-
+        let preservedCompletedDescendant = false;
         const updated = await this.editWorkspaceEntry(
           id,
           (ws) => {
+            if (hasCompletedAgentReport(ws)) {
+              // Preserve completed report evidence so already-finished descendants stay
+              // collapse-eligible after a later parent hard interrupt.
+              preservedCompletedDescendant = true;
+              return;
+            }
+
             const previousStatus = ws.taskStatus;
             const persistedQueuedPrompt = coerceNonEmptyString(ws.taskPrompt);
             ws.taskStatus = "interrupted";
+            ws.reportedAt = undefined;
 
             // Queued tasks persist their initial prompt in config until first start.
             // Preserve that prompt when interrupting queued descendants so users can
@@ -1425,12 +1430,25 @@ export class TaskService {
           { allowMissing: true }
         );
         if (!updated) {
+          // Missing descendants should still reject prompt waiters promptly so task_await does
+          // not hang until timeout after a parent hard interrupt races with external cleanup.
+          this.rejectWaiters(id, interruptionError);
           log.debug("terminateAllDescendantAgentTasks: descendant workspace missing", {
             taskId: id,
           });
           continue;
         }
 
+        if (preservedCompletedDescendant) {
+          log.debug("terminateAllDescendantAgentTasks: preserving completed descendant report", {
+            taskId: id,
+          });
+          continue;
+        }
+
+        // Report monotonicity: descendants that did not complete a report must reject waiters
+        // once the interrupt status transition is persisted.
+        this.rejectWaiters(id, interruptionError);
         interruptedTaskIds.push(id);
       }
     }
@@ -2194,16 +2212,17 @@ export class TaskService {
 
   /**
    * Topology predicate for reported-task cleanup: does this workspace still have child agent
-   * tasks that are not reported yet?
+   * tasks without completed report evidence?
    *
-   * Reported children should not block ancestor rechecks. Once every child has reported, the
-   * cleanup walk can continue upward and evaluate that ancestor as a reported leaf.
+   * Children with completed reports should not block ancestor rechecks. Once every child has a
+   * completed report, the cleanup walk can continue upward and evaluate that ancestor as a
+   * reported leaf.
    */
-  private hasNonReportedChildAgentTasks(index: AgentTaskIndex, workspaceId: string): boolean {
+  private hasIncompleteChildAgentReports(index: AgentTaskIndex, workspaceId: string): boolean {
     const childIds = index.childrenByParent.get(workspaceId) ?? [];
     for (const childId of childIds) {
-      const childStatus: AgentTaskStatus = index.byId.get(childId)?.taskStatus ?? "running";
-      if (childStatus !== "reported") {
+      const childEntry = index.byId.get(childId);
+      if (!childEntry || !hasCompletedAgentReport(childEntry)) {
         return true;
       }
     }
@@ -2743,6 +2762,7 @@ export class TaskService {
         }
 
         ws.taskStatus = "interrupted";
+        ws.reportedAt = undefined;
         revertedToInterrupted = true;
       },
       { allowMissing: true }
@@ -3693,7 +3713,7 @@ export class TaskService {
       return { ok: false, reason: "missing_parent_workspace" };
     }
 
-    if (entry.workspace.taskStatus !== "reported") {
+    if (!hasCompletedAgentReport(entry.workspace)) {
       return { ok: false, reason: "task_not_reported" };
     }
 
@@ -3706,9 +3726,10 @@ export class TaskService {
     }
 
     // Reported-task topology gate: children only block ancestor walk-up while they are still
-    // active. Once all children are reported, this workspace is treated as a reported leaf.
+    // active. Once all children have completed reports, this workspace is treated as a reported
+    // leaf.
     const index = this.buildAgentTaskIndex(config);
-    if (this.hasNonReportedChildAgentTasks(index, workspaceId)) {
+    if (this.hasIncompleteChildAgentReports(index, workspaceId)) {
       return { ok: false, reason: "has_non_reported_child_tasks" };
     }
 

@@ -1,5 +1,6 @@
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
+import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { assert } from "@/common/utils/assert";
 
 // Re-export shared section sorting utility
@@ -121,7 +122,7 @@ export interface AgentRowRenderMeta {
 }
 
 /**
- * Hide completed child tasks (taskStatus=reported) by default unless their parent is expanded.
+ * Hide completed child tasks by default unless their parent is expanded.
  * Child visibility is inherited from ancestors so hidden parents also hide descendants.
  */
 export function filterVisibleAgentRows(
@@ -168,8 +169,8 @@ export function filterVisibleAgentRows(
     }
 
     const parentVisible = isVisible(parent);
-    const isReportedChildTask = workspace.taskStatus === "reported";
-    const shouldHideCompletedChild = isReportedChildTask && !expandedParentIds.has(parentId);
+    const isCompletedChildTask = hasCompletedAgentReport(workspace);
+    const shouldHideCompletedChild = isCompletedChildTask && !expandedParentIds.has(parentId);
     const visible = parentVisible && !shouldHideCompletedChild;
 
     visiting.delete(workspace.id);
@@ -192,7 +193,7 @@ export function computeAgentRowRenderMeta(
   const visibleWorkspaceIds = new Set(visibleRows.map((workspace) => workspace.id));
 
   const visibleChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
-  const reportedChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+  const completedChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
 
   for (const workspace of visibleRows) {
     const parentId = workspace.parentWorkspaceId;
@@ -206,13 +207,13 @@ export function computeAgentRowRenderMeta(
   }
 
   for (const workspace of flattenedWorkspaces) {
-    if (!workspace.parentWorkspaceId || workspace.taskStatus !== "reported") {
+    if (!workspace.parentWorkspaceId || !hasCompletedAgentReport(workspace)) {
       continue;
     }
 
-    const reportedChildren = reportedChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
-    reportedChildren.push(workspace);
-    reportedChildrenByParent.set(workspace.parentWorkspaceId, reportedChildren);
+    const completedChildren = completedChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+    completedChildren.push(workspace);
+    completedChildrenByParent.set(workspace.parentWorkspaceId, completedChildren);
   }
 
   const metadataByWorkspaceId = new Map<string, AgentRowRenderMeta>();
@@ -228,9 +229,9 @@ export function computeAgentRowRenderMeta(
       }
     }
 
-    const reportedChildren = reportedChildrenByParent.get(workspace.id) ?? [];
+    const completedChildren = completedChildrenByParent.get(workspace.id) ?? [];
     let visibleCompletedChildrenCount = 0;
-    for (const child of reportedChildren) {
+    for (const child of completedChildren) {
       if (visibleWorkspaceIds.has(child.id)) {
         visibleCompletedChildrenCount += 1;
       }
@@ -240,7 +241,7 @@ export function computeAgentRowRenderMeta(
       depth: depthByWorkspaceId[workspace.id] ?? 0,
       rowKind,
       connectorPosition,
-      hasHiddenCompletedChildren: visibleCompletedChildrenCount < reportedChildren.length,
+      hasHiddenCompletedChildren: visibleCompletedChildrenCount < completedChildren.length,
       visibleCompletedChildrenCount,
     });
   }
