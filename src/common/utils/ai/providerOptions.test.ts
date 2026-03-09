@@ -10,6 +10,7 @@ import {
   buildProviderOptions,
   buildRequestHeaders,
   isAnthropic1MEffectivelyEnabled,
+  preserveAnthropic1MContextForFollowUp,
   ANTHROPIC_1M_CONTEXT_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
@@ -428,6 +429,41 @@ describe("isAnthropic1MEffectivelyEnabled", () => {
 
   test("returns false when provider options are missing", () => {
     expect(isAnthropic1MEffectivelyEnabled("anthropic:claude-opus-4-6")).toBe(false);
+  });
+});
+
+describe("preserveAnthropic1MContextForFollowUp", () => {
+  test("preserves 1M for alias source model when providersConfig resolves to 1M-capable model", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/sonnet": "anthropic:claude-sonnet-4-6-20251022",
+    });
+
+    const result = preserveAnthropic1MContextForFollowUp(
+      "anthropic:claude/sonnet",
+      "anthropic:claude-sonnet-4-6",
+      {
+        anthropic: {
+          use1MContextModels: ["anthropic:claude/sonnet"],
+        },
+      },
+      providersConfig
+    );
+
+    expect(result?.anthropic?.use1MContext).toBe(true);
+  });
+
+  test("does not preserve 1M for alias source model without providersConfig", () => {
+    const result = preserveAnthropic1MContextForFollowUp(
+      "anthropic:claude/sonnet",
+      "anthropic:claude-sonnet-4-6",
+      {
+        anthropic: {
+          use1MContextModels: ["anthropic:claude/sonnet"],
+        },
+      }
+    );
+
+    expect(result?.anthropic?.use1MContext).not.toBe(true);
   });
 });
 

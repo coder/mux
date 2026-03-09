@@ -4,7 +4,11 @@ import * as fs from "fs/promises";
 import * as path from "path";
 
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import type { SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
+import type {
+  ProvidersConfigMap,
+  SendMessageOptions,
+  WorkspaceChatMessage,
+} from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 
@@ -37,7 +41,8 @@ interface SessionHarness {
 function createAiService(
   projectPath: string,
   aiEmitter: EventEmitter,
-  metadataOverrides?: Partial<WorkspaceMetadata>
+  metadataOverrides?: Partial<WorkspaceMetadata>,
+  providersConfig?: ProvidersConfigMap | null
 ): AIService {
   const workspaceMetadata: WorkspaceMetadata = {
     id: "workspace-switch",
@@ -55,6 +60,7 @@ function createAiService(
         data: workspaceMetadata,
       })
     ),
+    getProvidersConfig: mock(() => providersConfig ?? null),
     stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
   }) as unknown as AIService;
 }
@@ -63,7 +69,8 @@ function createSessionHarness(
   historyService: HistoryService,
   sessionDir: string,
   projectPath: string,
-  metadataOverrides?: Partial<WorkspaceMetadata>
+  metadataOverrides?: Partial<WorkspaceMetadata>,
+  providersConfig?: ProvidersConfigMap | null
 ): SessionHarness {
   const aiEmitter = new EventEmitter();
   const initStateManager: InitStateManager = {
@@ -90,7 +97,7 @@ function createSessionHarness(
     workspaceId: "workspace-switch",
     config,
     historyService,
-    aiService: createAiService(projectPath, aiEmitter, metadataOverrides),
+    aiService: createAiService(projectPath, aiEmitter, metadataOverrides, providersConfig),
     initStateManager,
     backgroundProcessManager,
   });
@@ -102,9 +109,16 @@ function createSession(
   historyService: HistoryService,
   sessionDir: string,
   projectPath: string,
-  metadataOverrides?: Partial<WorkspaceMetadata>
+  metadataOverrides?: Partial<WorkspaceMetadata>,
+  providersConfig?: ProvidersConfigMap | null
 ): AgentSession {
-  return createSessionHarness(historyService, sessionDir, projectPath, metadataOverrides).session;
+  return createSessionHarness(
+    historyService,
+    sessionDir,
+    projectPath,
+    metadataOverrides,
+    providersConfig
+  ).session;
 }
 
 async function writeAgentDefinition(
@@ -243,20 +257,27 @@ describe("AgentSession switch_agent target validation", () => {
   describe("1M context preservation", () => {
     async function dispatchSwitchAndCaptureOptions(
       currentOptions: SendMessageOptions,
-      targetModel: string
+      targetModel: string,
+      providersConfig?: ProvidersConfigMap | null
     ): Promise<SendMessageOptions> {
       using projectDir = new DisposableTempDir("agent-session-switch-1m-context");
       const { historyService, cleanup } = await createTestHistoryService();
       historyCleanup = cleanup;
 
-      const session = createSession(historyService, projectDir.path, projectDir.path, {
-        aiSettingsByAgent: {
-          plan: {
-            model: targetModel,
-            thinkingLevel: "high",
+      const session = createSession(
+        historyService,
+        projectDir.path,
+        projectDir.path,
+        {
+          aiSettingsByAgent: {
+            plan: {
+              model: targetModel,
+              thinkingLevel: "high",
+            },
           },
         },
-      });
+        providersConfig
+      );
 
       try {
         const internals = session as unknown as SessionInternals;
@@ -298,6 +319,38 @@ describe("AgentSession switch_agent target validation", () => {
           },
         },
         "anthropic:claude-sonnet-4-6"
+      );
+
+      expect(followUpOptions.providerOptions?.anthropic?.use1MContext).toBe(true);
+    });
+
+    test("preserves 1M intent when source model is an alias resolved via providersConfig", async () => {
+      const providersConfig: ProvidersConfigMap = {
+        anthropic: {
+          apiKeySet: false,
+          isEnabled: true,
+          isConfigured: true,
+          models: [
+            {
+              id: "claude/sonnet",
+              mappedToModel: "anthropic:claude-sonnet-4-6-20251022",
+            },
+          ],
+        },
+      };
+
+      const followUpOptions = await dispatchSwitchAndCaptureOptions(
+        {
+          agentId: "exec",
+          model: "anthropic:claude/sonnet",
+          providerOptions: {
+            anthropic: {
+              use1MContextModels: ["anthropic:claude/sonnet"],
+            },
+          },
+        },
+        "anthropic:claude-sonnet-4-6",
+        providersConfig
       );
 
       expect(followUpOptions.providerOptions?.anthropic?.use1MContext).toBe(true);

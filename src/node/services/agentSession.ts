@@ -4356,7 +4356,8 @@ export class AgentSession {
     const followUpProviderOptions = preserveAnthropic1MContextForFollowUp(
       sourceModel,
       effectiveModel,
-      currentOptions?.providerOptions
+      currentOptions?.providerOptions,
+      this.aiService.getProvidersConfig()
     );
 
     // Build follow-up options from an explicit allowlist.
