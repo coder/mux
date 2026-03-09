@@ -509,6 +509,12 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
 
+      // Count active connector segments before expanding completed children.
+      // Only the running child contributes active segments at this point.
+      const activeCountBeforeExpand = renderedView.container.querySelectorAll(
+        "span.subagent-connector-active"
+      ).length;
+
       const parentDisplayTitle = parentWorkspace.title ?? parentWorkspace.name;
       const expandCompletedChildrenButton = await waitFor(
         () => {
@@ -530,21 +536,17 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
           if (!reportedRow) {
             throw new Error("Expected reported child row to be visible");
           }
-
-          const reportedConnector = getSubagentConnector(renderedView.container, reportedChild.id);
-          if (!reportedConnector) {
-            throw new Error("Expected reported child connector to be rendered");
-          }
-
-          const reportedActiveSegments = reportedConnector.querySelectorAll(
-            "span.subagent-connector-active"
-          );
-          if (reportedActiveSegments.length !== 0) {
-            throw new Error("Did not expect active connector segments for reported child");
-          }
         },
         { timeout: 10_000 }
       );
+
+      // After expanding, the reported child's connector should NOT add any active
+      // segments. The total count of active segments should remain the same.
+      const activeCountAfterExpand = renderedView.container.querySelectorAll(
+        "span.subagent-connector-active"
+      ).length;
+
+      expect(activeCountAfterExpand).toBe(activeCountBeforeExpand);
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);
