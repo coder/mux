@@ -5,6 +5,7 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { Config } from "@/node/config";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 
 /**
@@ -52,12 +53,12 @@ function getTestInitStateManager(): InitStateManager {
  */
 export function createTestToolConfig(
   tempDir: string,
-  options?: { workspaceId?: string; sessionsDir?: string }
+  options?: { workspaceId?: string; sessionsDir?: string; runtime?: Runtime }
 ): ToolConfiguration {
   return {
     cwd: tempDir,
     workspaceSessionDir: options?.sessionsDir ?? tempDir,
-    runtime: new LocalRuntime(tempDir),
+    runtime: options?.runtime ?? new LocalRuntime(tempDir),
     runtimeTempDir: tempDir,
     workspaceId: options?.workspaceId ?? "test-workspace",
   };

@@ -8,9 +8,10 @@ import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks"
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { log } from "./log";
 
 export interface SessionUsageTokenStatsCacheV1 {
@@ -21,6 +22,12 @@ export interface SessionUsageTokenStatsCacheV1 {
   version: 1;
 
   computedAt: number;
+
+  /**
+   * Stable fingerprint of provider config used when this cache was computed.
+   * Optional for backward compatibility with pre-fingerprint cache entries.
+   */
+  providersConfigVersion?: number;
 
   /** Tokenization model (impacts tokenizer + tool definition counting) */
   model: string;
@@ -53,8 +60,10 @@ export interface SessionUsageFile {
    * When a child workspace is deleted, we merge its byModel usage into the parent.
    * This tracks which children have already been merged to prevent double-counting
    * if removal is retried.
+   *
+   * Legacy entries use `true`; newer entries include per-child totals and metadata.
    */
-  rolledUpFrom?: Record<string, true>;
+  rolledUpFrom?: Record<string, true | RolledUpChildEntry>;
 
   /** Cached token statistics (consumer/file breakdown) for Costs tab */
   tokenStatsCache?: SessionUsageTokenStatsCacheV1;
@@ -197,7 +206,8 @@ export class SessionUsageService {
   async rollUpUsageIntoParent(
     parentWorkspaceId: string,
     childWorkspaceId: string,
-    childUsageByModel: Record<string, ChatUsageDisplay>
+    childUsageByModel: Record<string, ChatUsageDisplay>,
+    childMeta?: { agentType?: string; model?: string }
   ): Promise<{ didRollUp: boolean }> {
     assert(parentWorkspaceId.trim().length > 0, "rollUpUsageIntoParent: parentWorkspaceId empty");
     assert(childWorkspaceId.trim().length > 0, "rollUpUsageIntoParent: childWorkspaceId empty");
@@ -243,7 +253,69 @@ export class SessionUsageService {
         current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
       }
 
-      current.rolledUpFrom = { ...(current.rolledUpFrom ?? {}), [childWorkspaceId]: true };
+      let totalTokens = 0;
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let reasoningTokens = 0;
+      let cachedTokens = 0;
+      let cacheCreateTokens = 0;
+      let contextTokens = 0;
+      let totalCostUsd = 0;
+      let hasCosts = false;
+      for (const [, usage] of entries) {
+        inputTokens += usage.input.tokens;
+        outputTokens += usage.output.tokens;
+        reasoningTokens += usage.reasoning.tokens;
+        cachedTokens += usage.cached.tokens;
+        cacheCreateTokens += usage.cacheCreate.tokens;
+
+        totalTokens +=
+          usage.input.tokens +
+          usage.output.tokens +
+          usage.reasoning.tokens +
+          usage.cached.tokens +
+          usage.cacheCreate.tokens;
+        contextTokens += usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens;
+
+        for (const bucket of [
+          usage.input,
+          usage.output,
+          usage.reasoning,
+          usage.cached,
+          usage.cacheCreate,
+        ]) {
+          if (bucket.cost_usd != null) {
+            totalCostUsd += bucket.cost_usd;
+            hasCosts = true;
+          }
+        }
+      }
+
+      assert(totalTokens >= 0, "rollUpUsageIntoParent: totalTokens must be >= 0");
+      assert(inputTokens >= 0, "rollUpUsageIntoParent: inputTokens must be >= 0");
+      assert(outputTokens >= 0, "rollUpUsageIntoParent: outputTokens must be >= 0");
+      assert(reasoningTokens >= 0, "rollUpUsageIntoParent: reasoningTokens must be >= 0");
+      assert(cachedTokens >= 0, "rollUpUsageIntoParent: cachedTokens must be >= 0");
+      assert(cacheCreateTokens >= 0, "rollUpUsageIntoParent: cacheCreateTokens must be >= 0");
+      assert(contextTokens >= 0, "rollUpUsageIntoParent: contextTokens must be >= 0");
+      assert(!hasCosts || totalCostUsd >= 0, "rollUpUsageIntoParent: totalCostUsd must be >= 0");
+
+      current.rolledUpFrom = {
+        ...(current.rolledUpFrom ?? {}),
+        [childWorkspaceId]: {
+          totalTokens,
+          inputTokens,
+          outputTokens,
+          reasoningTokens,
+          cachedTokens,
+          cacheCreateTokens,
+          contextTokens,
+          totalCostUsd: hasCosts ? totalCostUsd : undefined,
+          agentType: childMeta?.agentType,
+          model: childMeta?.model,
+          rolledUpAtMs: Date.now(),
+        },
+      };
       await this.writeFile(parentWorkspaceId, current);
 
       return { didRollUp: true };

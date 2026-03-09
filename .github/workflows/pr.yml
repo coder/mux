@@ -99,6 +99,15 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y shellcheck
+      - name: Install hadolint
+        run: |
+          set -euo pipefail
+          HADOLINT_VERSION="v2.12.0"
+          curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf \
+            "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
+            -o "$HOME/.local/bin/hadolint"
+          chmod +x "$HOME/.local/bin/hadolint"
+          hadolint --version
       - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
         with:
           extra_nix_config: |
@@ -240,7 +249,7 @@ jobs:
           - os: linux
             runner: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
           - os: macos
-            runner: ${{ github.repository_owner == 'coder' && 'depot-macos-latest' || 'macos-latest' }}
+            runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -260,6 +269,8 @@ jobs:
           ELECTRON_DISABLE_SANDBOX: 1
       - name: Run tests
         if: matrix.os == 'macos'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: make test-e2e PLAYWRIGHT_ARGS="tests/e2e/scenarios/windowLifecycle.spec.ts"
 
   test-windows:
@@ -320,7 +331,7 @@ jobs:
           # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
           TARBALL=$(ls mux-*.tgz | head -1)
           PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: failure()
         with:
           name: smoke-server-logs
@@ -333,19 +344,21 @@ jobs:
     # Only run on merge queue (not every PR, not on merge-queue push to main)
     if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.actor != 'github-merge-queue[bot]')
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      id-token: write # Depot OIDC authentication
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+      - uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
+      - uses: depot/build-push-action@5f3b3c2e5a00f0093de47f657aeaefcedff27d18 # v1.17.0
         with:
+          project: 3pmt6zbws4
           context: .
           load: true
           tags: mux-server:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Test container
         run: |
           docker run -d --name mux-test -p 3000:3000 mux-server:test
@@ -374,18 +387,20 @@ jobs:
       - uses: ./.github/actions/setup-mux
       - run: bun run build
       - run: make dist-linux
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-linux
           path: release/*.AppImage
           retention-days: 30
           if-no-files-found: error
+          archive: false
 
   build-macos:
     name: Build / macOS
     needs: [changes]
     if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
-    runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    runs-on: macos-15
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -401,21 +416,23 @@ jobs:
           AC_APIKEY_P8_BASE64: ${{ secrets.AC_APIKEY_P8_BASE64 }}
           AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
           AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
-      - run: make dist-mac
+      - name: Build macOS distributables
+        # Retry for transient Apple timestamp-server failures during code signing.
+        run: ./scripts/retry.sh 3 30 make dist-mac
       - name: Upload x64 artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-macos-x64
           path: release/*-x64.dmg
           retention-days: 30
           if-no-files-found: error
+          archive: false
       - name: Upload arm64 artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-macos-arm64
           path: release/*-arm64.dmg
           retention-days: 30
           if-no-files-found: error
+          archive: false
 
   build-windows:
     name: Build / Windows
@@ -462,7 +479,7 @@ jobs:
           EV_KEY: ${{ vars.EV_KEY }}
           EV_TSA_URL: ${{ vars.EV_TSA_URL }}
           GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: build-windows
           path: release/*.exe
@@ -481,12 +498,12 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/build-vscode-extension
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: build-vscode
           path: vscode/mux-*.vsix
           retention-days: 30
           if-no-files-found: error
+          archive: false
 
   codex-comments:
     name: Codex Comments

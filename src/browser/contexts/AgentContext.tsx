@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -21,8 +22,10 @@ import {
   getDisableWorkspaceAgentsKey,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { sortAgentsStable } from "@/browser/utils/agents";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export interface AgentContextValue {
   agentId: string;
@@ -42,20 +45,28 @@ export interface AgentContextValue {
    */
   disableWorkspaceAgents: boolean;
   setDisableWorkspaceAgents: Dispatch<SetStateAction<boolean>>;
+  /** True when workspace metadata locks agent selection changes. */
+  isAgentSelectionLocked?: boolean;
 }
 
 const AgentContext = createContext<AgentContextValue | undefined>(undefined);
 
 type AgentProviderProps =
   | { value: AgentContextValue; children: ReactNode }
-  | { workspaceId?: string; projectPath?: string; children: ReactNode };
+  | {
+      workspaceId?: string;
+      projectPath?: string;
+      children: ReactNode;
+    };
 
 function getScopeId(workspaceId: string | undefined, projectPath: string | undefined): string {
   return workspaceId ?? (projectPath ? getProjectScopeId(projectPath) : GLOBAL_SCOPE_ID);
 }
 
 function coerceAgentId(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : "exec";
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : WORKSPACE_DEFAULTS.agentId;
 }
 
 export function AgentProvider(props: AgentProviderProps) {
@@ -72,12 +83,27 @@ function AgentProviderWithState(props: {
   children: ReactNode;
 }) {
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceMetadata();
+  const currentMeta = props.workspaceId ? workspaceMetadata.get(props.workspaceId) : undefined;
 
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
+  const isProjectScope = !props.workspaceId && Boolean(props.projectPath);
 
-  const [agentId, setAgentIdRaw] = usePersistedState<string>(getAgentIdKey(scopeId), "exec", {
-    listener: true,
-  });
+  const [globalDefaultAgentId] = usePersistedState<string>(
+    getAgentIdKey(GLOBAL_SCOPE_ID),
+    WORKSPACE_DEFAULTS.agentId,
+    {
+      listener: true,
+    }
+  );
+
+  const [scopedAgentId, setAgentIdRaw] = usePersistedState<string | null>(
+    getAgentIdKey(scopeId),
+    isProjectScope ? null : WORKSPACE_DEFAULTS.agentId,
+    {
+      listener: true,
+    }
+  );
 
   const [disableWorkspaceAgents, setDisableWorkspaceAgents] = usePersistedState<boolean>(
     getDisableWorkspaceAgentsKey(scopeId),
@@ -85,14 +111,26 @@ function AgentProviderWithState(props: {
     { listener: true }
   );
 
+  // The UI toggle for disableWorkspaceAgents was removed — clear persisted
+  // true values so users who had it enabled aren't stranded with no way to
+  // re-enable workspace agents.
+  useEffect(() => {
+    if (disableWorkspaceAgents) {
+      setDisableWorkspaceAgents(false);
+    }
+  }, [disableWorkspaceAgents, setDisableWorkspaceAgents]);
+
   const setAgentId: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {
       setAgentIdRaw((prev) => {
-        const next = typeof value === "function" ? value(prev) : value;
+        const previousAgentId = coerceAgentId(
+          isProjectScope ? (prev ?? globalDefaultAgentId) : prev
+        );
+        const next = typeof value === "function" ? value(previousAgentId) : value;
         return coerceAgentId(next);
       });
     },
-    [setAgentIdRaw]
+    [globalDefaultAgentId, isProjectScope, setAgentIdRaw]
   );
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
@@ -192,27 +230,81 @@ function AgentProviderWithState(props: {
     }
   }, [fetchAgents, props.projectPath, props.workspaceId, disableWorkspaceAgents]);
 
+  // Project-scoped providers should inherit the global default agent until a
+  // project-scoped preference is explicitly set.
+  // Workspace agent is backend-fixed for mux-chat and all child/subagent workspaces.
+  // Derive from existing metadata fields — no extra stored state needed.
+  const isCurrentAgentLocked =
+    props.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID || currentMeta?.parentWorkspaceId != null;
+
+  // For locked workspaces, use the backend-assigned agent — persisted localStorage
+  // may contain a stale selection from before locking, and the picker is disabled
+  // so there's no in-UI recovery path.
+  const normalizedAgentId =
+    isCurrentAgentLocked && currentMeta?.agentId
+      ? currentMeta.agentId
+      : coerceAgentId(isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId);
+  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
+
   const selectableAgents = useMemo(
     () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),
     [agents]
   );
 
   const cycleToNextAgent = useCallback(() => {
-    if (selectableAgents.length < 2) return;
+    if (isCurrentAgentLocked) {
+      return;
+    }
 
-    const currentIndex = selectableAgents.findIndex((a) => a.id === coerceAgentId(agentId));
-    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % selectableAgents.length;
-    const nextAgent = selectableAgents[nextIndex];
+    const activeAgentId = normalizedAgentId;
+
+    // Never cycle into "auto" — it's toggled explicitly via the picker switch.
+    // When auto is currently active, the same shortcut should still provide a way
+    // out of auto mode so normal manual cycling becomes available again.
+    const cyclableAgents = selectableAgents.filter((a) => a.id !== "auto");
+    if (cyclableAgents.length === 0) return;
+
+    if (activeAgentId === "auto") {
+      setAgentId(cyclableAgents[0].id);
+      return;
+    }
+
+    if (cyclableAgents.length < 2) return;
+
+    const currentIndex = cyclableAgents.findIndex((a) => a.id === activeAgentId);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % cyclableAgents.length;
+    const nextAgent = cyclableAgents[nextIndex];
     if (nextAgent) {
       setAgentId(nextAgent.id);
     }
-  }, [agentId, selectableAgents, setAgentId]);
+  }, [isCurrentAgentLocked, normalizedAgentId, selectableAgents, setAgentId]);
+
+  const toggleAutoAgent = useCallback(() => {
+    if (isCurrentAgentLocked) {
+      return;
+    }
+
+    const activeAgentId = normalizedAgentId;
+    const autoAvailable = selectableAgents.some((agent) => agent.id === "auto");
+    if (!autoAvailable) return;
+
+    if (activeAgentId === "auto") {
+      const firstManualAgent = selectableAgents.find((agent) => agent.id !== "auto");
+      if (!firstManualAgent) return;
+      setAgentId(firstManualAgent.id);
+      return;
+    }
+
+    setAgentId("auto");
+  }, [isCurrentAgentLocked, normalizedAgentId, selectableAgents, setAgentId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.TOGGLE_AGENT)) {
         e.preventDefault();
-        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+        if (!isCurrentAgentLocked) {
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
+        }
         return;
       }
 
@@ -221,11 +313,17 @@ function AgentProviderWithState(props: {
         cycleToNextAgent();
         return;
       }
+
+      if (matchesKeybind(e, KEYBINDS.TOGGLE_AUTO_AGENT)) {
+        e.preventDefault();
+        toggleAutoAgent();
+        return;
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleToNextAgent]);
+  }, [cycleToNextAgent, isCurrentAgentLocked, toggleAutoAgent]);
 
   useEffect(() => {
     const handleRefreshRequested = () => {
@@ -236,9 +334,6 @@ function AgentProviderWithState(props: {
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handleRefreshRequested);
   }, [refresh]);
-
-  const normalizedAgentId = coerceAgentId(agentId);
-  const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
 
   const agentContextValue = useMemo(
     () => ({
@@ -252,6 +347,7 @@ function AgentProviderWithState(props: {
       refreshing,
       disableWorkspaceAgents,
       setDisableWorkspaceAgents,
+      isAgentSelectionLocked: isCurrentAgentLocked,
     }),
     [
       normalizedAgentId,
@@ -264,6 +360,7 @@ function AgentProviderWithState(props: {
       refreshing,
       disableWorkspaceAgents,
       setDisableWorkspaceAgents,
+      isCurrentAgentLocked,
     ]
   );
 

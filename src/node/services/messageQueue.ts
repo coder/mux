@@ -42,6 +42,9 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
   return Array.isArray(obj.reviews);
 }
 
+// Derive from the Zod schema (SendMessageOptions) to stay in sync automatically.
+type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
+
 /**
  * Queue for messages sent during active streaming.
  *
@@ -61,18 +64,31 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
  * - Single agent-skill invocation → shows rawCommand (/{skill})
  * - Multiple messages → shows all actual message texts
  */
+interface QueuedMessageInternalOptions {
+  synthetic?: boolean;
+  agentInitiated?: boolean;
+}
+
 export class MessageQueue {
   private messages: string[] = [];
   private firstMuxMetadata?: unknown;
   private latestOptions?: SendMessageOptions;
   private accumulatedFileParts: FilePart[] = [];
   private dedupeKeys: Set<string> = new Set<string>();
+  private queueDispatchMode: QueueDispatchMode = "tool-end";
+  private queuedEntryCount = 0;
+  private queuedSyntheticCount = 0;
+  private queuedAgentInitiatedCount = 0;
 
   /**
    * Check if the queue currently contains a compaction request.
    */
   hasCompactionRequest(): boolean {
     return isCompactionMetadata(this.firstMuxMetadata);
+  }
+
+  getQueueDispatchMode(): QueueDispatchMode {
+    return this.queueDispatchMode;
   }
 
   /**
@@ -82,8 +98,12 @@ export class MessageQueue {
    *
    * @throws Error if trying to add a compaction request when queue already has messages
    */
-  add(message: string, options?: SendMessageOptions & { fileParts?: FilePart[] }): void {
-    this.addInternal(message, options);
+  add(
+    message: string,
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
+    internal?: QueuedMessageInternalOptions
+  ): boolean {
+    return this.addInternal(message, options, internal);
   }
 
   /**
@@ -93,13 +113,14 @@ export class MessageQueue {
   addOnce(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    dedupeKey?: string
+    dedupeKey?: string,
+    internal?: QueuedMessageInternalOptions
   ): boolean {
     if (dedupeKey !== undefined && this.dedupeKeys.has(dedupeKey)) {
       return false;
     }
 
-    const didAdd = this.addInternal(message, options);
+    const didAdd = this.addInternal(message, options, internal);
     if (didAdd && dedupeKey !== undefined) {
       this.dedupeKeys.add(dedupeKey);
     }
@@ -108,7 +129,8 @@ export class MessageQueue {
 
   private addInternal(
     message: string,
-    options?: SendMessageOptions & { fileParts?: FilePart[] }
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
+    internal?: QueuedMessageInternalOptions
   ): boolean {
     const trimmedMessage = message.trim();
     const hasFiles = options?.fileParts && options.fileParts.length > 0;
@@ -121,6 +143,13 @@ export class MessageQueue {
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
     const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
     const queueHasMessages = !this.isEmpty();
+    const incomingMode = options?.queueDispatchMode ?? "tool-end";
+    const nextQueueDispatchMode = !queueHasMessages
+      ? incomingMode
+      : incomingMode === "tool-end"
+        ? "tool-end"
+        : this.queueDispatchMode;
+
     const queueHasAgentSkill = isAgentSkillMetadata(this.firstMuxMetadata);
 
     // Avoid leaking agent-skill metadata to later queued messages.
@@ -149,6 +178,9 @@ export class MessageQueue {
       );
     }
 
+    // Commit dispatch mode only after validation checks pass
+    this.queueDispatchMode = nextQueueDispatchMode;
+
     // Add text message if non-empty
     if (trimmedMessage.length > 0) {
       this.messages.push(trimmedMessage);
@@ -166,6 +198,14 @@ export class MessageQueue {
       if (fileParts && fileParts.length > 0) {
         this.accumulatedFileParts.push(...fileParts);
       }
+    }
+
+    this.queuedEntryCount += 1;
+    if (internal?.synthetic === true) {
+      this.queuedSyntheticCount += 1;
+    }
+    if (internal?.agentInitiated === true) {
+      this.queuedAgentInitiatedCount += 1;
     }
 
     return true;
@@ -222,6 +262,7 @@ export class MessageQueue {
   produceMessage(): {
     message: string;
     options?: SendMessageOptions & { fileParts?: FilePart[] };
+    internal?: QueuedMessageInternalOptions;
   } {
     const joinedMessages = this.messages.join("\n");
     // First metadata takes precedence (preserves compaction + agent-skill invocations)
@@ -230,14 +271,30 @@ export class MessageQueue {
         ? this.firstMuxMetadata
         : (this.latestOptions?.muxMetadata as unknown);
     const options = this.latestOptions
-      ? {
-          ...this.latestOptions,
-          muxMetadata,
-          fileParts: this.accumulatedFileParts.length > 0 ? this.accumulatedFileParts : undefined,
-        }
+      ? (() => {
+          const restOptions: SendMessageOptions = { ...this.latestOptions };
+          delete restOptions.queueDispatchMode;
+          return {
+            ...restOptions,
+            muxMetadata,
+            fileParts: this.accumulatedFileParts.length > 0 ? this.accumulatedFileParts : undefined,
+          };
+        })()
       : undefined;
 
-    return { message: joinedMessages, options };
+    const allQueuedEntriesAreSynthetic =
+      this.queuedEntryCount > 0 && this.queuedSyntheticCount === this.queuedEntryCount;
+    const allQueuedEntriesAreAgentInitiated =
+      this.queuedEntryCount > 0 && this.queuedAgentInitiatedCount === this.queuedEntryCount;
+    const internal =
+      allQueuedEntriesAreSynthetic || allQueuedEntriesAreAgentInitiated
+        ? {
+            ...(allQueuedEntriesAreSynthetic ? { synthetic: true } : {}),
+            ...(allQueuedEntriesAreAgentInitiated ? { agentInitiated: true } : {}),
+          }
+        : undefined;
+
+    return { message: joinedMessages, options, internal };
   }
 
   /**
@@ -249,6 +306,10 @@ export class MessageQueue {
     this.latestOptions = undefined;
     this.accumulatedFileParts = [];
     this.dedupeKeys.clear();
+    this.queueDispatchMode = "tool-end";
+    this.queuedEntryCount = 0;
+    this.queuedSyntheticCount = 0;
+    this.queuedAgentInitiatedCount = 0;
   }
 
   /**

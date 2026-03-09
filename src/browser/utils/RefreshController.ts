@@ -29,12 +29,24 @@ export interface LastRefreshInfo {
   trigger: RefreshTrigger;
 }
 
+export interface RefreshFailureInfo {
+  /** Timestamp of failed refresh attempt */
+  timestamp: number;
+  /** What triggered the refresh */
+  trigger: RefreshTrigger;
+  /** Human-readable error message */
+  errorMessage: string;
+}
+
 export interface RefreshControllerOptions {
   /** Called to execute the actual refresh. Can be async. */
   onRefresh: () => Promise<void> | void;
 
   /** Called after refresh completes with info about the refresh (for state updates) */
   onRefreshComplete?: (info: LastRefreshInfo) => void;
+
+  /** Called when refresh fails (sync throw or async rejection) */
+  onRefreshError?: (info: RefreshFailureInfo) => void;
 
   /** Debounce delay for triggered refreshes (ms). Default: 3000 */
   debounceMs?: number;
@@ -76,6 +88,7 @@ const MIN_REFRESH_INTERVAL_MS = 500;
 export class RefreshController {
   private readonly onRefresh: () => Promise<void> | void;
   private readonly onRefreshComplete: ((info: LastRefreshInfo) => void) | null;
+  private readonly onRefreshError: ((info: RefreshFailureInfo) => void) | null;
   private readonly debounceMs: number;
   private readonly priorityDebounceMs: number;
   private readonly refreshOnFocus: boolean;
@@ -92,6 +105,7 @@ export class RefreshController {
   private pendingBecausePaused = false;
   private lastFocusRefreshMs = 0;
   private disposed = false;
+  private lifecycleGeneration = 0;
 
   // Track last refresh for debugging
   private _lastRefreshInfo: LastRefreshInfo | null = null;
@@ -108,6 +122,7 @@ export class RefreshController {
   constructor(options: RefreshControllerOptions) {
     this.onRefresh = options.onRefresh;
     this.onRefreshComplete = options.onRefreshComplete ?? null;
+    this.onRefreshError = options.onRefreshError ?? null;
     this.debounceMs = options.debounceMs ?? 3000;
     this.priorityDebounceMs = options.priorityDebounceMs ?? this.debounceMs;
     this.refreshOnFocus = options.refreshOnFocus ?? false;
@@ -296,7 +311,6 @@ export class RefreshController {
   private executeRefresh(trigger: RefreshTrigger): void {
     if (this.disposed) return;
 
-    // Record refresh start; min-interval enforcement happens in tryRefresh().
     this.lastRefreshStartMs = Date.now();
 
     if (this.cooldownTimer) {
@@ -307,18 +321,13 @@ export class RefreshController {
     this.inFlight = true;
     this.pendingTrigger = null;
 
-    const maybePromise = this.onRefresh();
+    // Capture generation at start so dispose() can fence stale continuations.
+    const runGeneration = this.lifecycleGeneration;
+    const isRunStale = () => this.disposed || runGeneration !== this.lifecycleGeneration;
 
-    const onComplete = () => {
+    // Shared cleanup: clear in-flight state and process any queued follow-up.
+    const finalizeInFlight = () => {
       this.inFlight = false;
-      this._lastRefreshInfo = { timestamp: Date.now(), trigger };
-
-      // Notify listener (for React state updates)
-      this.onRefreshComplete?.(this._lastRefreshInfo);
-
-      // Process any queued refresh with trailing debounce.
-      // This captures the final state after activity stops while still rate-limiting
-      // during constant activity (since scheduleWithDelay won't reset the timer).
       if (this.pendingBecauseInFlight) {
         this.pendingBecauseInFlight = false;
         const followupTrigger = this.pendingTrigger ?? "in-flight-followup";
@@ -327,11 +336,59 @@ export class RefreshController {
       }
     };
 
-    if (maybePromise instanceof Promise) {
-      void maybePromise.finally(onComplete);
-    } else {
-      onComplete();
-    }
+    const handleSuccess = () => {
+      const info: LastRefreshInfo = { timestamp: Date.now(), trigger };
+      this._lastRefreshInfo = info;
+
+      finalizeInFlight();
+
+      try {
+        this.onRefreshComplete?.(info);
+      } catch (error) {
+        console.error("[RefreshController] onRefreshComplete callback threw", error);
+      }
+    };
+
+    const handleFailure = (error: unknown) => {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.debug(`onRefresh failed: ${errorMessage}`);
+      // Do NOT mutate _lastRefreshInfo — failure must not look like success.
+      const failureInfo: RefreshFailureInfo = { timestamp: Date.now(), trigger, errorMessage };
+
+      finalizeInFlight();
+
+      try {
+        this.onRefreshError?.(failureInfo);
+      } catch (callbackError) {
+        console.error("[RefreshController] onRefreshError callback threw", callbackError);
+      }
+    };
+
+    // Unified promise pipeline: normalizes sync throws and async rejections
+    // into a single failure path so all errors are handled identically.
+    // Each stage checks isRunStale() so dispose() mid-flight stops the pipeline
+    // from invoking onRefresh or external callbacks for a dead owner.
+    void Promise.resolve()
+      .then(() => {
+        if (isRunStale()) return;
+        return this.onRefresh();
+      })
+      .then(
+        () => {
+          if (isRunStale()) {
+            finalizeInFlight();
+            return;
+          }
+          handleSuccess();
+        },
+        (error) => {
+          if (isRunStale()) {
+            finalizeInFlight();
+            return;
+          }
+          handleFailure(error);
+        }
+      );
   }
 
   /**
@@ -426,6 +483,16 @@ export class RefreshController {
    */
   dispose(): void {
     this.disposed = true;
+
+    // Bump generation to fence any in-flight async pipeline continuations.
+    this.lifecycleGeneration += 1;
+
+    // Collapse active refresh state so observability is coherent immediately.
+    this.inFlight = false;
+    this.pendingBecauseInFlight = false;
+    this.pendingBecauseHidden = false;
+    this.pendingBecausePaused = false;
+    this.pendingTrigger = null;
 
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);

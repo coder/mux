@@ -96,32 +96,33 @@ test.describe("slash command flows", () => {
     await ui.chat.expectTranscriptContains(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText("Compaction boundary");
-    // Regression check: transcript now keeps only the top compaction boundary row.
+    // With skip=0 (latest boundary only) replay, compaction prunes pre-boundary
+    // messages from the live view. They are accessible via "Load older messages".
     await expect(transcript).not.toContainText("Resume after compaction");
-    await expect(transcript).toContainText("Mock README content");
-    await expect(transcript).toContainText("Directory listing:");
+    await expect(transcript).not.toContainText("Mock README content");
+    await expect(transcript).not.toContainText("Directory listing:");
   });
 
   test("slash command /model sonnet switches models for subsequent turns", async ({ ui, page }) => {
     await ui.projects.openFirstWorkspace();
 
     const modeToggles = page.locator('[data-component="ChatModeToggles"]');
-    // Default model is now Opus 4.6 - displayed as formatted name
-    await expect(modeToggles.getByText("Opus 4.6", { exact: true })).toBeVisible();
+    // Default model is now Sonnet 4.6 - displayed as formatted name
+    await expect(modeToggles.getByText("Sonnet 4.6", { exact: true })).toBeVisible();
 
     await ui.chat.sendMessage("/model sonnet");
-    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-5");
+    await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-6");
     // Model is displayed as formatted name
-    await expect(modeToggles.getByText("Sonnet 4.5", { exact: true })).toBeVisible();
+    await expect(modeToggles.getByText("Sonnet 4.6", { exact: true })).toBeVisible();
 
     const timeline = await ui.chat.captureStreamTimeline(async () => {
       await ui.chat.sendMessage(MOCK_SLASH_COMMAND_PROMPTS.MODEL_STATUS);
     });
 
     const streamStart = timeline.events.find((event) => event.type === "stream-start");
-    expect(streamStart?.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(streamStart?.model).toBe("anthropic:claude-sonnet-4-6");
     await ui.chat.expectTranscriptContains(
-      "Claude Sonnet 4.5 is now responding with standard reasoning capacity."
+      "Claude Sonnet 4.6 is now responding with standard reasoning capacity."
     );
   });
 });

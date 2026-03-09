@@ -4,6 +4,7 @@ import * as fs from "fs/promises";
 import type { BrowserWindow, WebContents } from "electron";
 import { Config } from "../../src/node/config";
 import { ServiceContainer } from "../../src/node/services/serviceContainer";
+import { setOpenSSHHostKeyPolicyMode } from "../../src/node/runtime/sshConnectionPool";
 import {
   generateBranchName,
   createWorkspace,
@@ -75,6 +76,10 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
 
   // Create ServiceContainer instance
   const services = new ServiceContainer(config);
+  // IPC tests run SSH against Docker containers with ephemeral host keys and no
+  // interactive UI for host-key approval. Reset to headless-fallback so the
+  // ServiceContainer's "strict" mode doesn't block Docker SSH connections.
+  setOpenSSHHostKeyPolicyMode("headless-fallback");
   await services.initialize();
 
   // Wire services to the mock BrowserWindow
@@ -98,7 +103,6 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     updateService: services.updateService,
     tokenizerService: services.tokenizerService,
     serverService: services.serverService,
-    featureFlagService: services.featureFlagService,
     workspaceMcpOverridesService: services.workspaceMcpOverridesService,
     sessionTimingService: services.sessionTimingService,
     mcpConfigService: services.mcpConfigService,
@@ -108,11 +112,14 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
     voiceService: services.voiceService,
     experimentsService: services.experimentsService,
     telemetryService: services.telemetryService,
+    devToolsService: services.devToolsService,
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
     coderService: services.coderService,
     serverAuthService: services.serverAuthService,
     policyService: services.policyService,
+    sshPromptService: services.sshPromptService,
+    analyticsService: services.analyticsService,
   };
   const orpc = createOrpcTestClient(orpcContext);
 

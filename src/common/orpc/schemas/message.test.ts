@@ -21,6 +21,17 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
     expect(parsed.metadata?.compactionEpoch).toBe(7);
   });
 
+  test("preserves acpPromptId metadata", () => {
+    const parsed = MuxMessageSchema.parse({
+      ...createMessage(),
+      metadata: {
+        acpPromptId: "acp-prompt-123",
+      },
+    });
+
+    expect(parsed.metadata?.acpPromptId).toBe("acp-prompt-123");
+  });
+
   test("tolerates malformed compactionEpoch values by treating them as absent", () => {
     const malformedCompactionEpochValues: unknown[] = [
       0,

@@ -1,6 +1,6 @@
 import { render, type RenderResult, waitFor } from "@testing-library/react";
 
-import { AppLoader } from "@/browser/components/AppLoader";
+import { AppLoader } from "@/browser/components/AppLoader/AppLoader";
 import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
@@ -16,7 +16,7 @@ export interface RenderedApp extends RenderResult {
   /** Select a workspace by clicking in sidebar */
   selectWorkspace(workspaceId: string): Promise<void>;
   /** Switch to a specific tab in the right sidebar */
-  selectTab(tab: "costs" | "review" | "stats"): Promise<void>;
+  selectTab(tab: "costs" | "review"): Promise<void>;
 }
 
 /**
@@ -72,7 +72,7 @@ export function renderApp(props: RenderReviewPanelParams): RenderedApp {
       );
     },
 
-    async selectTab(tab: "costs" | "review" | "terminal" | "stats"): Promise<void> {
+    async selectTab(tab: "costs" | "review" | "terminal"): Promise<void> {
       await waitFor(
         () => {
           // Find tab button by role and name

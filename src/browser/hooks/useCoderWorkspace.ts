@@ -35,11 +35,15 @@ export function buildAutoSelectedTemplateConfig(
   };
 }
 
+export type CoderInfoRefreshPolicy = "mount-only" | "mount-and-focus";
+
 interface UseCoderWorkspaceOptions {
   /** Current Coder config (null = disabled, owned by parent via selectedRuntime.coder) */
   coderConfig: CoderWorkspaceConfig | null;
   /** Callback to update Coder config (updates selectedRuntime.coder) */
   onCoderConfigChange: (config: CoderWorkspaceConfig | null) => void;
+  /** Controls whether auth checks run only on mount or also when the window regains focus. */
+  coderInfoRefreshPolicy: CoderInfoRefreshPolicy;
 }
 
 interface UseCoderWorkspaceReturn {
@@ -90,6 +94,7 @@ interface UseCoderWorkspaceReturn {
 export function useCoderWorkspace({
   coderConfig,
   onCoderConfigChange,
+  coderInfoRefreshPolicy,
 }: UseCoderWorkspaceOptions): UseCoderWorkspaceReturn {
   const { api } = useAPI();
 
@@ -105,6 +110,7 @@ export function useCoderWorkspace({
   const onCoderConfigChangeRef = useRef(onCoderConfigChange);
   coderConfigRef.current = coderConfig;
   onCoderConfigChangeRef.current = onCoderConfigChange;
+  const latestAuthSeqRef = useRef(0);
   const [templates, setTemplates] = useState<CoderTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [presets, setPresets] = useState<CoderPreset[]>([]);
@@ -117,40 +123,60 @@ export function useCoderWorkspace({
   const [loadingPresets, setLoadingPresets] = useState(false);
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
 
-  // Fetch Coder info on mount
-  useEffect(() => {
+  const fetchCoderInfo = useCallback(async () => {
+    // Advance sequence before the API guard so that an API context change
+    // (e.g., reconnecting -> api becomes null) invalidates any in-flight request.
+    const seq = ++latestAuthSeqRef.current;
+
     if (!api) return;
 
-    let mounted = true;
+    try {
+      const info = await api.coder.getInfo();
+      if (seq !== latestAuthSeqRef.current) {
+        return;
+      }
 
-    api.coder
-      .getInfo()
-      .then((info) => {
-        if (mounted) {
-          setCoderInfo(info);
-          // Clear Coder config when CLI is not available (outdated or unavailable)
-          if (info.state !== "available" && coderConfigRef.current != null) {
-            onCoderConfigChangeRef.current(null);
-          }
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setCoderInfo({
-            state: "unavailable",
-            reason: { kind: "error", message: "Failed to fetch" },
-          });
-          // Clear Coder config on fetch failure
-          if (coderConfigRef.current != null) {
-            onCoderConfigChangeRef.current(null);
-          }
-        }
+      setCoderInfo(info);
+      // Clear Coder config when CLI is not available (outdated or unavailable)
+      if (info.state !== "available" && coderConfigRef.current != null) {
+        onCoderConfigChangeRef.current(null);
+      }
+    } catch {
+      if (seq !== latestAuthSeqRef.current) {
+        return;
+      }
+
+      setCoderInfo({
+        state: "unavailable",
+        reason: { kind: "error", message: "Failed to fetch" },
       });
-
-    return () => {
-      mounted = false;
-    };
+      // Clear Coder config on fetch failure
+      if (coderConfigRef.current != null) {
+        onCoderConfigChangeRef.current(null);
+      }
+    }
   }, [api]);
+
+  // Fetch Coder info on mount
+  useEffect(() => {
+    void fetchCoderInfo();
+  }, [fetchCoderInfo]);
+
+  // Re-check Coder auth on window focus — catches `coder login` done externally.
+  // Backend doesn't cache whoami failures, so this re-runs the CLI check only
+  // when logged out. Once logged in, the cached result returns instantly.
+  useEffect(() => {
+    if (coderInfoRefreshPolicy !== "mount-and-focus") {
+      return;
+    }
+
+    const onFocus = () => {
+      void fetchCoderInfo();
+    };
+
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [coderInfoRefreshPolicy, fetchCoderInfo]);
 
   // Fetch templates when Coder is enabled
   useEffect(() => {

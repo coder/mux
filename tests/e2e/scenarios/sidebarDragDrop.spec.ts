@@ -22,29 +22,29 @@ test.describe("sidebar drag and drop", () => {
     const tablist = sidebar.getByRole("tablist");
     await expect(tablist).toBeVisible({ timeout: 5000 });
 
-    const costsTab = tablist.getByRole("tab", { name: /Costs/ });
+    const costsTab = tablist.getByRole("tab", { name: /Stats/ });
     const reviewTab = tablist.getByRole("tab", { name: /Review/ });
     await expect(costsTab).toBeVisible({ timeout: 5000 });
     await expect(reviewTab).toBeVisible({ timeout: 5000 });
 
-    // Costs tab should be selected (active) by default
+    // Stats tab should be selected (active) by default
     await expect(costsTab).toHaveAttribute("aria-selected", "true");
 
-    // Verify initial order: costs comes before review
+    // Verify initial order: Stats comes before Review
     const initialTabs = await tablist.getByRole("tab").all();
     const initialLabels = await Promise.all(initialTabs.map((t) => t.textContent()));
-    const costsIndex = initialLabels.findIndex((l) => l?.includes("Costs"));
+    const costsIndex = initialLabels.findIndex((l) => l?.includes("Stats"));
     const reviewIndex = initialLabels.findIndex((l) => l?.includes("Review"));
     expect(costsIndex).toBeLessThan(reviewIndex);
 
-    // Drag active costs tab to after review tab position (reorder)
+    // Drag active Stats tab to after Review tab position (reorder)
     // Tabs are directly draggable without needing a handle
     await ui.dragElement(costsTab, reviewTab, { targetPosition: "after" });
 
     // Verify tabs were reordered: review now comes before costs
     const reorderedTabs = await tablist.getByRole("tab").all();
     const reorderedLabels = await Promise.all(reorderedTabs.map((t) => t.textContent()));
-    const newCostsIndex = reorderedLabels.findIndex((l) => l?.includes("Costs"));
+    const newCostsIndex = reorderedLabels.findIndex((l) => l?.includes("Stats"));
     const newReviewIndex = reorderedLabels.findIndex((l) => l?.includes("Review"));
     expect(newReviewIndex).toBeLessThan(newCostsIndex);
   });
@@ -60,7 +60,7 @@ test.describe("sidebar drag and drop", () => {
     await ui.metaSidebar.addTerminal();
 
     const tablist = sidebar.getByRole("tablist");
-    const costsTab = tablist.getByRole("tab", { name: /Costs/ });
+    const costsTab = tablist.getByRole("tab", { name: /Stats/ });
     const reviewTab = tablist.getByRole("tab", { name: /Review/ });
     // Terminal tab name may be "Terminal" initially or a cwd path after shell starts
     // Find it by looking for tab with close button (only terminal tabs have X button)
@@ -71,14 +71,14 @@ test.describe("sidebar drag and drop", () => {
     await expect(reviewTab).toBeVisible({ timeout: 5000 });
     await expect(terminalTab).toBeVisible({ timeout: 5000 });
 
-    // Terminal tab is selected after adding; select Costs to make Terminal inactive
+    // Terminal tab is selected after adding; select Stats to make Terminal inactive
     await costsTab.click();
     await expect(costsTab).toHaveAttribute("aria-selected", "true");
     await expect(terminalTab).toHaveAttribute("aria-selected", "false");
 
     // Verify initial order: costs, review, terminal (terminal is last after adding)
     await tablist.getByRole("tab").all();
-    await tablist.getByRole("tab", { name: /Costs/ }).evaluate((el) => {
+    await tablist.getByRole("tab", { name: /Stats/ }).evaluate((el) => {
       return Array.from(el.parentElement?.parentElement?.children ?? []).indexOf(el.parentElement!);
     });
     const reviewIndex = await tablist.getByRole("tab", { name: /Review/ }).evaluate((el) => {
@@ -102,7 +102,7 @@ test.describe("sidebar drag and drop", () => {
     });
     expect(newTerminalIndex).toBeLessThan(newReviewIndex);
 
-    // The active tab should still be costs (drag shouldn't change selection)
+    // The active tab should still be Stats (drag shouldn't change selection)
     await expect(costsTab).toHaveAttribute("aria-selected", "true");
   });
 
@@ -119,7 +119,7 @@ test.describe("sidebar drag and drop", () => {
     await expect(tablist).toBeVisible();
 
     // Get all tabs - terminal has close button (unique to terminal tabs)
-    const costsTab = tablist.getByRole("tab", { name: /Costs/ });
+    const costsTab = tablist.getByRole("tab", { name: /Stats/ });
     const reviewTab = tablist.getByRole("tab", { name: /Review/ });
     const terminalTab = tablist.locator('[role="tab"]').filter({
       has: page.getByRole("button", { name: "Close terminal" }),
@@ -137,7 +137,7 @@ test.describe("sidebar drag and drop", () => {
     await expect(terminalTab).toHaveAttribute("aria-selected", "true");
     await expect(reviewTab).toHaveAttribute("aria-selected", "false");
 
-    // Return to costs
+    // Return to Stats
     await costsTab.click();
     await expect(costsTab).toHaveAttribute("aria-selected", "true");
   });
@@ -188,9 +188,11 @@ test.describe("sidebar drag and drop", () => {
       { wsId: workspaceId }
     );
 
-    // Reload to pick up the layout
+    // Reload to pick up the layout. The app boots to the landing page after
+    // reload, so re-open the workspace via the sidebar.
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
+    await ui.projects.openFirstWorkspace();
 
     // Wait for sidebar to appear
     await expect(sidebar).toBeVisible({ timeout: 10000 });
@@ -201,10 +203,10 @@ test.describe("sidebar drag and drop", () => {
 
     // Verify each tablist has expected tabs.
     //
-    // Stats is default-on, and both Stats + Explorer get auto-injected into the first tabset
-    // when loading a persisted layout that doesn't list every built-in tab.
-    await expect(tablists[0].getByRole("tab")).toHaveCount(4); // Costs, Review, Explorer, Stats
-    await expect(tablists[1].getByRole("tab")).toHaveCount(1); // Costs (duplicate tab in split)
+    // Explorer gets auto-injected into the first tabset when loading a persisted
+    // layout that doesn't list every built-in tab.
+    await expect(tablists[0].getByRole("tab")).toHaveCount(3); // Stats (costs), Review, Explorer
+    await expect(tablists[1].getByRole("tab")).toHaveCount(1); // Stats (duplicate costs in split)
   });
 
   // Note: Full drag-drop tests require real browser mouse events which

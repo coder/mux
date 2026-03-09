@@ -1,7 +1,5 @@
 import assert from "@/common/utils/assert";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { GATEWAY_CONFIGURED_KEY } from "@/common/constants/storage";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import type { DeleteMessage, StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
 import {
@@ -83,6 +81,40 @@ export interface WorkspaceChatEventAggregator {
   clearTokenState(messageId: string): void;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function isSuccessfulProposePlanResult(result: unknown): boolean {
+  if (!isRecord(result)) return false;
+  if (result.success !== true) return false;
+
+  const hasFileResult = typeof result.planPath === "string";
+  const hasLegacyResult = typeof result.title === "string" && typeof result.plan === "string";
+  return hasFileResult || hasLegacyResult;
+}
+
+function shouldRefreshAgentsAfterToolCallEnd(event: ToolCallEndEvent): boolean {
+  if (event.replay === true) return false;
+  if (event.toolName !== "propose_plan") return false;
+  return isSuccessfulProposePlanResult(event.result);
+}
+
+function dispatchAgentsRefreshRequested(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED));
+}
+
+function dispatchSkillsRefreshRequested(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED));
+}
+
+function dispatchMuxGatewaySessionExpired(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
+}
+
 /**
  * Applies a single workspace chat event to a StreamingMessageAggregator-like instance.
  *
@@ -129,10 +161,9 @@ export function applyWorkspaceChatEventToAggregator(
 
   if (isStreamError(event)) {
     if (allowSideEffects && event.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
-      updatePersistedState(GATEWAY_CONFIGURED_KEY, false);
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
-      }
+      // Dispatch session-expired event; useGateway() listens for it and
+      // optimistically marks the gateway as unconfigured to stop routing.
+      dispatchMuxGatewaySessionExpired();
     }
 
     aggregator.handleStreamError(event);
@@ -151,6 +182,21 @@ export function applyWorkspaceChatEventToAggregator(
 
   if (isToolCallEnd(event)) {
     aggregator.handleToolCallEnd(event);
+
+    if (allowSideEffects && shouldRefreshAgentsAfterToolCallEnd(event)) {
+      // Keep agent discovery in sync when propose_plan succeeds so conditionally visible
+      // agents (for example, orchestrator with ui.requires: ["plan"]) appear immediately.
+      dispatchAgentsRefreshRequested();
+    }
+
+    if (
+      allowSideEffects &&
+      event.replay !== true &&
+      (event.toolName === "agent_skill_read" || event.toolName === "agent_skill_list")
+    ) {
+      dispatchSkillsRefreshRequested();
+    }
+
     return "immediate";
   }
 
@@ -193,7 +239,8 @@ export function applyWorkspaceChatEventToAggregator(
     isRestoreToInput(event) ||
     isBashOutputEvent(event) ||
     ("type" in event && event.type === "session-usage-delta") ||
-    ("type" in event && event.type === "idle-compaction-needed")
+    ("type" in event && event.type === "auto-compaction-triggered") ||
+    ("type" in event && event.type === "auto-compaction-completed")
   ) {
     return "ignored";
   }

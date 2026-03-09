@@ -18,34 +18,147 @@ import { parseBearerWwwAuthenticate, type McpOauthService } from "@/node/service
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
 import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const TEST_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
 
+/** Detect errors from the @ai-sdk/mcp SDK indicating the client/transport is closed.
+ *  MCPClientError is not exported from the SDK, so we match on known message patterns.
+ *  Known patterns: "closed client", "Connection closed", "Connection closed unexpectedly". */
+export function isClosedClientError(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return (
+    msg.includes("closed client") ||
+    msg.includes("connection closed") ||
+    msg.includes("not connected")
+  );
+}
+
+const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
+
+/**
+ * Thrown by runMCPToolWithDeadline when abort or timeout wins the race.
+ * Typed so shouldRecycleClientAfterToolError can distinguish wrapper-generated
+ * deadline errors from MCP server errors that coincidentally contain similar text.
+ */
+class MCPDeadlineError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MCPDeadlineError";
+  }
+}
+
+/**
+ * Run an MCP tool call with unified timeout + abort lifecycle.
+ * All cleanup (timer, abort listener) happens in one `finally` block,
+ * so abort cannot leave orphaned timers or dangling promises.
+ */
+export async function runMCPToolWithDeadline<T>(
+  start: () => Promise<T>,
+  opts: { toolName: string; timeoutMs: number; signal?: AbortSignal }
+): Promise<T> {
+  const { signal, timeoutMs, toolName } = opts;
+
+  // Pre-abort short-circuit: skip all async work if already canceled.
+  if (signal?.aborted) {
+    throw new MCPDeadlineError("Interrupted");
+  }
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let cleanupAbort: (() => void) | undefined;
+
+  // Lazy start: tool execution begins only after pre-abort check passes.
+  const op = Promise.resolve().then(start);
+
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new MCPDeadlineError(`MCP tool '${toolName}' timed out after ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    if (
+      timeoutHandle !== undefined &&
+      typeof timeoutHandle === "object" &&
+      "unref" in timeoutHandle &&
+      typeof timeoutHandle.unref === "function"
+    ) {
+      timeoutHandle.unref();
+    }
+  });
+
+  const aborted = signal
+    ? new Promise<never>((_resolve, reject) => {
+        const onAbort = () => reject(new MCPDeadlineError("Interrupted"));
+        signal.addEventListener("abort", onAbort, { once: true });
+        cleanupAbort = () => signal.removeEventListener("abort", onAbort);
+      })
+    : undefined;
+
+  try {
+    const racers: Array<Promise<T>> = [op, timeout];
+    if (aborted) {
+      racers.push(aborted);
+    }
+    return await Promise.race(racers);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+    cleanupAbort?.();
+  }
+}
+
+function shouldRecycleClientAfterToolError(error: unknown): boolean {
+  return isClosedClientError(error) || error instanceof MCPDeadlineError;
+}
+
 /**
  * Wrap MCP tools to transform their results to AI SDK format.
  * This ensures image content is properly converted to media type.
  */
-function wrapMCPTools(tools: Record<string, Tool>, onActivity?: () => void): Record<string, Tool> {
+export function wrapMCPTools(
+  tools: Record<string, Tool>,
+  options?: { onActivity?: () => void; onClosed?: () => void }
+): Record<string, Tool> {
+  const { onActivity, onClosed } = options ?? {};
   const wrapped: Record<string, Tool> = {};
-  for (const [name, tool] of Object.entries(tools)) {
+  for (const [toolName, tool] of Object.entries(tools)) {
     // Only wrap tools that have an execute function
     if (!tool.execute) {
-      wrapped[name] = tool;
+      wrapped[toolName] = tool;
       continue;
     }
 
     const originalExecute = tool.execute;
-    wrapped[name] = {
+    wrapped[toolName] = {
       ...tool,
-      execute: async (args: Parameters<typeof originalExecute>[0], options) => {
+      execute: async (args: Parameters<typeof originalExecute>[0], context) => {
         // Mark the MCP server set as active *before* execution, so failed tool
         // calls (including closed-client races) still count as activity.
         onActivity?.();
 
-        const result: unknown = await originalExecute(args, options);
-        return transformMCPResult(result as MCPCallToolResult);
+        try {
+          const abortSignal =
+            context && typeof context === "object" && "abortSignal" in context
+              ? (context as { abortSignal?: AbortSignal }).abortSignal
+              : undefined;
+
+          const result: unknown = await runMCPToolWithDeadline(
+            () => Promise.resolve(originalExecute(args, context)) as Promise<unknown>,
+            { toolName, timeoutMs: MCP_TOOL_CALL_TIMEOUT_MS, signal: abortSignal }
+          );
+          return transformMCPResult(result as MCPCallToolResult);
+        } catch (error) {
+          if (shouldRecycleClientAfterToolError(error)) {
+            try {
+              onClosed?.();
+            } catch {
+              // Swallow — original tool error takes priority.
+            }
+          }
+          throw error;
+        }
       },
     };
   }
@@ -373,7 +486,7 @@ async function runServerTest(
       log.info(`[MCP] ${logContext} test successful`, { toolCount: toolNames.length });
       return { success: true, tools: toolNames };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.warn(`[MCP] ${logContext} test failed`, { error: message });
 
       if (client) {
@@ -433,7 +546,7 @@ export interface MCPWorkspaceStats {
   transportMode: MCPTransportMode;
 }
 
-export interface MCPToolsForWorkspaceResult {
+interface MCPToolsForWorkspaceResult {
   tools: Record<string, Tool>;
   stats: MCPWorkspaceStats;
 }
@@ -1006,7 +1119,7 @@ export class MCPServerManager {
           `server "${trimmedName}"`
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return { success: false, error: message };
       }
     }
@@ -1049,7 +1162,7 @@ export class MCPServerManager {
           trimmedName ? `server "${trimmedName}" (url)` : "url"
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return { success: false, error: message };
       }
     }
@@ -1161,7 +1274,7 @@ export class MCPServerManager {
           result.set(name, instance);
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         log.error("Failed to start MCP server", { name, error: message });
       }
     }
@@ -1202,13 +1315,18 @@ export class MCPServerManager {
       transport.onclose = markClosed;
 
       transport.onerror = (error) => {
-        log.error("[MCP] Transport error", { name, error });
+        log.error("[MCP] Transport error", { name, error: getErrorMessage(error) });
       };
 
       await transport.start();
       const client = await createMCPClient({ transport });
       const rawTools = await client.tools();
-      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
+      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
+        onActivity,
+        onClosed: () => {
+          if (instanceRef.current) instanceRef.current.isClosed = true;
+        },
+      });
 
       log.info("[MCP] Server ready", {
         name,
@@ -1237,6 +1355,7 @@ export class MCPServerManager {
           } catch (error) {
             log.debug("[MCP] Error closing transport", { name, error });
           }
+          instanceRef.current = null;
         },
       };
 
@@ -1254,6 +1373,22 @@ export class MCPServerManager {
       serverUrl: info.url,
     });
 
+    const instanceRef: { current: MCPServerInstance | null } = { current: null };
+    let transportErrored = false;
+
+    const onUncaughtError = (error: unknown) => {
+      if (transportErrored) {
+        return;
+      }
+      log.error("[MCP] Uncaught transport error", { name, error: getErrorMessage(error) });
+      if (isClosedClientError(error)) {
+        transportErrored = true;
+        if (instanceRef.current) {
+          instanceRef.current.isClosed = true;
+        }
+      }
+    };
+
     const transportBase = {
       url: info.url,
       headers,
@@ -1266,6 +1401,7 @@ export class MCPServerManager {
           type: "http",
           ...transportBase,
         },
+        onUncaughtError,
       });
 
     const trySse = async () =>
@@ -1274,6 +1410,7 @@ export class MCPServerManager {
           type: "sse",
           ...transportBase,
         },
+        onUncaughtError,
       });
 
     let client: Awaited<ReturnType<typeof createMCPClient>>;
@@ -1305,7 +1442,12 @@ export class MCPServerManager {
     let clientClosed = false;
 
     const rawTools = await client.tools();
-    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
+    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, {
+      onActivity,
+      onClosed: () => {
+        if (instanceRef.current) instanceRef.current.isClosed = true;
+      },
+    });
 
     log.info("[MCP] Server ready", {
       name,
@@ -1319,7 +1461,7 @@ export class MCPServerManager {
       resolvedTransport,
       autoFallbackUsed,
       tools,
-      isClosed: clientClosed,
+      isClosed: transportErrored || clientClosed,
       close: async () => {
         // Mark closed first to prevent any new tool calls from being treated as
         // valid by higher-level caching logic.
@@ -1333,9 +1475,11 @@ export class MCPServerManager {
         } catch (error) {
           log.debug("[MCP] Error closing client", { name, error });
         }
+        instanceRef.current = null;
       },
     };
 
+    instanceRef.current = instance;
     return instance;
   }
 }

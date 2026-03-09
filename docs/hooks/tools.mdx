@@ -228,6 +228,27 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>agent_skill_delete (4)</summary>
+
+| Env var                    | JSON path  | Type    | Description                                                                                                        |
+| -------------------------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_CONFIRM`   | `confirm`  | boolean | Must be true to confirm deletion                                                                                   |
+| `MUX_TOOL_INPUT_FILE_PATH` | `filePath` | string  | Relative file path within the skill directory to delete. Required when target is 'file'                            |
+| `MUX_TOOL_INPUT_NAME`      | `name`     | string  | Skill name to delete                                                                                               |
+| `MUX_TOOL_INPUT_TARGET`    | `target`   | enum    | Deletion target: 'file' to delete a specific file, 'skill' to remove the entire skill directory (defaults to file) |
+
+</details>
+
+<details>
+<summary>agent_skill_list (1)</summary>
+
+| Env var                               | JSON path             | Type    | Description                                      |
+| ------------------------------------- | --------------------- | ------- | ------------------------------------------------ |
+| `MUX_TOOL_INPUT_INCLUDE_UNADVERTISED` | `includeUnadvertised` | boolean | When true, includes skills with advertise: false |
+
+</details>
+
+<details>
 <summary>agent_skill_read (1)</summary>
 
 | Env var               | JSON path | Type   | Description                                       |
@@ -245,6 +266,31 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | `MUX_TOOL_INPUT_LIMIT`     | `limit`    | number | Number of lines to return from offset (optional, returns all if not specified) |
 | `MUX_TOOL_INPUT_NAME`      | `name`     | string | Skill name (directory name under the skills root)                              |
 | `MUX_TOOL_INPUT_OFFSET`    | `offset`   | number | 1-based starting line number (optional, defaults to 1)                         |
+
+</details>
+
+<details>
+<summary>agent_skill_write (3)</summary>
+
+| Env var                    | JSON path  | Type   | Description                                                |
+| -------------------------- | ---------- | ------ | ---------------------------------------------------------- |
+| `MUX_TOOL_INPUT_CONTENT`   | `content`  | string | File content to write                                      |
+| `MUX_TOOL_INPUT_FILE_PATH` | `filePath` | string | Relative path within skill directory. Defaults to SKILL.md |
+| `MUX_TOOL_INPUT_NAME`      | `name`     | string | Skill name (directory name under the global skills root)   |
+
+</details>
+
+<details>
+<summary>analytics_query (6)</summary>
+
+| Env var                         | JSON path         | Type   | Description                                                                         |
+| ------------------------------- | ----------------- | ------ | ----------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_SQL`            | `sql`             | string | DuckDB SQL query to execute                                                         |
+| `MUX_TOOL_INPUT_TITLE`          | `title`           | string | Optional chart title                                                                |
+| `MUX_TOOL_INPUT_VISUALIZATION`  | `visualization`   | enum   | Optional visualization type for rendering the query result                          |
+| `MUX_TOOL_INPUT_X_AXIS`         | `x_axis`          | string | Optional column name for the visualization X axis                                   |
+| `MUX_TOOL_INPUT_Y_AXIS_<INDEX>` | `y_axis[<INDEX>]` | string | Optional column name(s) for the visualization Y axis                                |
+| `MUX_TOOL_INPUT_Y_AXIS_COUNT`   | `y_axis.length`   | number | Number of elements in y_axis (Optional column name(s) for the visualization Y axis) |
 
 </details>
 
@@ -267,12 +313,12 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 <details>
 <summary>bash (4)</summary>
 
-| Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------- | ------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_DISPLAY_NAME`      | `display_name`      | string  | Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). Required for all bash invocations since any process can be sent to background.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | Run this command in the background without blocking. Use for processes running &gt;5s (dev servers, builds, file watchers). Do NOT use for quick commands (&lt;5s), interactive processes (no stdin support), or processes requiring real-time output (use foreground with larger timeout instead). Returns immediately with a taskId (bash:&lt;processId&gt;) and backgroundProcessId. Read output with task_await (returns only new output since last check). Terminate with task_terminate using the taskId. List active tasks with task_list. Process persists until timeout_secs expires, terminated, or workspace is removed. For long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. Check back periodically with task_await rather than blocking on completion. |
-| `MUX_TOOL_INPUT_SCRIPT`            | `script`            | string  | The bash script/command to execute                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `MUX_TOOL_INPUT_TIMEOUT_SECS`      | `timeout_secs`      | number  | Timeout in seconds. For foreground: max execution time before kill. For background: max lifetime before auto-termination. Start small and increase on retry; avoid large initial values to keep UX responsive                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_DISPLAY_NAME`      | `display_name`      | string  | Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). Required for all bash invocations since any process can be sent to background.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | Run this command in the background without blocking. Use for processes running &gt;5s (dev servers, builds, file watchers). Do NOT use for quick commands (&lt;5s), interactive processes (no stdin support), or processes requiring real-time output (use foreground with larger timeout instead). Returns immediately with a taskId (bash:&lt;processId&gt;) and backgroundProcessId. Read output with task_await (returns only new output since last check). Terminate with task_terminate using the taskId. List active tasks with task_list. Process persists until timeout_secs expires, terminated, or workspace is removed. For long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. Check back periodically with task_await rather than blocking on completion. |
+| `MUX_TOOL_INPUT_SCRIPT`            | `script`            | string  | The bash script/command to execute                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `MUX_TOOL_INPUT_TIMEOUT_SECS`      | `timeout_secs`      | number  | Timeout in seconds. For foreground: max execution time before kill. For background: max lifetime before auto-termination. Start small and increase on retry; avoid large initial values to keep UX responsive                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 </details>
 
@@ -357,6 +403,32 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>mux_config_read (3)</summary>
+
+| Env var                       | JSON path       | Type   | Description                                                                                                               |
+| ----------------------------- | --------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_FILE`         | `file`          | enum   | Which configuration file to read                                                                                          |
+| `MUX_TOOL_INPUT_PATH_<INDEX>` | `path[<INDEX>]` | string | Optional path segments to read a specific nested value. If omitted, returns the full config.                              |
+| `MUX_TOOL_INPUT_PATH_COUNT`   | `path.length`   | number | Number of elements in path (Optional path segments to read a specific nested value. If omitted, returns the full config.) |
+
+</details>
+
+<details>
+<summary>mux_config_write (7)</summary>
+
+| Env var                                          | JSON path                           | Type    | Description                                                                   |
+| ------------------------------------------------ | ----------------------------------- | ------- | ----------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_CONFIRM`                         | `confirm`                           | boolean | Must be true to apply the write. Ask the user for confirmation first.         |
+| `MUX_TOOL_INPUT_FILE`                            | `file`                              | enum    | Which configuration file to write                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_OP`           | `operations[<INDEX>].op`            | literal | —                                                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_PATH_<INDEX>` | `operations[<INDEX>].path[<INDEX>]` | string  | —                                                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_PATH_COUNT`   | `operations[<INDEX>].path.length`   | number  | Number of elements in operations[&lt;INDEX&gt;].path                          |
+| `MUX_TOOL_INPUT_OPERATIONS_<INDEX>_VALUE`        | `operations[<INDEX>].value`         | unknown | —                                                                             |
+| `MUX_TOOL_INPUT_OPERATIONS_COUNT`                | `operations.length`                 | number  | Number of elements in operations (Operations to apply to the config document) |
+
+</details>
+
+<details>
 <summary>mux_global_agents_write (2)</summary>
 
 | Env var                      | JSON path    | Type    | Description                                                                            |
@@ -377,6 +449,37 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>propose_name (2)</summary>
+
+| Env var                | JSON path | Type   | Description                                                                                        |
+| ---------------------- | --------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_NAME`  | `name`    | string | Codebase area (1-2 words, max 15 chars): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config' |
+| `MUX_TOOL_INPUT_TITLE` | `title`   | string | Human-readable title (2-5 words): verb-noun format like 'Fix plan mode'                            |
+
+</details>
+
+<details>
+<summary>skills_catalog_read (3)</summary>
+
+| Env var                   | JSON path | Type   | Description                                                         |
+| ------------------------- | --------- | ------ | ------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_OWNER`    | `owner`   | string | GitHub owner from the search result (e.g. 'vercel-labs')            |
+| `MUX_TOOL_INPUT_REPO`     | `repo`    | string | GitHub repository name from the search result (e.g. 'agent-skills') |
+| `MUX_TOOL_INPUT_SKILL_ID` | `skillId` | string | Skill ID from the search result                                     |
+
+</details>
+
+<details>
+<summary>skills_catalog_search (2)</summary>
+
+| Env var                | JSON path | Type   | Description                                       |
+| ---------------------- | --------- | ------ | ------------------------------------------------- |
+| `MUX_TOOL_INPUT_LIMIT` | `limit`   | number | Maximum number of results to return (default: 10) |
+| `MUX_TOOL_INPUT_QUERY` | `query`   | string | Search query to find skills in the catalog        |
+
+</details>
+
+<details>
 <summary>status_set (3)</summary>
 
 | Env var                  | JSON path | Type   | Description                                                                                                                                  |
@@ -384,6 +487,17 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | `MUX_TOOL_INPUT_EMOJI`   | `emoji`   | string | A single emoji character representing the current activity                                                                                   |
 | `MUX_TOOL_INPUT_MESSAGE` | `message` | string | A brief description of the current activity (auto-truncated to 60 chars with ellipsis if needed)                                             |
 | `MUX_TOOL_INPUT_URL`     | `url`     | string | Optional URL to external resource with more details (e.g., Pull Request URL). The URL persists and is displayed to the user for easy access. |
+
+</details>
+
+<details>
+<summary>switch_agent (3)</summary>
+
+| Env var                    | JSON path  | Type   | Description |
+| -------------------------- | ---------- | ------ | ----------- |
+| `MUX_TOOL_INPUT_AGENT_ID`  | `agentId`  | string | —           |
+| `MUX_TOOL_INPUT_FOLLOW_UP` | `followUp` | string | —           |
+| `MUX_TOOL_INPUT_REASON`    | `reason`   | string | —           |
 
 </details>
 
@@ -431,8 +545,8 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | --------------------------------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `MUX_TOOL_INPUT_FILTER`           | `filter`            | string  | Optional regex to filter bash task output lines. By default, only matching lines are returned. When filter_exclude is true, matching lines are excluded instead. Non-matching lines are discarded and cannot be retrieved later.                                                                             |
 | `MUX_TOOL_INPUT_FILTER_EXCLUDE`   | `filter_exclude`    | boolean | When true, lines matching 'filter' are excluded instead of kept. Requires 'filter' to be set.                                                                                                                                                                                                                |
-| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string  | List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace.                                                                                                                                                                                                     |
-| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number  | Number of elements in task_ids (List of task IDs to await. When omitted, waits for all active descendant tasks of the current workspace.)                                                                                                                                                                    |
+| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string  | List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks of the current workspace.                                                                                                  |
+| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number  | Number of elements in task_ids (List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks of the current workspace.)                                                                 |
 | `MUX_TOOL_INPUT_TIMEOUT_SECS`     | `timeout_secs`      | number  | Maximum time to wait in seconds for each task. For bash tasks, this waits for NEW output (or process exit). If exceeded, the result returns status=queued\|running\|awaiting_report (task is still active). Defaults to 600 seconds (10 minutes) if not specified. Set to 0 for a non-blocking status check. |
 
 </details>

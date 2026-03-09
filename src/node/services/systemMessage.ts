@@ -12,9 +12,9 @@ import {
   stripScopedInstructionSections,
 } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getMuxHome } from "@/common/constants/paths";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
+import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import { assertNever } from "@/common/utils/assertNever";
 
 // NOTE: keep this in sync with the docs/models.md file
@@ -47,13 +47,9 @@ You are a coding agent called Mux. You may find information about yourself here:
   
 <markdown>
 Your Assistant messages display in Markdown with extensions for mermaidjs and katex.
+For math expressions, prefer \`$$...$$\` delimiters for the most reliable rendering.
 
-When creating mermaid diagrams:
-- Avoid side-by-side subgraphs (they display too wide)
-- For comparisons, use separate diagram blocks or single graph with visual separation
-- When using custom fill colors, include contrasting color property (e.g., "style note fill:#ff6b6b,color:#fff")
-- Make good use of visual space: e.g. use inline commentary
-- Wrap node labels containing brackets or special characters in quotes (e.g., Display["Message[]"] not Display[Message[]])
+When creating mermaid diagrams, load the built-in "mux-diagram" skill via agent_skill_read for best practices.
 
 Use GitHub-style \`<details>/<summary>\` tags to create collapsible sections for lengthy content, error traces, or supplementary information. Toggles help keep responses scannable while preserving detail.
 </markdown>
@@ -68,12 +64,13 @@ When the user asks you to remember something:
 Before finishing, apply strict completion discipline:
 - Re-check the user's request and confirm every required change is fully implemented.
 - Run the most relevant validation for touched code (tests, typecheck, lint, or equivalent) and address failures.
+- Do not create/open a pull request unless the user explicitly asks for one.
 - Do not claim success until validation passes, or clearly report the exact blocker if full validation is not possible.
 - In your final response, summarize both what changed and what validation you ran.
 </completion-discipline>
 
 <subagent-reports>
-Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). Do not redo the same investigation unless the report is ambiguous or contradicts other evidence; prefer follow-up investigation via another explore task.
+Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). In planning workflows, do not re-verify those reports yourself when delegation is available; if one is ambiguous, incomplete, or conflicts with another report, spawn a narrower Explore task instead. If planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap. Such reports count as having read the referenced files.
 </subagent-reports>
 </prelude>
 `;
@@ -224,6 +221,7 @@ export function extractToolInstructions(
   options?: {
     enableAgentReport?: boolean;
     enableMuxGlobalAgentsTools?: boolean;
+    enableSkillsCatalogTools?: boolean;
     agentInstructions?: string;
   }
 ): Record<string, string> {
@@ -270,8 +268,10 @@ export async function readToolInstructions(
   );
 
   return extractToolInstructions(globalInstructions, contextInstructions, modelString, {
-    enableAgentReport: Boolean(metadata.parentWorkspaceId),
-    enableMuxGlobalAgentsTools: metadata.id === MUX_HELP_CHAT_WORKSPACE_ID,
+    ...getToolAvailabilityOptions({
+      workspaceId: metadata.id,
+      parentWorkspaceId: metadata.parentWorkspaceId,
+    }),
     agentInstructions,
   });
 }

@@ -416,8 +416,15 @@ export function createChatEventExpander(): ChatEventExpander {
         // Usage delta: mobile app doesn't display usage, silently ignore
         "usage-delta": () => [],
 
-        // Idle compaction signal: desktop auto-triggers; mobile currently ignores.
+        // Compaction/retry status signals: desktop-only affordances for now.
+        // Mobile intentionally drops these to avoid noisy "unsupported event" rows.
         "idle-compaction-needed": () => [],
+        "idle-compaction-started": () => [],
+        "auto-compaction-triggered": () => [],
+        "auto-compaction-completed": () => [],
+        "auto-retry-scheduled": () => [],
+        "auto-retry-starting": () => [],
+        "auto-retry-abandoned": () => [],
 
         // Pass-through events: return unchanged
         "caught-up": () => [payload as WorkspaceChatEvent],

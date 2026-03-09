@@ -9,6 +9,7 @@
  *   update           - Regenerate all derived icons from docs/img/logo-*.svg
  *   png              - Generate build/icon.png (512x512)
  *   icns             - Generate build/icon.icns (macOS app icon)
+ *   linux-icons      - Generate build/icons/{16x16..512x512}.png (Linux icon set)
  *
  * If no command is given, defaults to: png icns
  */
@@ -33,6 +34,8 @@ const BUILD_DIR = path.join(ROOT, "build");
 const ICONSET_DIR = path.join(BUILD_DIR, "icon.iconset");
 const PNG_OUTPUT = path.join(BUILD_DIR, "icon.png");
 const ICNS_OUTPUT = path.join(BUILD_DIR, "icon.icns");
+const LINUX_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256, 512] as const;
+const LINUX_ICON_DIR = path.join(BUILD_DIR, "icons");
 const FAVICON_OUTPUT = path.join(ROOT, "public", "favicon.ico");
 const FAVICON_DARK_OUTPUT = path.join(ROOT, "public", "favicon-dark.ico");
 
@@ -299,6 +302,18 @@ async function generateIcns() {
   }
 }
 
+async function generateLinuxIcons() {
+  await rm(LINUX_ICON_DIR, { recursive: true, force: true });
+  await mkdir(LINUX_ICON_DIR, { recursive: true });
+
+  await Promise.all(
+    LINUX_ICON_SIZES.map(async (size) => {
+      const img = await generateRasterIcon({ size, ...APP_ICON });
+      await img.toFile(path.join(LINUX_ICON_DIR, `${size}x${size}.png`));
+    })
+  );
+}
+
 // Parse arguments
 const commands = new Set(process.argv.slice(2));
 
@@ -310,6 +325,11 @@ if (commands.size === 0) {
 
 if (commands.has("update")) {
   await updateAllLogos();
+}
+
+if (commands.has("linux-icons")) {
+  await mkdir(BUILD_DIR, { recursive: true });
+  await generateLinuxIcons();
 }
 
 // Build commands

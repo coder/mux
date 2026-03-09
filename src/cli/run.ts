@@ -14,7 +14,7 @@ import { z } from "zod";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
-import { Config } from "../node/config";
+import { Config, type ProjectConfig } from "../node/config";
 import { DisposableTempDir } from "../node/services/tempDir";
 import { AgentSession, type AgentSessionChatEvent } from "../node/services/agentSession";
 import { CodexOauthService } from "../node/services/codexOauthService";
@@ -74,6 +74,7 @@ import { runFullInit } from "../node/runtime/runtimeFactory";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "../common/constants/experiments";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
@@ -353,6 +354,31 @@ async function main(): Promise<number> {
     fsSync.writeFileSync(secretsFile, JSON.stringify(existingSecrets, null, 2));
   }
 
+  // Copy only project trust metadata so AIService can read trust flags.
+  // Avoid importing workspace/task metadata into ephemeral CLI config because
+  // stale queued/running records can incorrectly throttle sub-agent tasks.
+  const existingConfig = realConfig.loadConfigOrDefault();
+  if (existingConfig.projects.size > 0) {
+    const trustOnlyProjects = new Map<string, ProjectConfig>();
+    for (const [projectPath, projectConfig] of existingConfig.projects) {
+      if (projectConfig.trusted === undefined) {
+        continue;
+      }
+
+      trustOnlyProjects.set(projectPath, {
+        workspaces: [],
+        trusted: projectConfig.trusted,
+      });
+    }
+
+    if (trustOnlyProjects.size > 0) {
+      await config.saveConfig({
+        ...config.loadConfigOrDefault(),
+        projects: trustOnlyProjects,
+      });
+    }
+  }
+
   const workspaceId = generateWorkspaceId();
   const projectDir = path.resolve(opts.dir);
   await ensureDirectory(projectDir);
@@ -509,6 +535,9 @@ async function main(): Promise<number> {
       // Fallback to main
     }
 
+    // Read trust state from real config so trusted projects can run hooks
+    const trusted = realConfig.loadConfigOrDefault().projects.get(projectDir)?.trusted ?? false;
+
     const initLogger = makeCliInitLogger(writeHumanLine);
     const createResult = await runtime.createWorkspace({
       projectPath: projectDir,
@@ -516,6 +545,7 @@ async function main(): Promise<number> {
       trunkBranch,
       directoryName: branchName,
       initLogger,
+      trusted,
     });
     if (!createResult.success) {
       console.error(`Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`);
@@ -531,9 +561,10 @@ async function main(): Promise<number> {
         trunkBranch,
         workspacePath: createResult.workspacePath!,
         initLogger,
+        trusted,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       initLogger.logStderr(`Initialization failed: ${errorMessage}`);
       initLogger.logComplete(-1);
       initResult = { success: false, error: errorMessage };
@@ -1115,6 +1146,6 @@ main()
   })
   .catch((error) => {
     clearInterval(keepAliveInterval);
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`Error: ${getErrorMessage(error)}`);
     process.exit(1);
   });

@@ -1,3 +1,5 @@
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import modelsData from "./models.json";
 import { modelsExtra } from "./models-extra";
 import { normalizeGatewayModel } from "../ai/models";
@@ -7,8 +9,13 @@ export interface ModelStats {
   max_output_tokens?: number;
   input_cost_per_token: number;
   output_cost_per_token: number;
+  input_cost_per_token_above_200k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
+  cache_creation_input_token_cost_above_200k_tokens?: number;
   cache_read_input_token_cost?: number;
+  cache_read_input_token_cost_above_200k_tokens?: number;
+  tiered_pricing_threshold_tokens?: number;
 }
 
 interface RawModelData {
@@ -16,8 +23,13 @@ interface RawModelData {
   max_output_tokens?: number | string | null;
   input_cost_per_token?: number;
   output_cost_per_token?: number;
+  input_cost_per_token_above_200k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
+  cache_creation_input_token_cost_above_200k_tokens?: number;
   cache_read_input_token_cost?: number;
+  cache_read_input_token_cost_above_200k_tokens?: number;
+  tiered_pricing_threshold_tokens?: number | string | null;
   [key: string]: unknown;
 }
 
@@ -39,6 +51,21 @@ function parseNum(value: unknown): number | null {
   return null;
 }
 
+const DEFAULT_TIERED_PRICING_THRESHOLD_TOKENS = 200_000;
+
+function parseOptionalNumber(value: unknown): number | undefined {
+  return parseNum(value) ?? undefined;
+}
+
+function hasTieredPricing(data: RawModelData): boolean {
+  return (
+    parseOptionalNumber(data.input_cost_per_token_above_200k_tokens) != null ||
+    parseOptionalNumber(data.output_cost_per_token_above_200k_tokens) != null ||
+    parseOptionalNumber(data.cache_creation_input_token_cost_above_200k_tokens) != null ||
+    parseOptionalNumber(data.cache_read_input_token_cost_above_200k_tokens) != null
+  );
+}
+
 /**
  * Validates raw model data has required fields
  */
@@ -51,6 +78,13 @@ function isValidModelData(data: RawModelData): boolean {
  * Extracts ModelStats from validated raw data
  */
 function extractModelStats(data: RawModelData): ModelStats {
+  const tieredPricingThresholdTokens =
+    parseOptionalNumber(data.tiered_pricing_threshold_tokens) ??
+    // LiteLLM names long-context rates with `_above_200k_tokens` but does not ship a
+    // separate threshold field. Keep 200K as the compatibility default unless an override
+    // (like GPT-5.4's published 272K boundary) is provided explicitly.
+    (hasTieredPricing(data) ? DEFAULT_TIERED_PRICING_THRESHOLD_TOKENS : undefined);
+
   return {
     max_input_tokens: parseNum(data.max_input_tokens) ?? 0,
     max_output_tokens: parseNum(data.max_output_tokens) ?? undefined,
@@ -59,15 +93,32 @@ function extractModelStats(data: RawModelData): ModelStats {
       typeof data.input_cost_per_token === "number" ? data.input_cost_per_token : 0,
     output_cost_per_token:
       typeof data.output_cost_per_token === "number" ? data.output_cost_per_token : 0,
+    input_cost_per_token_above_200k_tokens: parseOptionalNumber(
+      data.input_cost_per_token_above_200k_tokens
+    ),
+    output_cost_per_token_above_200k_tokens: parseOptionalNumber(
+      data.output_cost_per_token_above_200k_tokens
+    ),
     cache_creation_input_token_cost:
       typeof data.cache_creation_input_token_cost === "number"
         ? data.cache_creation_input_token_cost
         : undefined,
+    cache_creation_input_token_cost_above_200k_tokens: parseOptionalNumber(
+      data.cache_creation_input_token_cost_above_200k_tokens
+    ),
     cache_read_input_token_cost:
       typeof data.cache_read_input_token_cost === "number"
         ? data.cache_read_input_token_cost
         : undefined,
+    cache_read_input_token_cost_above_200k_tokens: parseOptionalNumber(
+      data.cache_read_input_token_cost_above_200k_tokens
+    ),
+    tiered_pricing_threshold_tokens: tieredPricingThresholdTokens,
   };
+}
+
+function stripVersionDateSuffix(modelName: string): string {
+  return modelName.replace(/-(?:\d{4}-\d{2}-\d{2}|\d{8})$/, "");
 }
 
 /**
@@ -79,12 +130,22 @@ function generateLookupKeys(modelString: string): string[] {
   const provider = colonIndex !== -1 ? modelString.slice(0, colonIndex) : "";
   const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
   const litellmProvider = PROVIDER_KEY_ALIASES[provider] ?? provider;
+  const unversionedModelName = stripVersionDateSuffix(modelName);
 
   const keys: string[] = [];
 
   // Prefer provider-scoped matches first so provider-specific limits win over generic entries.
   if (provider) {
     keys.push(`${litellmProvider}/${modelName}`, `${litellmProvider}/${modelName}-cloud`);
+
+    // Version-pinned model IDs like gpt-5.4-2026-03-05 should fall back to the
+    // base model entry when models-extra/models.json only publish the family key.
+    if (unversionedModelName !== modelName) {
+      keys.push(
+        `${litellmProvider}/${unversionedModelName}`,
+        `${litellmProvider}/${unversionedModelName}-cloud`
+      );
+    }
 
     // Fallback: strip size suffix for base model lookup
     // "ollama:gpt-oss:20b" → "ollama/gpt-oss"
@@ -95,6 +156,9 @@ function generateLookupKeys(modelString: string): string[] {
   }
 
   keys.push(modelName);
+  if (unversionedModelName !== modelName) {
+    keys.push(unversionedModelName);
+  }
 
   return keys;
 }
@@ -125,4 +189,12 @@ export function getModelStats(modelString: string): ModelStats | null {
   }
 
   return null;
+}
+
+export function getModelStatsResolved(
+  modelString: string,
+  providersConfig: ProvidersConfigMap | null
+): ModelStats | null {
+  const metadataModel = resolveModelForMetadata(modelString, providersConfig);
+  return getModelStats(metadataModel);
 }

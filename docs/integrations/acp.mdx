@@ -1,0 +1,175 @@
+---
+title: ACP (Editor Integrations)
+sidebarTitle: ACP (Editors)
+description: Connect Mux to Zed, Neovim, and JetBrains via the Agent Client Protocol
+---
+
+Mux implements the [Agent Client Protocol (ACP)](https://agentclientprotocol.org/) to integrate
+with editors that support it. The `mux acp` command starts a stdio bridge that any
+ACP-compatible editor can spawn as a subprocess.
+
+<Info>
+  ACP is the "LSP for agents" and provides session management, tool delegation, and streaming. Mux
+  uses ACP (not MCP) for its editor bridge.
+</Info>
+
+## Zed
+
+Zed has native ACP support and does not require a plugin.
+
+Open **Settings** (`Cmd+,`) and add:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "mux",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+<Accordion title="Using npx (no global install)">
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "npx",
+      "args": ["-y", "mux", "acp"]
+    }
+  }
+}
+```
+
+</Accordion>
+
+### Connect to a remote server
+
+Pass `--server-url` and `--auth-token` in `args`:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "type": "custom",
+      "command": "mux",
+      "args": ["acp", "--server-url", "https://mux.example.com", "--auth-token", "<token>"]
+    }
+  }
+}
+```
+
+Or set environment variables for any `mux acp` process:
+
+```bash
+MUX_SERVER_URL=https://mux.example.com \
+MUX_SERVER_AUTH_TOKEN=<token> \
+mux acp
+```
+
+## Neovim
+
+Two plugins currently support ACP in Neovim.
+
+### codecompanion.nvim (recommended)
+
+[codecompanion.nvim](https://github.com/olimorris/codecompanion.nvim) added ACP support in
+v17.18. Add the adapter in your `lazy.nvim` config:
+
+```lua
+require("codecompanion").setup({
+  adapters = {
+    mux = function()
+      return require("codecompanion.adapters").extend("acp", {
+        name = "mux",
+        schema = {
+          model = { default = "mux" },
+        },
+        args = { "mux", "acp" },
+      })
+    end,
+  },
+  strategies = {
+    chat = { adapter = "mux" },
+    inline = { adapter = "mux" },
+  },
+})
+```
+
+See the
+[codecompanion ACP adapter docs](https://codecompanion.olimorris.dev/configuration/adapters-acp)
+for full options.
+
+### agentic.nvim
+
+[agentic.nvim](https://github.com/carlos-algms/agentic.nvim) is a dedicated ACP client.
+Requires Neovim 0.11 or newer. Add via `lazy.nvim`:
+
+```lua
+{
+  "carlos-algms/agentic.nvim",
+  opts = {
+    agents = {
+      mux = {
+        cmd = "mux",
+        args = { "acp" },
+      },
+    },
+  },
+}
+```
+
+## JetBrains
+
+JetBrains ACP support requires the **AI Assistant** plugin (2025.3 or newer).
+
+1. Open the **AI Chat** tool window
+2. Click **More** (`...`) then **Add Custom Agent**
+3. Add the Mux entry to the `acp.json` that opens:
+
+```json
+{
+  "agent_servers": {
+    "Mux": {
+      "command": "mux",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+<Note>ACP is not supported in WSL-backed JetBrains projects.</Note>
+
+See the [JetBrains ACP docs](https://www.jetbrains.com/help/ai-assistant/acp.html) for more
+information.
+
+## Flags and environment variables
+
+| Flag                   | Environment variable    | Description                                                                |
+| ---------------------- | ----------------------- | -------------------------------------------------------------------------- |
+| `--server-url <url>`   | `MUX_SERVER_URL`        | URL of a running Mux server                                                |
+| `--auth-token <token>` | `MUX_SERVER_AUTH_TOKEN` | Bearer token for authenticated connections                                 |
+| `--log-file <path>`    | —                       | Write ACP logs to a file (useful when your editor hides subprocess stderr) |
+
+<Warning>`MUX_AUTH_TOKEN` is not read by `mux acp`. Use `MUX_SERVER_AUTH_TOKEN`.</Warning>
+
+If no `--server-url` is provided, `mux acp` first attempts to discover a running server via the
+lockfile in `~/.mux/`, then starts an in-process server automatically when needed.
+
+## Troubleshooting
+
+- **Logs hidden by your editor:** use `--log-file /tmp/mux-acp.log` to capture ACP stderr output.
+- **Connection refused:** ensure Mux is running (`mux server` or the desktop app), or omit
+  `--server-url` to let ACP auto-start in-process.
+- **Tool calls are not delegated:** the editor must advertise filesystem or terminal capabilities,
+  and the workspace must use `local` runtime mode.
+
+## Related
+
+- [CLI Reference — `mux acp`](/reference/cli#mux-acp)
+- [VS Code Extension](/integrations/vscode-extension)
+- [Workspaces](/workspaces)

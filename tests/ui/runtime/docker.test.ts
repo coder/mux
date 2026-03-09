@@ -25,7 +25,7 @@ function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
   return [path, { workspaces: [] }];
 }
 
-function findRuntimeButton(container: HTMLElement, label: string): HTMLButtonElement | null {
+function getWorkspaceTypeTrigger(container: HTMLElement): HTMLButtonElement | null {
   const group = container.querySelector(
     '[data-component="RuntimeTypeGroup"]'
   ) as HTMLElement | null;
@@ -33,9 +33,33 @@ function findRuntimeButton(container: HTMLElement, label: string): HTMLButtonEle
     return null;
   }
 
-  const buttons = Array.from(group.querySelectorAll("button"));
-  const button = buttons.find((btn) => btn.textContent?.includes(label));
-  return (button ?? null) as HTMLButtonElement | null;
+  return group.querySelector('button[aria-label="Workspace type"]') as HTMLButtonElement | null;
+}
+
+function findRuntimeOption(label: string): HTMLElement | null {
+  const options = Array.from(document.querySelectorAll('[role="option"]')) as HTMLElement[];
+  return options.find((option) => option.textContent?.includes(label)) ?? null;
+}
+
+async function selectRuntime(container: HTMLElement, label: string): Promise<void> {
+  const trigger = getWorkspaceTypeTrigger(container);
+  if (!trigger) {
+    throw new Error("Workspace type trigger not found");
+  }
+
+  fireEvent.click(trigger);
+  const option = await waitFor(
+    () => {
+      const candidate = findRuntimeOption(label);
+      if (!candidate) {
+        throw new Error(`Runtime option '${label}' not found`);
+      }
+      return candidate;
+    },
+    { timeout: 2_000 }
+  );
+
+  fireEvent.click(option);
 }
 
 describeIntegration("Docker runtime selection (UI)", () => {
@@ -67,16 +91,14 @@ describeIntegration("Docker runtime selection (UI)", () => {
         { timeout: 5_000 }
       );
 
-      const dockerButton = findRuntimeButton(view.container, "Docker");
-      expect(dockerButton).toBeTruthy();
-      fireEvent.click(dockerButton!);
+      await selectRuntime(view.container, "Docker");
 
-      // Verify Docker button becomes active
+      // Verify Docker runtime becomes active in the workspace-type trigger.
       await waitFor(
         () => {
-          const btn = findRuntimeButton(view.container, "Docker");
-          if (!btn) throw new Error("Docker button not found");
-          if (btn.getAttribute("aria-pressed") !== "true") {
+          const trigger = getWorkspaceTypeTrigger(view.container);
+          if (!trigger) throw new Error("Workspace type trigger not found");
+          if (!trigger.textContent?.includes("Docker")) {
             throw new Error("Docker runtime not selected");
           }
         },
@@ -107,9 +129,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
       expect(imageInput.value).toBe("node:20");
 
       // Switching to SSH should hide Docker image input and show host input
-      const sshButton = findRuntimeButton(view.container, "SSH");
-      expect(sshButton).toBeTruthy();
-      fireEvent.click(sshButton!);
+      await selectRuntime(view.container, "SSH");
 
       await waitFor(
         () => {
@@ -166,21 +186,34 @@ describeIntegration("Docker runtime selection (UI)", () => {
         { timeout: 5_000 }
       );
 
-      // Local should be forced when repo is not a git repository
+      // Local should be forced when repo is not a git repository.
       await waitFor(
         () => {
-          const localButton = findRuntimeButton(view.container, "Local");
-          if (!localButton) throw new Error("Local button not found");
-          if (localButton.getAttribute("aria-pressed") !== "true") {
+          const trigger = getWorkspaceTypeTrigger(view.container);
+          if (!trigger) throw new Error("Workspace type trigger not found");
+          if (!trigger.textContent?.includes("Local")) {
             throw new Error("Local runtime not selected for non-git repo");
           }
         },
         { timeout: 2_000 }
       );
 
-      const dockerButton = findRuntimeButton(view.container, "Docker");
-      expect(dockerButton).toBeTruthy();
-      expect(dockerButton!.disabled).toBe(true);
+      const trigger = getWorkspaceTypeTrigger(view.container);
+      expect(trigger).toBeTruthy();
+      fireEvent.click(trigger!);
+
+      const dockerOption = await waitFor(
+        () => {
+          const option = findRuntimeOption("Docker");
+          if (!option) {
+            throw new Error("Docker option not found");
+          }
+          return option;
+        },
+        { timeout: 2_000 }
+      );
+
+      expect(dockerOption.getAttribute("aria-disabled")).toBe("true");
     } finally {
       await cleanupView(view, cleanupDom);
     }

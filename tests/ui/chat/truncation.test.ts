@@ -1,15 +1,21 @@
 /**
  * UI integration test for chat truncation behavior.
- * Verifies tool/reasoning omissions are surfaced and assistant meta rows remain intact.
+ * Verifies a generic hidden-history indicator is surfaced and assistant meta rows remain intact.
  */
 
 import "../dom";
 import { waitFor } from "@testing-library/react";
 
 import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } from "../../ipc/setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { HistoryService } from "@/node/services/historyService";
+import { MAX_HISTORY_HIDDEN_SEGMENTS } from "@/browser/utils/messages/transcriptTruncationPlan";
 import { createMuxMessage } from "@/common/types/message";
 
 import { installDom } from "../dom";
@@ -74,9 +80,10 @@ describe("Chat truncation UI", () => {
     await preloadTestModules();
   });
 
-  test("shows truncation details and preserves assistant meta rows", async () => {
+  test("shows a generic hidden indicator and preserves assistant meta rows", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
     const cleanupDom = installDom();
     let view: ReturnType<typeof renderApp> | undefined;
     let workspaceId: string | undefined;
@@ -110,33 +117,47 @@ describe("Chat truncation UI", () => {
       const totalDisplayedMessages = pairCount * 4;
       const oldDisplayedMessages = totalDisplayedMessages - maxDisplayedMessages;
       const oldPairs = oldDisplayedMessages / 4;
-      // Each old pair contributes 3 hidden rows: reasoning + tool + assistant
-      // (user messages are always kept)
       const expectedHiddenCount = oldPairs * 3;
-      const expectedToolCount = oldPairs;
-      const expectedThinkingCount = oldPairs;
 
-      const indicator = await waitFor(() => {
-        const node = view?.getByText(/omitted .*performance/i);
-        if (!node) {
+      const indicators = await waitFor(() => {
+        const nodes = Array.from(
+          view?.container.querySelectorAll('[data-testid="chat-message"]') ?? []
+        ).filter((node) => node.textContent?.match(/some messages are hidden for performance/i));
+        if (nodes.length === 0) {
           throw new Error("Truncation indicator not found");
         }
-        return node;
+        return nodes;
       });
 
-      expect(indicator.textContent).toContain(`${expectedHiddenCount} message`);
-      expect(indicator.textContent).toContain(`${expectedToolCount} tool call`);
-      expect(indicator.textContent).toContain(`${expectedThinkingCount} thinking block`);
+      expect(indicators).toHaveLength(MAX_HISTORY_HIDDEN_SEGMENTS);
+
+      const sumIndicatorCounts = (pattern: RegExp): number => {
+        return indicators.reduce((sum, node) => {
+          const match = node.textContent?.match(pattern);
+          return sum + (match ? Number(match[1]) : 0);
+        }, 0);
+      };
+
+      expect(sumIndicatorCounts(/(\d+)\s+messages? hidden/i)).toBe(expectedHiddenCount);
+      expect(sumIndicatorCounts(/(\d+)\s+tool call/i)).toBe(oldPairs);
+      expect(sumIndicatorCounts(/(\d+)\s+thinking block/i)).toBe(oldPairs);
+      expect(view.getAllByRole("button", { name: /load all/i })).toHaveLength(
+        MAX_HISTORY_HIDDEN_SEGMENTS
+      );
 
       const messageBlocks = Array.from(
         view.container.querySelectorAll('[data-testid="chat-message"]')
       );
+      const hiddenIndicatorCount = messageBlocks.filter((node) =>
+        node.textContent?.match(/some messages are hidden for performance/i)
+      ).length;
+      expect(hiddenIndicatorCount).toBe(MAX_HISTORY_HIDDEN_SEGMENTS);
       const indicatorIndex = messageBlocks.findIndex((node) =>
-        node.textContent?.match(/omitted .*performance/i)
+        node.textContent?.match(/some messages are hidden for performance/i)
       );
       expect(indicatorIndex).toBeGreaterThan(0);
       expect(messageBlocks[indicatorIndex - 1]?.textContent).toContain("user-0");
-      // After the indicator, the next kept old message is user-1 (assistant rows are now omitted)
+      // The earliest marker still appears at the first omission seam.
       expect(messageBlocks[indicatorIndex + 1]?.textContent).toContain("user-1");
 
       // Verify assistant meta rows survive in the recent (non-truncated) section.

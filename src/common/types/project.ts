@@ -3,15 +3,17 @@
  * Kept lightweight for preload script usage.
  */
 
+import type { FeatureFlagOverride, UpdateChannel } from "@/common/config/schemas/appConfigOnDisk";
 import type { z } from "zod";
 import type {
   ProjectConfigSchema,
   SectionConfigSchema,
   WorkspaceConfigSchema,
 } from "../orpc/schemas";
+import type { AgentAiDefaults } from "./agentAiDefaults";
+import type { RuntimeEnablementId } from "./runtime";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { LayoutPresetsConfig } from "./uiLayouts";
-import type { AgentAiDefaults } from "./agentAiDefaults";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -19,10 +21,14 @@ export type SectionConfig = z.infer<typeof SectionConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
-export type FeatureFlagOverride = "default" | "on" | "off";
+export type { FeatureFlagOverride, UpdateChannel };
 
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
+  /**
+   * Update channel preference for Electron desktop app. Defaults to "stable".
+   */
+  updateChannel?: UpdateChannel;
   /**
    * Bind host/interface for the desktop HTTP/WS API server.
    *
@@ -77,6 +83,8 @@ export interface ProjectsConfig {
    * Mirrors browser localStorage so switching server ports doesn't reset the UI.
    */
   muxGatewayEnabled?: boolean;
+  /** Enable recording AI SDK devtools logs to ~/.mux/sessions/<workspace>/devtools.jsonl */
+  llmDebugLogs?: boolean;
   muxGatewayModels?: string[];
 
   /**
@@ -89,12 +97,6 @@ export interface ProjectsConfig {
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).
    */
   hiddenModels?: string[];
-  /**
-   * Preferred model for compaction requests (shared via ~/.mux/config.json).
-   * Mirrors the browser localStorage cache (PREFERRED_COMPACTION_MODEL_KEY).
-   */
-  preferredCompactionModel?: string;
-
   /** Default model + thinking overrides per agentId (applies to UI agents and subagents). */
   agentAiDefaults?: AgentAiDefaults;
   /** @deprecated Legacy per-subagent default model + thinking overrides. */
@@ -114,4 +116,26 @@ export interface ProjectsConfig {
    * Stored as `false` only (undefined behaves as true) to keep config.json minimal.
    */
   stopCoderWorkspaceOnArchive?: boolean;
+
+  /** Global default runtime for new workspaces. */
+  defaultRuntime?: RuntimeEnablementId;
+
+  /**
+   * Override the default shell for local integrated terminals.
+   *
+   * When set, all local terminals (not SSH/Docker/Devcontainer) spawn this shell
+   * instead of auto-detecting from $SHELL or platform defaults.
+   *
+   * Accepts an absolute path (e.g. "/usr/bin/fish") or a command name (e.g. "fish").
+   */
+  terminalDefaultShell?: string;
+
+  /**
+   * Runtime enablement overrides (shared via ~/.mux/config.json).
+   * Defaults to enabled; store `false` only to keep config.json minimal.
+   */
+  runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
+
+  /** Optional 1Password account name used for desktop SDK account selection. */
+  onePasswordAccountName?: string;
 }

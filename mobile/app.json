@@ -5,9 +5,12 @@
     "version": "0.0.1",
     "scheme": "mux",
     "orientation": "portrait",
-    "platforms": ["ios", "android"],
+    "platforms": ["ios", "android", "web"],
     "newArchEnabled": true,
-    "jsEngine": "hermes",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
     "experiments": {
       "typedRoutes": true
     },
@@ -20,11 +23,13 @@
     },
     "plugins": ["expo-router", "expo-secure-store"],
     "ios": {
-      "bundleIdentifier": "com.coder.mux-mobile"
+      "bundleIdentifier": "com.coder.mux-mobile",
+      "jsEngine": "hermes"
     },
     "owner": "coder-technologies",
     "android": {
-      "package": "com.coder.muxmobile"
+      "package": "com.coder.muxmobile",
+      "jsEngine": "hermes"
     }
   }
 }

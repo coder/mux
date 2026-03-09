@@ -1,40 +1,36 @@
+import type {
+  PlanSubagentExecutorRouting,
+  TaskSettings as TaskSettingsOnDisk,
+} from "@/common/config/schemas/taskSettings";
+import {
+  SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
+  TASK_SETTINGS_LIMITS,
+} from "@/common/config/schemas/taskSettings";
+import type {
+  SubagentAiDefaults,
+  SubagentAiDefaultsEntry,
+} from "@/common/config/schemas/appConfigOnDisk";
 import assert from "@/common/utils/assert";
 import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
-export interface TaskSettings {
-  maxParallelAgentTasks: number;
-  maxTaskNestingDepth: number;
+export type { PlanSubagentExecutorRouting, SubagentAiDefaults, SubagentAiDefaultsEntry };
+export {
+  SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
+  TASK_SETTINGS_LIMITS,
+} from "@/common/config/schemas/taskSettings";
 
-  /**
-   * When enabled, clicking "Implement" in propose_plan first replaces chat history with the plan
-   * (same behavior as "Start Here").
-   */
-  proposePlanImplementReplacesChatHistory?: boolean;
-
-  // System 1: bash output compaction (log filtering)
-  bashOutputCompactionMinLines?: number;
-  bashOutputCompactionMinTotalBytes?: number;
-  bashOutputCompactionMaxKeptLines?: number;
-  bashOutputCompactionTimeoutMs?: number;
-  bashOutputCompactionHeuristicFallback?: boolean;
-}
-
-export const TASK_SETTINGS_LIMITS = {
-  maxParallelAgentTasks: { min: 1, max: 256, default: 3 },
-  maxTaskNestingDepth: { min: 1, max: 5, default: 3 },
-} as const;
-
-export const SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS = {
-  bashOutputCompactionMinLines: { min: 0, max: 1_000, default: 10 },
-  bashOutputCompactionMinTotalBytes: { min: 0, max: 16 * 1024, default: 4 * 1024 },
-  bashOutputCompactionMaxKeptLines: { min: 1, max: 1_000, default: 40 },
-  bashOutputCompactionTimeoutMs: { min: 1_000, max: 120_000, default: 5_000 },
-} as const;
+// Normalized runtime settings always include numeric task limits.
+export type TaskSettings = Required<
+  Pick<TaskSettingsOnDisk, "maxParallelAgentTasks" | "maxTaskNestingDepth">
+> &
+  Omit<TaskSettingsOnDisk, "maxParallelAgentTasks" | "maxTaskNestingDepth">;
 
 export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
+  planSubagentExecutorRouting: "auto",
+  planSubagentDefaultsToOrchestrator: false,
 
   bashOutputCompactionMinLines:
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
@@ -46,13 +42,6 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
   bashOutputCompactionHeuristicFallback: true,
 };
-
-export interface SubagentAiDefaultsEntry {
-  modelString?: string;
-  thinkingLevel?: ThinkingLevel;
-}
-
-export type SubagentAiDefaults = Record<string, SubagentAiDefaultsEntry>;
 
 export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : ({} as const);
@@ -72,7 +61,7 @@ export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
         ? entry.modelString.trim()
         : undefined;
 
-    const thinkingLevel = coerceThinkingLevel(entry.thinkingLevel);
+    const thinkingLevel: ThinkingLevel | undefined = coerceThinkingLevel(entry.thinkingLevel);
 
     if (!modelString && !thinkingLevel) {
       continue;
@@ -95,6 +84,12 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return rounded;
 }
 
+export function isPlanSubagentExecutorRouting(
+  value: unknown
+): value is PlanSubagentExecutorRouting {
+  return value === "exec" || value === "orchestrator" || value === "auto";
+}
+
 export function normalizeTaskSettings(raw: unknown): TaskSettings {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : ({} as const);
 
@@ -115,6 +110,28 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     typeof record.proposePlanImplementReplacesChatHistory === "boolean"
       ? record.proposePlanImplementReplacesChatHistory
       : (DEFAULT_TASK_SETTINGS.proposePlanImplementReplacesChatHistory ?? false);
+
+  const normalizedPlanSubagentExecutorRouting = isPlanSubagentExecutorRouting(
+    record.planSubagentExecutorRouting
+  )
+    ? record.planSubagentExecutorRouting
+    : undefined;
+
+  const migratedPlanSubagentExecutorRouting =
+    normalizedPlanSubagentExecutorRouting ??
+    (typeof record.planSubagentDefaultsToOrchestrator === "boolean"
+      ? record.planSubagentDefaultsToOrchestrator
+        ? "orchestrator"
+        : "exec"
+      : undefined);
+
+  const planSubagentExecutorRouting =
+    migratedPlanSubagentExecutorRouting ??
+    DEFAULT_TASK_SETTINGS.planSubagentExecutorRouting ??
+    "exec";
+
+  // Keep the deprecated boolean in sync for downgrade compatibility.
+  const planSubagentDefaultsToOrchestrator = planSubagentExecutorRouting === "orchestrator";
 
   const bashOutputCompactionMinLines = clampInt(
     record.bashOutputCompactionMinLines,
@@ -151,6 +168,8 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
     proposePlanImplementReplacesChatHistory,
+    planSubagentExecutorRouting,
+    planSubagentDefaultsToOrchestrator,
     bashOutputCompactionMinLines,
     bashOutputCompactionMinTotalBytes,
     bashOutputCompactionMaxKeptLines,
@@ -170,6 +189,16 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     typeof proposePlanImplementReplacesChatHistory === "boolean",
     "normalizeTaskSettings: proposePlanImplementReplacesChatHistory must be a boolean"
+  );
+
+  assert(
+    isPlanSubagentExecutorRouting(planSubagentExecutorRouting),
+    "normalizeTaskSettings: planSubagentExecutorRouting must be exec, orchestrator, or auto"
+  );
+
+  assert(
+    typeof planSubagentDefaultsToOrchestrator === "boolean",
+    "normalizeTaskSettings: planSubagentDefaultsToOrchestrator must be a boolean"
   );
 
   assert(

@@ -1,5 +1,6 @@
 import { MAX_SVG_TEXT_CHARS } from "@/common/constants/imageAttachments";
-import { describe, expect, test } from "@jest/globals";
+import { afterAll, describe, expect, test } from "@jest/globals";
+
 import {
   generateAttachmentId,
   fileToChatAttachment,
@@ -25,7 +26,42 @@ class MockFileReader {
   }
 }
 
+// Mock Image for resizeImageIfNeeded — small dimensions mean no resize occurs.
+class MockImage {
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  naturalWidth = 100;
+  naturalHeight = 100;
+
+  set src(_value: string) {
+    // Fire onload asynchronously to simulate real Image loading behavior.
+    setTimeout(() => {
+      this.onload?.();
+    }, 0);
+  }
+}
+
+const originalImage = globalThis.Image;
+
 global.FileReader = MockFileReader as unknown as typeof FileReader;
+Object.defineProperty(globalThis, "Image", {
+  value: MockImage,
+  configurable: true,
+  writable: true,
+});
+
+afterAll(() => {
+  if (originalImage) {
+    Object.defineProperty(globalThis, "Image", {
+      value: originalImage,
+      configurable: true,
+      writable: true,
+    });
+    return;
+  }
+
+  delete (globalThis as { Image?: typeof Image }).Image;
+});
 
 describe("attachmentsHandling", () => {
   describe("generateAttachmentId", () => {

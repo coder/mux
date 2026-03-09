@@ -9,8 +9,16 @@ interface ModelData {
   max_output_tokens?: number;
   input_cost_per_token: number;
   output_cost_per_token: number;
+  input_cost_per_token_above_200k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
+  cache_creation_input_token_cost_above_200k_tokens?: number;
   cache_read_input_token_cost?: number;
+  cache_read_input_token_cost_above_200k_tokens?: number;
+  // LiteLLM's upstream schema hard-codes the field suffix `_above_200k_tokens`, but
+  // some providers publish a different long-context boundary. Omit this to keep the
+  // historical 200K default; set it explicitly when the provider documents another cutoff.
+  tiered_pricing_threshold_tokens?: number;
   litellm_provider?: string;
   mode?: string;
   supports_function_calling?: boolean;
@@ -45,6 +53,25 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
+  // Claude Sonnet 4.6 - Released February 2026
+  // $3/M input, $15/M output (same as Sonnet 4.5)
+  // 64K max output tokens, supports adaptive thinking + effort parameter
+  "claude-sonnet-4-6": {
+    max_input_tokens: 200000,
+    max_output_tokens: 64000,
+    input_cost_per_token: 0.000003, // $3 per million input tokens
+    output_cost_per_token: 0.000015, // $15 per million output tokens
+    cache_creation_input_token_cost: 0.00000375, // $3.75 per million tokens
+    cache_read_input_token_cost: 0.0000003, // $0.30 per million tokens
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // Claude Opus 4.5 - Released November 24, 2025
   // $5/M input, $25/M output (price drop from Opus 4.1's $15/$75)
   // 64K max output tokens (matches Sonnet 4.5)
@@ -61,6 +88,54 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
+  },
+
+  // GPT-5.4 - Released March 5, 2026
+  // Native 1.05M context, 128K max output; OpenAI's model page exposes the larger
+  // window directly and does not document an extra API flag for it, so Mux should
+  // present the published limit instead of routing this through the Anthropic-only toggle.
+  // Base pricing: $2.50/M input, $15/M output, $0.25/M cached input.
+  // Above 272K prompt tokens: $5/M input, $22.50/M output, $0.50/M cached input.
+  "gpt-5.4": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.0000025, // $2.50 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.000005, // $5 per million input tokens (>272K)
+    output_cost_per_token: 0.000015, // $15 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.0000225, // $22.50 per million output tokens (>272K)
+    cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens (<272K)
+    cache_read_input_token_cost_above_200k_tokens: 0.0000005, // $0.50 per million cached input tokens (>272K)
+    // OpenAI's published long-context boundary is 272K even though LiteLLM's field names say 200K.
+    tiered_pricing_threshold_tokens: 272000,
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-08-31",
+  },
+
+  // GPT-5.4 Pro - Released March 5, 2026
+  // Native 1.05M context, 128K max output; same rationale as GPT-5.4 above.
+  // Base pricing: $30/M input, $180/M output; OpenAI has not published cached-input pricing.
+  // Above 272K prompt tokens: $60/M input, $270/M output.
+  "gpt-5.4-pro": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00003, // $30 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.00006, // $60 per million input tokens (>272K)
+    output_cost_per_token: 0.00018, // $180 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.00027, // $270 per million output tokens (>272K)
+    tiered_pricing_threshold_tokens: 272000,
+    knowledge_cutoff: "2025-08-31",
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
   },
 
   // GPT-5.2 / GPT-5.2 Codex - keep aligned
@@ -98,7 +173,28 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
-  // GPT-5.3-Codex - same pricing as gpt-5.2-codex
+  // Gemini 3.1 Pro Preview - Released February 19, 2026
+  // Tiered pricing: ≤200K tokens $2/M input, $12/M output; >200K tokens $4/M input, $18/M output
+  // 1M input context, ~64K max output tokens
+  "gemini-3.1-pro-preview": {
+    max_input_tokens: 1048576,
+    max_output_tokens: 65535,
+    input_cost_per_token: 0.000002, // $2 per million input tokens (≤200K)
+    output_cost_per_token: 0.000012, // $12 per million output tokens (≤200K)
+    input_cost_per_token_above_200k_tokens: 0.000004, // $4 per million input tokens (>200K)
+    output_cost_per_token_above_200k_tokens: 0.000018, // $18 per million output tokens (>200K)
+    cache_read_input_token_cost: 2e-7,
+    litellm_provider: "vertex_ai-language-models",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-01",
+  },
+
+  // GPT-5.3-Codex (released API id) - same pricing as gpt-5.2-codex
   "gpt-5.3-codex": {
     max_input_tokens: 272000,
     max_output_tokens: 128000,
@@ -112,7 +208,21 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_reasoning: true,
     supports_response_schema: true,
   },
-
+  // GPT-5.3-Codex Spark - research preview (text-only) and currently available as 128k-context model.
+  // Pricing is not published separately; reuse GPT-5.3-Codex pricing until confirmed.
+  "gpt-5.3-codex-spark": {
+    max_input_tokens: 128000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00000175, // $1.75 per million input tokens
+    output_cost_per_token: 0.000014, // $14 per million output tokens
+    cache_read_input_token_cost: 0.000000175, // $0.175 per million cached input tokens
+    litellm_provider: "openai",
+    mode: "responses",
+    supports_function_calling: true,
+    supports_vision: false,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
   // GPT-5.2 Pro - Released December 11, 2025
   // $21/M input, $168/M output
   // Supports medium, high, xhigh reasoning levels

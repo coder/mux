@@ -30,5 +30,5 @@ test("review scenario", async ({ ui, page }) => {
 
   await ui.metaSidebar.expectVisible();
   await ui.metaSidebar.selectTab("Review");
-  await ui.metaSidebar.selectTab("Costs");
+  await ui.metaSidebar.selectTab("Stats");
 });

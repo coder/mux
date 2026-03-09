@@ -11,14 +11,13 @@ import { DevcontainerRuntime } from "./DevcontainerRuntime";
 import type { RuntimeConfig, RuntimeMode, RuntimeAvailabilityStatus } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import type { CoderService } from "@/node/services/coderService";
 import { Config } from "@/node/config";
 import { checkDevcontainerCliVersion } from "./devcontainerCli";
 import { buildDevcontainerConfigInfo, scanDevcontainerConfigs } from "./devcontainerConfigs";
-
-// Re-export for backward compatibility with existing imports
-export { isIncompatibleRuntimeConfig };
+import { resolveCoderSSHHost } from "@/constants/coder";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Global CoderService singleton - set during app init so all createRuntime calls can use it
 let globalCoderService: CoderService | undefined;
@@ -62,7 +61,7 @@ export function runBackgroundInit(
     try {
       await runFullInit(runtime, params);
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       logger?.error(`Workspace init failed for ${workspaceId}:`, { error });
       params.initLogger.logStderr(`Initialization failed: ${errorMsg}`);
       params.initLogger.logComplete(-1);
@@ -158,8 +157,11 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       });
 
     case "ssh": {
+      // Normalize Coder host before transport creation so both transport
+      // and runtime use the canonical *.mux--coder hostname from the start.
+      const sshHost = resolveCoderSSHHost(config.host, config.coder?.workspaceName);
       const sshConfig = {
-        host: config.host,
+        host: sshHost,
         srcBaseDir: config.srcBaseDir,
         bgOutputDir: config.bgOutputDir,
         identityFile: config.identityFile,
@@ -253,7 +255,7 @@ async function isGitRepository(projectPath: string): Promise<boolean> {
 async function isDockerAvailable(): Promise<boolean> {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    using proc = execAsync("docker info");
+    using proc = execFileAsync("docker", ["info"]);
     const timeout = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => reject(new Error("timeout")), 5000);
     });

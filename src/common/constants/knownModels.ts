@@ -35,9 +35,10 @@ const MODEL_DEFINITIONS = {
   },
   SONNET: {
     provider: "anthropic",
-    providerModelId: "claude-sonnet-4-5",
+    providerModelId: "claude-sonnet-4-6",
     aliases: ["sonnet"],
     warm: true,
+    // Sonnet 4.6 tokenizer not yet available upstream; reuse 4.5 for approximate counting
     tokenizerOverride: "anthropic/claude-sonnet-4.5",
   },
   HAIKU: {
@@ -46,36 +47,34 @@ const MODEL_DEFINITIONS = {
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
   },
+  // GPT alias tracks the latest stable GPT-5 tier.
   GPT: {
     provider: "openai",
-    providerModelId: "gpt-5.2",
+    providerModelId: "gpt-5.4",
     aliases: ["gpt"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
+  // GPT Pro alias tracks the latest GPT-5 Pro tier.
   GPT_PRO: {
     provider: "openai",
-    providerModelId: "gpt-5.2-pro",
+    providerModelId: "gpt-5.4-pro",
     aliases: ["gpt-pro"],
   },
-  GPT_52_CODEX: {
-    provider: "openai",
-    providerModelId: "gpt-5.2-codex",
-    aliases: ["codex"],
-    warm: true,
-    tokenizerOverride: "openai/gpt-5",
-  },
+  // GPT-5.3-Codex is the released API model id.
   GPT_53_CODEX: {
     provider: "openai",
     providerModelId: "gpt-5.3-codex",
-    aliases: ["codex-5.3"],
+    aliases: ["codex", "codex-5.3"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  GPT_CODEX: {
+  // Codex Spark is a real-time, text-only variant of GPT-5.3-Codex with a 128k context window.
+  // We intentionally keep it first-class so users can select it directly via the `spark` alias.
+  GPT_53_CODEX_SPARK: {
     provider: "openai",
-    providerModelId: "gpt-5.1-codex",
-    aliases: ["codex-5.1"],
+    providerModelId: "gpt-5.3-codex-spark",
+    aliases: ["spark"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
@@ -91,16 +90,17 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  GEMINI_3_PRO: {
+  // Gemini 3.1 Pro supersedes Gemini 3 Pro; keep bare aliases pointed at the latest Pro tier.
+  GEMINI_31_PRO: {
     provider: "google",
-    providerModelId: "gemini-3-pro-preview",
-    aliases: ["gemini", "gemini-3", "gemini-3-pro"],
+    providerModelId: "gemini-3.1-pro-preview",
+    aliases: ["gemini", "gemini-pro"],
     tokenizerOverride: "google/gemini-2.5-pro",
   },
   GEMINI_3_FLASH: {
     provider: "google",
     providerModelId: "gemini-3-flash-preview",
-    aliases: ["gemini-3-flash"],
+    aliases: ["gemini-flash"],
     tokenizerOverride: "google/gemini-2.5-pro",
   },
   GROK_4_1: {
@@ -149,7 +149,7 @@ export function getKnownModel(key: KnownModelKey): KnownModel {
  *
  * Keep this local (non-exported) to avoid confusion with storage keys.
  */
-const DEFAULT_KNOWN_MODEL_KEY: KnownModelKey = "OPUS";
+const DEFAULT_KNOWN_MODEL_KEY: KnownModelKey = "SONNET";
 
 export const DEFAULT_MODEL = KNOWN_MODELS[DEFAULT_KNOWN_MODEL_KEY].id;
 

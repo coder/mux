@@ -121,6 +121,7 @@ export interface StreamErrorPayload {
   messageId: string;
   error: string;
   errorType?: StreamErrorType;
+  acpPromptId?: string;
 }
 
 export const createErrorEvent = (workspaceId: string, payload: StreamErrorPayload): ErrorEvent => ({
@@ -129,6 +130,7 @@ export const createErrorEvent = (workspaceId: string, payload: StreamErrorPayloa
   messageId: payload.messageId,
   error: payload.error,
   errorType: payload.errorType,
+  acpPromptId: payload.acpPromptId,
 });
 
 const API_KEY_ERROR_HINTS = ["api key", "api_key", "anthropic_api_key"];
@@ -149,13 +151,22 @@ export const createStreamErrorMessage = (payload: StreamErrorPayload): StreamErr
   messageId: payload.messageId,
   error: payload.error,
   errorType: payload.errorType ?? "unknown",
+  acpPromptId: payload.acpPromptId,
 });
 
 /**
  * Build a stream-error payload for pre-stream failures so the UI can surface them immediately.
  */
-export const buildStreamErrorEventData = (error: SendMessageError): StreamErrorPayload => {
+export const buildStreamErrorEventData = (
+  error: SendMessageError,
+  options?: { acpPromptId?: string }
+): StreamErrorPayload => {
   const { message, errorType } = formatSendMessageError(error);
   const messageId = createAssistantMessageId();
-  return { messageId, error: message, errorType };
+  return {
+    messageId,
+    error: message,
+    errorType,
+    acpPromptId: options?.acpPromptId,
+  };
 };

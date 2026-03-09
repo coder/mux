@@ -1,6 +1,7 @@
 import { THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
+import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
@@ -13,7 +14,6 @@ import {
 } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
@@ -38,12 +38,15 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
-  projects: Map<string, ProjectConfig>;
+  userProjects: Map<string, ProjectConfig>;
   /** Map of workspace ID to workspace metadata (keyed by metadata.id, not path) */
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
+  /** In-app confirmation dialog (replaces window.confirm) */
+  confirmDialog: (opts: ConfirmDialogOptions) => Promise<boolean>;
   themePreference: ThemePreference;
   selectedWorkspaceState?: WorkspaceState | null;
   selectedWorkspace: {
@@ -166,6 +169,52 @@ function toFileUrl(filePath: string): string {
   return `file://${encodeURI(normalized)}`;
 }
 
+interface AnalyticsRebuildNamespace {
+  rebuildDatabase?: (
+    input: Record<string, never>
+  ) => Promise<{ success: boolean; workspacesIngested: number }>;
+}
+
+const getAnalyticsRebuildDatabase = (
+  api: APIClient | null
+): AnalyticsRebuildNamespace["rebuildDatabase"] | null => {
+  const candidate = (api as { analytics?: unknown } | null)?.analytics;
+  if (!candidate || (typeof candidate !== "object" && typeof candidate !== "function")) {
+    return null;
+  }
+
+  const rebuildDatabase = (candidate as AnalyticsRebuildNamespace).rebuildDatabase;
+  return typeof rebuildDatabase === "function" ? rebuildDatabase : null;
+};
+
+const showCommandFeedbackToast = (feedback: {
+  type: "success" | "error";
+  message: string;
+  title?: string;
+}) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  // Analytics view does not mount ChatInput, so keep a basic alert fallback
+  // for command palette actions that need user feedback.
+  const hasChatInputToastHost =
+    typeof document !== "undefined" &&
+    document.querySelector('[data-component="ChatInputSection"]') !== null;
+
+  if (hasChatInputToastHost) {
+    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, feedback));
+    return;
+  }
+
+  const alertMessage = feedback.title
+    ? `${feedback.title}\n\n${feedback.message}`
+    : feedback.message;
+  if (typeof window.alert === "function") {
+    window.alert(alertMessage);
+  }
+};
+
 const findFirstTerminalSessionTab = (
   node: ReturnType<typeof parseRightSidebarLayoutState>["root"]
 ): { tabsetId: string; tab: TabType } | null => {
@@ -257,9 +306,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             selectedMeta?.name ??
             selected.namedWorkspacePath.split("/").pop() ??
             selected.namedWorkspacePath;
-          const ok = confirm(
-            `Remove current workspace? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
-          );
+          const ok = await p.confirmDialog({
+            title: "Remove current workspace?",
+            description: `This will delete the worktree and local branch "${branchName}".`,
+            warning: "This cannot be undone.",
+            confirmLabel: "Remove",
+            confirmVariant: "destructive",
+          });
           if (ok) await p.onRemoveWorkspace(selected.workspaceId);
         },
       });
@@ -434,9 +487,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             );
             const workspaceName = meta ? `${meta.projectName}/${meta.name}` : vals.workspaceId;
             const branchName = meta?.name ?? workspaceName.split("/").pop() ?? workspaceName;
-            const ok = confirm(
-              `Remove workspace ${workspaceName}? This will delete the worktree and local branch "${branchName}". This cannot be undone.`
-            );
+            const ok = await p.confirmDialog({
+              title: `Remove workspace ${workspaceName}?`,
+              description: `This will delete the worktree and local branch "${branchName}".`,
+              warning: "This cannot be undone.",
+              confirmLabel: "Remove",
+              confirmVariant: "destructive",
+            });
             if (ok) {
               await p.onRemoveWorkspace(vals.workspaceId);
             }
@@ -545,7 +602,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 label: "Tool",
                 placeholder: "Select a tool…",
                 getOptions: () =>
-                  (["costs", "review", "output", "terminal"] as TabType[]).map((tab) => ({
+                  (["costs", "review", "output", "debug", "terminal"] as TabType[]).map((tab) => ({
                     id: tab,
                     label:
                       tab === "costs"
@@ -554,7 +611,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                           ? "Review"
                           : tab === "output"
                             ? "Output"
-                            : "Terminal",
+                            : tab === "debug"
+                              ? "Debug"
+                              : "Terminal",
                     keywords: [tab],
                   })),
               },
@@ -708,7 +767,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           if (p.selectedWorkspaceState?.awaitingUserQuestion) {
             return;
           }
-          disableAutoRetryPreference(id);
+          await p.api?.workspace.setAutoRetryEnabled?.({ workspaceId: id, enabled: false });
           await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });
@@ -766,6 +825,21 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         shortcutHint: formatKeybind(KEYBINDS.CYCLE_AGENT),
         run: () => {
           const ev = new KeyboardEvent("keydown", { key: ".", ctrlKey: true });
+          window.dispatchEvent(ev);
+        },
+      },
+      {
+        id: "toggle-auto-agent",
+        title: "Toggle Auto Agent",
+        section: section.mode,
+        shortcutHint: formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT),
+        run: () => {
+          const ev = new KeyboardEvent("keydown", {
+            key: ".",
+            code: "Period",
+            ctrlKey: true,
+            shiftKey: true,
+          });
           window.dispatchEvent(ev);
         },
       },
@@ -883,7 +957,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Select project",
               placeholder: "Search projects…",
               getOptions: (_values) =>
-                Array.from(p.projects.keys()).map((projectPath) => ({
+                Array.from(p.userProjects.keys()).map((projectPath) => ({
                   id: projectPath,
                   label: projectPath.split("/").pop() ?? projectPath,
                   keywords: [projectPath],
@@ -912,7 +986,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Select project",
               placeholder: "Search projects…",
               getOptions: (_values) =>
-                Array.from(p.projects.keys()).map((projectPath) => ({
+                Array.from(p.userProjects.keys()).map((projectPath) => ({
                   id: projectPath,
                   label: projectPath.split("/").pop() ?? projectPath,
                   keywords: [projectPath],
@@ -923,9 +997,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             const projectPath = vals.projectPath;
             const projectName = projectPath.split("/").pop() ?? projectPath;
 
-            const ok = confirm(
-              `Archive merged workspaces in ${projectName}?\n\nThis will archive (not delete) workspaces in this project whose GitHub PR is merged. This is reversible.\n\nThis may start/wake workspace runtimes and can take a while.\n\nThis uses GitHub via the gh CLI. Make sure gh is installed and authenticated.`
-            );
+            const ok = await p.confirmDialog({
+              title: `Archive merged workspaces in ${projectName}?`,
+              description:
+                "This will archive (not delete) workspaces in this project whose GitHub PR is merged. This is reversible.\n\nThis may start/wake workspace runtimes and can take a while.\n\nThis uses GitHub via the gh CLI. Make sure gh is installed and authenticated.",
+              confirmLabel: "Archive",
+            });
             if (!ok) return;
 
             await p.onArchiveMergedWorkspacesInProject(projectPath);
@@ -934,7 +1011,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       },
     ];
 
-    for (const [projectPath] of p.projects.entries()) {
+    for (const [projectPath] of p.userProjects.entries()) {
       const projectName = projectPath.split("/").pop() ?? projectPath;
       list.push({
         id: CommandIds.projectRemove(projectPath),
@@ -945,6 +1022,54 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     }
     return list;
   });
+
+  // Analytics maintenance
+  actions.push(() => [
+    {
+      id: CommandIds.analyticsRebuildDatabase(),
+      title: "Rebuild Analytics Database",
+      subtitle: "Recompute analytics from workspace history",
+      section: section.settings,
+      keywords: ["analytics", "rebuild", "recompute", "database", "stats"],
+      run: async () => {
+        const rebuildDatabase = getAnalyticsRebuildDatabase(p.api);
+        if (!rebuildDatabase) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Analytics Unavailable",
+            message: "Analytics backend is not available in this build.",
+          });
+          return;
+        }
+
+        try {
+          const result = await rebuildDatabase({});
+          if (!result.success) {
+            showCommandFeedbackToast({
+              type: "error",
+              title: "Analytics Rebuild Failed",
+              message: "Analytics database rebuild did not complete successfully.",
+            });
+            return;
+          }
+
+          const workspaceLabel = `${result.workspacesIngested} workspace${
+            result.workspacesIngested === 1 ? "" : "s"
+          }`;
+          showCommandFeedbackToast({
+            type: "success",
+            message: `Analytics database rebuilt successfully (${workspaceLabel} ingested).`,
+          });
+        } catch (error) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Analytics Rebuild Failed",
+            message: getErrorMessage(error),
+          });
+        }
+      },
+    },
+  ]);
 
   // Settings
   if (p.onOpenSettings) {

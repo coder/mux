@@ -10,6 +10,7 @@ import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
@@ -19,6 +20,7 @@ import {
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
 import { normalizeGatewayModel, supports1MContext } from "./models";
@@ -46,6 +48,16 @@ type ProviderOptions =
   | { xai: XaiProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
+const OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS = new Set<string>([
+  // Codex Spark rejects reasoning.summary with:
+  // "Unsupported parameter: 'reasoning.summary' ...".
+  "gpt-5.3-codex-spark",
+]);
+
+function supportsOpenAIReasoningSummary(modelName: string): boolean {
+  return !OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS.has(modelName);
+}
+
 /**
  * Build provider-specific options for AI SDK based on thinking level
  *
@@ -53,36 +65,47 @@ type ProviderOptions =
  * 1. Enable reasoning traces (transparency into model's thought process)
  * 2. Set reasoning level (control depth of reasoning based on task complexity)
  * 3. Enable parallel tool calls (allow concurrent tool execution)
- * 4. Extract previousResponseId for OpenAI persistence (when available)
+ * 4. Keep provider-specific request knobs consistent with Mux's explicit history model
  *
  * @param modelString - Full model string (e.g., "anthropic:claude-opus-4-1")
  * @param thinkingLevel - Unified thinking level (must be pre-clamped via enforceThinkingPolicy)
- * @param messages - Conversation history to extract previousResponseId from
- * @param lostResponseIds - Optional callback to check if a responseId has been invalidated by OpenAI
+ * @param messages - Conversation history being sent to the provider
+ * @param _lostResponseIds - Reserved for OpenAI response-state recovery filtering
  * @param muxProviderOptions - Optional provider overrides from config
  * @param workspaceId - Optional for non-OpenAI providers
  * @param openaiTruncationMode - Optional truncation mode for OpenAI responses (auto/disabled)
+ * @param providersConfig - Optional providers config for mapped model capability detection
  * @returns Provider options object for AI SDK
  */
 export function buildProviderOptions(
   modelString: string,
   thinkingLevel: ThinkingLevel,
   messages?: MuxMessage[],
-  lostResponseIds?: (id: string) => boolean,
+  _lostResponseIds?: (id: string) => boolean,
   muxProviderOptions?: MuxProviderOptions,
   workspaceId?: string, // Optional for non-OpenAI providers
-  openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"]
+  openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"],
+  providersConfig?: ProvidersConfigMap | null
 ): ProviderOptions {
   // Caller is responsible for enforcing thinking policy before calling this function.
   // agentSession.ts is the canonical enforcement point.
   const effectiveThinking = thinkingLevel;
   // Parse provider from normalized model string
-  const [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
+  const normalizedModel = normalizeGatewayModel(modelString);
+  const [provider, modelName] = normalizedModel.split(":", 2);
+
+  // Resolve aliases to their base model for capability detection while keeping
+  // the original modelString for provider routing and metadata lookups.
+  const capabilityModel = resolveModelForMetadata(normalizedModel, providersConfig ?? null);
+  const [, resolvedCapabilityModelName] = capabilityModel.split(":", 2);
+  const capModelName = resolvedCapabilityModelName || modelName;
 
   log.debug("buildProviderOptions", {
     modelString,
     provider,
     modelName,
+    capabilityModel,
+    capModelName,
     thinkingLevel,
   });
 
@@ -93,22 +116,25 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    const cacheTtl = muxProviderOptions?.anthropic?.cacheTtl;
+    const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
+    const cacheTtl = disableBeta ? undefined : muxProviderOptions?.anthropic?.cacheTtl;
     const cacheControl = cacheTtl ? { type: "ephemeral" as const, ttl: cacheTtl } : undefined;
 
-    // Opus 4.5+ use the effort parameter for reasoning control.
-    // Opus 4.6 uses adaptive thinking (model decides when/how much to think).
+    // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
+    // Opus 4.6 / Sonnet 4.6 use adaptive thinking (model decides when/how much to think).
     // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
-    const isOpus45 = modelName?.includes("opus-4-5") ?? false;
-    const isOpus46 = modelName?.includes("opus-4-6") ?? false;
+    const isOpus45 = capModelName?.includes("opus-4-5") ?? false;
+    const isOpus46 = capModelName?.includes("opus-4-6") ?? false;
+    const isSonnet46 = capModelName?.includes("sonnet-4-6") ?? false;
+    const usesAdaptiveThinking = isOpus46 || isSonnet46;
 
-    if (isOpus45 || isOpus46) {
+    if (isOpus45 || usesAdaptiveThinking) {
       // xhigh maps to "max" effort; policy clamps Opus 4.5 to "high" max
       const effortLevel = getAnthropicEffort(effectiveThinking);
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-      // Opus 4.6: adaptive thinking when on, disabled when off
+      // Opus 4.6 / Sonnet 4.6: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
-      const thinking: AnthropicProviderOptions["thinking"] = isOpus46
+      const thinking: AnthropicProviderOptions["thinking"] = usesAdaptiveThinking
         ? effectiveThinking === "off"
           ? { type: "disabled" }
           : { type: "adaptive" }
@@ -162,58 +188,10 @@ export function buildProviderOptions(
   if (provider === "openai") {
     const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
 
-    // Extract previousResponseId from last assistant message for persistence
-    // IMPORTANT: Only use previousResponseId if:
-    // 1. The previous message used the same model (prevents cross-model contamination)
-    // 2. That model uses reasoning (reasoning effort is set)
-    // 3. The response ID exists
-    // 4. The response ID hasn't been invalidated by OpenAI
-    let previousResponseId: string | undefined;
-    if (messages && messages.length > 0 && reasoningEffort) {
-      // Parse current model name (without provider prefix), normalize gateway format if needed
-      const currentModelName = normalizeGatewayModel(modelString).split(":")[1];
-
-      // Find last assistant message from the same model
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg.role === "assistant") {
-          // Check if this message is from the same model
-          const msgModel = msg.metadata?.model;
-          const msgModelName = msgModel ? normalizeGatewayModel(msgModel).split(":")[1] : undefined;
-
-          if (msgModelName === currentModelName) {
-            const metadata = msg.metadata?.providerMetadata;
-            if (metadata && "openai" in metadata) {
-              const openaiData = metadata.openai as Record<string, unknown> | undefined;
-              previousResponseId = openaiData?.responseId as string | undefined;
-            }
-            if (previousResponseId) {
-              // Check if this responseId has been invalidated by OpenAI
-              if (lostResponseIds?.(previousResponseId)) {
-                log.info("buildProviderOptions: Filtering out lost previousResponseId", {
-                  previousResponseId,
-                  model: currentModelName,
-                });
-                previousResponseId = undefined;
-              } else {
-                log.debug("buildProviderOptions: Found previousResponseId from same model", {
-                  previousResponseId,
-                  model: currentModelName,
-                });
-              }
-              break;
-            }
-          } else if (msgModelName) {
-            // Found assistant message from different model, stop searching
-            log.debug("buildProviderOptions: Skipping previousResponseId - model changed", {
-              previousModel: msgModelName,
-              currentModel: currentModelName,
-            });
-            break;
-          }
-        }
-      }
-    }
+    // Mux always sends the latest conversation history explicitly. OpenAI's
+    // previous_response_id is an alternative state-management path, not an additive one.
+    // Chaining it on top of explicit history double-counts prior turns and caused GPT-5.4
+    // requests to hit context_exceeded far below the documented native window.
 
     // Prompt cache key: derive from workspaceId
     // This helps OpenAI route requests to cached prefixes for improved hit rates
@@ -221,37 +199,48 @@ export function buildProviderOptions(
     const promptCacheKey = workspaceId ? `mux-v1-${workspaceId}` : undefined;
 
     const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
+    const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
+    const store = muxProviderOptions?.openai?.store;
+    const isResponses = wireFormat === "responses";
     const truncationMode = openaiTruncationMode ?? "disabled";
+    const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(capModelName);
 
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,
+      shouldSendReasoningSummary,
       thinkingLevel: effectiveThinking,
-      previousResponseId,
+      historyMessages: messages?.length ?? 0,
       promptCacheKey,
       truncation: truncationMode,
+      wireFormat,
     });
 
     const options: ProviderOptions = {
       openai: {
         parallelToolCalls: true, // Always enable concurrent tool execution
         serviceTier,
-        // Default to disabled; allow auto truncation for compaction to avoid context errors
-        truncation: truncationMode,
-        // Stable prompt cache key to improve OpenAI cache hit rates
-        // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
-        ...(promptCacheKey && { promptCacheKey }),
+        ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
+        ...(isResponses && {
+          // Default to disabled; allow auto truncation for compaction to avoid context errors
+          truncation: truncationMode,
+          // Stable prompt cache key to improve OpenAI cache hit rates
+          // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
+          ...(promptCacheKey && { promptCacheKey }),
+        }),
         // Conditionally add reasoning configuration
         ...(reasoningEffort && {
           reasoningEffort,
-          reasoningSummary: "detailed", // Enable detailed reasoning summaries
-          // Include reasoning encrypted content to preserve reasoning context across conversation steps
-          // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls
-          // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
-          include: ["reasoning.encrypted_content"],
+          ...(isResponses &&
+            shouldSendReasoningSummary && {
+              reasoningSummary: "detailed", // Enable detailed reasoning summaries when the model supports it
+            }),
+          ...(isResponses && {
+            // Include reasoning encrypted content to preserve reasoning context across conversation steps
+            // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls
+            // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
+            include: ["reasoning.encrypted_content"],
+          }),
         }),
-        // Include previousResponseId for conversation persistence
-        // OpenAI uses this to maintain reasoning state across turns
-        ...(previousResponseId && { previousResponseId }),
       },
     };
     log.info("buildProviderOptions: Returning OpenAI options", options);
@@ -260,7 +249,7 @@ export function buildProviderOptions(
 
   // Build Google-specific options
   if (provider === "google") {
-    const isGemini3 = modelString.includes("gemini-3");
+    const isGemini3 = capModelName.includes("gemini-3");
     let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
 
     if (effectiveThinking !== "off") {
@@ -355,28 +344,68 @@ export function buildProviderOptions(
 /** Header value for Anthropic 1M context beta */
 export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
 
+/** HTTP header sent on AI requests for workspace-level observability. */
+export const MUX_WORKSPACE_ID_HEADER = "X-Mux-Workspace-Id";
+
+const HTTP_HEADER_VALUE_SAFE_PATTERN = /^[\t\x20-\x7E\x80-\xFF]+$/;
+
+/**
+ * Encode workspace IDs that contain non-header-safe bytes.
+ *
+ * Legacy workspace IDs may include non-Latin-1 characters (e.g., emoji from
+ * project/workspace names). Fetch rejects such header values, which would abort
+ * the request before it reaches the provider. We keep safe IDs unchanged for
+ * readability and encode unsafe ones into a stable URL-safe base64 form.
+ */
+function toWorkspaceHeaderValue(workspaceId: string): string {
+  if (HTTP_HEADER_VALUE_SAFE_PATTERN.test(workspaceId)) {
+    return workspaceId;
+  }
+
+  return `b64:${Buffer.from(workspaceId, "utf8").toString("base64url")}`;
+}
+
 /**
  * Build per-request HTTP headers for provider-specific features.
  *
  * These flow through streamText({ headers }) to the provider SDK, which merges
  * them with provider-creation-time headers via combineHeaders(). This is the
- * single injection site for features like the Anthropic 1M context beta header,
- * regardless of whether the model is direct or gateway-routed.
+ * single injection site for headers like the workspace correlation header and
+ * Anthropic's 1M context beta header, regardless of direct vs gateway routing.
  */
 export function buildRequestHeaders(
   modelString: string,
-  muxProviderOptions?: MuxProviderOptions
+  muxProviderOptions?: MuxProviderOptions,
+  workspaceId?: string,
+  providersConfig?: ProvidersConfigMap | null
 ): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+
+  if (workspaceId != null) {
+    headers[MUX_WORKSPACE_ID_HEADER] = toWorkspaceHeaderValue(workspaceId);
+  }
+
   const normalized = normalizeGatewayModel(modelString);
+  // Route provider-specific headers by the runtime provider from the original model
+  // string. Capability resolution is only for model-level feature checks below.
   const [provider] = normalized.split(":", 2);
+  const capabilityModel = resolveModelForMetadata(normalized, providersConfig ?? null);
 
-  if (provider !== "anthropic") return undefined;
+  if (provider === "anthropic") {
+    // ZDR: skip all Anthropic beta headers when beta features are disabled.
+    if (!muxProviderOptions?.anthropic?.disableBetaFeatures) {
+      const explicitlyEnabled1MModel =
+        (muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
+        (muxProviderOptions?.anthropic?.use1MContextModels?.includes(capabilityModel) ?? false);
+      const is1MEnabled =
+        (explicitlyEnabled1MModel || muxProviderOptions?.anthropic?.use1MContext === true) &&
+        supports1MContext(capabilityModel);
 
-  const is1MEnabled =
-    ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
-      muxProviderOptions?.anthropic?.use1MContext === true) &&
-    supports1MContext(normalized);
+      if (is1MEnabled) {
+        headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
+      }
+    }
+  }
 
-  if (!is1MEnabled) return undefined;
-  return { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }

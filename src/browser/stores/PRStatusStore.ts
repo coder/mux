@@ -14,7 +14,12 @@
 
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import type { GitHubPRLink, GitHubPRStatus, GitHubPRLinkWithStatus } from "@/common/types/links";
+import type {
+  GitHubPRLink,
+  GitHubPRStatus,
+  GitHubPRLinkWithStatus,
+  MergeQueueEntry,
+} from "@/common/types/links";
 import { createLRUCache } from "@/browser/utils/lruCache";
 /**
  * Parse a GitHub PR URL to extract owner, repo, and number.
@@ -34,6 +39,10 @@ const STATUS_CACHE_TTL_MS = 5 * 1000;
 
 // How long to wait before retrying after an error
 const ERROR_RETRY_DELAY_MS = 5 * 1000;
+
+// GraphQL query for merge queue data (not available in `gh pr view --json`).
+const MERGE_QUEUE_QUERY =
+  "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){mergeQueueEntry{state position}}}}";
 
 /**
  * Persisted PR status for localStorage LRU cache.
@@ -101,6 +110,25 @@ function summarizeStatusCheckRollup(raw: unknown): {
 }
 
 /**
+ * Parse merge queue entry data from GitHub GraphQL response payloads.
+ */
+export function parseMergeQueueEntry(raw: unknown): MergeQueueEntry | null {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const state = typeof record.state === "string" ? record.state : "QUEUED";
+  const positionRaw = record.position;
+  const position =
+    typeof positionRaw === "number" && Number.isInteger(positionRaw) && positionRaw >= 0
+      ? positionRaw
+      : null;
+
+  return { state, position };
+}
+
+/**
  * Workspace PR detection result (from branch, not chat).
  */
 interface WorkspacePRCacheEntry {
@@ -111,6 +139,12 @@ interface WorkspacePRCacheEntry {
   error?: string;
   fetchedAt: number;
   loading: boolean;
+}
+
+interface MergeQueueRefreshRequest {
+  prLinkBase: { owner: string; repo: string; number: number };
+  prUrl: string;
+  statusFetchedAt: number;
 }
 
 /**
@@ -128,12 +162,21 @@ export class PRStatusStore {
   // Track active subscriptions per workspace so we only refresh workspaces that are actually visible.
   private workspaceSubscriptionCounts = new Map<string, number>();
 
+  // Track latest merge queue enrichment request while an in-flight fetch is running.
+  private mergeQueueRefreshPending = new Map<string, MergeQueueRefreshRequest>();
+
+  // Track per-workspace async merge queue enrichment to avoid overlapping gh api calls.
+  private mergeQueueRefreshInFlight = new Map<string, Promise<void>>();
+
   // Like GitStatusStore: batch immediate refreshes triggered by subscriptions.
   private immediateUpdateQueued = false;
 
   constructor() {
     this.refreshController = new RefreshController({
       onRefresh: () => this.refreshAll(),
+      onRefreshError: (failure) => {
+        console.error("[PRStatusStore] refresh failed:", failure.errorMessage);
+      },
       debounceMs: 5000,
       refreshOnFocus: true,
       focusDebounceMs: 1000,
@@ -317,6 +360,8 @@ export class PRStatusStore {
 
             // Persist to localStorage for instant display on app restart
             prStatusLRU.set(workspaceId, { prLink, status });
+
+            this.scheduleMergeQueueRefresh(workspaceId, prLinkBase, prUrl, status.fetchedAt);
           }
         }
       } else {
@@ -339,6 +384,141 @@ export class PRStatusStore {
         fetchedAt: Date.now(),
       });
       this.workspacePRSubscriptions.bump(workspaceId);
+    }
+  }
+
+  /**
+   * Enqueue merge queue enrichment and retain a single follow-up request if one arrives
+   * while a fetch is already in flight.
+   */
+  private scheduleMergeQueueRefresh(
+    workspaceId: string,
+    prLinkBase: { owner: string; repo: string; number: number },
+    prUrl: string,
+    statusFetchedAt: number
+  ): void {
+    const request: MergeQueueRefreshRequest = {
+      prLinkBase,
+      prUrl,
+      statusFetchedAt,
+    };
+
+    if (this.mergeQueueRefreshInFlight.has(workspaceId)) {
+      this.mergeQueueRefreshPending.set(workspaceId, request);
+      return;
+    }
+
+    this.startMergeQueueRefresh(workspaceId, request);
+  }
+
+  private startMergeQueueRefresh(workspaceId: string, request: MergeQueueRefreshRequest): void {
+    const refreshPromise = this.fetchMergeQueueEntry(workspaceId, request.prLinkBase)
+      .then((mergeQueueEntry) => {
+        if (!this.isActive || mergeQueueEntry == null) {
+          return;
+        }
+
+        const currentEntry = this.workspacePRCache.get(workspaceId);
+        if (!currentEntry?.status || !currentEntry.prLink) {
+          return;
+        }
+
+        // Ignore stale async updates from older refresh cycles.
+        if (
+          currentEntry.status.fetchedAt !== request.statusFetchedAt ||
+          currentEntry.prLink.url !== request.prUrl
+        ) {
+          return;
+        }
+
+        const updatedStatus: GitHubPRStatus = {
+          ...currentEntry.status,
+          mergeQueueEntry,
+        };
+        this.workspacePRCache.set(workspaceId, {
+          ...currentEntry,
+          status: updatedStatus,
+        });
+        prStatusLRU.set(workspaceId, {
+          prLink: currentEntry.prLink,
+          status: updatedStatus,
+        });
+        this.workspacePRSubscriptions.bump(workspaceId);
+      })
+      .catch(() => {
+        // Non-fatal: merge queue metadata is best-effort.
+      })
+      .finally(() => {
+        const inFlight = this.mergeQueueRefreshInFlight.get(workspaceId);
+        if (inFlight === refreshPromise) {
+          this.mergeQueueRefreshInFlight.delete(workspaceId);
+        }
+
+        const pendingRequest = this.mergeQueueRefreshPending.get(workspaceId);
+        if (!this.isActive || !pendingRequest) {
+          return;
+        }
+
+        this.mergeQueueRefreshPending.delete(workspaceId);
+        this.startMergeQueueRefresh(workspaceId, pendingRequest);
+      });
+
+    this.mergeQueueRefreshInFlight.set(workspaceId, refreshPromise);
+  }
+
+  /**
+   * Fetch merge queue details via GraphQL.
+   * Best-effort only: failures should not block normal PR status updates.
+   */
+  private async fetchMergeQueueEntry(
+    workspaceId: string,
+    prLink: { owner: string; repo: string; number: number }
+  ): Promise<MergeQueueEntry | null> {
+    if (!this.client || !this.isActive) {
+      return null;
+    }
+
+    try {
+      const result = await this.client.workspace.executeBash({
+        workspaceId,
+        script: [
+          "gh api graphql",
+          `-f query='${MERGE_QUEUE_QUERY}'`,
+          `-f owner='${prLink.owner}'`,
+          `-f repo='${prLink.repo}'`,
+          `-F number=${prLink.number}`,
+          "2>/dev/null",
+        ].join(" "),
+        options: { timeout_secs: 10 },
+      });
+
+      if (!this.isActive || !result.success || !result.data.success) {
+        return null;
+      }
+
+      if (!result.data.output) {
+        return null;
+      }
+
+      const parsed = JSON.parse(result.data.output) as Record<string, unknown>;
+      const data = parsed.data;
+      if (typeof data !== "object" || data === null) {
+        return null;
+      }
+
+      const repository = (data as Record<string, unknown>).repository;
+      if (typeof repository !== "object" || repository === null) {
+        return null;
+      }
+
+      const pullRequest = (repository as Record<string, unknown>).pullRequest;
+      if (typeof pullRequest !== "object" || pullRequest === null) {
+        return null;
+      }
+
+      return parseMergeQueueEntry((pullRequest as Record<string, unknown>).mergeQueueEntry);
+    } catch {
+      return null;
     }
   }
 
@@ -385,6 +565,8 @@ export class PRStatusStore {
    */
   dispose(): void {
     this.isActive = false;
+    this.mergeQueueRefreshPending.clear();
+    this.mergeQueueRefreshInFlight.clear();
     this.refreshController.dispose();
   }
 }

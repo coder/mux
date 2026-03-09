@@ -3,7 +3,15 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
-import { ProviderModelFactory } from "./providerModelFactory";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import {
+  ProviderModelFactory,
+  buildAIProviderRequestHeaders,
+  classifyCopilotInitiator,
+  modelCostsIncluded,
+  MUX_AI_PROVIDER_USER_AGENT,
+  resolveAIProviderHeaderSource,
+} from "./providerModelFactory";
 import { ProviderService } from "./providerService";
 
 async function withTempConfig(
@@ -86,6 +94,49 @@ describe("ProviderModelFactory.createModel", () => {
   });
 });
 
+describe("ProviderModelFactory modelCostsIncluded", () => {
+  it("marks gpt-5.3-codex as subscription-covered when routed through Codex OAuth", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          codexOauth: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account-id",
+          },
+        },
+      });
+
+      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(modelCostsIncluded(result.data)).toBe(true);
+    });
+  });
+
+  it("does not mark gpt-5.3-codex as subscription-covered when routed through API key", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+
+      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(modelCostsIncluded(result.data)).toBe(false);
+    });
+  });
+});
 describe("ProviderModelFactory.resolveGatewayModelString", () => {
   it("routes through gateway when provider is disabled but gateway is configured and model is allowlisted", async () => {
     await withTempConfig(async (config, factory) => {
@@ -140,5 +191,121 @@ describe("ProviderModelFactory.resolveGatewayModelString", () => {
         });
       }
     });
+  });
+});
+
+describe("classifyCopilotInitiator", () => {
+  it("returns 'user' when last message role is user", () => {
+    const body = JSON.stringify({ messages: [{ role: "user", content: "hello" }] });
+    expect(classifyCopilotInitiator(body)).toBe("user");
+  });
+
+  it("returns 'agent' when last message role is tool", () => {
+    const body = JSON.stringify({
+      messages: [
+        { role: "user", content: "hello" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{ id: "1", type: "function", function: { name: "test", arguments: "{}" } }],
+        },
+        { role: "tool", tool_call_id: "1", content: "result" },
+      ],
+    });
+    expect(classifyCopilotInitiator(body)).toBe("agent");
+  });
+
+  it("returns 'agent' when last message role is assistant", () => {
+    const body = JSON.stringify({
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "..." },
+      ],
+    });
+    expect(classifyCopilotInitiator(body)).toBe("agent");
+  });
+
+  it("returns 'user' for empty messages array", () => {
+    expect(classifyCopilotInitiator(JSON.stringify({ messages: [] }))).toBe("user");
+  });
+
+  it("returns 'user' for non-string body", () => {
+    expect(classifyCopilotInitiator(undefined)).toBe("user");
+    expect(classifyCopilotInitiator(null)).toBe("user");
+  });
+
+  it("returns 'user' for malformed JSON", () => {
+    expect(classifyCopilotInitiator("not json")).toBe("user");
+  });
+
+  it("returns 'user' when body has no messages field", () => {
+    expect(classifyCopilotInitiator(JSON.stringify({ model: "gpt-4o" }))).toBe("user");
+  });
+});
+
+describe("resolveAIProviderHeaderSource", () => {
+  it("uses Request headers when init.headers is not provided", () => {
+    const input = new Request("https://example.com", {
+      headers: {
+        Authorization: "Bearer test-token",
+      },
+    });
+
+    const result = resolveAIProviderHeaderSource(input, undefined);
+    const headers = new Headers(result);
+
+    expect(headers.get("authorization")).toBe("Bearer test-token");
+  });
+
+  it("prefers init.headers over Request headers", () => {
+    const input = new Request("https://example.com", {
+      headers: {
+        Authorization: "Bearer test-token",
+      },
+    });
+
+    const result = resolveAIProviderHeaderSource(input, {
+      headers: {
+        "x-custom": "value",
+      },
+    });
+    const headers = new Headers(result);
+
+    expect(headers.get("x-custom")).toBe("value");
+    expect(headers.get("authorization")).toBeNull();
+  });
+
+  it("returns undefined for non-Request inputs without init headers", () => {
+    const result = resolveAIProviderHeaderSource("https://example.com", undefined);
+    expect(result).toBeUndefined();
+  });
+});
+
+describe("buildAIProviderRequestHeaders", () => {
+  it("adds User-Agent when no headers exist", () => {
+    const result = buildAIProviderRequestHeaders(undefined);
+    expect(result.get("user-agent")).toBe(MUX_AI_PROVIDER_USER_AGENT);
+  });
+
+  it("prepends Mux attribution to an existing User-Agent", () => {
+    const result = buildAIProviderRequestHeaders({ "User-Agent": "custom-agent/1.0" });
+    expect(result.get("user-agent")).toBe(`${MUX_AI_PROVIDER_USER_AGENT} custom-agent/1.0`);
+  });
+
+  it("does not duplicate Mux attribution when already present", () => {
+    const existing = `${MUX_AI_PROVIDER_USER_AGENT} ai-sdk/anthropic/3.0.37`;
+    const result = buildAIProviderRequestHeaders({ "User-Agent": existing });
+    expect(result.get("user-agent")).toBe(existing);
+  });
+
+  it("preserves existing headers while injecting User-Agent", () => {
+    const existing = { "x-custom": "value" };
+    const existingSnapshot = { ...existing };
+
+    const result = buildAIProviderRequestHeaders(existing);
+
+    expect(result.get("x-custom")).toBe("value");
+    expect(result.get("user-agent")).toBe(MUX_AI_PROVIDER_USER_AGENT);
+    expect(existing).toEqual(existingSnapshot);
   });
 });

@@ -27,8 +27,8 @@ test("terminal tab handles workspace switching", async ({ ui, page: _page }) => 
   await ui.metaSidebar.addTerminal();
   await ui.metaSidebar.expectTerminalNoError();
 
-  // Switch to Costs tab (unmounts terminal UI but keeps session alive)
-  await ui.metaSidebar.selectTab("Costs");
+  // Switch to Stats tab (unmounts terminal UI but keeps session alive)
+  await ui.metaSidebar.selectTab("Stats");
 
   // Switch back to Terminal tab (should reattach to existing session)
   await ui.metaSidebar.selectTab("Terminal");

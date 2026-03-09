@@ -24,6 +24,27 @@ async function openProjectCreationView(storyRoot: HTMLElement, projectPath: stri
 
   await userEvent.click(projectRow);
 }
+
+/**
+ * Workspace Type is now a Radix Select dropdown.
+ * These helpers open the menu and select options from the portal.
+ */
+async function openWorkspaceTypeMenu(storyRoot: HTMLElement): Promise<void> {
+  const canvas = within(storyRoot);
+  await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+  const trigger = await canvas.findByLabelText("Workspace type", {}, { timeout: 10000 });
+  await userEvent.click(trigger);
+}
+
+async function selectWorkspaceType(storyRoot: HTMLElement, label: string): Promise<void> {
+  await openWorkspaceTypeMenu(storyRoot);
+  const option = await within(document.body).findByRole(
+    "option",
+    { name: new RegExp(`^${label}`, "i") },
+    { timeout: 10000 }
+  );
+  await userEvent.click(option);
+}
 export default {
   ...appMeta,
   title: "App/Dev container",
@@ -107,22 +128,17 @@ export const DevcontainerUnavailable: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openProjectCreationView(storyRoot, "/Users/dev/no-devcontainer-cli");
-    const canvas = within(storyRoot);
 
-    // Wait for the runtime button group to appear
-    const runtimeGroup = await canvas.findByRole(
-      "group",
-      { name: "Runtime type" },
-      { timeout: 10000 }
-    );
-
-    // Dev container button should be disabled (wait for availability data to load)
-    const groupCanvas = within(runtimeGroup);
-    const devcontainerText = await groupCanvas.findByText("Dev container");
-    const devcontainerButton = devcontainerText.closest("button");
-    if (!devcontainerButton) throw new Error("Dev container button not found");
+    // Open the workspace type dropdown and verify the Dev container option is disabled.
     await waitFor(async () => {
-      await expect(devcontainerButton).toBeDisabled();
+      await openWorkspaceTypeMenu(storyRoot);
+
+      const devcontainerOption = await within(document.body).findByRole("option", {
+        name: /^Dev container/i,
+      });
+      await expect(devcontainerOption).toHaveAttribute("aria-disabled", "true");
+
+      await userEvent.keyboard("{Escape}");
     });
   },
 };
@@ -148,19 +164,8 @@ export const DevcontainerSingleConfig: AppStory = {
     await openProjectCreationView(storyRoot, "/Users/dev/devcontainer-app");
     const canvas = within(storyRoot);
 
-    // Wait for the runtime button group to appear
-    const runtimeGroup = await canvas.findByRole(
-      "group",
-      { name: "Runtime type" },
-      { timeout: 10000 }
-    );
-
-    // Click Dev container runtime button (find within the group to avoid ambiguity)
-    const groupCanvas = within(runtimeGroup);
-    const devcontainerText = await groupCanvas.findByText("Dev container");
-    const devcontainerButton = devcontainerText.closest("button");
-    if (!devcontainerButton) throw new Error("Dev container button not found");
-    await userEvent.click(devcontainerButton);
+    // Select Dev container runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Dev container");
 
     // Wait for the config controls box to appear with a disabled dropdown
     await waitFor(() => {
@@ -200,19 +205,8 @@ export const DevcontainerMultiConfig: AppStory = {
     const canvas = within(storyRoot);
     const body = within(storyRoot.ownerDocument.body);
 
-    // Wait for the runtime button group to appear
-    const runtimeGroup = await canvas.findByRole(
-      "group",
-      { name: "Runtime type" },
-      { timeout: 10000 }
-    );
-
-    // Click Dev container runtime button (find within the group to avoid ambiguity)
-    const groupCanvas = within(runtimeGroup);
-    const devcontainerText = await groupCanvas.findByText("Dev container");
-    const devcontainerButton = devcontainerText.closest("button");
-    if (!devcontainerButton) throw new Error("Dev container button not found");
-    await userEvent.click(devcontainerButton);
+    // Select Dev container runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Dev container");
 
     // Wait for Dev container mode to be active and config dropdown to appear
     await waitFor(() => {

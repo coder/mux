@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ThinkingLevelSchema } from "../../types/thinking";
 
 /**
  * Workspace-scoped AI settings that should persist across devices.
@@ -10,7 +11,7 @@ import { z } from "zod";
 
 export const WorkspaceAISettingsSchema = z.object({
   model: z.string().meta({ description: 'Canonical model id in the form "provider:model"' }),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).meta({
+  thinkingLevel: ThinkingLevelSchema.meta({
     description: "Thinking/reasoning effort level",
   }),
 });

@@ -48,6 +48,7 @@ Use this index to find a page's:
   - **Getting Started**
     - Introduction (`/`) → `references/docs/index.mdx`
     - Install (`/install`) → `references/docs/install.mdx` — Download and install Mux for macOS, Linux, and Windows
+    - Chat with Mux (`/getting-started/chat`) → `references/docs/getting-started/chat.mdx` — Ask questions about Mux, configure settings, install skills, and explore usage analytics
     - **Models**
       - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in Mux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
@@ -58,6 +59,7 @@ Use this index to find a page's:
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx` — Isolated development environments for parallel agent work
     - Forking Workspaces (`/workspaces/fork`) → `references/docs/workspaces/fork.mdx` — Clone workspaces with conversation history to explore alternatives
     - Message Sharing (`/workspaces/sharing`) → `references/docs/workspaces/sharing.mdx` — Share encrypted messages with cryptographic signatures via Mux
+    - .muxignore (`/workspaces/muxignore`) → `references/docs/workspaces/muxignore.mdx` — Sync gitignored files to worktree workspaces
     - **Compaction**
       - Compaction (`/workspaces/compaction`) → `references/docs/workspaces/compaction/index.mdx` — Managing conversation context size with compaction
       - Manual Compaction (`/workspaces/compaction/manual`) → `references/docs/workspaces/compaction/manual.mdx` — Commands for manually managing conversation context
@@ -89,6 +91,7 @@ Use this index to find a page's:
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
     - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for Mux
     - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx` — Configure how agents notify you about important events
+    - Server Access (`/config/server-access`) → `references/docs/config/server-access.mdx` — Configure authentication and session controls for mux server/browser mode
     - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx` — Vim-style editing in the Mux chat input
   - **Guides**
     - GitHub Actions (`/guides/github-actions`) → `references/docs/guides/github-actions.mdx` — Automate your workflows with mux run in GitHub Actions
@@ -96,8 +99,10 @@ Use this index to find a page's:
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
   - **Integrations**
     - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair Mux workspaces with VS Code and Cursor editors
+    - ACP (Editor Integrations) (`/integrations/acp`) → `references/docs/integrations/acp.mdx` — Connect Mux to Zed, Neovim, and JetBrains via the Agent Client Protocol
     - Mux Governor (`/integrations/mux-governor`) → `references/docs/integrations/mux-governor.mdx` — Our upcoming enterprise platform for Mux.
   - **Reference**
+    - Debugging (`/reference/debugging`) → `references/docs/reference/debugging.mdx` — View live backend logs and diagnose issues
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
     - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation
     - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter

@@ -8,6 +8,11 @@
  */
 
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import type {
+  BedrockProviderConfig,
+  MuxGatewayProviderConfig,
+  OpenAIProviderConfig,
+} from "@/common/config/schemas/providersConfig";
 import type { ProviderConfig, ProvidersConfig } from "@/node/config";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 
@@ -82,20 +87,18 @@ function resolveEnv(
 // Types
 // ============================================================================
 
-/** Raw provider config shape (subset of providers.jsonc entry) */
-export interface ProviderConfigRaw {
-  apiKey?: string;
-  baseUrl?: string;
-  baseURL?: string; // Anthropic uses baseURL
+type ProviderSpecificCredentialFields = Partial<
+  Pick<BedrockProviderConfig, "region" | "bearerToken" | "accessKeyId" | "secretAccessKey"> &
+    Pick<MuxGatewayProviderConfig, "couponCode" | "voucher"> &
+    Pick<OpenAIProviderConfig, "organization">
+>;
+
+// Raw provider config as read from disk — before validation.
+// Omit enabled/models then re-add with looser types for defensive parsing.
+export type ProviderConfigRaw = Omit<ProviderConfig, "enabled" | "models"> & {
+  enabled?: unknown;
   models?: unknown[];
-  region?: string;
-  bearerToken?: string;
-  accessKeyId?: string;
-  secretAccessKey?: string;
-  couponCode?: string;
-  voucher?: string; // legacy mux-gateway field
-  organization?: string; // OpenAI org ID
-}
+} & ProviderSpecificCredentialFields;
 
 /** Result of resolving provider credentials */
 export interface ResolvedCredentials {
@@ -157,12 +160,20 @@ export function resolveProviderCredentials(
 
   // Standard API key providers: check config first, then env vars
   const envMapping = PROVIDER_ENV_VARS[provider];
-  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty string should be treated as unset
-  const configKey = config.apiKey || null;
+  const configKey =
+    typeof config.apiKey === "string" && config.apiKey.trim().length > 0 ? config.apiKey : null;
   const apiKey = configKey ?? resolveEnv(envMapping?.apiKey, env);
-  const baseUrl = config.baseURL ?? config.baseUrl ?? resolveEnv(envMapping?.baseUrl, env);
+  const configBaseUrl =
+    (typeof config.baseURL === "string" && config.baseURL) ||
+    (typeof config.baseUrl === "string" && config.baseUrl) ||
+    undefined;
+  const baseUrl = configBaseUrl ?? resolveEnv(envMapping?.baseUrl, env);
   // Config organization takes precedence over env var (user's explicit choice)
-  const organization = config.organization ?? resolveEnv(envMapping?.organization, env);
+  const configOrganization =
+    typeof config.organization === "string" && config.organization
+      ? config.organization
+      : undefined;
+  const organization = configOrganization ?? resolveEnv(envMapping?.organization, env);
 
   if (apiKey) {
     return { isConfigured: true, apiKey, baseUrl, organization };

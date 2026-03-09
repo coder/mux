@@ -8,11 +8,7 @@ import {
 } from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import {
-  GATEWAY_ENABLED_KEY,
-  GATEWAY_MODELS_KEY,
-  HIDDEN_MODELS_KEY,
-} from "@/common/constants/storage";
+import { HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -132,8 +128,10 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    expect(result.current.models).toContain("openai:gpt-5.2");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
+    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
+    expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
     expect(result.current.models).not.toContain("openai:gpt-5.2-pro");
   });
 
@@ -144,9 +142,10 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
-    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
+    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
   test("api key + codex oauth: allows all OpenAI models", () => {
@@ -156,9 +155,10 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
-    expect(result.current.models).toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
+    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
+    expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
   });
 
   test("neither with configured provider: hides Codex OAuth required OpenAI models", () => {
@@ -168,9 +168,10 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    expect(result.current.models).toContain("openai:gpt-5.2-pro");
-    expect(result.current.models).toContain("openai:gpt-5.1-codex");
-    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
+    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
   test("exposes OpenAI auth state flags", () => {
@@ -243,15 +244,10 @@ describe("useModelsFromSettings provider availability gating", () => {
         isEnabled: true,
         isConfigured: true,
         couponCodeSet: true,
+        // Only OPUS is opted-in to gateway routing (via backend config, not localStorage)
+        gatewayModels: [KNOWN_MODELS.OPUS.id],
       },
     };
-
-    globalThis.window.localStorage.setItem(GATEWAY_ENABLED_KEY, JSON.stringify(true));
-    // Only OPUS is opted-in to gateway routing
-    globalThis.window.localStorage.setItem(
-      GATEWAY_MODELS_KEY,
-      JSON.stringify([KNOWN_MODELS.OPUS.id])
-    );
 
     const { result } = renderHook(() => useModelsFromSettings());
 
@@ -274,12 +270,14 @@ describe("useModelsFromSettings provider availability gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    // OAuth-required models (e.g. gpt-5.3-codex) should NOT appear in either list
-    // because selecting them from "Show all models…" would also fail at send time.
-    expect(result.current.models).not.toContain("openai:gpt-5.3-codex");
-    expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex");
+    // OAuth-required models (currently Spark) should NOT appear in either list
+    // because selecting them from "Show all models…" would fail at send time.
+    expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
+    expect(result.current.hiddenModelsForSelector).not.toContain("openai:gpt-5.3-codex-spark");
 
     // Non-OAuth-required OpenAI models should still be in the hidden bucket
+    // when the provider is unconfigured.
+    expect(result.current.hiddenModelsForSelector).toContain("openai:gpt-5.3-codex");
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
   });
 

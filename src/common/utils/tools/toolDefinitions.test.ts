@@ -1,4 +1,4 @@
-import { TaskToolArgsSchema, TOOL_DEFINITIONS } from "./toolDefinitions";
+import { getAvailableTools, TaskToolArgsSchema, TOOL_DEFINITIONS } from "./toolDefinitions";
 
 describe("TOOL_DEFINITIONS", () => {
   it("accepts custom subagent_type IDs (deprecated alias)", () => {
@@ -194,8 +194,65 @@ describe("TOOL_DEFINITIONS", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("always includes global skill management tools", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).toContain("agent_skill_list");
+    expect(tools).toContain("agent_skill_write");
+    expect(tools).toContain("agent_skill_delete");
+    expect(tools).toContain("mux_global_agents_read");
+    expect(tools).toContain("mux_global_agents_write");
+    expect(tools).toContain("mux_config_read");
+    expect(tools).toContain("mux_config_write");
+  });
+
+  it("excludes skills catalog tools by default", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).not.toContain("skills_catalog_search");
+    expect(tools).not.toContain("skills_catalog_read");
+  });
+
+  it("includes skills catalog tools when explicitly enabled", () => {
+    const tools = getAvailableTools("openai:gpt-4o", { enableSkillsCatalogTools: true });
+
+    expect(tools).toContain("skills_catalog_search");
+    expect(tools).toContain("skills_catalog_read");
+  });
+
   it("discourages repeating plan contents or plan file location after propose_plan", () => {
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("do not paste the plan contents");
     expect(TOOL_DEFINITIONS.propose_plan.description).toContain("plan file path");
+  });
+
+  it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
+    const parsed = TOOL_DEFINITIONS.agent_skill_write.schema.safeParse({
+      name: "demo-skill",
+      content: "---\nname: demo-skill\ndescription: demo\n---\n",
+      advertise: false,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  describe("skills_catalog_read schema", () => {
+    it("rejects invalid skillId values", () => {
+      const schema = TOOL_DEFINITIONS.skills_catalog_read.schema;
+      const validBase = { owner: "test-owner", repo: "test-repo" };
+
+      // Path traversal attempts
+      expect(schema.safeParse({ ...validBase, skillId: "../escape" }).success).toBe(false);
+      expect(schema.safeParse({ ...validBase, skillId: "../../etc/passwd" }).success).toBe(false);
+
+      // Absolute paths
+      expect(schema.safeParse({ ...validBase, skillId: "/tmp/a" }).success).toBe(false);
+
+      // Invalid format (uppercase, underscores, etc.)
+      expect(schema.safeParse({ ...validBase, skillId: "Bad_Name" }).success).toBe(false);
+      expect(schema.safeParse({ ...validBase, skillId: "UPPER" }).success).toBe(false);
+
+      // Valid skill names should pass
+      expect(schema.safeParse({ ...validBase, skillId: "my-skill" }).success).toBe(true);
+      expect(schema.safeParse({ ...validBase, skillId: "skill123" }).success).toBe(true);
+    });
   });
 });

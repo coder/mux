@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -55,6 +55,84 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
+  it("surfaces valid OpenAI wireFormat", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          wireFormat: "chatCompletions",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.wireFormat).toBe("chatCompletions");
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "wireFormat")).toBe(true);
+    });
+  });
+
+  it("omits invalid OpenAI wireFormat", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          wireFormat: "graphql",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.wireFormat).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "wireFormat")).toBe(false);
+    });
+  });
+
+  it("surfaces store: false for OpenAI", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          store: false,
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.openai.store).toBe(false);
+    });
+  });
+
+  it("omits store when not set for OpenAI", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(Object.prototype.hasOwnProperty.call(cfg.openai, "store")).toBe(false);
+    });
+  });
+
+  it("surfaces non-secret op:// API key references", () => {
+    withTempConfig((config, service) => {
+      const opRef = "op://Personal/Anthropic/credential";
+      config.saveProvidersConfig({
+        anthropic: {
+          apiKey: opRef,
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.anthropic.apiKeySet).toBe(true);
+      expect(cfg.anthropic.apiKeyIsOpRef).toBe(true);
+      expect(cfg.anthropic.apiKeyOpRef).toBe(opRef);
+    });
+  });
+
   it("marks providers disabled when enabled is false", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
@@ -69,6 +147,33 @@ describe("ProviderService.getConfig", () => {
       expect(cfg.openai.apiKeySet).toBe(true);
       expect(cfg.openai.isEnabled).toBe(false);
       expect(cfg.openai.isConfigured).toBe(false);
+    });
+  });
+
+  it("marks mux-gateway disabled when muxGatewayEnabled is false in main config", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+
+      const defaultMainConfig = config.loadConfigOrDefault();
+      const loadConfigSpy = spyOn(config, "loadConfigOrDefault");
+      loadConfigSpy.mockReturnValue({
+        ...defaultMainConfig,
+        muxGatewayEnabled: false,
+      });
+
+      try {
+        const cfg = service.getConfig();
+
+        expect(cfg["mux-gateway"].couponCodeSet).toBe(true);
+        expect(cfg["mux-gateway"].isEnabled).toBe(false);
+        expect(cfg["mux-gateway"].isConfigured).toBe(false);
+      } finally {
+        loadConfigSpy.mockRestore();
+      }
     });
   });
 
@@ -144,6 +249,21 @@ describe("ProviderService model normalization", () => {
 });
 
 describe("ProviderService.setConfig", () => {
+  it("seeds first-time mux-gateway defaults without GPT-5.2 Codex", () => {
+    withTempConfig((config, service) => {
+      const result = service.setConfig("mux-gateway", ["couponCode"], "gateway-token");
+      expect(result.success).toBe(true);
+
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.["mux-gateway"]?.models).toEqual([
+        "anthropic/claude-sonnet-4-6",
+        "anthropic/claude-opus-4-6",
+        "openai/gpt-5.4",
+      ]);
+      expect(providersConfig?.["mux-gateway"]?.models).not.toContain("openai/gpt-5.2-codex");
+    });
+  });
+
   it("stores enabled=false without deleting existing credentials", () => {
     withTempConfig((config, service) => {
       config.saveProvidersConfig({
@@ -214,5 +334,31 @@ describe("ProviderService.setConfig", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("surfaces disableBetaFeatures: true for Anthropic", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        anthropic: { apiKey: "sk-ant-test", disableBetaFeatures: true },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(cfg.anthropic.disableBetaFeatures).toBe(true);
+    });
+  });
+
+  it("omits disableBetaFeatures when not set for Anthropic", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        anthropic: { apiKey: "sk-ant-test" },
+      });
+
+      const cfg = service.getConfig();
+
+      expect(Object.prototype.hasOwnProperty.call(cfg.anthropic, "disableBetaFeatures")).toBe(
+        false
+      );
+    });
   });
 });

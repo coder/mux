@@ -1,13 +1,16 @@
 import * as fs from "fs/promises";
 import { EventEmitter } from "events";
 
+import assert from "@/common/utils/assert";
 import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
+import { ensurePrivateDir } from "@/node/utils/fs";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import type { SendMessageOptions } from "@/common/orpc/types";
+import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 
@@ -18,10 +21,11 @@ import { StreamManager } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { secretsToRecord } from "@/common/types/secrets";
+import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -36,26 +40,36 @@ import {
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 
 import type { HistoryService } from "./historyService";
+import { delegatedToolCallManager } from "./delegatedToolCallManager";
 import { createErrorEvent } from "./utils/sendMessageError";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { DevToolsService } from "@/node/services/devToolsService";
 
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/providerOptions";
+import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
+import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
-import type { StreamAbortEvent, StreamAbortReason, StreamEndEvent } from "@/common/types/stream";
+import type {
+  ErrorEvent,
+  StreamAbortEvent,
+  StreamAbortReason,
+  StreamEndEvent,
+} from "@/common/types/stream";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
+import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
 import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
@@ -67,6 +81,7 @@ import {
   type SimulationContext,
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -83,7 +98,13 @@ export interface StreamMessageOptions {
   additionalSystemInstructions?: string;
   maxOutputTokens?: number;
   muxProviderOptions?: MuxProviderOptions;
+  /** Internal-only flag for Copilot billing attribution; never sourced from IPC schemas. */
+  agentInitiated?: boolean;
   agentId?: string;
+  /** ACP prompt correlation id used to match stream events to a specific request. */
+  acpPromptId?: string;
+  /** Tool names that should be delegated back to ACP clients for this request. */
+  delegatedToolNames?: string[];
   recordFileState?: (filePath: string, state: FileState) => void;
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
@@ -106,6 +127,47 @@ function safeClone<T>(value: T): T {
     : (JSON.parse(JSON.stringify(value)) as T);
 }
 
+/**
+ * Recursively merge user-provided provider extras under Mux-built provider options.
+ * Mux values win on leaf conflicts; both sides' non-conflicting nested fields are preserved.
+ */
+function mergeProviderExtrasUnderMux(
+  providerExtras: Record<string, unknown>,
+  muxProviderNamespace: Record<string, unknown>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...providerExtras };
+
+  for (const [key, muxValue] of Object.entries(muxProviderNamespace)) {
+    const extraValue = merged[key];
+    merged[key] =
+      isPlainObject(extraValue) && isPlainObject(muxValue)
+        ? mergeProviderExtrasUnderMux(extraValue, muxValue)
+        : muxValue;
+  }
+
+  return merged;
+}
+
+interface ToolExecutionContext {
+  toolCallId?: string;
+  abortSignal?: AbortSignal;
+}
+
+function isToolExecutionContext(value: unknown): value is ToolExecutionContext {
+  if (typeof value !== "object" || value == null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  const toolCallId = record.toolCallId;
+  const abortSignal = record.abortSignal;
+
+  const validToolCallId = toolCallId == null || typeof toolCallId === "string";
+  const validAbortSignal = abortSignal == null || abortSignal instanceof AbortSignal;
+
+  return validToolCallId && validAbortSignal;
+}
+
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
@@ -114,24 +176,42 @@ export class AIService extends EventEmitter {
   private mcpServerManager?: MCPServerManager;
   private readonly policyService?: PolicyService;
   private readonly telemetryService?: TelemetryService;
+  private readonly opResolver?: ExternalSecretResolver;
   private readonly initStateManager: InitStateManager;
   private mockModeEnabled: boolean;
   private mockAiStreamPlayer?: MockAiStreamPlayer;
   private readonly backgroundProcessManager?: BackgroundProcessManager;
   private readonly sessionUsageService?: SessionUsageService;
+  private readonly providerService: ProviderService;
   private readonly providerModelFactory: ProviderModelFactory;
+  private readonly devToolsService?: DevToolsService;
 
   // Tracks in-flight stream startup (before StreamManager emits stream-start).
   // This enables user interrupts (Esc/Ctrl+C) during the UI "starting..." phase.
   private readonly pendingStreamStarts = new Map<
     string,
-    { abortController: AbortController; startTime: number; syntheticMessageId: string }
+    {
+      abortController: AbortController;
+      startTime: number;
+      syntheticMessageId: string;
+      acpPromptId?: string;
+    }
+  >();
+
+  /**
+   * Tracks queued DevTools run metadata by assistant message id so stream-end/abort
+   * can clear orphaned entries when a stream starts but never reaches middleware run creation.
+   */
+  private readonly pendingDevToolsRunMetadataByMessageId = new Map<
+    string,
+    { workspaceId: string; metadataId: string }
   >();
 
   // Debug: captured LLM request payloads for last send per workspace
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
+  private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
 
   constructor(
     config: Config,
@@ -142,7 +222,9 @@ export class AIService extends EventEmitter {
     sessionUsageService?: SessionUsageService,
     workspaceMcpOverridesService?: WorkspaceMcpOverridesService,
     policyService?: PolicyService,
-    telemetryService?: TelemetryService
+    telemetryService?: TelemetryService,
+    devToolsService?: DevToolsService,
+    opResolver?: ExternalSecretResolver
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -157,8 +239,20 @@ export class AIService extends EventEmitter {
     this.sessionUsageService = sessionUsageService;
     this.policyService = policyService;
     this.telemetryService = telemetryService;
-    this.streamManager = new StreamManager(historyService, sessionUsageService);
-    this.providerModelFactory = new ProviderModelFactory(config, providerService, policyService);
+    this.opResolver = opResolver;
+    this.providerService = providerService;
+    this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
+      this.providerService.getConfig()
+    );
+    this.devToolsService = devToolsService;
+    this.providerModelFactory = new ProviderModelFactory(
+      config,
+      providerService,
+      policyService,
+      undefined,
+      devToolsService,
+      opResolver
+    );
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
     this.mockModeEnabled = false;
@@ -181,6 +275,14 @@ export class AIService extends EventEmitter {
     this.taskService = taskService;
   }
 
+  setAnalyticsService(service: { executeRawQuery(sql: string): Promise<unknown> }): void {
+    this.analyticsService = service;
+  }
+
+  getProvidersConfig(): ProvidersConfigMap | null {
+    return this.providerService.getConfig();
+  }
+
   /**
    * Set extra tools to include in every tool call.
    * Used by CLI to inject tools like set_exit_code without modifying core tool definitions.
@@ -197,7 +299,6 @@ export class AIService extends EventEmitter {
     for (const event of [
       "stream-start",
       "stream-delta",
-      "error",
       "tool-call-start",
       "tool-call-delta",
       "tool-call-end",
@@ -208,8 +309,19 @@ export class AIService extends EventEmitter {
       this.streamManager.on(event, (data) => this.emit(event, data));
     }
 
+    // Stream errors can bypass stream-end/stream-abort. Clear any queued metadata
+    // so failed requests don't leak pending-run tracking entries.
+    this.streamManager.on("error", (data: ErrorEvent) => {
+      this.clearTrackedPendingDevToolsRunMetadata(data.messageId);
+      this.emit("error", data);
+    });
+
     // stream-end needs extra logic: capture provider response for debug modal
     this.streamManager.on("stream-end", (data: StreamEndEvent) => {
+      // Streams can end before DevTools middleware creates a run (for example when
+      // interrupted early). Clear any still-queued run metadata for this message.
+      this.clearTrackedPendingDevToolsRunMetadata(data.messageId);
+
       // Best-effort capture of the provider response for the "Last LLM request" debug modal.
       // Must never break live streaming.
       try {
@@ -231,7 +343,7 @@ export class AIService extends EventEmitter {
           }
         }
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         log.warn("Failed to capture debug LLM response snapshot", { error: errMsg });
       }
 
@@ -240,29 +352,95 @@ export class AIService extends EventEmitter {
 
     // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
-      void (async () => {
-        if (data.abandonPartial) {
-          // Caller requested discarding partial - delete without committing
-          await this.historyService.deletePartial(data.workspaceId);
-        } else {
-          // Commit interrupted message to history with partial:true metadata
-          // This ensures /clear and /truncate can clean up interrupted messages
-          const partial = await this.historyService.readPartial(data.workspaceId);
-          if (partial) {
-            await this.historyService.commitPartial(data.workspaceId);
-            await this.historyService.deletePartial(data.workspaceId);
-          }
-        }
+      // Aborts can happen before the first provider call reaches DevTools middleware.
+      // Clear any queued run metadata for this message to avoid memory growth.
+      this.clearTrackedPendingDevToolsRunMetadata(data.messageId);
 
-        // Forward abort event to consumers
-        this.emit("stream-abort", data);
+      void (async () => {
+        try {
+          if (data.abandonPartial) {
+            // Caller requested discarding partial - delete without committing
+            await this.historyService.deletePartial(data.workspaceId);
+          } else {
+            // Commit interrupted message to history with partial:true metadata
+            // This ensures /clear and /truncate can clean up interrupted messages
+            const partial = await this.historyService.readPartial(data.workspaceId);
+            if (partial) {
+              await this.historyService.commitPartial(data.workspaceId);
+              await this.historyService.deletePartial(data.workspaceId);
+            }
+          }
+        } catch (error) {
+          log.error("Failed partial cleanup during stream-abort", {
+            workspaceId: data.workspaceId,
+            error: getErrorMessage(error),
+          });
+        } finally {
+          // Always forward abort event to consumers (workspaceService, agentSession)
+          // even if partial cleanup failed — stream lifecycle consistency is higher priority.
+          this.emit("stream-abort", data);
+        }
       })();
     });
   }
 
+  private trackPendingDevToolsRunMetadata(
+    messageId: string,
+    workspaceId: string,
+    metadataId: string
+  ): void {
+    assert(messageId.trim().length > 0, "trackPendingDevToolsRunMetadata requires a messageId");
+    assert(workspaceId.trim().length > 0, "trackPendingDevToolsRunMetadata requires a workspaceId");
+    assert(metadataId.trim().length > 0, "trackPendingDevToolsRunMetadata requires a metadataId");
+
+    this.pendingDevToolsRunMetadataByMessageId.set(messageId, {
+      workspaceId,
+      metadataId,
+    });
+  }
+
+  private clearTrackedPendingDevToolsRunMetadata(messageId: string): void {
+    // StreamManager can emit stream-abort with an empty messageId during startup races.
+    // Treat that as "nothing to clear" instead of throwing so interruptStream remains reliable.
+    if (messageId.trim().length === 0) {
+      return;
+    }
+
+    const pending = this.pendingDevToolsRunMetadataByMessageId.get(messageId);
+    if (!pending) {
+      return;
+    }
+
+    this.pendingDevToolsRunMetadataByMessageId.delete(messageId);
+    this.devToolsService?.clearPendingRunMetadata(pending.workspaceId, pending.metadataId);
+  }
+
+  private clearTrackedPendingDevToolsRunMetadataById(
+    workspaceId: string,
+    metadataId: string
+  ): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "clearTrackedPendingDevToolsRunMetadataById requires a workspaceId"
+    );
+    assert(
+      metadataId.trim().length > 0,
+      "clearTrackedPendingDevToolsRunMetadataById requires a metadataId"
+    );
+
+    for (const [messageId, pending] of this.pendingDevToolsRunMetadataByMessageId.entries()) {
+      if (pending.workspaceId === workspaceId && pending.metadataId === metadataId) {
+        this.pendingDevToolsRunMetadataByMessageId.delete(messageId);
+        break;
+      }
+    }
+
+    this.devToolsService?.clearPendingRunMetadata(workspaceId, metadataId);
+  }
+
   private async ensureSessionsDir(): Promise<void> {
     try {
-      await fs.mkdir(this.config.sessionsDir, { recursive: true });
+      await ensurePrivateDir(this.config.sessionsDir);
     } catch (error) {
       log.error("Failed to create sessions directory:", error);
     }
@@ -300,7 +478,7 @@ export class AIService extends EventEmitter {
 
       return Ok(metadata);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to read workspace metadata: ${message}`);
     }
   }
@@ -311,9 +489,100 @@ export class AIService extends EventEmitter {
    */
   async createModel(
     modelString: string,
-    muxProviderOptions?: MuxProviderOptions
+    muxProviderOptions?: MuxProviderOptions,
+    opts?: { agentInitiated?: boolean; workspaceId?: string }
   ): Promise<Result<LanguageModel, SendMessageError>> {
-    return this.providerModelFactory.createModel(modelString, muxProviderOptions);
+    return this.providerModelFactory.createModel(modelString, muxProviderOptions, opts);
+  }
+
+  private wrapToolsForDelegation(
+    workspaceId: string,
+    tools: Record<string, Tool>,
+    delegatedToolNames?: string[]
+  ): Record<string, Tool> {
+    const normalizedDelegatedTools =
+      delegatedToolNames
+        ?.map((toolName) => toolName.trim())
+        .filter((toolName) => toolName.length > 0) ?? [];
+
+    if (normalizedDelegatedTools.length === 0) {
+      return tools;
+    }
+
+    const delegatedToolSet = new Set(normalizedDelegatedTools);
+    const wrappedTools = { ...tools };
+
+    for (const [toolName, tool] of Object.entries(tools)) {
+      if (!delegatedToolSet.has(toolName)) {
+        continue;
+      }
+
+      const toolRecord = tool as Record<string, unknown>;
+      const execute = toolRecord.execute;
+      if (typeof execute !== "function") {
+        continue;
+      }
+
+      const wrappedTool = cloneToolPreservingDescriptors(tool);
+      const wrappedToolRecord = wrappedTool as Record<string, unknown>;
+
+      wrappedToolRecord.execute = async (_args: unknown, options: unknown) => {
+        const executionContext = isToolExecutionContext(options) ? options : undefined;
+        const toolCallId = executionContext?.toolCallId?.trim();
+
+        if (executionContext == null || toolCallId == null || toolCallId.length === 0) {
+          throw new Error(
+            `Delegated tool '${toolName}' requires a non-empty toolCallId in execute context`
+          );
+        }
+
+        const pendingResult = delegatedToolCallManager.registerPending(
+          workspaceId,
+          toolCallId,
+          toolName
+        );
+
+        const abortSignal = executionContext.abortSignal;
+        if (abortSignal == null) {
+          return pendingResult;
+        }
+
+        if (abortSignal.aborted) {
+          try {
+            delegatedToolCallManager.cancel(workspaceId, toolCallId, "Interrupted");
+          } catch {
+            // no-op: pending may already have resolved
+          }
+          throw new Error("Interrupted");
+        }
+
+        let abortListener: (() => void) | undefined;
+        const abortPromise = new Promise<never>((_, reject) => {
+          abortListener = () => {
+            try {
+              delegatedToolCallManager.cancel(workspaceId, toolCallId, "Interrupted");
+            } catch {
+              // no-op: pending may already have resolved
+            }
+            reject(new Error("Interrupted"));
+          };
+
+          abortSignal.addEventListener("abort", abortListener, { once: true });
+        });
+
+        try {
+          return await Promise.race([pendingResult, abortPromise]);
+        } finally {
+          if (abortListener != null) {
+            abortSignal.removeEventListener("abort", abortListener);
+          }
+        }
+      };
+
+      wrappedTools[toolName] = wrappedTool;
+    }
+
+    return wrappedTools;
   }
 
   /** Stream a message conversation to the AI model. */
@@ -328,7 +597,10 @@ export class AIService extends EventEmitter {
       additionalSystemInstructions,
       maxOutputTokens,
       muxProviderOptions,
+      agentInitiated,
       agentId,
+      acpPromptId,
+      delegatedToolNames,
       recordFileState,
       changedFileAttachments,
       postCompactionAttachments,
@@ -352,9 +624,12 @@ export class AIService extends EventEmitter {
       abortController: pendingAbortController,
       startTime,
       syntheticMessageId,
+      acpPromptId,
     });
 
     const combinedAbortSignal = pendingAbortController.signal;
+
+    let pendingRunMetadataId: string | null = null;
 
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
@@ -397,7 +672,8 @@ export class AIService extends EventEmitter {
       const modelResult = await this.providerModelFactory.resolveAndCreateModel(
         modelString,
         effectiveThinkingLevel,
-        effectiveMuxProviderOptions
+        effectiveMuxProviderOptions,
+        { agentInitiated, workspaceId }
       );
       if (!modelResult.success) {
         return Err(modelResult.error);
@@ -436,10 +712,10 @@ export class AIService extends EventEmitter {
       }
       log.debug_obj(`${workspaceId}/1b_provider_request_messages.json`, providerRequestMessages);
 
-      // OpenAI-specific: Keep reasoning parts in history
-      // OpenAI manages conversation state via previousResponseId
+      // OpenAI-specific: Keep reasoning parts in history so each request can
+      // carry forward reasoning context without relying on previous_response_id.
       if (canonicalProviderName === "openai") {
-        log.debug("Keeping reasoning parts for OpenAI (managed via previousResponseId)");
+        log.debug("Keeping reasoning parts for OpenAI (managed via explicit history)");
       }
       // Add [CONTINUE] sentinel to partial messages (for model context)
       const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
@@ -520,6 +796,7 @@ export class AIService extends EventEmitter {
             messageId: errorMessageId,
             error: errorMessage,
             errorType,
+            acpPromptId,
           })
         );
 
@@ -640,6 +917,7 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions,
         modelString,
         cfg,
+        providersConfig: this.providerService.getConfig(),
         mcpServers,
       });
 
@@ -665,7 +943,7 @@ export class AIService extends EventEmitter {
             runtime,
             workspacePath,
             overrides: mcpOverrides,
-            projectSecrets: secretsToRecord(projectSecrets),
+            projectSecrets: await secretsToRecord(projectSecrets, this.opResolver),
           });
 
           mcpTools = result.tools;
@@ -704,7 +982,7 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
-          secrets: secretsToRecord(projectSecrets),
+          secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv: getMuxEnv(
             metadata.projectPath,
             getRuntimeType(metadata.runtimeConfig),
@@ -716,6 +994,7 @@ export class AIService extends EventEmitter {
             }
           ),
           runtimeTempDir,
+          openaiWireFormat: effectiveMuxProviderOptions?.openai?.wireFormat,
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan agent configuration for plan file access.
           // - read: plan file is readable in all agents (useful context)
@@ -735,17 +1014,29 @@ export class AIService extends EventEmitter {
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback
           recordFileState,
+          onConfigChanged: () => this.providerService.notifyConfigChanged(),
           taskService: this.taskService,
+          analyticsService: this.analyticsService,
           // PTC experiments for inheritance to subagents
           experiments,
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,
+          // Trust gating: only run hooks/scripts for explicitly trusted projects
+          trusted:
+            this.config
+              .loadConfigOrDefault()
+              .projects.get(stripTrailingSlashes(metadata.projectPath))?.trusted ?? false,
         },
         workspaceId,
         this.initStateManager,
         toolInstructions,
         mcpTools
+      );
+      const toolsWithDelegation = this.wrapToolsForDelegation(
+        workspaceId,
+        allTools,
+        delegatedToolNames
       );
 
       // Create assistant message ID early so the PTC callback closure captures it.
@@ -754,7 +1045,7 @@ export class AIService extends EventEmitter {
 
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
       const tools = await applyToolPolicyAndExperiments({
-        allTools,
+        allTools: toolsWithDelegation,
         extraTools: this.extraTools,
         effectiveToolPolicy,
         experiments,
@@ -835,8 +1126,7 @@ export class AIService extends EventEmitter {
       // Build provider options based on thinking level and request-sliced message history.
       const truncationMode = openaiTruncationModeOverride;
       // Use the same boundary-sliced payload history that we send to the provider.
-      // This prevents previousResponseId lookup from reaching pre-compaction epochs.
-      // Also pass callback to filter out lost responseIds (OpenAI invalidated them).
+      // This keeps OpenAI request state aligned with the explicit history Mux sends.
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching.
       const providerOptions = buildProviderOptions(
         modelString,
@@ -845,13 +1135,52 @@ export class AIService extends EventEmitter {
         (id) => this.streamManager.isResponseIdLost(id),
         effectiveMuxProviderOptions,
         workspaceId,
-        truncationMode
+        truncationMode,
+        this.providerService.getConfig()
       );
 
-      // Build per-request HTTP headers (e.g., anthropic-beta for 1M context).
-      // This is the single injection site for provider-specific headers, handling
-      // both direct and gateway-routed models identically.
-      const requestHeaders = buildRequestHeaders(modelString, effectiveMuxProviderOptions);
+      // Build per-request HTTP headers (e.g., workspace correlation and
+      // anthropic-beta for 1M context). This is the single injection site for
+      // provider-specific headers, handling both direct and gateway-routed models
+      // identically.
+      let requestHeaders = buildRequestHeaders(
+        modelString,
+        effectiveMuxProviderOptions,
+        workspaceId,
+        this.providerService.getConfig()
+      );
+
+      // --- Model parameter overrides from providers.jsonc ---
+      const providersConfig = this.config.loadProvidersConfig();
+      const resolvedOverrides = resolveModelParameterOverrides(
+        providersConfig,
+        canonicalProviderName,
+        canonicalModelString,
+        effectiveModelString
+      );
+
+      // Merge provider extras (user knobs) UNDER Mux-built options (safety-critical).
+      // Recursive merge within the provider namespace preserves non-conflicting nested
+      // subfields (e.g., user reasoning.max_tokens alongside Mux reasoning.enabled).
+      // Mux-built values win on leaf conflicts for safety of thinking/reasoning/cache.
+      const muxProviderNamespace = (providerOptions as Record<string, unknown>)?.[
+        canonicalProviderName
+      ];
+      const mergedProviderOptions = resolvedOverrides.providerExtras
+        ? {
+            ...providerOptions,
+            [canonicalProviderName]: isPlainObject(muxProviderNamespace)
+              ? mergeProviderExtrasUnderMux(resolvedOverrides.providerExtras, muxProviderNamespace)
+              : resolvedOverrides.providerExtras,
+          }
+        : providerOptions;
+
+      if (Object.keys(resolvedOverrides.standard).length > 0 || resolvedOverrides.providerExtras) {
+        log.debug(
+          `Resolved model parameter overrides for ${canonicalModelString}`,
+          resolvedOverrides
+        );
+      }
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
@@ -868,7 +1197,7 @@ export class AIService extends EventEmitter {
                   { description: t.description, inputSchema: t.inputSchema },
                 ])
               ),
-              providerOptions,
+              providerOptions: mergedProviderOptions,
               thinkingLevel: effectiveThinkingLevel,
               maxOutputTokens,
               mode: effectiveMode,
@@ -879,6 +1208,16 @@ export class AIService extends EventEmitter {
             2
           )}`
         );
+
+        if (resolvedOverrides.standard && Object.keys(resolvedOverrides.standard).length > 0) {
+          log.debug("Model parameter overrides (standard):", resolvedOverrides.standard);
+        }
+        if (resolvedOverrides.providerExtras) {
+          log.debug(
+            "Model parameter overrides (provider extras):",
+            resolvedOverrides.providerExtras
+          );
+        }
       }
 
       if (combinedAbortSignal.aborted) {
@@ -904,7 +1243,7 @@ export class AIService extends EventEmitter {
       try {
         this.lastLlmRequestByWorkspace.set(workspaceId, safeClone(snapshot));
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
+        const errMsg = getErrorMessage(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
       const toolsForStream =
@@ -924,11 +1263,39 @@ export class AIService extends EventEmitter {
               runtimeTempDir,
               runtime,
               agentDiscoveryPath,
-              createModel: (ms, o) => this.createModel(ms, o),
+              createModel: (ms, o, createOptions) =>
+                this.createModel(ms, o, { ...(createOptions ?? {}), workspaceId }),
               emitBashOutput: (ev) => this.emit("bash-output", ev),
               sessionUsageService: this.sessionUsageService,
             })
           : tools;
+      // Top-level agents need a belt-and-suspenders toolChoice safety net for
+      // required routing/completion tools. Sub-agents rely on taskService.ts
+      // post-stream recovery when a required tool is skipped.
+      const forceToolChoice = !isSubagentWorkspace;
+
+      const canQueueDevToolsRunMetadata =
+        this.devToolsService?.enabled === true &&
+        typeof modelResult.data.model !== "string" &&
+        modelResult.data.model.specificationVersion === "v3";
+
+      if (canQueueDevToolsRunMetadata) {
+        // Correlate pending run metadata with the specific request that reaches
+        // DevTools middleware to avoid cross-request policy leakage. Queue only
+        // when middleware is guaranteed to run (LanguageModelV3).
+        pendingRunMetadataId = String(streamToken);
+        this.devToolsService.setPendingRunMetadata(workspaceId, pendingRunMetadataId, {
+          toolPolicy:
+            effectiveToolPolicy != null && effectiveToolPolicy.length > 0
+              ? effectiveToolPolicy
+              : undefined,
+        });
+        this.trackPendingDevToolsRunMetadata(assistantMessageId, workspaceId, pendingRunMetadataId);
+        requestHeaders = {
+          ...requestHeaders,
+          [DEVTOOLS_RUN_METADATA_ID_HEADER]: pendingRunMetadataId,
+        };
+      }
 
       const streamResult = await this.streamManager.startStream(
         workspaceId,
@@ -947,9 +1314,10 @@ export class AIService extends EventEmitter {
           agentId: effectiveAgentId,
           mode: effectiveMode,
           routedThroughGateway,
+          ...(acpPromptId != null ? { acpPromptId } : {}),
           ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },
-        providerOptions,
+        mergedProviderOptions,
         maxOutputTokens,
         effectiveToolPolicy,
         streamToken, // Pass the pre-generated stream token
@@ -957,10 +1325,19 @@ export class AIService extends EventEmitter {
         metadata.name,
         effectiveThinkingLevel,
         requestHeaders,
-        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined
+        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+        forceToolChoice,
+        resolvedOverrides.standard
       );
 
       if (!streamResult.success) {
+        // StreamManager failed before registering a stream. Clear queued run
+        // metadata so it cannot attach to a later unrelated request.
+        if (pendingRunMetadataId != null) {
+          this.clearTrackedPendingDevToolsRunMetadata(assistantMessageId);
+          pendingRunMetadataId = null;
+        }
+
         // StreamManager already returns SendMessageError
         return Err(streamResult.error);
       }
@@ -968,6 +1345,10 @@ export class AIService extends EventEmitter {
       // If we were interrupted during StreamManager startup before the stream was registered,
       // make sure we don't leave an empty assistant placeholder behind.
       if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
+        if (pendingRunMetadataId != null) {
+          this.clearTrackedPendingDevToolsRunMetadata(assistantMessageId);
+          pendingRunMetadataId = null;
+        }
         await deleteAbortedPlaceholder(assistantMessageId);
       }
 
@@ -975,7 +1356,12 @@ export class AIService extends EventEmitter {
       // No need for event listener here
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (pendingRunMetadataId != null) {
+        this.clearTrackedPendingDevToolsRunMetadataById(workspaceId, pendingRunMetadataId);
+        pendingRunMetadataId = null;
+      }
+
+      const errorMessage = getErrorMessage(error);
       log.error("Stream message error:", error);
       // Return as unknown error type
       return Err({ type: "unknown", raw: `Failed to stream message: ${errorMessage}` });
@@ -1012,6 +1398,7 @@ export class AIService extends EventEmitter {
           messageId: pending.syntheticMessageId,
           metadata: { duration: Date.now() - pending.startTime },
           abandonPartial: options?.abandonPartial,
+          acpPromptId: pending.acpPromptId,
         } satisfies StreamAbortEvent);
       }
     }
@@ -1058,12 +1445,12 @@ export class AIService extends EventEmitter {
    * Replay stream events
    * Emits the same events that would be emitted during live streaming
    */
-  async replayStream(workspaceId: string): Promise<void> {
+  async replayStream(workspaceId: string, opts?: { afterTimestamp?: number }): Promise<void> {
     if (this.mockModeEnabled && this.mockAiStreamPlayer) {
       await this.mockAiStreamPlayer.replayStream(workspaceId);
       return;
     }
-    await this.streamManager.replayStream(workspaceId);
+    await this.streamManager.replayStream(workspaceId, opts);
   }
 
   debugGetLastMockPrompt(workspaceId: string): Result<MuxMessage[] | null> {
@@ -1123,7 +1510,7 @@ export class AIService extends EventEmitter {
       await fs.rm(workspaceDir, { recursive: true, force: true });
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to delete workspace: ${message}`);
     }
   }

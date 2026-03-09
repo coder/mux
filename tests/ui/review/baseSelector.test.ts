@@ -20,6 +20,8 @@ import { installDom } from "../dom";
 import { renderReviewPanel, type RenderedApp } from "../renderReviewPanel";
 import { cleanupView, setupWorkspaceView } from "../helpers";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 configureTestRetries(2);
 
@@ -40,8 +42,8 @@ async function setupReviewPanel(
   await setupWorkspaceView(view, metadata, workspaceId);
   await view.selectTab("review");
   // Wait for ReviewControls to render (base selector is always shown).
-  // We avoid waiting on diff output here because the default base is `origin/main`,
-  // which may not exist in test repos.
+  // We avoid waiting on diff output here because the default base is a trunk ref,
+  // which may not exist as a remote tracking branch in test repos.
   await waitFor(
     () => {
       const btn = view.container.querySelector('[data-testid="review-base-value"]');
@@ -130,6 +132,11 @@ describeIntegration("ReviewPanel base selector", () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
+      // Reset persisted review-base keys so this test validates trunk auto-detection
+      // rather than inheriting state from prior tests in the same browser storage.
+      updatePersistedState(STORAGE_KEYS.reviewDefaultBase(metadata.projectPath), null);
+      updatePersistedState(STORAGE_KEYS.reviewDiffBase(workspaceId), null);
+
       const view = renderReviewPanel({
         apiClient: env.orpc,
         metadata,
@@ -138,8 +145,20 @@ describeIntegration("ReviewPanel base selector", () => {
       try {
         await setupReviewPanel(view, metadata, workspaceId);
 
-        // Verify initial base (default is origin/main per workspaceDefaults)
-        expect(getDisplayedBase(view.container)).toBe("origin/main");
+        const branchResult = await env.orpc.projects.listBranches({
+          projectPath: metadata.projectPath,
+        });
+        const expectedInitialBase =
+          branchResult.recommendedTrunk && branchResult.recommendedTrunk.trim().length > 0
+            ? `origin/${branchResult.recommendedTrunk.trim()}`
+            : WORKSPACE_DEFAULTS.reviewBase;
+
+        await waitFor(
+          () => {
+            expect(getDisplayedBase(view.container)).toBe(expectedInitialBase);
+          },
+          { timeout: 5_000 }
+        );
 
         // Open dropdown and click HEAD~1
         await openBaseSelectorDropdown(view.container);

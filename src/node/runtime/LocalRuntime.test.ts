@@ -117,6 +117,7 @@ describe("LocalRuntime", () => {
       await fs.writeFile(hookPath, "#!/usr/bin/env bash\n\necho ran > .init-marker\n");
       await fs.chmod(hookPath, 0o755);
 
+      // Init hook should run when trusted
       {
         const logger = createMockLogger();
         const result = await runtime.initWorkspace({
@@ -125,6 +126,7 @@ describe("LocalRuntime", () => {
           trunkBranch: "main",
           workspacePath: testDir,
           initLogger: logger,
+          trusted: true,
         });
         expect(result.success).toBe(true);
       }
@@ -157,6 +159,39 @@ describe("LocalRuntime", () => {
         () => false
       );
       expect(skippedMarkerExists).toBe(false);
+    });
+
+    it("skips init hook when project is untrusted", async () => {
+      const runtime = new LocalRuntime(testDir);
+      const muxDir = path.join(testDir, ".mux");
+      await fs.mkdir(muxDir, { recursive: true });
+
+      const markerPath = path.join(testDir, ".init-marker");
+      await fs.rm(markerPath, { force: true });
+
+      const hookPath = path.join(muxDir, "init");
+      await fs.writeFile(hookPath, "#!/usr/bin/env bash\n\necho ran > .init-marker\n");
+      await fs.chmod(hookPath, 0o755);
+
+      // Init hook should be skipped when trusted is false (default-deny)
+      const logger = createMockLogger();
+      const result = await runtime.initWorkspace({
+        projectPath: testDir,
+        branchName: "main",
+        trunkBranch: "main",
+        workspacePath: testDir,
+        initLogger: logger,
+        trusted: false,
+      });
+      expect(result.success).toBe(true);
+      expect(logger.steps).toContain("Skipping .mux/init hook (project not trusted)");
+
+      const markerExists = await fs.access(markerPath).then(
+        () => true,
+        () => false
+      );
+      // Hook must NOT have executed — marker file should not exist
+      expect(markerExists).toBe(false);
     });
   });
 

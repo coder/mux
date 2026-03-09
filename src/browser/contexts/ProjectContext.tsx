@@ -11,6 +11,8 @@ import {
 import { useAPI } from "@/browser/contexts/API";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import type { BranchListResult } from "@/common/orpc/types";
+import type { z } from "zod";
+import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import type { Secret } from "@/common/types/secrets";
 import type { Result } from "@/common/types/result";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -19,6 +21,12 @@ import {
   deleteWorkspaceStorage,
   getDraftScopeId,
 } from "@/common/constants/storage";
+import { getErrorMessage } from "@/common/utils/errors";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import {
+  normalizeProjectPathForComparison,
+  resolveProjectPathFromProjectQuery,
+} from "@/common/utils/deepLink";
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -30,13 +38,41 @@ interface WorkspaceModalState {
   isLoading: boolean;
 }
 
+type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
+
+type ProjectRemoveResult =
+  | { success: true }
+  | {
+      success: false;
+      error: ProjectRemoveError;
+    };
+
+export type ProjectQuery =
+  | { type: "path"; value: string }
+  | { type: "routeId"; value: string }
+  | { type: "fuzzy"; value: string };
+
+/** Selector fields from a deep-link payload for resolving which project to open a new chat in. */
+export interface NewChatProjectSelector {
+  projectPath?: string | null;
+  projectId?: string | null;
+  project?: string | null;
+}
+
 export interface ProjectContext {
-  projects: Map<string, ProjectConfig>;
+  /** User-visible projects only (system projects filtered out). */
+  userProjects: Map<string, ProjectConfig>;
+  /** Canonical system project path when configured (e.g. Chat with Mux), otherwise null. */
+  systemProjectPath: string | null;
+  /** Resolve project path by caller intent (exact path, route ID, or fuzzy deep-link query). */
+  resolveProjectPath: (query: ProjectQuery) => string | null;
+  /** Read project config from the full project map (includes system projects). */
+  getProjectConfig: (projectPath: string) => ProjectConfig | undefined;
   /** True while initial project list is loading */
   loading: boolean;
   refreshProjects: () => Promise<void>;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
-  removeProject: (path: string) => Promise<{ success: boolean; error?: string }>;
+  removeProject: (path: string, options?: { force?: boolean }) => Promise<ProjectRemoveResult>;
 
   // Project creation modal
   isProjectCreateModalOpen: boolean;
@@ -71,6 +107,10 @@ export interface ProjectContext {
     workspaceId: string,
     sectionId: string | null
   ) => Promise<Result<void>>;
+  /** Whether any project (user or system) is loaded. */
+  hasAnyProject: boolean;
+  /** Resolve the target project for a new-chat deep link. Tries explicit selectors, then falls back to default. */
+  resolveNewChatProjectPath: (selector: NewChatProjectSelector) => string | null;
 }
 
 const ProjectContext = createContext<ProjectContext | undefined>(undefined);
@@ -83,9 +123,27 @@ function deriveProjectName(projectPath: string): string {
   return segments[segments.length - 1] ?? projectPath;
 }
 
+/** Normalize a selector field: trim whitespace, treat empty/whitespace-only as absent. */
+function toNonEmptyTrimmed(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
 export function ProjectProvider(props: { children: ReactNode }) {
   const { api } = useAPI();
-  const [projects, setProjects] = useState<Map<string, ProjectConfig>>(new Map());
+  const [allProjectsInternal, setAllProjectsInternal] = useState<Map<string, ProjectConfig>>(
+    new Map()
+  );
+  const userProjects = useMemo(
+    () => new Map([...allProjectsInternal].filter(([, cfg]) => cfg.projectKind !== "system")),
+    [allProjectsInternal]
+  );
+  const systemProjectPath = useMemo(
+    () =>
+      [...allProjectsInternal.entries()].find(([, cfg]) => cfg.projectKind === "system")?.[0] ??
+      null,
+    [allProjectsInternal]
+  );
   const [loading, setLoading] = useState(true);
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
@@ -123,7 +181,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       }
 
       latestAppliedProjectsRefreshSeqRef.current = refreshSeq;
-      setProjects(new Map(projectsList));
+      setAllProjectsInternal(new Map(projectsList));
     } catch (error) {
       // Ignore out-of-date refreshes so an older error can't clobber a newer success.
       if (refreshSeq < latestAppliedProjectsRefreshSeqRef.current) {
@@ -143,7 +201,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
   }, [refreshProjects]);
 
   const addProject = useCallback((normalizedPath: string, projectConfig: ProjectConfig) => {
-    setProjects((prev) => {
+    setAllProjectsInternal((prev) => {
       const next = new Map(prev);
       next.set(normalizedPath, projectConfig);
       return next;
@@ -151,12 +209,20 @@ export function ProjectProvider(props: { children: ReactNode }) {
   }, []);
 
   const removeProject = useCallback(
-    async (path: string): Promise<{ success: boolean; error?: string }> => {
-      if (!api) return { success: false, error: "API not connected" };
+    async (path: string, options?: { force?: boolean }): Promise<ProjectRemoveResult> => {
+      if (!api) {
+        return {
+          success: false,
+          error: { type: "unknown", message: "API not connected" },
+        };
+      }
       try {
-        const result = await api.projects.remove({ projectPath: path });
+        const result = await api.projects.remove({
+          projectPath: path,
+          force: options?.force,
+        });
         if (result.success) {
-          setProjects((prev) => {
+          setAllProjectsInternal((prev) => {
             const next = new Map(prev);
             next.delete(path);
             return next;
@@ -191,17 +257,103 @@ export function ProjectProvider(props: { children: ReactNode }) {
           }
 
           return { success: true };
-        } else {
-          console.error("Failed to remove project:", result.error);
-          return { success: false, error: result.error };
         }
+
+        const error = result.error;
+        if (error.type === "workspace_blockers") {
+          // Expected user-facing validation failures should surface in UI without
+          // polluting error-level console output.
+          console.warn("Failed to remove project:", error);
+        } else {
+          console.error("Failed to remove project:", error);
+        }
+        return { success: false, error };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to remove project:", errorMessage);
-        return { success: false, error: errorMessage };
+        return {
+          success: false,
+          error: { type: "unknown" as const, message: errorMessage },
+        };
       }
     },
     [api]
+  );
+
+  const resolveProjectPath = useCallback(
+    (query: ProjectQuery): string | null => {
+      if (query.type === "path") {
+        const platform = globalThis.window?.api?.platform;
+        const normalizedTarget = normalizeProjectPathForComparison(query.value, platform);
+
+        for (const projectPath of allProjectsInternal.keys()) {
+          if (normalizeProjectPathForComparison(projectPath, platform) === normalizedTarget) {
+            return projectPath;
+          }
+        }
+
+        return null;
+      }
+
+      if (query.type === "routeId") {
+        for (const projectPath of allProjectsInternal.keys()) {
+          if (getProjectRouteId(projectPath) === query.value) {
+            return projectPath;
+          }
+        }
+
+        return null;
+      }
+
+      return resolveProjectPathFromProjectQuery(allProjectsInternal.keys(), query.value);
+    },
+    [allProjectsInternal]
+  );
+
+  const getProjectConfig = useCallback(
+    (projectPath: string): ProjectConfig | undefined => {
+      return allProjectsInternal.get(projectPath);
+    },
+    [allProjectsInternal]
+  );
+
+  const hasAnyProject = allProjectsInternal.size > 0;
+
+  // Default project selection: prefer first user project → system project → any project → null.
+  const resolveDefaultProjectPath = useCallback(() => {
+    const firstUser = userProjects.keys().next().value;
+    if (typeof firstUser === "string") return firstUser;
+    if (typeof systemProjectPath === "string") return systemProjectPath;
+    const firstAny = allProjectsInternal.keys().next().value;
+    return typeof firstAny === "string" ? firstAny : null;
+  }, [userProjects, systemProjectPath, allProjectsInternal]);
+
+  // Canonical resolver for new-chat deep links: explicit selectors first, default fallback last.
+  const resolveNewChatProjectPath = useCallback(
+    (selector: NewChatProjectSelector): string | null => {
+      const exactPath = toNonEmptyTrimmed(selector.projectPath);
+      if (exactPath) {
+        const byPath = resolveProjectPath({ type: "path", value: exactPath });
+        if (byPath) return byPath;
+      }
+
+      const routeId = toNonEmptyTrimmed(selector.projectId);
+      if (routeId) {
+        const byRoute = resolveProjectPath({ type: "routeId", value: routeId });
+        if (byRoute) return byRoute;
+      }
+
+      // Back-compat: if projectPath didn't match exactly, try fuzzy matching by path segment.
+      const projectQuery = toNonEmptyTrimmed(selector.project);
+      const fuzzy = projectQuery ?? exactPath;
+      if (fuzzy) {
+        const byQuery = resolveProjectPath({ type: "fuzzy", value: fuzzy });
+        if (byQuery) return byQuery;
+      }
+
+      return resolveDefaultProjectPath();
+    },
+    [resolveProjectPath, resolveDefaultProjectPath]
   );
 
   const getBranchesForProject = useCallback(
@@ -382,7 +534,12 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
   const value = useMemo<ProjectContext>(
     () => ({
-      projects,
+      userProjects,
+      systemProjectPath,
+      resolveProjectPath,
+      hasAnyProject,
+      resolveNewChatProjectPath,
+      getProjectConfig,
       loading,
       refreshProjects,
       addProject,
@@ -403,7 +560,12 @@ export function ProjectProvider(props: { children: ReactNode }) {
       assignWorkspaceToSection,
     }),
     [
-      projects,
+      userProjects,
+      systemProjectPath,
+      resolveProjectPath,
+      hasAnyProject,
+      resolveNewChatProjectPath,
+      getProjectConfig,
       loading,
       refreshProjects,
       addProject,

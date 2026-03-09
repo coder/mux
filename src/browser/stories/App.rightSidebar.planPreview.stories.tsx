@@ -31,7 +31,7 @@ function configurePlanArtifactMocks(client: APIClient): void {
 
     return Promise.resolve({
       planPath: PLAN_PREVIEW_PATH,
-      trackedFilePaths: ["src/browser/components/RightSidebar/PostCompactionSection.tsx"],
+      trackedFilePaths: ["src/browser/features/RightSidebar/PostCompactionSection.tsx"],
       excludedItems: Array.from(excludedItems),
     });
   };
@@ -93,7 +93,7 @@ export const PlanPreviewModal: AppStory = {
 
         updatePersistedState(getPostCompactionStateKey(PLAN_PREVIEW_WORKSPACE_ID), {
           planPath: PLAN_PREVIEW_PATH,
-          trackedFilePaths: ["src/browser/components/RightSidebar/PostCompactionSection.tsx"],
+          trackedFilePaths: ["src/browser/features/RightSidebar/PostCompactionSection.tsx"],
           excludedItems: [],
         });
 

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from "react";
 import type { Result } from "@/common/types/result";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface TitleEditResult {
   success: boolean;
@@ -114,7 +115,7 @@ export const TitleEditProvider: React.FC<TitleEditProviderProps> = ({
         })
         .catch((error: unknown) => {
           if (typeof window !== "undefined") {
-            window.alert(error instanceof Error ? error.message : String(error));
+            window.alert(getErrorMessage(error));
           }
         })
         .finally(() => {

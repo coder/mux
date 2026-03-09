@@ -1,6 +1,6 @@
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
-import { matchesKeybind, isTerminalFocused } from "@/browser/utils/ui/keybinds";
+import { matchesKeybind, isTerminalFocused, isDialogOpen } from "@/browser/utils/ui/keybinds";
 
 export function handleLayoutSlotHotkeys(
   e: KeyboardEvent,
@@ -13,6 +13,12 @@ export function handleLayoutSlotHotkeys(
   }
 ): boolean {
   if (params.isCommandPaletteOpen || params.isSettingsOpen) {
+    return false;
+  }
+
+  // Dialogs are modal — don't process layout hotkeys when one is open.
+  // This runs in capture phase, so bubble-phase stopPropagation from dialog onKeyDown can't block it.
+  if (isDialogOpen()) {
     return false;
   }
 

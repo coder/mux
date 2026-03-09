@@ -2,17 +2,41 @@
  * Markdown rendering stories (tables, code blocks)
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { STABLE_TIMESTAMP, createUserMessage, createAssistantMessage } from "./mockFactory";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, waitFor } from "@storybook/test";
-import { waitForChatMessagesLoaded } from "./storyPlayHelpers";
+import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
+import { UserMessageContent } from "@/browser/features/Messages/UserMessageContent";
+import { lightweightMeta } from "./meta.js";
 
-import { setupSimpleChatStory } from "./storyHelpers";
-
-export default {
-  ...appMeta,
+const meta = {
+  ...lightweightMeta,
   title: "App/Markdown",
-};
+  component: MarkdownRenderer,
+} satisfies Meta<typeof MarkdownRenderer>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+function AssistantMarkdownCanvas(props: { content: string; testId?: string }) {
+  return (
+    <div className="bg-background flex min-h-screen justify-center p-6">
+      <div data-testid={props.testId} className="w-full max-w-3xl overflow-x-hidden">
+        <MarkdownRenderer content={props.content} />
+      </div>
+    </div>
+  );
+}
+
+function UserMarkdownCanvas(props: { content: string; testId?: string }) {
+  return (
+    <div className="bg-background flex min-h-screen justify-center p-6">
+      <div data-testid={props.testId} className="w-full max-w-3xl overflow-x-hidden px-4 py-3">
+        <UserMessageContent content={props.content} variant="sent" />
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONTENT FIXTURES
@@ -116,57 +140,52 @@ Code blocks without language (regression: avoid extra vertical spacing):
 65d02772b 🤖 feat: Settings-driven model selector with visibility controls
 \`\`\``;
 
+const BLOCKQUOTE_CONTENT = `Here are blockquote examples:
+
+## Simple Blockquote
+
+> This is a simple blockquote. It should look clean and visually distinct from the surrounding text.
+
+## Multi-line Blockquote
+
+> This is a longer blockquote that spans multiple lines. It demonstrates how the styling
+> holds up with more content. The background and border should make it easy to distinguish
+> from normal paragraph text.
+
+## Blockquote with Inline Formatting
+
+> **Important:** You can use \`inline code\`, **bold**, and *italic* inside blockquotes.
+> They should all render correctly within the styled container.
+
+## Nested Blockquotes
+
+> Outer blockquote
+>
+> > Inner nested blockquote with additional context.
+>
+> Back to the outer level.
+
+## Blockquote after a Paragraph
+
+Here is some regular text before a blockquote.
+
+> And here is the blockquote that follows.
+
+And some text after.`;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Markdown tables in chat */
-export const Tables: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-tables",
-          messages: [
-            createUserMessage("msg-1", "Show me some table examples", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", TABLE_CONTENT, {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-            }),
-          ],
-        })
-      }
-    />
-  ),
+export const Tables: Story = {
+  render: () => <AssistantMarkdownCanvas content={TABLE_CONTENT} />,
 };
 
 /** Single-line code blocks - copy button should be compact */
-export const SingleLineCodeBlocks: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-single-line",
-          messages: [
-            createUserMessage("msg-1", "Show me single-line code", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", SINGLE_LINE_CODE, {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
+export const SingleLineCodeBlocks: Story = {
+  render: () => <AssistantMarkdownCanvas content={SINGLE_LINE_CODE} />,
+  play: async ({ canvasElement }) => {
     // Wait for code blocks to render with highlighting
     const codeWrappers = await waitFor(() => {
       const candidates = Array.from(canvasElement.querySelectorAll(".code-block-wrapper"));
@@ -194,52 +213,14 @@ export const SingleLineCodeBlocks: AppStory = {
 };
 
 /** SQL with double underscores in code block - tests for bug where __ leaks to end */
-export const SqlWithDoubleUnderscore: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-sql-underscore",
-          messages: [
-            createUserMessage("msg-1", "Show me the SQL query", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", SQL_WITH_DOUBLE_UNDERSCORE, {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-            }),
-          ],
-        })
-      }
-    />
-  ),
+export const SqlWithDoubleUnderscore: Story = {
+  render: () => <AssistantMarkdownCanvas content={SQL_WITH_DOUBLE_UNDERSCORE} />,
 };
 
 /** Code blocks with syntax highlighting */
-export const CodeBlocks: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-code",
-          messages: [
-            createUserMessage("msg-1", "Show me the code", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", CODE_CONTENT, {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
+export const CodeBlocks: Story = {
+  render: () => <AssistantMarkdownCanvas content={CODE_CONTENT} />,
+  play: async ({ canvasElement }) => {
     // Wait for ALL code blocks with language hints to be highlighted.
     // CODE_CONTENT has 3 language-tagged blocks (2× typescript, 1× text) that use async Shiki.
     // Waiting for all prevents flaky snapshots from partial highlighting state.
@@ -332,7 +313,7 @@ const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentTh
 ## Long List Items
 
 - This is a very long list item that contains a lot of text and should wrap properly within the message container without causing horizontal scrollbar on the entire chat window
-- Another item with a long URL: https://github.com/coder/mux/blob/main/src/browser/components/Messages/MessageWindow.tsx#L72-L76
+- Another item with a long URL: https://github.com/coder/mux/blob/main/src/browser/features/Messages/MessageWindow.tsx#L72-L76
 - \`inline code with a really long function name like thisIsAReallyLongFunctionNameThatShouldWrapOrScrollProperly()\`
 
 ## Long Paragraph
@@ -370,29 +351,9 @@ const reallyLongVariableName = someFunction(argumentOne, argumentTwo, argumentTh
 Any ideas?`;
 
 /** User message list spacing - regression test for extra list padding */
-export const UserMessageListSpacing: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-user-list",
-          messages: [
-            createUserMessage("msg-1", USER_LIST_CONTENT, {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 10000,
-            }),
-            createAssistantMessage("msg-2", "Noted.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP,
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
+export const UserMessageListSpacing: Story = {
+  render: () => <UserMarkdownCanvas content={USER_LIST_CONTENT} />,
+  play: async ({ canvasElement }) => {
     const orderedList = await waitFor(() => {
       const list = canvasElement.querySelector(".user-message-markdown ol");
       if (!list) throw new Error("User list not found");
@@ -411,52 +372,14 @@ export const UserMessageListSpacing: AppStory = {
 };
 
 /** User message with code blocks - tests scrolling for long lines */
-export const UserMessageCodeBlock: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-user-code",
-          messages: [
-            createUserMessage("msg-1", USER_CODE_BLOCKS, {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 10000,
-            }),
-            createAssistantMessage("msg-2", "I can help with that error.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP,
-            }),
-          ],
-        })
-      }
-    />
-  ),
+export const UserMessageCodeBlock: Story = {
+  render: () => <UserMarkdownCanvas content={USER_CODE_BLOCKS} />,
 };
 
 /** Long lines in code blocks and lists - regression test for horizontal overflow */
-export const LongLinesOverflow: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-long-lines",
-          messages: [
-            createUserMessage("msg-1", "Show me content with long lines", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 100000,
-            }),
-            createAssistantMessage("msg-2", LONG_LINE_CONTENT, {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 90000,
-            }),
-          ],
-        })
-      }
-    />
-  ),
-  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitForChatMessagesLoaded(canvasElement);
-
+export const LongLinesOverflow: Story = {
+  render: () => <AssistantMarkdownCanvas content={LONG_LINE_CONTENT} testId="message-window" />,
+  play: async ({ canvasElement }) => {
     // Wait for plain code block to render (no language = uses pre > code, not .code-block-wrapper)
     await waitFor(
       () => {
@@ -481,4 +404,9 @@ export const LongLinesOverflow: AppStory = {
     const hasHorizontalScroll = scrollContainer.scrollWidth > scrollContainer.clientWidth;
     await expect(hasHorizontalScroll).toBe(false);
   },
+};
+
+/** Blockquotes - styled with background tint, left border accent, and rounded corners */
+export const Blockquotes: Story = {
+  render: () => <AssistantMarkdownCanvas content={BLOCKQUOTE_CONTENT} />,
 };

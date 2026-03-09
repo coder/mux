@@ -36,10 +36,10 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
       Promise.resolve({ success: true as const, data: undefined })
     ),
     ensureProvisioningSession: mock(() => Promise.resolve(provisioningSession)),
+    verifyAuthenticatedSession: mock(() => Promise.resolve()),
     takeProvisioningSession: mock(() => provisioningSession),
     disposeProvisioningSession: mock(() => Promise.resolve()),
-    fetchDeploymentSshConfig: mock(() => Promise.resolve({ hostnameSuffix: "coder" })),
-    ensureSSHConfig: mock(() => Promise.resolve()),
+    ensureMuxCoderSSHConfig: mock(() => Promise.resolve()),
     getWorkspaceStatus: mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     ),
@@ -72,7 +72,7 @@ function createRuntime(
   const template = "template" in coderConfig ? coderConfig.template : "default-template";
 
   const config: CoderSSHRuntimeConfig = {
-    host: "placeholder.coder",
+    host: "placeholder.mux--coder",
     srcBaseDir: "~/src",
     coder: {
       existingWorkspace: coderConfig.existingWorkspace ?? false,
@@ -93,7 +93,7 @@ function createSSHCoderConfig(coder: {
 }): RuntimeConfig {
   return {
     type: "ssh",
-    host: "placeholder.coder",
+    host: "placeholder.mux--coder",
     srcBaseDir: "~/src",
     coder: {
       existingWorkspace: coder.existingWorkspace ?? false,
@@ -102,6 +102,25 @@ function createSSHCoderConfig(coder: {
     },
   };
 }
+
+describe("CoderSSHRuntime constructor", () => {
+  it("normalizes host to .mux--coder when workspaceName is present", () => {
+    const coderService = createMockCoderService();
+    const config: CoderSSHRuntimeConfig = {
+      host: "ws.coder",
+      srcBaseDir: "~/src",
+      coder: {
+        existingWorkspace: true,
+        workspaceName: "ws",
+        template: "default-template",
+      },
+    };
+    const transport = createSSHTransport(config, false);
+    const runtime = new CoderSSHRuntime(config, transport, coderService);
+
+    expect(runtime.getConfig().host).toBe("ws.mux--coder");
+  });
+});
 
 // =============================================================================
 // Test Suite 1: finalizeConfig (name/host derivation)
@@ -117,20 +136,6 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
   });
 
   describe("new workspace mode", () => {
-    it("uses hostname suffix from deployment SSH config", async () => {
-      const fetchDeploymentSshConfig = mock(() => Promise.resolve({ hostnameSuffix: "corp" }));
-      coderService = createMockCoderService({ fetchDeploymentSshConfig });
-      runtime = createRuntime({}, coderService);
-
-      const config = createSSHCoderConfig({ existingWorkspace: false });
-      const result = await runtime.finalizeConfig("my-feature", config);
-
-      expect(result.success).toBe(true);
-      if (result.success && result.data.type === "ssh") {
-        expect(result.data.host).toBe("mux-my-feature.corp");
-      }
-      expect(fetchDeploymentSshConfig).toHaveBeenCalled();
-    });
     it("derives Coder name from branch name when not provided", async () => {
       const config = createSSHCoderConfig({ existingWorkspace: false });
       const result = await runtime.finalizeConfig("my-feature", config);
@@ -140,7 +145,7 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
         expect(result.data.type).toBe("ssh");
         if (result.data.type === "ssh") {
           expect(result.data.coder?.workspaceName).toBe("mux-my-feature");
-          expect(result.data.host).toBe("mux-my-feature.coder");
+          expect(result.data.host).toBe("mux-my-feature.mux--coder");
         }
       }
     });
@@ -152,7 +157,7 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
       expect(result.success).toBe(true);
       if (result.success && result.data.type === "ssh") {
         expect(result.data.coder?.workspaceName).toBe("mux-my-feature-branch");
-        expect(result.data.host).toBe("mux-my-feature-branch.coder");
+        expect(result.data.host).toBe("mux-my-feature-branch.mux--coder");
       }
     });
 
@@ -177,19 +182,13 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
       }
     });
 
-    it("returns error when deployment SSH config fetch fails", async () => {
-      const provisioningSession = {
-        token: "token",
-        dispose: mock(() => Promise.resolve()),
-      };
-      const ensureProvisioningSession = mock(() => Promise.resolve(provisioningSession));
-      const fetchDeploymentSshConfig = mock(() => Promise.reject(new Error("nope")));
-      const disposeProvisioningSession = mock(() => Promise.resolve());
+    it("returns error when provisioning session creation fails", async () => {
+      const verifyAuthenticatedSession = mock(() => Promise.resolve());
+      const ensureProvisioningSession = mock(() => Promise.reject(new Error("nope")));
 
       coderService = createMockCoderService({
+        verifyAuthenticatedSession,
         ensureProvisioningSession,
-        fetchDeploymentSshConfig,
-        disposeProvisioningSession,
       });
       runtime = createRuntime({}, coderService);
 
@@ -198,12 +197,10 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toContain("Failed to read Coder deployment SSH config");
+        expect(result.error).toContain("Failed to prepare Coder provisioning session");
         expect(result.error).toContain("nope");
       }
       expect(ensureProvisioningSession).toHaveBeenCalledWith("mux-branch");
-      expect(fetchDeploymentSshConfig).toHaveBeenCalledWith(provisioningSession);
-      expect(disposeProvisioningSession).toHaveBeenCalledWith("mux-branch");
     });
     it("uses provided workspaceName over branch name", async () => {
       const config = createSSHCoderConfig({
@@ -215,7 +212,7 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
       expect(result.success).toBe(true);
       if (result.success && result.data.type === "ssh") {
         expect(result.data.coder?.workspaceName).toBe("custom-name");
-        expect(result.data.host).toBe("custom-name.coder");
+        expect(result.data.host).toBe("custom-name.mux--coder");
       }
     });
   });
@@ -241,8 +238,52 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
       expect(result.success).toBe(true);
       if (result.success && result.data.type === "ssh") {
         expect(result.data.coder?.workspaceName).toBe("existing-ws");
-        expect(result.data.host).toBe("existing-ws.coder");
+        expect(result.data.host).toBe("existing-ws.mux--coder");
       }
+    });
+
+    it("returns Err when Coder auth verification fails for existing workspace", async () => {
+      const verifyAuthenticatedSession = mock(() => Promise.reject(new Error("not logged in")));
+
+      coderService = createMockCoderService({ verifyAuthenticatedSession });
+      runtime = createRuntime({}, coderService);
+
+      const config = createSSHCoderConfig({
+        existingWorkspace: true,
+        workspaceName: "existing-ws",
+      });
+
+      const result = await runtime.finalizeConfig("branch-name", config);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Failed to verify Coder authentication");
+      }
+      expect(verifyAuthenticatedSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not call ensureProvisioningSession for existing workspace even when auth succeeds", async () => {
+      const verifyAuthenticatedSession = mock(() => Promise.resolve());
+      const ensureProvisioningSession = mock(() =>
+        Promise.resolve({ token: "token", dispose: mock(() => Promise.resolve()) })
+      );
+
+      coderService = createMockCoderService({
+        verifyAuthenticatedSession,
+        ensureProvisioningSession,
+      });
+      runtime = createRuntime({}, coderService);
+
+      const config = createSSHCoderConfig({
+        existingWorkspace: true,
+        workspaceName: "existing-ws",
+      });
+
+      const result = await runtime.finalizeConfig("branch-name", config);
+
+      expect(result.success).toBe(true);
+      expect(verifyAuthenticatedSession).toHaveBeenCalledTimes(1);
+      expect(ensureProvisioningSession).not.toHaveBeenCalled();
     });
   });
 
@@ -533,7 +574,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
         yield "build line 2";
       })()
     );
-    const ensureSSHConfig = mock(() => Promise.resolve());
+    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
     const provisioningSession = {
       token: "token",
       dispose: mock(() => Promise.resolve()),
@@ -552,7 +593,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
 
     const coderService = createMockCoderService({
       createWorkspace,
-      ensureSSHConfig,
+      ensureMuxCoderSSHConfig,
       getWorkspaceStatus,
       takeProvisioningSession,
     });
@@ -605,7 +646,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       provisioningSession
     );
     expect(provisioningSession.dispose).toHaveBeenCalled();
-    expect(ensureSSHConfig).toHaveBeenCalled();
+    expect(ensureMuxCoderSSHConfig).toHaveBeenCalled();
     expect(execBufferedSpy).toHaveBeenCalled();
 
     // After postCreateSetup, ensureReady should succeed (workspace exists on server)
@@ -686,7 +727,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
         yield "Already running";
       })()
     );
-    const ensureSSHConfig = mock(() => Promise.resolve());
+    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     );
@@ -694,7 +735,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     const coderService = createMockCoderService({
       createWorkspace,
       waitForStartupScripts,
-      ensureSSHConfig,
+      ensureMuxCoderSSHConfig,
       getWorkspaceStatus,
     });
     const runtime = createRuntime(
@@ -718,7 +759,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     expect(createWorkspace).not.toHaveBeenCalled();
     // waitForStartupScripts is called (it handles running workspaces quickly)
     expect(waitForStartupScripts).toHaveBeenCalled();
-    expect(ensureSSHConfig).toHaveBeenCalled();
+    expect(ensureMuxCoderSSHConfig).toHaveBeenCalled();
     expect(execBufferedSpy).toHaveBeenCalled();
   });
 
@@ -737,7 +778,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
         yield "Startup scripts finished";
       })()
     );
-    const ensureSSHConfig = mock(() => Promise.resolve());
+    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
     );
@@ -745,7 +786,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     const coderService = createMockCoderService({
       createWorkspace,
       waitForStartupScripts,
-      ensureSSHConfig,
+      ensureMuxCoderSSHConfig,
       getWorkspaceStatus,
     });
     const runtime = createRuntime(
@@ -771,7 +812,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     expect(waitForStartupScripts).toHaveBeenCalled();
     expect(loggedStdout).toContain("Starting workspace...");
     expect(loggedStdout).toContain("Startup scripts finished");
-    expect(ensureSSHConfig).toHaveBeenCalled();
+    expect(ensureMuxCoderSSHConfig).toHaveBeenCalled();
   });
 
   it("polls until stopping workspace becomes stopped before connecting", async () => {
@@ -790,12 +831,12 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
         yield "Ready";
       })()
     );
-    const ensureSSHConfig = mock(() => Promise.resolve());
+    const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
 
     const coderService = createMockCoderService({
       getWorkspaceStatus,
       waitForStartupScripts,
-      ensureSSHConfig,
+      ensureMuxCoderSSHConfig,
     });
 
     const runtime = createRuntime(

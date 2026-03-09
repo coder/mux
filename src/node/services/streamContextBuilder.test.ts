@@ -28,6 +28,57 @@ class TestRuntime extends LocalRuntime {
 }
 
 describe("buildPlanInstructions", () => {
+  test("prepends runtime plan file guidance ahead of caller additional instructions", async () => {
+    using tempRoot = new DisposableTempDir("stream-context-builder");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata: WorkspaceMetadata = {
+      id: "ws-1",
+      name: "workspace-1",
+      projectName: "project-1",
+      projectPath,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const runtime = new TestRuntime(projectPath, muxHome);
+    const requestPayloadMessages = [createMuxMessage("u1", "user", "plan the fix")];
+    const callerInstructions = "Caller-specific plan note";
+
+    const expectedPlanFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+
+    const result = await buildPlanInstructions({
+      runtime,
+      metadata,
+      workspaceId: metadata.id,
+      workspacePath: projectPath,
+      effectiveMode: "plan",
+      effectiveAgentId: "plan",
+      agentIsPlanLike: true,
+      agentDiscoveryPath: projectPath,
+      additionalSystemInstructions: callerInstructions,
+      shouldDisableTaskToolsForDepth: false,
+      taskDepth: 0,
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      requestPayloadMessages,
+    });
+
+    expect(result.effectiveAdditionalInstructions).toContain(
+      `Plan file path: ${expectedPlanFilePath}`
+    );
+    expect(result.effectiveAdditionalInstructions).toContain(callerInstructions);
+    expect(result.effectiveAdditionalInstructions).toContain("propose_plan");
+    expect(
+      result.effectiveAdditionalInstructions?.indexOf(`Plan file path: ${expectedPlanFilePath}`)
+    ).toBeLessThan(
+      result.effectiveAdditionalInstructions?.indexOf(callerInstructions) ??
+        Number.POSITIVE_INFINITY
+    );
+  });
+
   test("uses request payload history for Start Here detection", async () => {
     using tempRoot = new DisposableTempDir("stream-context-builder");
 

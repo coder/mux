@@ -7,6 +7,7 @@ import type { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthServ
 import type { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { CopilotOauthService } from "@/node/services/copilotOauthService";
+import type { OnePasswordService } from "@/node/services/onePasswordService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { EditorService } from "@/node/services/editorService";
@@ -23,13 +24,15 @@ import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpO
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { SigningService } from "@/node/services/signingService";
-import type { FeatureFlagService } from "@/node/services/featureFlagService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { TaskService } from "@/node/services/taskService";
+import type { DevToolsService } from "@/node/services/devToolsService";
 import type { PolicyService } from "@/node/services/policyService";
 import type { CoderService } from "@/node/services/coderService";
 import type { ServerAuthService } from "@/node/services/serverAuthService";
+import type { SshPromptService } from "@/node/services/sshPromptService";
+import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
 
 export interface ORPCContext {
   config: Config;
@@ -42,6 +45,7 @@ export interface ORPCContext {
   muxGovernorOauthService: MuxGovernorOauthService;
   codexOauthService: CodexOauthService;
   copilotOauthService: CopilotOauthService;
+  onePasswordService?: OnePasswordService | null;
   terminalService: TerminalService;
   editorService: EditorService;
   windowService: WindowService;
@@ -54,14 +58,16 @@ export interface ORPCContext {
   mcpOauthService: McpOauthService;
   workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   mcpServerManager: MCPServerManager;
-  featureFlagService: FeatureFlagService;
   sessionTimingService: SessionTimingService;
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
+  devToolsService: DevToolsService;
   policyService: PolicyService;
   signingService: SigningService;
   coderService: CoderService;
   serverAuthService: ServerAuthService;
+  sshPromptService: SshPromptService;
+  analyticsService: AnalyticsService;
   headers?: IncomingHttpHeaders;
 }

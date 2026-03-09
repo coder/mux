@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
-import { secretsToRecord } from "@/common/types/secrets";
+import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
   let tempDir: string;
@@ -75,6 +75,65 @@ describe("Config", () => {
     });
   });
 
+  describe("projectKind normalization", () => {
+    it("normalizes unknown projectKind to user semantics on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [["/repo", { workspaces: [], projectKind: "experimental" }]],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/repo")?.projectKind).toBeUndefined();
+    });
+
+    it("preserves valid projectKind 'system' on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [["/repo", { workspaces: [], projectKind: "system" }]],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/repo")?.projectKind).toBe("system");
+    });
+  });
+
+  describe("update channel preference", () => {
+    it("defaults to stable when no channel is configured", () => {
+      expect(config.getUpdateChannel()).toBe("stable");
+    });
+
+    it("persists nightly channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("nightly");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("nightly");
+    });
+
+    it("persists explicit stable channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+      await config.setUpdateChannel("stable");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("stable");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("stable");
+    });
+  });
+
   describe("server GitHub owner auth setting", () => {
     it("persists serverAuthGithubOwner", async () => {
       await config.editConfig((cfg) => {
@@ -102,8 +161,28 @@ describe("Config", () => {
     });
   });
 
+  describe("onePasswordAccountName loading", () => {
+    it("loads top-level settings even when projects is missing", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          onePasswordAccountName: "personal-account",
+          muxGovernorUrl: "https://governor.example.com",
+          terminalDefaultShell: "zsh",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.size).toBe(0);
+      expect(loaded.onePasswordAccountName).toBe("personal-account");
+      expect(loaded.muxGovernorUrl).toBe("https://governor.example.com");
+      expect(loaded.terminalDefaultShell).toBe("zsh");
+    });
+  });
+
   describe("model preferences", () => {
-    it("should normalize and persist defaultModel, hiddenModels, and preferredCompactionModel", async () => {
+    it("should normalize and persist defaultModel and hiddenModels", async () => {
       await config.editConfig((cfg) => {
         cfg.defaultModel = "mux-gateway:openai/gpt-4o";
         cfg.hiddenModels = [
@@ -111,14 +190,12 @@ describe("Config", () => {
           "invalid-model",
           "openai:gpt-4o-mini", // duplicate
         ];
-        cfg.preferredCompactionModel = "openai:gpt-4o";
         return cfg;
       });
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.defaultModel).toBe("openai:gpt-4o");
       expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
-      expect(loaded.preferredCompactionModel).toBe("openai:gpt-4o");
     });
 
     it("normalizes gateway-prefixed model strings on load", () => {
@@ -129,14 +206,12 @@ describe("Config", () => {
           projects: [],
           defaultModel: "mux-gateway:openai/gpt-4o",
           hiddenModels: ["mux-gateway:openai/gpt-4o-mini"],
-          preferredCompactionModel: "mux-gateway:openai/gpt-4o",
         })
       );
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.defaultModel).toBe("openai:gpt-4o");
       expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
-      expect(loaded.preferredCompactionModel).toBe("openai:gpt-4o");
     });
 
     it("rejects malformed mux-gateway model strings on load", () => {
@@ -147,28 +222,12 @@ describe("Config", () => {
           projects: [],
           defaultModel: "mux-gateway:openai", // missing "/model"
           hiddenModels: ["mux-gateway:openai", "openai:gpt-4o-mini"],
-          preferredCompactionModel: "mux-gateway:", // missing provider + "/model"
         })
       );
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.defaultModel).toBeUndefined();
       expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
-      expect(loaded.preferredCompactionModel).toBeUndefined();
-    });
-
-    it("treats empty preferredCompactionModel as unset on load", () => {
-      const configFile = path.join(tempDir, "config.json");
-      fs.writeFileSync(
-        configFile,
-        JSON.stringify({
-          projects: [],
-          preferredCompactionModel: "",
-        })
-      );
-
-      const loaded = config.loadConfigOrDefault();
-      expect(loaded.preferredCompactionModel).toBeUndefined();
     });
 
     it("ignores invalid model preference values on load", () => {
@@ -179,14 +238,12 @@ describe("Config", () => {
           projects: [],
           defaultModel: "gpt-4o", // missing provider
           hiddenModels: ["openai:gpt-4o-mini", "bad"],
-          preferredCompactionModel: "   ",
         })
       );
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.defaultModel).toBeUndefined();
       expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
-      expect(loaded.preferredCompactionModel).toBeUndefined();
     });
   });
   describe("generateStableId", () => {
@@ -318,7 +375,7 @@ describe("Config", () => {
       ]);
 
       const effective = config.getEffectiveSecrets(projectPath);
-      const record = secretsToRecord(effective);
+      const record = await secretsToRecord(effective);
 
       expect(record).toEqual({
         TOKEN: "project",
@@ -334,7 +391,7 @@ describe("Config", () => {
         { key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } },
       ]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
         TOKEN: "abc",
       });
@@ -348,14 +405,35 @@ describe("Config", () => {
         { key: "OPENAI_API_KEY", value: { secret: "OPENAI_API_KEY" } },
       ]);
 
-      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
       expect(record).toEqual({
         OPENAI_API_KEY: "abc",
       });
     });
 
-    it("omits missing referenced secrets when resolving secretsToRecord", () => {
-      const record = secretsToRecord([
+    it("resolves project secret aliases to global { op } values", async () => {
+      const opRef = "op://Vault/Item/field";
+      await config.updateGlobalSecrets([{ key: "GLOBAL_OP", value: { op: opRef } }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: { secret: "GLOBAL_OP" } },
+      ]);
+
+      const effective = config.getEffectiveSecrets(projectPath);
+      expect(effective).toEqual([{ key: "TOKEN", value: { op: opRef } }]);
+
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === opRef) return Promise.resolve("resolved-op");
+        return Promise.resolve(undefined);
+      };
+
+      const record = await secretsToRecord(effective, resolver);
+      expect(record).toEqual({ TOKEN: "resolved-op" });
+    });
+
+    it("omits missing referenced secrets when resolving secretsToRecord", async () => {
+      const record = await secretsToRecord([
         { key: "GLOBAL", value: "1" },
         { key: "A", value: { secret: "MISSING" } },
       ]);
@@ -363,14 +441,74 @@ describe("Config", () => {
       expect(record).toEqual({ GLOBAL: "1" });
     });
 
-    it("omits cyclic secret references when resolving secretsToRecord", () => {
-      const record = secretsToRecord([
+    it("omits cyclic secret references when resolving secretsToRecord", async () => {
+      const record = await secretsToRecord([
         { key: "A", value: { secret: "B" } },
         { key: "B", value: { secret: "A" } },
         { key: "OK", value: "y" },
       ]);
 
       expect(record).toEqual({ OK: "y" });
+    });
+
+    it("resolves { op } values via external resolver", async () => {
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === "op://Dev/Stripe/key") return Promise.resolve("sk-resolved");
+        return Promise.resolve(undefined);
+      };
+
+      const record = await secretsToRecord(
+        [
+          { key: "STRIPE_KEY", value: { op: "op://Dev/Stripe/key" } },
+          { key: "LITERAL", value: "plain" },
+        ],
+        resolver
+      );
+
+      expect(record).toEqual({ STRIPE_KEY: "sk-resolved", LITERAL: "plain" });
+    });
+
+    it("omits { op } values when no resolver is provided", async () => {
+      const record = await secretsToRecord([
+        { key: "A", value: { op: "op://Dev/Stripe/key" } },
+        { key: "B", value: "literal" },
+      ]);
+
+      expect(record).toEqual({ B: "literal" });
+    });
+
+    it("omits { op } values when resolver returns undefined", async () => {
+      const resolver: ExternalSecretResolver = () => Promise.resolve(undefined);
+      const record = await secretsToRecord(
+        [{ key: "A", value: { op: "op://Dev/Stripe/key" } }],
+        resolver
+      );
+
+      expect(record).toEqual({});
+    });
+
+    it("resolves mixed literal, { secret }, and { op } values", async () => {
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === "op://Vault/Item/field") return Promise.resolve("op-resolved");
+        return Promise.resolve(undefined);
+      };
+
+      const record = await secretsToRecord(
+        [
+          { key: "LITERAL", value: "raw" },
+          { key: "GLOBAL_TOKEN", value: "abc" },
+          { key: "ALIAS", value: { secret: "GLOBAL_TOKEN" } },
+          { key: "OP_REF", value: { op: "op://Vault/Item/field" } },
+        ],
+        resolver
+      );
+
+      expect(record).toEqual({
+        LITERAL: "raw",
+        GLOBAL_TOKEN: "abc",
+        ALIAS: "abc",
+        OP_REF: "op-resolved",
+      });
     });
     it("normalizes project paths so trailing slashes don't split secrets", async () => {
       const projectPath = "/repo";

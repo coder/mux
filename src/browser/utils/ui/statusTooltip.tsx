@@ -1,5 +1,5 @@
 import React from "react";
-import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
+import { ModelDisplay } from "@/browser/features/Messages/ModelDisplay";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 
 /**

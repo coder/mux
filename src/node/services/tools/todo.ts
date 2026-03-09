@@ -31,14 +31,13 @@ function validateTodos(todos: TodoItem[]): void {
         `Keep high precision at the center: ` +
         `summarize old completed work (e.g., 'Setup phase (3 tasks)'), ` +
         `keep recent completions detailed (1-2), ` +
-        `one in_progress, ` +
+        `in_progress tasks in the middle, ` +
         `immediate pending detailed (2-3), ` +
         `and summarize far future work (e.g., 'Testing phase (4 items)').`
     );
   }
 
   let phase: "completed" | "in_progress" | "pending" = "completed";
-  let inProgressCount = 0;
 
   todos.forEach((todo, index) => {
     const status = todo.status;
@@ -57,12 +56,6 @@ function validateTodos(todos: TodoItem[]): void {
         if (phase === "pending") {
           throw new Error(
             `Invalid todo order at index ${index}: in-progress tasks must appear before pending tasks`
-          );
-        }
-        inProgressCount += 1;
-        if (inProgressCount > 1) {
-          throw new Error(
-            "Invalid todo list: only one task can be marked as in_progress at a time"
           );
         }
         // Transition to in_progress phase (from completed or stay in in_progress)

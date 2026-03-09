@@ -9,7 +9,7 @@ import type {
   WorkspaceForkResult,
 } from "./Runtime";
 import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
-import { checkInitHookExists, getMuxEnv } from "./initHook";
+import { checkInitHookExists, getMuxEnv, shouldSkipInitHook } from "./initHook";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isGitRepository } from "@/node/utils/pathUtils";
@@ -82,16 +82,15 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       branchName: params.branchName,
       trunkBranch: params.trunkBranch,
       initLogger: params.initLogger,
+      trusted: params.trusted,
     });
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env, skipInitHook } =
-      params;
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
 
     try {
-      if (skipInitHook) {
-        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+      if (shouldSkipInitHook(params, initLogger)) {
         initLogger.logComplete(0);
         return { success: true };
       }
@@ -123,22 +122,24 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     projectPath: string,
     oldName: string,
     newName: string,
-    _abortSignal?: AbortSignal
+    _abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<
     { success: true; oldPath: string; newPath: string } | { success: false; error: string }
   > {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
-    return this.worktreeManager.renameWorkspace(projectPath, oldName, newName);
+    return this.worktreeManager.renameWorkspace(projectPath, oldName, newName, trusted);
   }
 
   async deleteWorkspace(
     projectPath: string,
     workspaceName: string,
     force: boolean,
-    _abortSignal?: AbortSignal
+    _abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
     // Note: _abortSignal ignored for local operations (fast, no need for cancellation)
-    return this.worktreeManager.deleteWorkspace(projectPath, workspaceName, force);
+    return this.worktreeManager.deleteWorkspace(projectPath, workspaceName, force, trusted);
   }
 
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {

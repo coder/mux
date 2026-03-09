@@ -36,6 +36,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { log } from "./log";
 import type { SessionUsageService } from "./sessionUsageService";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -63,7 +64,8 @@ export interface System1WrapOptions {
   /** Callbacks to break the dependency on AIService / StreamManager. */
   createModel: (
     modelString: string,
-    opts?: MuxProviderOptions
+    opts?: MuxProviderOptions,
+    createOptions?: { agentInitiated?: boolean; workspaceId?: string }
   ) => Promise<Result<LanguageModel, SendMessageError>>;
   emitBashOutput: (event: BashOutputEvent) => void;
   sessionUsageService?: SessionUsageService;
@@ -101,7 +103,10 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
     if (cachedSystem1ModelFailed) return undefined;
 
     // createModel handles gateway routing automatically — pass the raw string.
-    const created = await opts.createModel(system1Ctx.modelString, opts.muxProviderOptions);
+    const created = await opts.createModel(system1Ctx.modelString, opts.muxProviderOptions, {
+      agentInitiated: true,
+      workspaceId: opts.workspaceId,
+    });
     if (!created.success) {
       cachedSystem1ModelFailed = true;
       log.debug("[system1] Failed to create System 1 model", {
@@ -328,7 +333,7 @@ async function maybeFilterBashOutput(
     } catch (error) {
       log.debug("[system1] Failed to save full bash output to temp file", {
         workspaceId: opts.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       fullOutputPath = undefined;
     }
@@ -418,7 +423,7 @@ async function maybeFilterBashOutput(
       }
     } catch (error) {
       lastErrorName = error instanceof Error ? error.name : undefined;
-      lastErrorMessage = error instanceof Error ? error.message : String(error);
+      lastErrorMessage = getErrorMessage(error);
     }
 
     if (!applied || applied.keptLines === 0) {
@@ -496,7 +501,7 @@ async function maybeFilterBashOutput(
 
     return { filteredOutput: applied.filteredOutput, notice };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = getErrorMessage(error);
     const errorName = error instanceof Error ? error.name : undefined;
     const upstreamAborted = filterParams.abortSignal?.aborted ?? false;
     const isAbortError = errorName === "AbortError";
@@ -589,7 +594,7 @@ function wrapBashTool(
     } catch (error) {
       log.debug("[system1] Failed to filter bash tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }
@@ -624,7 +629,7 @@ function wrapBashOutputTool(
     } catch (error) {
       log.debug("[system1] Failed to filter bash_output tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }
@@ -712,7 +717,7 @@ function wrapTaskAwaitTool(
     } catch (error) {
       log.debug("[system1] Failed to filter task_await tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }

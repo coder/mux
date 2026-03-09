@@ -30,9 +30,10 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
  * Rules:
  * - openai:gpt-5.1-codex-max → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2-codex → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
- * - openai:gpt-5.3-codex → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
- * - openai:gpt-5.2 → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
- * - openai:gpt-5.2-pro → ["medium", "high", "xhigh"] (3 levels)
+ * - openai:gpt-5.3-codex / Spark variants →
+ *   ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
+ * - openai:gpt-5.2 / openai:gpt-5.4 → ["off", "low", "medium", "high", "xhigh"]
+ * - openai:gpt-5.2-pro / openai:gpt-5.4-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - gemini-3 → ["low", "high"] (thinking level only)
  * - default → ["off", "low", "medium", "high"] (standard 4 levels; xhigh is opt-in per model)
@@ -46,11 +47,14 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
 
   // Many providers/proxies encode the upstream provider as a path segment:
-  //   mux-gateway:openai/gpt-5.2-pro -> openai/gpt-5.2-pro -> gpt-5.2-pro
+  //   mux-gateway:openai/gpt-5.4-pro -> openai/gpt-5.4-pro -> gpt-5.4-pro
   const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
 
-  // Claude Opus 4.6 supports 5 levels including xhigh (mapped to "max" effort)
-  if (withoutProviderNamespace.includes("opus-4-6")) {
+  // Claude Opus 4.6 and Sonnet 4.6 support 5 levels including xhigh (mapped to "max" effort)
+  if (
+    withoutProviderNamespace.includes("opus-4-6") ||
+    withoutProviderNamespace.includes("sonnet-4-6")
+  ) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
@@ -62,18 +66,18 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
-  // GPT-5.2-Codex and GPT-5.3-Codex support 5 reasoning levels including xhigh (Extra High)
-  if (/^gpt-5\.[23]-codex(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // GPT-5.2/5.3 Codex models (including Spark) support 5 reasoning levels.
+  if (/^gpt-5\.[23]-codex(?:-spark)?(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
-  // gpt-5.2-pro supports medium, high, xhigh reasoning levels
-  if (/^gpt-5\.2-pro(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // gpt-5.2-pro and gpt-5.4-pro support medium, high, xhigh reasoning levels
+  if (/^gpt-5\.(?:2|4)-pro(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["medium", "high", "xhigh"];
   }
 
-  // gpt-5.2 supports 5 reasoning levels including xhigh (Extra High)
-  if (/^gpt-5\.2(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // gpt-5.2 and gpt-5.4 support 5 reasoning levels including xhigh (Extra High)
+  if (/^gpt-5\.(?:2|4)(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
@@ -146,7 +150,7 @@ export function enforceThinkingPolicy(
  * Named levels are returned as-is (the backend's enforceThinkingPolicy will
  * clamp if needed). Numeric indices are mapped into the model's sorted allowed
  * levels — so 0 always means the model's lowest allowed level (e.g., "medium"
- * for gpt-5.2-pro, "off" for most other models), and the highest index means
+ * for gpt-5.4-pro, "off" for most other models), and the highest index means
  * the model's highest level. Out-of-range indices clamp to min/max.
  */
 export function resolveThinkingInput(

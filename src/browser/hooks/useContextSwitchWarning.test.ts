@@ -8,7 +8,7 @@ import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { useContextSwitchWarning } from "./useContextSwitchWarning";
-import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import {
   recordWorkspaceModelChange,
   setWorkspaceModelWithOrigin,

@@ -27,6 +27,7 @@ import {
   SERVER_AUTH_SESSION_MAX_AGE_SECONDS,
 } from "@/node/services/serverAuthService";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -51,6 +52,11 @@ export interface OrpcServerOptions {
   authToken?: string;
   /** Optional pre-created router (if not provided, creates router(authToken)) */
   router?: AppRouter;
+  /**
+   * Allow HTTPS browser origins when reverse proxies forward X-Forwarded-Proto=http.
+   * Keep disabled by default and only enable when TLS is terminated before mux.
+   */
+  allowHttpOrigin?: boolean;
 }
 
 export interface OrpcServer {
@@ -112,6 +118,25 @@ function escapeJsonForHtmlScript(value: unknown): string {
   // Prevent `</script>` injection when embedding untrusted strings in an inline <script>.
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
+
+function getBrowserProxyUriTemplate(): string | null {
+  const muxProxyUri = process.env.MUX_PROXY_URI?.trim();
+  if (muxProxyUri) {
+    return muxProxyUri;
+  }
+
+  const vscodeProxyUri = process.env.VSCODE_PROXY_URI?.trim();
+  return vscodeProxyUri?.length ? vscodeProxyUri : null;
+}
+
+function injectProxyUriTemplate(indexHtml: string, proxyUriTemplate: string | null): string {
+  const templateJson = escapeJsonForHtmlScript(proxyUriTemplate);
+  return indexHtml.replace(
+    /<head[^>]*>/i,
+    (match) => `${match}\n    <script>window.__MUX_PROXY_URI_TEMPLATE__ = ${templateJson};</script>`
+  );
+}
+
 function escapeHtml(input: string): string {
   return input
     .replaceAll("&", "&amp;")
@@ -161,6 +186,19 @@ function buildOrigin(protocol: string, host: string): string | null {
   }
 }
 
+function normalizeHostForProtocol(host: string, protocol: "http" | "https"): string | null {
+  const trimmedHost = host.trim();
+  if (!trimmedHost) {
+    return null;
+  }
+
+  try {
+    return new URL(`${protocol}://${trimmedHost}`).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 function inferProtocol(req: OriginValidationRequest): "http" | "https" {
   if (typeof req.protocol === "string") {
     const normalized = normalizeProtocol(req.protocol);
@@ -172,14 +210,105 @@ function inferProtocol(req: OriginValidationRequest): "http" | "https" {
   return (req.socket as { encrypted?: boolean }).encrypted ? "https" : "http";
 }
 
-function getExpectedOrigin(req: OriginValidationRequest): string | null {
-  const host = getFirstHeaderValue(req, "x-forwarded-host") ?? getFirstHeaderValue(req, "host");
-  if (!host) {
+function getExpectedHosts(req: OriginValidationRequest): string[] {
+  return [getFirstHeaderValue(req, "x-forwarded-host"), getFirstHeaderValue(req, "host")].filter(
+    (value, index, values): value is string => value !== null && values.indexOf(value) === index
+  );
+}
+
+function getFirstForwardedProtocol(req: OriginValidationRequest): "http" | "https" | null {
+  const forwardedProtoHeader = getFirstHeaderValue(req, "x-forwarded-proto");
+  if (!forwardedProtoHeader) {
     return null;
   }
 
-  const proto = getFirstHeaderValue(req, "x-forwarded-proto") ?? inferProtocol(req);
-  return buildOrigin(proto, host);
+  // Trust the client-facing hop. Additional values come from downstream/internal hops.
+  const firstHop = forwardedProtoHeader.split(",")[0] ?? "";
+  return normalizeProtocol(firstHop);
+}
+
+function getOriginProtocolOnExpectedHost(req: OriginValidationRequest): "http" | "https" | null {
+  const normalizedOrigin = normalizeOrigin(getFirstHeaderValue(req, "origin"));
+  if (!normalizedOrigin) {
+    return null;
+  }
+
+  try {
+    const parsedOrigin = new URL(normalizedOrigin);
+    const originProtocol = normalizeProtocol(parsedOrigin.protocol);
+    if (!originProtocol) {
+      return null;
+    }
+
+    const originHost = parsedOrigin.host.toLowerCase();
+    const hasExpectedHost = getExpectedHosts(req).some((host) => {
+      const normalizedHost = normalizeHostForProtocol(host, originProtocol);
+      return normalizedHost !== null && normalizedHost === originHost;
+    });
+
+    return hasExpectedHost ? originProtocol : null;
+  } catch {
+    return null;
+  }
+}
+
+function getClientFacingProtocol(req: OriginValidationRequest): "http" | "https" {
+  return getFirstForwardedProtocol(req) ?? inferProtocol(req);
+}
+
+function getExpectedProtocols(
+  req: OriginValidationRequest,
+  allowHttpOrigin = false
+): Array<"http" | "https"> {
+  const clientFacingProtocol = getClientFacingProtocol(req);
+  const originProtocol = getOriginProtocolOnExpectedHost(req);
+
+  // Compatibility path: some reverse proxies overwrite X-Forwarded-Proto to http
+  // even when the browser-facing request is https. In that specific case, trust the
+  // validated origin protocol for host-matched requests only when explicitly enabled.
+  if (allowHttpOrigin && clientFacingProtocol === "http" && originProtocol === "https") {
+    return ["https"];
+  }
+
+  return [clientFacingProtocol];
+}
+
+function getPreferredPublicProtocol(
+  req: OriginValidationRequest,
+  allowHttpOrigin = false
+): "http" | "https" {
+  const clientFacingProtocol = getClientFacingProtocol(req);
+  const originProtocol = getOriginProtocolOnExpectedHost(req);
+
+  if (allowHttpOrigin && clientFacingProtocol === "http" && originProtocol === "https") {
+    return "https";
+  }
+
+  return clientFacingProtocol;
+}
+
+function getExpectedOrigins(req: OriginValidationRequest, allowHttpOrigin = false): string[] {
+  const hosts = getExpectedHosts(req);
+
+  if (hosts.length === 0) {
+    return [];
+  }
+
+  const protocols = getExpectedProtocols(req, allowHttpOrigin);
+
+  const expectedOrigins: string[] = [];
+  for (const protocol of protocols) {
+    for (const host of hosts) {
+      const origin = buildOrigin(protocol, host);
+      if (!origin || expectedOrigins.includes(origin)) {
+        continue;
+      }
+
+      expectedOrigins.push(origin);
+    }
+  }
+
+  return expectedOrigins;
 }
 
 function normalizeOrigin(raw: string | null | undefined): string | null {
@@ -262,25 +391,24 @@ function areEquivalentLoopbackOrigins(originA: string, originB: string): boolean
   );
 }
 
-function isOriginAllowed(req: OriginValidationRequest): boolean {
+function isOriginAllowed(
+  req: OriginValidationRequest,
+  expectedOrigins: readonly string[] = getExpectedOrigins(req)
+): boolean {
   const origin = getFirstHeaderValue(req, "origin");
   if (!origin) {
     return true;
   }
 
   const normalizedOrigin = normalizeOrigin(origin);
-  if (!normalizedOrigin) {
+  if (!normalizedOrigin || expectedOrigins.length === 0) {
     return false;
   }
 
-  const expectedOrigin = getExpectedOrigin(req);
-  if (!expectedOrigin) {
-    return false;
-  }
-
-  return (
-    normalizedOrigin === expectedOrigin ||
-    areEquivalentLoopbackOrigins(normalizedOrigin, expectedOrigin)
+  return expectedOrigins.some(
+    (expectedOrigin) =>
+      normalizedOrigin === expectedOrigin ||
+      areEquivalentLoopbackOrigins(normalizedOrigin, expectedOrigin)
   );
 }
 
@@ -312,6 +440,14 @@ function isOAuthCallbackNavigationRequest(req: Pick<express.Request, "method" | 
   );
 }
 
+function shouldEnforceOriginValidation(req: Pick<express.Request, "path">): boolean {
+  // User rationale: static HTML/CSS/JS must keep loading even when intermediaries rewrite
+  // Origin/forwarded headers, while API and auth endpoints retain strict same-origin checks.
+  return (
+    req.path.startsWith("/orpc") || req.path.startsWith("/api") || req.path.startsWith("/auth/")
+  );
+}
+
 /**
  * Create an oRPC server with HTTP and WebSocket endpoints.
  *
@@ -326,7 +462,9 @@ export async function createOrpcServer({
   authToken,
   context,
   serveStatic = false,
-  // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
+  allowHttpOrigin = false,
+  // Default for non-bundled mode: from dist/node/orpc/, go up 2 levels to dist/.
+  // In bundled mode (dist/runtime/), serverService computes the static dir.
   staticDir = path.join(__dirname, "../.."),
   onOrpcError = (error, options) => {
     // Auth failures are expected in browser mode while the user enters the token.
@@ -349,6 +487,11 @@ export async function createOrpcServer({
   // Express app setup
   const app = express();
   app.use((req, res, next) => {
+    if (!shouldEnforceOriginValidation(req)) {
+      next();
+      return;
+    }
+
     const originHeader = getFirstHeaderValue(req, "origin");
 
     if (!originHeader) {
@@ -357,8 +500,8 @@ export async function createOrpcServer({
     }
 
     const normalizedOrigin = normalizeOrigin(originHeader);
-    const expectedOrigin = getExpectedOrigin(req);
-    const allowedOrigin = isOriginAllowed(req) ? normalizedOrigin : null;
+    const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
+    const allowedOrigin = isOriginAllowed(req, expectedOrigins) ? normalizedOrigin : null;
     const oauthCallbackNavigationRequest = isOAuthCallbackNavigationRequest(req);
 
     if (req.method === "OPTIONS") {
@@ -367,7 +510,7 @@ export async function createOrpcServer({
           method: req.method,
           path: req.path,
           origin: originHeader,
-          expectedOrigin,
+          expectedOrigins,
         });
         res.sendStatus(403);
         return;
@@ -396,7 +539,7 @@ export async function createOrpcServer({
         method: req.method,
         path: req.path,
         origin: originHeader,
-        expectedOrigin,
+        expectedOrigins,
       });
       res.sendStatus(403);
       return;
@@ -420,12 +563,19 @@ export async function createOrpcServer({
     try {
       const indexHtmlPath = path.join(staticDir, "index.html");
       const indexHtml = await fs.readFile(indexHtmlPath, "utf8");
-      spaIndexHtml = injectBaseHref(indexHtml, "/");
+      const indexHtmlWithBaseHref = injectBaseHref(indexHtml, "/");
+      spaIndexHtml = injectProxyUriTemplate(indexHtmlWithBaseHref, getBrowserProxyUriTemplate());
     } catch (error) {
       log.error("Failed to read index.html for SPA fallback:", error);
     }
 
-    app.use(express.static(staticDir));
+    // Serve JS/CSS/assets from disk, but never serve index.html — the SPA fallback
+    // (below all API routes) serves the injected version with base href + proxy template.
+    const serveStaticAssets = express.static(staticDir, { index: false });
+    app.use((req, res, next) => {
+      if (req.path === "/index.html") return next();
+      serveStaticAssets(req, res, next);
+    });
   }
 
   // Health check endpoint
@@ -454,16 +604,7 @@ export async function createOrpcServer({
   }
 
   function isSecureRequest(req: OriginValidationRequest): boolean {
-    const forwardedProto = getFirstHeaderValue(req, "x-forwarded-proto");
-    if (forwardedProto) {
-      return normalizeProtocol(forwardedProto) === "https";
-    }
-
-    if (typeof req.protocol === "string") {
-      return normalizeProtocol(req.protocol) === "https";
-    }
-
-    return Boolean((req.socket as { encrypted?: boolean }).encrypted);
+    return getPreferredPublicProtocol(req, allowHttpOrigin) === "https";
   }
 
   function parsePathnameFromRequestValue(value: string | null | undefined): string | null {
@@ -696,14 +837,12 @@ export async function createOrpcServer({
       return;
     }
 
-    // When mux is running behind a reverse proxy, the terminating proxy may set
-    // X-Forwarded-Proto / X-Forwarded-Host, while the direct connection to mux
-    // is plain HTTP.
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-gateway/callback`;
+    // Keep callback scheme selection aligned with origin compatibility handling.
+    // Some proxy chains overwrite X-Forwarded-Proto to http on the final hop
+    // even when the browser-visible origin is https.
+    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
+    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
+    const redirectUri = `${protocol}://${callbackHost}/auth/mux-gateway/callback`;
     const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
     res.json({ authorizeUrl, state });
   });
@@ -850,11 +989,9 @@ export async function createOrpcServer({
       return;
     }
 
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-governor/callback`;
+    const protocol = getPreferredPublicProtocol(req, allowHttpOrigin);
+    const callbackHost = normalizeHostForProtocol(host, protocol) ?? host;
+    const redirectUri = `${protocol}://${callbackHost}/auth/mux-governor/callback`;
     const result = context.muxGovernorOauthService.startServerFlow({
       governorOrigin: governorUrl,
       redirectUri,
@@ -1234,7 +1371,7 @@ export async function createOrpcServer({
       return;
     }
 
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     const code =
       error && typeof error === "object" && "code" in error && typeof error.code === "string"
         ? error.code
@@ -1259,10 +1396,11 @@ export async function createOrpcServer({
       return;
     }
 
-    if (!isOriginAllowed(req)) {
+    const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
+    if (!isOriginAllowed(req, expectedOrigins)) {
       log.warn("Blocked cross-origin WebSocket upgrade request", {
         origin: getFirstHeaderValue(req, "origin"),
-        expectedOrigin: getExpectedOrigin(req),
+        expectedOrigins,
         url: req.url,
       });
 
@@ -1326,7 +1464,20 @@ export async function createOrpcServer({
     });
 
     const headers = extractWsHeaders(req);
-    void orpcWsHandler.upgrade(ws, { context: { ...context, headers } });
+    // Use Object.defineProperties to copy all property descriptors from
+    // the base context as own-properties (required by oRPC's internal
+    // property enumeration) while preserving getters like
+    // onePasswordService that must resolve lazily.
+    const wsContext = Object.defineProperties({} as typeof context, {
+      ...Object.getOwnPropertyDescriptors(context),
+      headers: {
+        value: headers,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      },
+    });
+    void orpcWsHandler.upgrade(ws, { context: wsContext });
   });
 
   // Start listening

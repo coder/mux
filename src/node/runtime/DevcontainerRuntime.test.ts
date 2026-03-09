@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import { DevcontainerRuntime } from "./DevcontainerRuntime";
 
 interface RuntimeState {
@@ -182,5 +185,119 @@ describe("DevcontainerRuntime.mapHostPathToContainer", () => {
   it("returns null when workspace not set", () => {
     const runtime = createRuntime({});
     expect(mapHostPathToContainer(runtime, "/some/path")).toBeNull();
+  });
+});
+
+interface RuntimeWithContainerRequirements {
+  computeContainerRequirements(workspacePath: string, runtimeEnv?: Record<string, string>): void;
+  containerMounts: Array<{ source: string; target: string }>;
+}
+
+describe("DevcontainerRuntime.getContainerEnv", () => {
+  const trackedEnvKeys = ["GIT_ASKPASS"] as const;
+  const tempDirs: string[] = [];
+  let originalValues = new Map<string, string | undefined>();
+
+  async function createTempDir(prefix: string): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  beforeEach(() => {
+    originalValues = new Map(trackedEnvKeys.map((key) => [key, process.env[key]]));
+  });
+
+  afterEach(async () => {
+    for (const key of trackedEnvKeys) {
+      const value = originalValues.get(key);
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+
+    await Promise.all(tempDirs.map((dir) => fs.rm(dir, { recursive: true, force: true })));
+    tempDirs.length = 0;
+  });
+
+  it("returns empty by default", () => {
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+    });
+
+    expect(runtime.getContainerEnv()).toEqual({});
+  });
+
+  it("returns cached env after computeContainerRequirements", async () => {
+    process.env.GIT_ASKPASS = "/usr/bin/coder";
+    const workspacePath = await createTempDir("mux-devcontainer-env-");
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+      shareCredentials: true,
+    });
+    const internal = runtime as unknown as RuntimeWithContainerRequirements;
+
+    internal.computeContainerRequirements(workspacePath);
+
+    expect(runtime.getContainerEnv()).toMatchObject({ GIT_ASKPASS: "/usr/bin/coder" });
+  });
+
+  it("with shareCredentials=false keeps env empty and only adds gitdir mount when present", async () => {
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+    });
+    const internal = runtime as unknown as RuntimeWithContainerRequirements;
+
+    const workspaceWithoutGit = await createTempDir("mux-devcontainer-no-git-");
+    internal.computeContainerRequirements(workspaceWithoutGit);
+    expect(runtime.getContainerEnv()).toEqual({});
+    expect(internal.containerMounts).toEqual([]);
+
+    const workspaceWithGitdir = await createTempDir("mux-devcontainer-worktree-");
+    const projectPath = await createTempDir("mux-devcontainer-project-");
+    const gitdirPath = path.join(projectPath, ".git", "worktrees", "feature");
+    const dotGitDir = path.join(projectPath, ".git");
+
+    await fs.mkdir(gitdirPath, { recursive: true });
+    await fs.writeFile(path.join(workspaceWithGitdir, ".git"), `gitdir: ${gitdirPath}\n`, "utf-8");
+
+    internal.computeContainerRequirements(workspaceWithGitdir);
+
+    expect(runtime.getContainerEnv()).toEqual({});
+    expect(internal.containerMounts).toEqual([{ source: dotGitDir, target: dotGitDir }]);
+  });
+
+  it("returns credential env after setCurrentWorkspacePath with shareCredentials=true", async () => {
+    process.env.GIT_ASKPASS = "/usr/bin/coder";
+    const workspacePath = await createTempDir("mux-devcontainer-setpath-");
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+      shareCredentials: true,
+    });
+
+    runtime.setCurrentWorkspacePath(workspacePath);
+
+    // Env should be populated without calling ensureReady()
+    expect(runtime.getContainerEnv()).toMatchObject({ GIT_ASKPASS: "/usr/bin/coder" });
+  });
+
+  it("keeps env empty after setCurrentWorkspacePath with shareCredentials=false", async () => {
+    process.env.GIT_ASKPASS = "/usr/bin/coder";
+    const workspacePath = await createTempDir("mux-devcontainer-setpath-nocred-");
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+      // shareCredentials defaults to false
+    });
+
+    runtime.setCurrentWorkspacePath(workspacePath);
+
+    expect(runtime.getContainerEnv()).toEqual({});
   });
 });

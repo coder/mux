@@ -1,29 +1,13 @@
-import { APICallError, NoObjectGeneratedError, Output, RetryError, streamText } from "ai";
-import { z } from "zod";
+import { APICallError, NoOutputGeneratedError, RetryError, streamText, tool } from "ai";
 import type { AIService } from "./aiService";
 import { log } from "./log";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { NameGenerationError, SendMessageError } from "@/common/types/errors";
+import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
+import { TOOL_DEFINITIONS, ProposeNameToolArgsSchema } from "@/common/utils/tools/toolDefinitions";
 import crypto from "crypto";
-
-/** Schema for AI-generated workspace identity (area name + descriptive title) */
-const workspaceIdentitySchema = z.object({
-  name: z
-    .string()
-    .regex(/^[a-z0-9-]+$/)
-    .min(2)
-    .max(20)
-    .describe(
-      "Codebase area (1-2 words, max 15 chars): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config'"
-    ),
-  title: z
-    .string()
-    .min(5)
-    .max(60)
-    .describe("Human-readable title (2-5 words): verb-noun format like 'Fix plan mode'"),
-});
 
 export interface WorkspaceIdentity {
   /** Codebase area with 4-char suffix (e.g., "sidebar-a1b2", "auth-k3m9") */
@@ -53,128 +37,6 @@ function generateNameSuffix(): string {
 export interface GenerateWorkspaceIdentityResult extends WorkspaceIdentity {
   /** The model that successfully generated the identity */
   modelUsed: string;
-}
-
-interface NameGenerationStreamFallback {
-  text: PromiseLike<string>;
-  content: PromiseLike<unknown>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-/**
- * Extract text payloads from a content-part array returned by some providers,
- * e.g. [{ type: "text", text: "..." }].
- */
-export function extractTextFromContentParts(content: unknown): string | null {
-  if (!Array.isArray(content)) {
-    return null;
-  }
-
-  const textParts: string[] = [];
-  for (const part of content) {
-    if (!isRecord(part)) {
-      continue;
-    }
-
-    if (typeof part.text === "string" && part.text.trim().length > 0) {
-      textParts.push(part.text);
-    }
-
-    const nestedText = extractTextFromContentParts(part.content);
-    if (nestedText) {
-      textParts.push(nestedText);
-    }
-  }
-
-  return textParts.length > 0 ? textParts.join("\n\n") : null;
-}
-
-function collectFallbackTextCandidates(error: unknown): string[] {
-  const candidates: string[] = [];
-
-  const pushCandidate = (value: unknown): void => {
-    if (typeof value !== "string") {
-      return;
-    }
-    const trimmed = value.trim();
-    if (trimmed.length === 0) {
-      return;
-    }
-    candidates.push(trimmed);
-  };
-
-  const visit = (value: unknown, depth: number): void => {
-    if (value == null || depth > 2) {
-      return;
-    }
-
-    if (typeof value === "string") {
-      pushCandidate(value);
-      return;
-    }
-
-    if (NoObjectGeneratedError.isInstance(value)) {
-      pushCandidate(value.text);
-    }
-
-    if (value instanceof Error) {
-      pushCandidate(value.message);
-      visit(value.cause, depth + 1);
-    }
-
-    if (!isRecord(value)) {
-      return;
-    }
-
-    pushCandidate(value.text);
-    pushCandidate(value.message);
-    pushCandidate(value.body);
-    pushCandidate(extractTextFromContentParts(value.content));
-
-    visit(value.cause, depth + 1);
-    visit(value.response, depth + 1);
-  };
-
-  visit(error, 0);
-
-  return [...new Set(candidates)];
-}
-
-async function recoverIdentityFromFallback(
-  error: unknown,
-  stream: NameGenerationStreamFallback | null
-): Promise<{ name: string; title: string } | null> {
-  const candidates = collectFallbackTextCandidates(error);
-
-  if (stream) {
-    try {
-      candidates.push((await stream.text).trim());
-    } catch {
-      // Ignore read errors; we still have error-derived candidates.
-    }
-
-    try {
-      const contentText = extractTextFromContentParts(await stream.content);
-      if (contentText) {
-        candidates.push(contentText.trim());
-      }
-    } catch {
-      // Ignore read errors; we still have error-derived candidates.
-    }
-  }
-
-  const uniqueCandidates = [...new Set(candidates.filter((text) => text.length > 0))];
-  for (const candidate of uniqueCandidates) {
-    const parsed = extractIdentityFromText(candidate);
-    if (parsed) {
-      return parsed;
-    }
-  }
-
-  return null;
 }
 
 function inferProviderFromModelString(modelString: string): string | undefined {
@@ -217,11 +79,20 @@ export function mapNameGenerationError(error: unknown, modelString: string): Nam
     }
   }
 
+  // NoOutputGeneratedError can still occur with tool-based generation when a
+  // provider returns no output at all (e.g. empty response before any tool call).
+  if (NoOutputGeneratedError.isInstance(error)) {
+    return {
+      type: "unknown",
+      raw: "No output generated from the AI provider.",
+    };
+  }
+
   if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
     return { type: "network", raw: error.message };
   }
 
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = getErrorMessage(error);
   return { type: "unknown", raw };
 }
 
@@ -279,18 +150,29 @@ export function buildWorkspaceIdentityPrompt(
   const trimmedConversationContext = conversationContext?.trim();
   if (trimmedConversationContext && trimmedConversationContext.length > 0) {
     promptSections.push(
-      `Conversation turns (first user message + latest turns, oldest to newest):\n${trimmedConversationContext.slice(0, 6_000)}`
+      `Conversation turns (chronological sample):\n${trimmedConversationContext.slice(0, 6_000)}`
     );
 
     const normalizedLatestUserMessage = latestUserMessage?.replace(/\s+/g, " ").trim();
     if (normalizedLatestUserMessage) {
       promptSections.push(
-        `Most recent user message (highest priority when it conflicts with older context): "${normalizedLatestUserMessage.slice(0, 1_000)}"`
+        `Most recent user message (extra context; do not prefer it over earlier turns): "${normalizedLatestUserMessage.slice(0, 1_000)}"`
       );
     }
   }
 
-  return `Generate a workspace name and title for this development task:\n\n${promptSections.join("\n\n")}\n\nRequirements:\n- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"\n- title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"\n- title guidance: Fit the long-term, overall purpose of the chat, not just the latest turn.\n- precedence: If older context conflicts, prioritize the most recent user message.`;
+  // Prompt wording is tuned for short UI titles that stay accurate over the whole chat,
+  // rather than over-indexing on whichever message happened most recently.
+  return [
+    "Generate a workspace name and title for this development task:\n\n",
+    `${promptSections.join("\n\n")}\n\n`,
+    "Requirements:\n",
+    '- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"\n',
+    '- title: 2-5 words, verb-noun format, describing the primary deliverable (what will be different when the work is done). Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"\n',
+    '- title quality: Be specific about the feature/system being changed. Prefer concrete nouns; avoid vague words ("stuff", "things"), self-referential meta phrases ("this chat", "this conversation", "regenerate title"), and temporal words ("latest", "recent", "today", "now").\n',
+    "- title scope: Choose the title that best represents the overall scope and goal across the entire conversation. Weigh all turns equally — do not favor the most recent message over earlier ones.\n",
+    "- title style: Sentence case, no punctuation, no quotes.\n",
+  ].join("");
 }
 
 export async function generateWorkspaceIdentity(
@@ -299,7 +181,7 @@ export async function generateWorkspaceIdentity(
   aiService: AIService,
   /** Optional conversation turns context used for regenerate-title prompts. */
   conversationContext?: string,
-  /** Optional most recent user message; if present, prompt gives it precedence over older context. */
+  /** Optional most recent user message; included as additional context only — not given precedence over older turns. */
   latestUserMessage?: string
 ): Promise<Result<GenerateWorkspaceIdentityResult, NameGenerationError>> {
   if (candidates.length === 0) {
@@ -315,59 +197,76 @@ export async function generateWorkspaceIdentity(
   for (let i = 0; i < maxAttempts; i++) {
     const modelString = candidates[i];
 
-    const modelResult = await aiService.createModel(modelString);
+    const modelResult = await aiService.createModel(modelString, undefined, {
+      agentInitiated: true,
+    });
     if (!modelResult.success) {
       lastError = mapModelCreationError(modelResult.error, modelString);
       log.debug(`Name generation: skipping ${modelString} (${modelResult.error.type})`);
       continue;
     }
 
-    let stream: NameGenerationStreamFallback | null = null;
     try {
-      // Use streamText instead of generateText: the Codex OAuth endpoint
-      // (chatgpt.com/backend-api/codex/responses) requires stream:true in the
-      // request body and rejects non-streaming requests with 400.  streamText
-      // sets stream:true automatically, while generateText does not.
+      // Use streamText with a propose_name tool instead of Output.object().
+      // Tool calls are universally supported across LLM APIs and far more
+      // reliable than structured JSON output, eliminating all the fragile
+      // regex fallback parsing that was previously needed.
+      //
+      // streamText (not generateText): the Codex OAuth endpoint requires
+      // stream:true in the request body; streamText sets it automatically.
+      //
+      // No toolChoice — forced tool choice (toolChoice: "required" / "any" /
+      // { type: "tool" }) is incompatible with extended thinking models.
+      // Instead, the prompt instructs the model to call the tool, and the
+      // name_workspace builtin agent declares tools.require: [propose_name]
+      // which the StreamManager enforces via stopWhen for full agent sessions.
+      // For this direct streamText path, the candidate retry loop handles the
+      // (rare) case where the model ignores the instruction.
       const currentStream = streamText({
         model: modelResult.data,
-        output: Output.object({ schema: workspaceIdentitySchema }),
         prompt: buildWorkspaceIdentityPrompt(message, conversationContext, latestUserMessage),
+        tools: {
+          // Defined inline so TypeScript preserves full schema inference on
+          // toolResult.output (the propose_name tool is only used here).
+          propose_name: tool({
+            description: TOOL_DEFINITIONS.propose_name.description,
+            inputSchema: ProposeNameToolArgsSchema,
+            // eslint-disable-next-line @typescript-eslint/require-await -- AI SDK Tool.execute must return a Promise
+            execute: async (args) => ({ success: true as const, ...args }),
+          }),
+        },
       });
-      stream = currentStream;
 
-      // Awaiting .output triggers full stream consumption and JSON parsing.
-      // If the model returned conversational text instead of JSON, this throws
-      // NoObjectGeneratedError — caught below with a text fallback parser.
-      const output = await currentStream.output;
+      // Wait for the tool call result. The prompt strongly instructs the model
+      // to call propose_name; most models comply on the first attempt.
+      // Search all results (not just the first) in case the model emits
+      // multiple tool calls — e.g., an initial invalid-args attempt followed
+      // by a corrected one.
+      const results = await currentStream.toolResults;
+      // find() narrows to StaticToolResult with toolName "propose_name",
+      // so toolResult.output is fully typed after the null check.
+      // Safety: toolResults only contains entries whose args passed Zod
+      // validation AND whose execute() returned successfully — schema-invalid
+      // tool calls never appear here.
+      const toolResult = results.find((r) => r.dynamic !== true && r.toolName === "propose_name");
 
+      if (!toolResult) {
+        lastError = { type: "unknown", raw: "Model did not call propose_name tool" };
+        log.warn("Name generation: model did not call propose_name", { modelString });
+        continue;
+      }
+
+      const { name, title } = toolResult.output;
       const suffix = generateNameSuffix();
-      const sanitizedName = sanitizeBranchName(output.name, 20);
+      const sanitizedName = sanitizeBranchName(name, 20);
       const nameWithSuffix = `${sanitizedName}-${suffix}`;
 
       return Ok({
         name: nameWithSuffix,
-        title: output.title.trim(),
+        title: title.trim(),
         modelUsed: modelString,
       });
     } catch (error) {
-      // Some models ignore structured output instructions and return prose or
-      // content arrays. Recover from any available text source (error.text,
-      // stream.text, stream.content) before giving up on this candidate.
-      const fallback = await recoverIdentityFromFallback(error, stream);
-      if (fallback) {
-        log.info(
-          `Name generation: structured output failed for ${modelString}, recovered from text fallback`
-        );
-        const suffix = generateNameSuffix();
-        const sanitizedName = sanitizeBranchName(fallback.name, 20);
-        const nameWithSuffix = `${sanitizedName}-${suffix}`;
-        return Ok({
-          name: nameWithSuffix,
-          title: fallback.title,
-          modelUsed: modelString,
-        });
-      }
-
       lastError = mapNameGenerationError(error, modelString);
       log.warn("Name generation failed, trying next candidate", { modelString, error: lastError });
       continue;
@@ -380,60 +279,6 @@ export async function generateWorkspaceIdentity(
       raw: "No working model candidates were available for name generation.",
     }
   );
-}
-
-/**
- * Fallback: extract name/title from conversational model text when structured
- * JSON output parsing fails. Handles common patterns like:
- *   **name:** `testing`          or  "name": "testing"
- *   **title:** `Improve tests`   or  "title": "Improve tests"
- *
- * Returns null if either field cannot be reliably extracted.
- */
-export function extractIdentityFromText(text: string): { name: string; title: string } | null {
-  // Try JSON extraction first (model may have embedded JSON in prose)
-  const jsonMatch = /\{[^}]*"name"\s*:\s*"([^"]+)"[^}]*"title"\s*:\s*"([^"]+)"[^}]*\}/.exec(text);
-  if (jsonMatch) {
-    return validateExtracted(jsonMatch[1], jsonMatch[2]);
-  }
-  // Also try reverse field order in JSON
-  const jsonMatchReverse = /\{[^}]*"title"\s*:\s*"([^"]+)"[^}]*"name"\s*:\s*"([^"]+)"[^}]*\}/.exec(
-    text
-  );
-  if (jsonMatchReverse) {
-    return validateExtracted(jsonMatchReverse[2], jsonMatchReverse[1]);
-  }
-
-  // Try markdown/prose patterns: **name:** `value` or name: "value"
-  // In bold markdown the colon sits inside the stars: **name:**
-  const nameMatch =
-    /\*?\*?name:\*?\*?\s*`([^`]+)`/i.exec(text) ?? /\bname:\s*"([^"]+)"/i.exec(text);
-  const titleMatch =
-    /\*?\*?title:\*?\*?\s*`([^`]+)`/i.exec(text) ?? /\btitle:\s*"([^"]+)"/i.exec(text);
-
-  if (nameMatch && titleMatch) {
-    return validateExtracted(nameMatch[1], titleMatch[1]);
-  }
-
-  return null;
-}
-
-/** Validate extracted values against the same constraints as the schema. */
-function validateExtracted(
-  rawName: string,
-  rawTitle: string
-): { name: string; title: string } | null {
-  const name = rawName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-+/g, "-");
-  const title = rawTitle.trim();
-
-  if (name.length < 2 || name.length > 20) return null;
-  if (title.length < 5 || title.length > 60) return null;
-
-  return { name, title };
 }
 
 /**

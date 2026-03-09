@@ -20,6 +20,7 @@ import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
+import { redactDevcontainerArgsForLog } from "@/node/runtime/devcontainerLogRedaction";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { access } from "fs/promises";
 import { constants } from "fs";
@@ -41,6 +42,8 @@ interface SessionData {
 
 interface CreateSessionOptions {
   env?: NodeJS.ProcessEnv;
+  /** User-configured default shell from config.json. */
+  defaultShell?: string;
 }
 
 /**
@@ -116,11 +119,18 @@ export class PTYService {
         devcontainerArgs.push("--config", runtimeConfig.configPath);
       }
 
+      // Forward the runtime's credential env (GIT_ASKPASS, CODER_*, etc.)
+      // into the terminal session. The runtime owns the policy (shareCredentials gate);
+      // ptyService just relays whatever the runtime computed.
+      const containerEnv = runtime.getContainerEnv();
+      for (const [key, value] of Object.entries(containerEnv)) {
+        devcontainerArgs.push("--remote-env", `${key}=${value}`);
+      }
+
       devcontainerArgs.push("--", "/bin/sh");
       runtimeLabel = "Devcontainer";
-      log.info(
-        `[PTY] Devcontainer terminal for ${sessionId}: devcontainer ${devcontainerArgs.join(" ")}`
-      );
+      const logArgs = redactDevcontainerArgsForLog(devcontainerArgs);
+      log.info(`[PTY] Devcontainer terminal for ${sessionId}: devcontainer ${logArgs.join(" ")}`);
 
       ptyProcess = spawnPtyProcess({
         runtimeLabel,
@@ -137,7 +147,7 @@ export class PTYService {
       } catch {
         throw new Error(`Workspace path does not exist: ${workspacePath}`);
       }
-      const shell = resolveLocalPtyShell();
+      const shell = resolveLocalPtyShell({ configuredShell: options?.defaultShell });
       runtimeLabel = "Local";
 
       if (!shell.command.trim()) {
@@ -291,9 +301,7 @@ export class PTYService {
    * Close all terminal sessions for a workspace
    */
   closeWorkspaceSessions(workspaceId: string): void {
-    const sessionIds = Array.from(this.sessions.entries())
-      .filter(([, session]) => session.workspaceId === workspaceId)
-      .map(([id]) => id);
+    const sessionIds = this.getWorkspaceSessionIds(workspaceId);
 
     log.info(`Closing ${sessionIds.length} terminal session(s) for workspace ${workspaceId}`);
 

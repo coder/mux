@@ -64,3 +64,18 @@ export const NameGenerationErrorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("configuration"), raw: z.string().nullish() }),
   z.object({ type: z.literal("unknown"), raw: z.string() }),
 ]);
+
+/**
+ * Discriminated union for project removal errors.
+ * workspace_blockers carries exact active/archived counts so the frontend can render
+ * precise messaging without parsing strings.
+ */
+export const ProjectRemoveErrorSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("workspace_blockers"),
+    activeCount: z.number().int().nonnegative(),
+    archivedCount: z.number().int().nonnegative(),
+  }),
+  z.object({ type: z.literal("project_not_found") }),
+  z.object({ type: z.literal("unknown"), message: z.string() }),
+]);

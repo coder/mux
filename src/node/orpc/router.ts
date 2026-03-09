@@ -1,12 +1,14 @@
-import { os } from "@orpc/server";
+import { os, ORPCError } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
+import { OnePasswordService } from "@/node/services/onePasswordService";
 import {
   MUX_GATEWAY_ORIGIN,
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
 } from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
@@ -16,6 +18,7 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
   createAuthMiddleware,
   extractClientIpAddress,
@@ -34,6 +37,7 @@ import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers"
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import { withQueueHeartbeat } from "@/common/utils/withQueueHeartbeat";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   isLayoutPresetsConfigEmpty,
@@ -46,6 +50,11 @@ import {
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
 } from "@/common/types/tasks";
+import {
+  normalizeRuntimeEnablement,
+  RUNTIME_ENABLEMENT_IDS,
+  type RuntimeEnablementId,
+} from "@/common/types/runtime";
 import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
@@ -62,6 +71,7 @@ import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
+import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
@@ -71,6 +81,24 @@ import {
   readSubagentTranscriptArtifactsFile,
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
+import { getErrorMessage } from "@/common/utils/errors";
+
+const RAW_QUERY_USER_ERROR_PATTERNS = [
+  /^parser error:/i,
+  /^binder error:/i,
+  /^catalog error:/i,
+  /^conversion error:/i,
+  /^invalid input error:/i,
+  /^out of range error:/i,
+  /^not implemented error:/i,
+  /query contains disallowed sql/i,
+  /string literals cannot be used as table sources/i,
+] as const;
+
+function shouldExposeRawQueryError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return RAW_QUERY_USER_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -163,7 +191,7 @@ async function readChatJsonlAllowMissing(params: {
       } catch (parseError) {
         log.warn(
           `Skipping malformed JSON at line ${i + 1} in ${params.logLabel}:`,
-          parseError instanceof Error ? parseError.message : String(parseError),
+          getErrorMessage(parseError),
           "\nLine content:",
           lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
         );
@@ -193,7 +221,7 @@ async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessag
     // Never fail transcript viewing because partial.json is corrupted.
     log.warn("Failed to read partial.json for transcript", {
       partialPath,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return null;
   }
@@ -322,10 +350,17 @@ export const router = (authToken?: string) => {
         .input(schemas.tokenizer.calculateStats.input)
         .output(schemas.tokenizer.calculateStats.output)
         .handler(async ({ context, input }) => {
+          const metadataResult = await context.aiService.getWorkspaceMetadata(input.workspaceId);
+          const parentWorkspaceId = metadataResult.success
+            ? (metadataResult.data.parentWorkspaceId ?? null)
+            : null;
+
           return context.tokenizerService.calculateStats(
             input.workspaceId,
             input.messages,
-            input.model
+            input.model,
+            context.providerService.getConfig(),
+            parentWorkspaceId
           );
         }),
     },
@@ -527,24 +562,6 @@ export const router = (authToken?: string) => {
           return { revokedCount };
         }),
     },
-    features: {
-      getStatsTabState: t
-        .input(schemas.features.getStatsTabState.input)
-        .output(schemas.features.getStatsTabState.output)
-        .handler(async ({ context }) => {
-          const state = await context.featureFlagService.getStatsTabState();
-          context.sessionTimingService.setStatsTabState(state);
-          return state;
-        }),
-      setStatsTabOverride: t
-        .input(schemas.features.setStatsTabOverride.input)
-        .output(schemas.features.setStatsTabOverride.output)
-        .handler(async ({ context, input }) => {
-          const state = await context.featureFlagService.setStatsTabOverride(input.override);
-          context.sessionTimingService.setStatsTabState(state);
-          return state;
-        }),
-    },
     config: {
       getConfig: t
         .input(schemas.config.getConfig.input)
@@ -560,14 +577,17 @@ export const router = (authToken?: string) => {
             muxGatewayModels: config.muxGatewayModels,
             defaultModel: config.defaultModel,
             hiddenModels: config.hiddenModels,
-            preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
+            runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
+            defaultRuntime: config.defaultRuntime ?? null,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
             // Mux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
+            llmDebugLogs: config.llmDebugLogs === true,
+            onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
       updateAgentAiDefaults: t
@@ -607,9 +627,14 @@ export const router = (authToken?: string) => {
             return {
               ...config,
               muxGatewayEnabled: input.muxGatewayEnabled ? undefined : false,
-              muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
+              // Persist explicit empty selections so startup migration doesn't
+              // rehydrate stale legacy localStorage values.
+              muxGatewayModels: nextModels,
             };
           });
+          // Notify subscribers (useProvidersConfig) so the frontend picks up the
+          // new gateway enabled/models state without needing localStorage.
+          context.providerService.notifyConfigChanged();
         }),
       updateModelPreferences: t
         .input(schemas.config.updateModelPreferences.input)
@@ -656,10 +681,6 @@ export const router = (authToken?: string) => {
               next.hiddenModels = normalizedHidden;
             }
 
-            if (input.preferredCompactionModel !== undefined) {
-              next.preferredCompactionModel = normalizeModelString(input.preferredCompactionModel);
-            }
-
             return next;
           });
         }),
@@ -673,6 +694,107 @@ export const router = (authToken?: string) => {
               // Default ON: store `false` only.
               stopCoderWorkspaceOnArchive: input.stopCoderWorkspaceOnArchive ? undefined : false,
             };
+          });
+        }),
+      updateOnePasswordAccountName: t
+        .input(schemas.config.updateOnePasswordAccountName.input)
+        .output(schemas.config.updateOnePasswordAccountName.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const trimmedAccountName = input.onePasswordAccountName?.trim() ?? undefined;
+            const normalizedAccountName =
+              trimmedAccountName === "" ? undefined : trimmedAccountName;
+            return {
+              ...config,
+              onePasswordAccountName: normalizedAccountName,
+            };
+          });
+        }),
+      updateRuntimeEnablement: t
+        .input(schemas.config.updateRuntimeEnablement.input)
+        .output(schemas.config.updateRuntimeEnablement.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const shouldUpdateRuntimeEnablement = input.runtimeEnablement !== undefined;
+            const shouldUpdateDefaultRuntime = input.defaultRuntime !== undefined;
+            const shouldUpdateOverridesEnabled = input.runtimeOverridesEnabled !== undefined;
+            const projectPath = input.projectPath?.trim();
+
+            if (
+              !shouldUpdateRuntimeEnablement &&
+              !shouldUpdateDefaultRuntime &&
+              !shouldUpdateOverridesEnabled
+            ) {
+              return config;
+            }
+
+            const runtimeEnablementOverrides =
+              input.runtimeEnablement == null
+                ? undefined
+                : (() => {
+                    const normalized = normalizeRuntimeEnablement(input.runtimeEnablement);
+                    const disabled: Partial<Record<RuntimeEnablementId, false>> = {};
+
+                    for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+                      if (!normalized[runtimeId]) {
+                        disabled[runtimeId] = false;
+                      }
+                    }
+
+                    return Object.keys(disabled).length > 0 ? disabled : undefined;
+                  })();
+
+            const defaultRuntime = input.defaultRuntime ?? undefined;
+            const runtimeOverridesEnabled =
+              input.runtimeOverridesEnabled === true ? true : undefined;
+
+            if (projectPath) {
+              const project = config.projects.get(projectPath);
+              if (!project) {
+                log.warn("Runtime settings update requested for missing project", { projectPath });
+                return config;
+              }
+
+              const nextProject = { ...project };
+
+              if (shouldUpdateRuntimeEnablement) {
+                if (runtimeEnablementOverrides) {
+                  nextProject.runtimeEnablement = runtimeEnablementOverrides;
+                } else {
+                  delete nextProject.runtimeEnablement;
+                }
+              }
+
+              if (shouldUpdateDefaultRuntime) {
+                if (defaultRuntime !== undefined) {
+                  nextProject.defaultRuntime = defaultRuntime;
+                } else {
+                  delete nextProject.defaultRuntime;
+                }
+              }
+
+              if (shouldUpdateOverridesEnabled) {
+                if (runtimeOverridesEnabled) {
+                  nextProject.runtimeOverridesEnabled = true;
+                } else {
+                  delete nextProject.runtimeOverridesEnabled;
+                }
+              }
+              const nextProjects = new Map(config.projects);
+              nextProjects.set(projectPath, nextProject);
+              return { ...config, projects: nextProjects };
+            }
+
+            const next = { ...config };
+            if (shouldUpdateRuntimeEnablement) {
+              next.runtimeEnablement = runtimeEnablementOverrides;
+            }
+
+            if (shouldUpdateDefaultRuntime) {
+              next.defaultRuntime = defaultRuntime;
+            }
+
+            return next;
           });
         }),
       saveConfig: t
@@ -748,6 +870,15 @@ export const router = (authToken?: string) => {
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
         }),
+      updateLlmDebugLogs: t
+        .input(schemas.config.updateLlmDebugLogs.input)
+        .output(schemas.config.updateLlmDebugLogs.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            config.llmDebugLogs = input.enabled;
+            return config;
+          });
+        }),
       unenrollMuxGovernor: t
         .input(schemas.config.unenrollMuxGovernor.input)
         .output(schemas.config.unenrollMuxGovernor.output)
@@ -758,6 +889,106 @@ export const router = (authToken?: string) => {
           });
 
           await context.policyService.refreshNow();
+        }),
+    },
+    devtools: {
+      getRuns: t
+        .input(schemas.devtools.getRuns.input)
+        .output(schemas.devtools.getRuns.output)
+        .handler(async ({ context, input }) => {
+          return context.devToolsService.getRuns(input.workspaceId);
+        }),
+      getRunDetail: t
+        .input(schemas.devtools.getRunDetail.input)
+        .output(schemas.devtools.getRunDetail.output)
+        .handler(async ({ context, input }) => {
+          return context.devToolsService.getRunWithSteps(input.workspaceId, input.runId);
+        }),
+      clear: t
+        .input(schemas.devtools.clear.input)
+        .output(schemas.devtools.clear.output)
+        .handler(async ({ context, input }) => {
+          await context.devToolsService.clear(input.workspaceId);
+          return { success: true };
+        }),
+      subscribe: t
+        .input(schemas.devtools.subscribe.input)
+        .output(schemas.devtools.subscribe.output)
+        .handler(async function* ({ context, input, signal }) {
+          const service = context.devToolsService;
+          let resolveNext: ((value: DevToolsEvent | null) => void) | null = null;
+          const queue: DevToolsEvent[] = [];
+          let ended = false;
+
+          const push = (event: DevToolsEvent) => {
+            if (ended) {
+              return;
+            }
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(event);
+              return;
+            }
+
+            queue.push(event);
+          };
+
+          const eventName = `update:${input.workspaceId}`;
+          const onEvent = (event: DevToolsEvent) => {
+            push(event);
+          };
+
+          service.on(eventName, onEvent);
+
+          const onAbort = () => {
+            if (ended) {
+              return;
+            }
+
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            const runs = await service.getRuns(input.workspaceId);
+            yield { type: "snapshot", runs };
+
+            while (!ended) {
+              const queuedEvent = queue.shift();
+              if (queuedEvent) {
+                yield queuedEvent;
+                continue;
+              }
+
+              const event = await new Promise<DevToolsEvent | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (event == null || ended) {
+                break;
+              }
+
+              yield event;
+            }
+          } finally {
+            ended = true;
+            signal?.removeEventListener("abort", onAbort);
+            service.off(eventName, onEvent);
+          }
         }),
     },
     uiLayouts: {
@@ -1116,7 +1347,7 @@ export const router = (authToken?: string) => {
               },
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance request failed: ${message}`);
           }
 
@@ -1151,7 +1382,7 @@ export const router = (authToken?: string) => {
           try {
             json = await response.json();
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(`Mux Gateway balance response was not valid JSON: ${message}`);
           }
 
@@ -1344,7 +1575,7 @@ export const router = (authToken?: string) => {
             clearLogEntries();
             return { success: true };
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = getErrorMessage(err);
             return { success: false, error: message };
           }
         }),
@@ -1456,7 +1687,7 @@ export const router = (authToken?: string) => {
 
             return Ok(undefined);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             return Err(message);
           }
         }),
@@ -1594,11 +1825,13 @@ export const router = (authToken?: string) => {
           const resolvedProjectPath = projectPathProvided
             ? input.projectPath!
             : context.config.rootDir;
+          const opResolver = context.onePasswordService?.resolve.bind(context.onePasswordService);
 
-          const secrets = secretsToRecord(
+          const secrets = await secretsToRecord(
             projectPathProvided
               ? context.config.getEffectiveSecrets(resolvedProjectPath)
-              : context.config.getGlobalSecrets()
+              : context.config.getGlobalSecrets(),
+            opResolver
           );
 
           const configuredTransport = input.name
@@ -1910,11 +2143,28 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.projectService.gitInit(input.projectPath);
         }),
+      setTrust: t
+        .input(schemas.projects.setTrust.input)
+        .output(schemas.projects.setTrust.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedPath = stripTrailingSlashes(input.projectPath);
+            let project = config.projects.get(normalizedPath);
+            if (!project) {
+              // Create a minimal project entry so trust can be set before
+              // the first workspace.create (which normally adds the project)
+              project = { workspaces: [] };
+              config.projects.set(normalizedPath, project);
+            }
+            project.trusted = input.trusted;
+            return config;
+          });
+        }),
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)
         .handler(async ({ context, input }) => {
-          return context.projectService.remove(input.projectPath);
+          return context.projectService.remove(input.projectPath, input.force ?? false);
         }),
       secrets: {
         get: t
@@ -2056,7 +2306,11 @@ export const router = (authToken?: string) => {
           .output(schemas.projects.mcp.test.output)
           .handler(async ({ context, input }) => {
             const start = Date.now();
-            const secrets = secretsToRecord(context.config.getEffectiveSecrets(input.projectPath));
+            const opResolver = context.onePasswordService?.resolve.bind(context.onePasswordService);
+            const secrets = await secretsToRecord(
+              context.config.getEffectiveSecrets(input.projectPath),
+              opResolver
+            );
 
             const configuredTransport = input.name
               ? (await context.mcpConfigService.listServers(input.projectPath))[input.name]
@@ -2432,7 +2686,7 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.create.output)
         .handler(async ({ context, input }) => {
           const result = await context.workspaceService.create(
-            input.projectPath,
+            stripTrailingSlashes(input.projectPath),
             input.branchName,
             input.trunkBranch,
             input.title,
@@ -2562,6 +2816,22 @@ export const router = (authToken?: string) => {
 
           return { success: true, data: undefined };
         }),
+      answerDelegatedToolCall: t
+        .input(schemas.workspace.answerDelegatedToolCall.input)
+        .output(schemas.workspace.answerDelegatedToolCall.output)
+        .handler(({ context, input }) => {
+          const result = context.workspaceService.answerDelegatedToolCall(
+            input.workspaceId,
+            input.toolCallId,
+            input.result
+          );
+
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+
+          return { success: true, data: undefined };
+        }),
       resumeStream: t
         .input(schemas.workspace.resumeStream.input)
         .output(schemas.workspace.resumeStream.output)
@@ -2576,6 +2846,43 @@ export const router = (authToken?: string) => {
                 ? { type: "unknown" as const, raw: result.error }
                 : result.error;
             return { success: false, error };
+          }
+          return { success: true, data: result.data };
+        }),
+      setAutoRetryEnabled: t
+        .input(schemas.workspace.setAutoRetryEnabled.input)
+        .output(schemas.workspace.setAutoRetryEnabled.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.setAutoRetryEnabled(
+            input.workspaceId,
+            input.enabled,
+            input.persist ?? true
+          );
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
+      getStartupAutoRetryModel: t
+        .input(schemas.workspace.getStartupAutoRetryModel.input)
+        .output(schemas.workspace.getStartupAutoRetryModel.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.getStartupAutoRetryModel(input.workspaceId);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
+        }),
+      setAutoCompactionThreshold: t
+        .input(schemas.workspace.setAutoCompactionThreshold.input)
+        .output(schemas.workspace.setAutoCompactionThreshold.output)
+        .handler(({ context, input }) => {
+          const result = context.workspaceService.setAutoCompactionThreshold(
+            input.workspaceId,
+            input.threshold
+          );
+          if (!result.success) {
+            return { success: false, error: result.error };
           }
           return { success: true, data: undefined };
         }),
@@ -2714,7 +3021,7 @@ export const router = (authToken?: string) => {
               log.warn("workspace.getSubagentTranscript: descendant check failed", {
                 requestingWorkspaceId,
                 taskId,
-                error: error instanceof Error ? error.message : String(error),
+                error: getErrorMessage(error),
               });
             }
           }
@@ -2834,7 +3141,9 @@ export const router = (authToken?: string) => {
           const result = await context.workspaceService.executeBash(
             input.workspaceId,
             input.script,
-            input.options
+            input.options,
+            input.command ?? undefined,
+            input.args ?? undefined
           );
           if (!result.success) {
             return { success: false, error: result.error };
@@ -2856,12 +3165,18 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.onChat.output)
         .handler(async function* ({ context, input, signal }) {
           const session = context.workspaceService.getOrCreateSession(input.workspaceId);
-          const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
+          if (typeof input.legacyAutoRetryEnabled === "boolean") {
+            session.setLegacyAutoRetryEnabledHint(input.legacyAutoRetryEnabled);
+          }
+
+          const queue = withQueueHeartbeat(createAsyncMessageQueue<WorkspaceChatMessage>(), {
+            type: "heartbeat" as const,
+          });
 
           const onAbort = () => {
             // Ensure we tear down the async generator even if the client stops iterating without
-            // calling iterator.return(). This prevents orphaned heartbeat intervals.
-            end();
+            // calling iterator.return(). This prevents orphaned heartbeat timers.
+            queue.end();
           };
 
           if (signal) {
@@ -2880,7 +3195,7 @@ export const router = (authToken?: string) => {
           // Live stream deltas can overlap with replayed deltas on reconnect. Buffer live stream
           // events during replay and flush after `caught-up`, skipping any deltas already delivered
           // by replay.
-          const replayRelay = createReplayBufferedStreamMessageRelay(push);
+          const replayRelay = createReplayBufferedStreamMessageRelay(queue.push);
 
           const unsubscribe = session.onChatEvent(({ message }) => {
             replayRelay.handleSessionMessage(message);
@@ -2888,24 +3203,20 @@ export const router = (authToken?: string) => {
 
           // 2. Replay history (sends caught-up at the end)
           await session.replayHistory(({ message }) => {
-            push(message);
-          });
+            queue.push(message);
+          }, input.mode);
 
           replayRelay.finishReplay();
 
-          // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
-          // Client uses this to detect stalled connections vs. intentionally idle streams.
-          const HEARTBEAT_INTERVAL_MS = 5_000;
-          const heartbeatInterval = setInterval(() => {
-            push({ type: "heartbeat" });
-          }, HEARTBEAT_INTERVAL_MS);
+          // Startup recovery: after replay catches the client up, recover any
+          // crash-stranded compaction follow-ups and then evaluate auto-retry.
+          session.scheduleStartupRecovery();
 
           try {
-            yield* iterate();
+            yield* queue.iterate();
           } finally {
-            clearInterval(heartbeatInterval);
             signal?.removeEventListener("abort", onAbort);
-            end();
+            queue.end();
             unsubscribe();
           }
         }),
@@ -2997,40 +3308,33 @@ export const router = (authToken?: string) => {
             const service = context.workspaceService;
 
             interface ActivityEvent {
+              type: "activity";
               workspaceId: string;
               activity: WorkspaceActivitySnapshot | null;
             }
 
-            let resolveNext: ((value: ActivityEvent | null) => void) | null = null;
-            const queue: ActivityEvent[] = [];
-            let ended = false;
-
-            const push = (event: ActivityEvent) => {
-              if (ended) return;
-              if (resolveNext) {
-                const resolve = resolveNext;
-                resolveNext = null;
-                resolve(event);
-              } else {
-                queue.push(event);
+            const queue = withQueueHeartbeat(
+              createAsyncEventQueue<ActivityEvent | { type: "heartbeat" }>(),
+              {
+                type: "heartbeat" as const,
               }
-            };
+            );
 
-            const onActivity = (event: ActivityEvent) => {
-              push(event);
+            const onActivity = (event: {
+              workspaceId: string;
+              activity: WorkspaceActivitySnapshot | null;
+            }) => {
+              queue.push({
+                type: "activity" as const,
+                workspaceId: event.workspaceId,
+                activity: event.activity,
+              });
             };
 
             service.on("activity", onActivity);
 
             const onAbort = () => {
-              if (ended) return;
-              ended = true;
-
-              if (resolveNext) {
-                const resolve = resolveNext;
-                resolveNext = null;
-                resolve(null);
-              }
+              queue.end();
             };
 
             if (signal) {
@@ -3042,27 +3346,24 @@ export const router = (authToken?: string) => {
             }
 
             try {
-              while (!ended) {
-                if (queue.length > 0) {
-                  yield queue.shift()!;
-                  continue;
-                }
-
-                const event = await new Promise<ActivityEvent | null>((resolve) => {
-                  resolveNext = resolve;
-                });
-
-                if (event === null || ended) {
-                  break;
-                }
-
-                yield event;
-              }
+              // Bootstrap snapshots are the responsibility of workspace.activity.list().
+              // This subscription emits only live activity deltas and heartbeats to
+              // preserve strict event ordering — replaying historical snapshots here
+              // could overwrite fresher live events queued by the listener above.
+              yield* queue.iterate();
             } finally {
-              ended = true;
               signal?.removeEventListener("abort", onAbort);
+              queue.end();
               service.off("activity", onActivity);
             }
+          }),
+      },
+      history: {
+        loadMore: t
+          .input(schemas.workspace.history.loadMore.input)
+          .output(schemas.workspace.history.loadMore.output)
+          .handler(async ({ context, input }) => {
+            return context.workspaceService.getHistoryLoadMore(input.workspaceId, input.cursor);
           }),
       },
       getPlanContent: t
@@ -3413,7 +3714,7 @@ export const router = (authToken?: string) => {
               await context.sessionTimingService.clearTimingFile(input.workspaceId);
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),
@@ -3453,7 +3754,7 @@ export const router = (authToken?: string) => {
               );
               return { success: true, data: undefined };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               return { success: false, error: message };
             }
           }),
@@ -3748,6 +4049,58 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.terminalService.openNative(input.workspaceId);
         }),
+      activity: {
+        subscribe: t
+          .input(schemas.terminal.activity.subscribe.input)
+          .output(schemas.terminal.activity.subscribe.output)
+          .handler(async function* ({ context, signal }) {
+            if (signal?.aborted) {
+              return;
+            }
+
+            const queue = withQueueHeartbeat(
+              createAsyncEventQueue<
+                | {
+                    type: "update";
+                    workspaceId: string;
+                    activity: { activeCount: number; totalSessions: number };
+                  }
+                | { type: "heartbeat" }
+              >(),
+              { type: "heartbeat" as const }
+            );
+
+            const unsubscribe = context.terminalService.onActivityChange((workspaceId: string) => {
+              queue.push({
+                type: "update" as const,
+                workspaceId,
+                activity: context.terminalService.getWorkspaceActivity(workspaceId),
+              });
+            });
+
+            const onAbort = () => {
+              queue.end();
+            };
+
+            if (signal) {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+
+            try {
+              // Yield initial snapshot (listener registered before snapshot, so no transition lost)
+              yield {
+                type: "snapshot" as const,
+                workspaces: context.terminalService.getAllWorkspaceActivity(),
+              };
+
+              yield* queue.iterate();
+            } finally {
+              signal?.removeEventListener("abort", onAbort);
+              queue.end();
+              unsubscribe();
+            }
+          }),
+      },
     },
     update: {
       check: t
@@ -3794,6 +4147,18 @@ export const router = (authToken?: string) => {
             queue.end();
             unsubscribe();
           }
+        }),
+      getChannel: t
+        .input(schemas.update.getChannel.input)
+        .output(schemas.update.getChannel.output)
+        .handler(({ context }) => {
+          return context.updateService.getChannel();
+        }),
+      setChannel: t
+        .input(schemas.update.setChannel.input)
+        .output(schemas.update.setChannel.output)
+        .handler(async ({ context, input }) => {
+          await context.updateService.setChannel(input.channel);
         }),
     },
     menu: {
@@ -3898,6 +4263,234 @@ export const router = (authToken?: string) => {
           context.signingService.clearIdentityCache();
           return { success: true };
         }),
+    },
+    analytics: {
+      getSummary: t
+        .input(schemas.analytics.getSummary.input)
+        .output(schemas.analytics.getSummary.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSummary(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
+      getSpendOverTime: t
+        .input(schemas.analytics.getSpendOverTime.input)
+        .output(schemas.analytics.getSpendOverTime.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSpendOverTime(input);
+        }),
+      getSpendByProject: t
+        .input(schemas.analytics.getSpendByProject.input)
+        .output(schemas.analytics.getSpendByProject.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSpendByProject(input.from ?? null, input.to ?? null);
+        }),
+      getSpendByModel: t
+        .input(schemas.analytics.getSpendByModel.input)
+        .output(schemas.analytics.getSpendByModel.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getSpendByModel(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
+      getTokensByModel: t
+        .input(schemas.analytics.getTokensByModel.input)
+        .output(schemas.analytics.getTokensByModel.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getTokensByModel(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
+      getTimingDistribution: t
+        .input(schemas.analytics.getTimingDistribution.input)
+        .output(schemas.analytics.getTimingDistribution.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getTimingDistribution(
+            input.metric,
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
+      getAgentCostBreakdown: t
+        .input(schemas.analytics.getAgentCostBreakdown.input)
+        .output(schemas.analytics.getAgentCostBreakdown.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getAgentCostBreakdown(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
+      getCacheHitRatioByProvider: t
+        .input(schemas.analytics.getCacheHitRatioByProvider.input)
+        .output(schemas.analytics.getCacheHitRatioByProvider.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getCacheHitRatioByProvider(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
+      getDelegationSummary: t
+        .input(schemas.analytics.getDelegationSummary.input)
+        .output(schemas.analytics.getDelegationSummary.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.getDelegationSummary(
+            input.projectPath ?? null,
+            input.from ?? null,
+            input.to ?? null
+          );
+        }),
+      executeRawQuery: t
+        .input(schemas.analytics.executeRawQuery.input)
+        .output(schemas.analytics.executeRawQuery.output)
+        .handler(async ({ context, input }) => {
+          try {
+            return await context.analyticsService.executeRawQuery(input.sql);
+          } catch (error) {
+            if (error instanceof ORPCError) {
+              throw error;
+            }
+
+            // Only surface user-authored SQL issues as BAD_REQUEST. Worker/service
+            // infrastructure faults must remain internal errors for correct health
+            // signaling and retry semantics.
+            if (!shouldExposeRawQueryError(error)) {
+              throw error;
+            }
+
+            throw new ORPCError("BAD_REQUEST", {
+              message: getErrorMessage(error),
+              cause: error,
+            });
+          }
+        }),
+
+      getSavedQueries: t
+        .input(schemas.analytics.getSavedQueries.input)
+        .output(schemas.analytics.getSavedQueries.output)
+        .handler(async ({ context }) => {
+          return context.analyticsService.getSavedQueries();
+        }),
+      saveQuery: t
+        .input(schemas.analytics.saveQuery.input)
+        .output(schemas.analytics.saveQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.saveQuery(input);
+        }),
+      updateSavedQuery: t
+        .input(schemas.analytics.updateSavedQuery.input)
+        .output(schemas.analytics.updateSavedQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.updateSavedQuery(input);
+        }),
+      deleteSavedQuery: t
+        .input(schemas.analytics.deleteSavedQuery.input)
+        .output(schemas.analytics.deleteSavedQuery.output)
+        .handler(async ({ context, input }) => {
+          return context.analyticsService.deleteSavedQuery(input);
+        }),
+
+      rebuildDatabase: t
+        .input(schemas.analytics.rebuildDatabase.input)
+        .output(schemas.analytics.rebuildDatabase.output)
+        .handler(async ({ context }) => {
+          return context.analyticsService.rebuildAll();
+        }),
+    },
+    onePassword: {
+      isAvailable: t
+        .output(schemas.onePassword.isAvailable.output)
+        .handler(async ({ context }) => ({
+          available: (await context.onePasswordService?.isAvailable()) ?? false,
+        })),
+      listVaults: t.output(schemas.onePassword.listVaults.output).handler(async ({ context }) => {
+        if (!context.onePasswordService) return [];
+        return context.onePasswordService.listVaults();
+      }),
+      listItems: t
+        .input(schemas.onePassword.listItems.input)
+        .output(schemas.onePassword.listItems.output)
+        .handler(async ({ context, input }) => {
+          if (!context.onePasswordService) return [];
+          return context.onePasswordService.listItems(input.vaultId);
+        }),
+      getItemFields: t
+        .input(schemas.onePassword.getItemFields.input)
+        .output(schemas.onePassword.getItemFields.output)
+        .handler(async ({ context, input }) => {
+          if (!context.onePasswordService) return [];
+          return context.onePasswordService.getItemFields(input.vaultId, input.itemId);
+        }),
+      buildReference: t
+        .input(schemas.onePassword.buildReference.input)
+        .output(schemas.onePassword.buildReference.output)
+        .handler(({ input }) => ({
+          reference: OnePasswordService.buildReference(
+            input.vaultId,
+            input.itemId,
+            input.fieldId,
+            input.sectionId ?? undefined
+          ),
+          label: OnePasswordService.buildLabel(
+            input.vaultTitle ?? input.vaultId,
+            input.itemTitle ?? input.itemId,
+            input.fieldTitle ?? input.fieldId,
+            input.sectionTitle ?? input.sectionId ?? undefined
+          ),
+        })),
+    },
+    ssh: {
+      prompt: {
+        subscribe: t
+          .input(schemas.ssh.prompt.subscribe.input)
+          .output(schemas.ssh.prompt.subscribe.output)
+          .handler(async function* ({ context, signal }) {
+            if (signal?.aborted) return;
+
+            const service = context.sshPromptService;
+            const releaseResponder = service.registerInteractiveResponder();
+            const queue = createAsyncEventQueue<SshPromptEvent>();
+
+            const onRequest = (req: SshPromptRequest) =>
+              queue.push({ type: "request" as const, ...req });
+            const onRemoved = (requestId: string) =>
+              queue.push({ type: "removed" as const, requestId });
+
+            // Atomic handshake: register listener + snapshot in one step.
+            // No requests can be lost between snapshot and subscription.
+            const { snapshot, unsubscribe } = service.subscribeRequests(onRequest, onRemoved);
+            for (const req of snapshot) {
+              queue.push({ type: "request" as const, ...req });
+            }
+
+            const onAbort = () => queue.end();
+            signal?.addEventListener("abort", onAbort, { once: true });
+
+            try {
+              yield* queue.iterate();
+            } finally {
+              signal?.removeEventListener("abort", onAbort);
+              releaseResponder();
+              queue.end();
+              unsubscribe();
+            }
+          }),
+        respond: t
+          .input(schemas.ssh.prompt.respond.input)
+          .output(schemas.ssh.prompt.respond.output)
+          .handler(({ context, input }) => {
+            context.sshPromptService.respond(input.requestId, input.response);
+            return Ok(undefined);
+          }),
+      },
     },
   });
 };

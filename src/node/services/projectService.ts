@@ -2,9 +2,9 @@ import type { Config, ProjectConfig } from "@/node/config";
 import type { SectionConfig } from "@/common/types/project";
 import { DEFAULT_SECTION_COLOR } from "@/common/constants/ui";
 import { sortSectionsByLinkedList } from "@/common/utils/sections";
-import { isWorkspaceArchived } from "@/common/utils/archive";
+import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
@@ -12,7 +12,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
-import { execAsync, killProcessTree } from "@/node/utils/disposableExec";
+import { execFileAsync, killProcessTree } from "@/node/utils/disposableExec";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -20,11 +20,22 @@ import {
   type FileCompletionsIndex,
 } from "@/node/services/fileCompletionsIndex";
 import { log } from "@/node/services/log";
+import type { SshPromptService } from "@/node/services/sshPromptService";
+import { createMediatedAskpassSession } from "@/node/runtime/openSshPromptMediation";
+import {
+  classifySshCloneFailure,
+  summarizeCloneStderr,
+  type CloneErrorCode,
+} from "./sshCloneFailure";
 import type { BranchListResult } from "@/common/orpc/types";
+import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import { getMuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
+import { getErrorMessage } from "@/common/utils/errors";
+import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
+import type { z } from "zod";
 
 /**
  * List directory contents for the DirectoryPickerModal.
@@ -66,10 +77,23 @@ interface CloneProjectParams {
   cloneParentDir?: string | null;
 }
 
+export type { CloneErrorCode } from "./sshCloneFailure";
+
 export type CloneEvent =
   | { type: "progress"; line: string }
   | { type: "success"; projectConfig: ProjectConfig; normalizedPath: string }
-  | { type: "error"; error: string };
+  | {
+      type: "error";
+      code: CloneErrorCode;
+      error: string;
+      normalizedPath?: string | null;
+    };
+
+type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
+
+interface WorkspaceRemover {
+  remove(workspaceId: string, force?: boolean): Promise<Result<void>>;
+}
 
 function isTildePrefixedPath(value: string): boolean {
   return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
@@ -94,13 +118,37 @@ function resolveProjectParentDir(
   return resolvePathWithTilde(trimmedParentDir);
 }
 
-// Strip filesystem-unsafe characters (including control chars U+0000–U+001F)
+// Windows device names are invalid as path segments (CON/PRN/AUX/NUL/COM1.../LPT9)
+// even when used as a directory name.
+const WINDOWS_RESERVED_BASENAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?=\.|$)/iu;
+
+// Derive a conservative folder name from user-controlled repo input.
+// This path can flow into shell-adjacent commands (for example when opening
+// native terminals), so we only keep letters/digits/combining marks plus . _ -.
 function sanitizeRepoFolderName(name: string): string {
-  const unsafeCharsPattern = /[<>:"/\\|?*]/g;
-  return name
-    .replace(unsafeCharsPattern, "-")
-    .replace(/^[.\s]+/, "")
-    .replace(/[.\s]+$/, "");
+  const sanitized = name
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{M}\p{N}._-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.\s-]+/u, "")
+    .replace(/[.\s-]+$/u, "");
+
+  if (!sanitized) {
+    return "";
+  }
+
+  const reservedStemMatch = WINDOWS_RESERVED_BASENAME_PATTERN.exec(sanitized);
+  if (reservedStemMatch) {
+    const stemLength = reservedStemMatch[1]?.length ?? 0;
+    return `${sanitized.slice(0, stemLength)}-repo${sanitized.slice(stemLength)}`;
+  }
+
+  return sanitized;
+}
+
+function deriveFallbackRepoFolderName(repoSeed: string): string {
+  const digest = createHash("sha256").update(repoSeed).digest("hex").slice(0, 10);
+  return `repo-${digest}`;
 }
 
 function deriveRepoFolderName(repoUrl: string): string {
@@ -132,8 +180,10 @@ function deriveRepoFolderName(repoUrl: string): string {
   const repoName = path.posix.basename(normalizedCandidatePath).replace(/\.git$/i, "");
   const safeFolderName = sanitizeRepoFolderName(repoName);
 
+  // Keep clone flow resilient even when the repo basename contains only symbols/emojis.
+  // A deterministic fallback avoids user-visible hard failures while staying shell-safe.
   if (!safeFolderName) {
-    throw new Error("Could not determine destination folder name from repository URL");
+    return deriveFallbackRepoFolderName(trimmedRepoUrl);
   }
 
   return safeFolderName;
@@ -185,6 +235,79 @@ function normalizeRepoUrlForClone(repoUrl: string): string {
   return trimmedRepoUrl;
 }
 
+function parseScpStyleSshUrl(url: string): { host: string } | undefined {
+  const trimmedUrl = url.trim();
+
+  // Keep Windows drive-letter paths (e.g. C:\repo) out of SCP-style SSH matching.
+  if (/^[a-zA-Z]:[\\/]/.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // Protocol URLs (https://, ssh://, etc.) are handled separately.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // SCP-style clone URL: [user@]host:path
+  const scpLikeMatch = /^(?:[a-zA-Z0-9._-]+@)?(\[[^\]]+\]|[^:/\s][^:/\s]*):(.+)$/.exec(trimmedUrl);
+  if (!scpLikeMatch) {
+    return undefined;
+  }
+
+  return { host: scpLikeMatch[1] };
+}
+
+/** Protocol schemes that Git routes through SSH transport. */
+const SSH_PROTOCOL_SCHEMES = new Set(["ssh:", "git+ssh:", "ssh+git:"]);
+
+type CloneTransport =
+  | { kind: "ssh"; hostname: string; port: number }
+  | { kind: "ssh-scp"; hostname: string; port: number }
+  | { kind: "non-ssh" };
+
+/**
+ * Canonical clone-URL transport classifier.
+ * Every SSH-related decision in the clone flow (askpass enablement, prompt
+ * deduplication) should consume this parser so protocol support cannot drift.
+ */
+function parseCloneTransport(rawUrl: string): CloneTransport {
+  const trimmedUrl = rawUrl.trim();
+
+  // SCP-style: [user@]host:path (always SSH, port 22)
+  const parsedScpLikeUrl = parseScpStyleSshUrl(trimmedUrl);
+  if (parsedScpLikeUrl) {
+    return { kind: "ssh-scp", hostname: parsedScpLikeUrl.host, port: 22 };
+  }
+
+  // Protocol URLs: ssh://, git+ssh://, ssh+git://
+  try {
+    const parsed = new URL(trimmedUrl);
+    if (SSH_PROTOCOL_SCHEMES.has(parsed.protocol.toLowerCase()) && parsed.hostname) {
+      const parsedPort = Number.parseInt(parsed.port, 10);
+      const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 22;
+      return { kind: "ssh", hostname: parsed.hostname, port };
+    }
+  } catch {
+    // Not a valid protocol URL; treat as non-SSH.
+  }
+
+  return { kind: "non-ssh" };
+}
+
+/** Detect whether a clone URL will use SSH transport. */
+function isSshCloneUrl(url: string): boolean {
+  return parseCloneTransport(url).kind !== "non-ssh";
+}
+
+function deriveSshClonePromptDedupeKey(cloneUrl: string): string | undefined {
+  const transport = parseCloneTransport(cloneUrl);
+  if (transport.kind === "non-ssh") {
+    return undefined;
+  }
+
+  return formatSshEndpoint(transport.hostname, transport.port);
+}
+
 const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
 
 interface FileCompletionsCacheEntry {
@@ -196,8 +319,19 @@ interface FileCompletionsCacheEntry {
 export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
   private directoryPicker?: () => Promise<string | null>;
+  private readonly sshPromptService: SshPromptService | undefined;
+  private workspaceService?: WorkspaceRemover;
 
-  constructor(private readonly config: Config) {}
+  constructor(
+    private readonly config: Config,
+    sshPromptService?: SshPromptService
+  ) {
+    this.sshPromptService = sshPromptService;
+  }
+
+  setWorkspaceService(workspaceService: WorkspaceRemover): void {
+    this.workspaceService = workspaceService;
+  }
 
   setDirectoryPicker(picker: () => Promise<string | null>) {
     this.directoryPicker = picker;
@@ -271,7 +405,7 @@ export class ProjectService {
 
       return Ok({ projectConfig, normalizedPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create project: ${message}`);
     }
   }
@@ -316,7 +450,7 @@ export class ProjectService {
         cloneParentDir,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }
@@ -327,13 +461,16 @@ export class ProjectService {
   ): AsyncGenerator<CloneEvent> {
     const prepared = this.validateAndPrepareClone(input);
     if (!prepared.success) {
-      yield { type: "error", error: prepared.error };
+      yield { type: "error", code: "clone_failed", error: prepared.error };
       return;
     }
 
     const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
     const cloneWorkPath = `${normalizedPath}.mux-clone-${randomBytes(6).toString("hex")}`;
     let cloneSucceeded = false;
+    // Preserve full stderr so failed clones can surface git's fatal message instead of only exit code 128.
+    let collectedStderr = "";
+    let askpass: Awaited<ReturnType<typeof createMediatedAskpassSession>> | undefined;
 
     const cleanupPartialClone = async () => {
       if (cloneSucceeded) {
@@ -351,7 +488,7 @@ export class ProjectService {
 
     try {
       if (signal?.aborted) {
-        yield { type: "error", error: "Clone cancelled" };
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
         return;
       }
 
@@ -366,7 +503,11 @@ export class ProjectService {
       }
 
       if (cloneParentStat && !cloneParentStat.isDirectory()) {
-        yield { type: "error", error: "Clone destination parent directory is not a directory" };
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: "Clone destination parent directory is not a directory",
+        };
         return;
       }
 
@@ -381,23 +522,49 @@ export class ProjectService {
       }
 
       if (destinationStat) {
-        yield { type: "error", error: `Destination already exists: ${normalizedPath}` };
+        if (destinationStat.isDirectory()) {
+          yield {
+            type: "error",
+            code: "destination_exists",
+            error: `Destination already exists: ${normalizedPath}`,
+            normalizedPath,
+          };
+        } else {
+          yield {
+            type: "error",
+            code: "clone_failed",
+            error: `Destination already exists: ${normalizedPath}`,
+          };
+        }
         return;
       }
 
       await fsPromises.mkdir(cloneParentDir, { recursive: true });
 
+      // Set up SSH askpass mediation for SSH clone URLs.
+      // This allows clone to surface host-key and credential prompts through the
+      // same in-app dialog used by SSH runtime probes.
+      askpass =
+        isSshCloneUrl(cloneUrl) && this.sshPromptService
+          ? await createMediatedAskpassSession({
+              sshPromptService: this.sshPromptService,
+              promptPolicy: { allowHostKey: true, allowCredential: true },
+              // Deduplicate host-key prompts by SSH endpoint identity (host:port),
+              // not by full repo path, so concurrent clones to the same host coalesce.
+              dedupeKey: deriveSshClonePromptDedupeKey(cloneUrl),
+              getStderrContext: () => collectedStderr,
+            })
+          : undefined;
+
       const child = spawn("git", ["clone", "--progress", "--", cloneUrl, cloneWorkPath], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(askpass?.env ?? {}) },
         // Detached children become process-group leaders on Unix so we can
         // reliably terminate clone helpers (ssh, shells) as a full tree.
         detached: process.platform !== "win32",
       });
 
       const stderrChunks: string[] = [];
-      // Preserve full stderr so failed clones can surface git's fatal message instead of only exit code 128.
-      let collectedStderr = "";
       let resolveChunk: (() => void) | null = null;
       let processEnded = false;
       let resolveProcessExit: (() => void) | null = null;
@@ -406,14 +573,7 @@ export class ProjectService {
       });
       let spawnErrorMessage: string | null = null;
 
-      const getLastMeaningfulStderrLine = (): string | null => {
-        const stderrLines = collectedStderr
-          .trim()
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
-        return stderrLines[stderrLines.length - 1] ?? null;
-      };
+      const summarizeStderr = (): string | null => summarizeCloneStderr(collectedStderr);
 
       const notifyChunk = () => {
         if (!resolveChunk) {
@@ -518,14 +678,14 @@ export class ProjectService {
 
       if (spawnErrorMessage != null) {
         await cleanupPartialClone();
-        const errorMessage = getLastMeaningfulStderrLine() ?? spawnErrorMessage;
-        yield { type: "error", error: errorMessage };
+        const errorMessage = summarizeStderr() ?? spawnErrorMessage;
+        yield { type: "error", code: "clone_failed", error: errorMessage };
         return;
       }
 
       if (signal?.aborted) {
         await cleanupPartialClone();
-        yield { type: "error", error: "Clone cancelled" };
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
         return;
       }
 
@@ -535,17 +695,24 @@ export class ProjectService {
       if (exitCode !== 0 || exitSignal != null) {
         await cleanupPartialClone();
         const errorMessage =
-          getLastMeaningfulStderrLine() ??
+          summarizeStderr() ??
           (exitSignal != null
             ? `Clone failed: process terminated by signal ${String(exitSignal)}`
             : `Clone failed with exit code ${exitCode ?? "unknown"}`);
-        yield { type: "error", error: errorMessage };
+        yield {
+          type: "error",
+          code: classifySshCloneFailure({
+            stderr: collectedStderr,
+            promptOutcome: askpass?.getLastPromptOutcome() ?? null,
+          }),
+          error: errorMessage,
+        };
         return;
       }
 
       if (signal?.aborted) {
         await cleanupPartialClone();
-        yield { type: "error", error: "Clone cancelled" };
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
         return;
       }
 
@@ -555,7 +722,31 @@ export class ProjectService {
         const err = error as NodeJS.ErrnoException;
         if (err.code === "EEXIST" || err.code === "ENOTEMPTY") {
           await cleanupPartialClone();
-          yield { type: "error", error: `Destination already exists: ${normalizedPath}` };
+
+          let existingDestinationStat: Stats | null = null;
+          try {
+            existingDestinationStat = await fsPromises.stat(normalizedPath);
+          } catch (statError) {
+            const statErr = statError as NodeJS.ErrnoException;
+            if (statErr.code !== "ENOENT") {
+              throw statError;
+            }
+          }
+
+          if (existingDestinationStat?.isDirectory()) {
+            yield {
+              type: "error",
+              code: "destination_exists",
+              error: `Destination already exists: ${normalizedPath}`,
+              normalizedPath,
+            };
+          } else {
+            yield {
+              type: "error",
+              code: "clone_failed",
+              error: `Destination already exists: ${normalizedPath}`,
+            };
+          }
           return;
         }
         throw error;
@@ -569,7 +760,7 @@ export class ProjectService {
         } catch {
           // Best-effort cleanup only.
         }
-        yield { type: "error", error: "Clone cancelled" };
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
         return;
       }
 
@@ -591,16 +782,25 @@ export class ProjectService {
         } catch {
           // Best-effort rollback only.
         }
-        yield { type: "error", error: "Failed to persist cloned project configuration" };
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: "Failed to persist cloned project configuration",
+        };
         return;
       }
 
       cloneSucceeded = true;
       yield { type: "success", projectConfig, normalizedPath };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      yield { type: "error", error: `Failed to clone repository: ${message}` };
+      const message = getErrorMessage(error);
+      yield {
+        type: "error",
+        code: "clone_failed",
+        error: `Failed to clone repository: ${message}`,
+      };
     } finally {
+      askpass?.cleanup();
       await cleanupPartialClone();
     }
   }
@@ -621,19 +821,103 @@ export class ProjectService {
     return Err("Clone did not return a completion event");
   }
 
-  async remove(projectPath: string): Promise<Result<void>> {
+  async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
     try {
-      const config = this.config.loadConfigOrDefault();
-      const projectConfig = config.projects.get(projectPath);
+      let config = this.config.loadConfigOrDefault();
+      let projectConfig = config.projects.get(projectPath);
 
       if (!projectConfig) {
-        return Err("Project not found");
+        return Err({ type: "project_not_found" as const });
       }
 
-      if (projectConfig.workspaces.length > 0) {
-        return Err(
-          `Cannot remove project with active workspaces. Please remove all ${projectConfig.workspaces.length} workspace(s) first.`
-        );
+      // Self-healing: purge workspace entries whose backing directories no longer exist.
+      // This handles the case where a user manually deleted workspace dirs from ~/.mux/src/.
+      // Only check local/worktree runtimes — remote runtimes (SSH, Docker, devcontainer)
+      // have paths on the remote host that won't exist locally.
+      const localRuntimeTypes = new Set(["local", "worktree"]);
+      const survivingWorkspaces = [];
+      for (const ws of projectConfig.workspaces) {
+        const runtimeType = ws.runtimeConfig?.type;
+        const isLocal = runtimeType == null || localRuntimeTypes.has(runtimeType);
+        if (!isLocal) {
+          survivingWorkspaces.push(ws);
+          continue;
+        }
+        try {
+          await fsPromises.access(ws.path);
+          survivingWorkspaces.push(ws);
+        } catch (err: unknown) {
+          // Only prune when the directory is truly gone (ENOENT/ENOTDIR).
+          // Other errors (EACCES, transient I/O) mean the path may still exist.
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "ENOTDIR") {
+            log.info(`Pruning stale workspace entry (directory missing): ${ws.path}`);
+          } else {
+            log.warn(
+              `Keeping workspace entry despite access error (${code ?? "unknown"}): ${ws.path}`
+            );
+            survivingWorkspaces.push(ws);
+          }
+        }
+      }
+      if (survivingWorkspaces.length !== projectConfig.workspaces.length) {
+        projectConfig.workspaces = survivingWorkspaces;
+        await this.config.saveConfig(config);
+      }
+
+      let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+
+      const totalWorkspaces = counts.activeCount + counts.archivedCount;
+      if (force && totalWorkspaces > 0) {
+        if (!this.workspaceService) {
+          return Err({
+            type: "unknown" as const,
+            message: "Failed to remove project: workspace service unavailable for cascade cleanup",
+          });
+        }
+
+        const workspaceIdsByPath = new Map<string, string>();
+
+        if (projectConfig.workspaces.some((workspace) => !workspace.id)) {
+          const allWorkspaceMetadata = await this.config.getAllWorkspaceMetadata();
+          for (const metadata of allWorkspaceMetadata) {
+            if (metadata.projectPath !== projectPath) {
+              continue;
+            }
+            workspaceIdsByPath.set(metadata.namedWorkspacePath, metadata.id);
+          }
+        }
+
+        for (const workspace of projectConfig.workspaces) {
+          // Legacy workspace entries can be missing `id`. Resolve through metadata so
+          // WorkspaceService.remove() receives the canonical workspace ID (it cannot remove by path).
+          const workspaceId = workspace.id ?? workspaceIdsByPath.get(workspace.path);
+          if (!workspaceId) {
+            return Err({
+              type: "unknown" as const,
+              message: `Failed to remove project: Failed to resolve workspace ID for ${workspace.path}`,
+            });
+          }
+
+          const removeResult = await this.workspaceService.remove(workspaceId, true);
+          if (!removeResult.success) {
+            return Err({
+              type: "unknown" as const,
+              message: `Failed to remove project: Failed to delete workspace ${workspaceId}: ${removeResult.error}`,
+            });
+          }
+        }
+
+        config = this.config.loadConfigOrDefault();
+        projectConfig = config.projects.get(projectPath);
+        if (!projectConfig) {
+          return Err({ type: "project_not_found" as const });
+        }
+        counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      }
+
+      if (counts.activeCount + counts.archivedCount > 0) {
+        return Err({ type: "workspace_blockers" as const, ...counts });
       }
 
       config.projects.delete(projectPath);
@@ -647,8 +931,8 @@ export class ProjectService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Err(`Failed to remove project: ${message}`);
+      const message = getErrorMessage(error);
+      return Err({ type: "unknown" as const, message: `Failed to remove project: ${message}` });
     }
   }
 
@@ -722,16 +1006,25 @@ export class ProjectService {
         // Repo exists but is unborn - just create the initial commit
       } else {
         // Initialize git repository with main as default branch
-        using initProc = execAsync(`git -C "${normalizedPath}" init -b main`);
+        using initProc = execFileAsync("git", ["-C", normalizedPath, "init", "-b", "main"]);
         await initProc.result;
       }
 
       // Create an initial empty commit so the branch exists and worktree/SSH can work
       // Without a commit, the repo is "unborn" and has no branches
       // Use -c flags to set identity only for this commit (don't persist to repo config)
-      using commitProc = execAsync(
-        `git -C "${normalizedPath}" -c user.name="mux" -c user.email="mux@localhost" commit --allow-empty -m "Initial commit"`
-      );
+      using commitProc = execFileAsync("git", [
+        "-C",
+        normalizedPath,
+        "-c",
+        "user.name=mux",
+        "-c",
+        "user.email=mux@localhost",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "Initial commit",
+      ]);
       await commitProc.result;
 
       // Invalidate file completions cache since the repo state changed
@@ -739,7 +1032,7 @@ export class ProjectService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.error("Failed to initialize git repository:", error);
       return Err(`Failed to initialize git repository: ${message}`);
     }
@@ -781,7 +1074,13 @@ export class ProjectService {
             return;
           }
 
-          using proc = execAsync(`git -C "${normalizedPath}" ls-files -co --exclude-standard`);
+          using proc = execFileAsync("git", [
+            "-C",
+            normalizedPath,
+            "ls-files",
+            "-co",
+            "--exclude-standard",
+          ]);
           const { stdout } = await proc.result;
 
           const files = stdout
@@ -796,7 +1095,7 @@ export class ProjectService {
         } catch (error) {
           log.debug("getFileCompletions: failed to list files", {
             projectPath: normalizedPath,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         } finally {
           cacheEntry.fetchedAt = Date.now();
@@ -828,7 +1127,7 @@ export class ProjectService {
     } catch (error) {
       return {
         success: false as const,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       };
     }
   }
@@ -847,7 +1146,7 @@ export class ProjectService {
       await fsPromises.mkdir(normalizedPath, { recursive: true });
       return Ok({ normalizedPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create directory: ${message}`);
     }
   }
@@ -857,7 +1156,7 @@ export class ProjectService {
       await this.config.updateProjectSecrets(projectPath, secrets);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update project secrets: ${message}`);
     }
   }
@@ -894,7 +1193,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to set idle compaction hours: ${message}`);
     }
   }
@@ -954,7 +1253,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(section);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create section: ${message}`);
     }
   }
@@ -989,14 +1288,13 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update section: ${message}`);
     }
   }
 
   /**
-   * Remove a section. Only archived workspaces can remain in the section;
-   * active workspaces block removal. Archived workspaces become unsectioned.
+   * Remove a section and unsection any workspaces assigned to it.
    */
   async removeSection(projectPath: string, sectionId: string): Promise<Result<void>> {
     try {
@@ -1014,20 +1312,9 @@ export class ProjectService {
         return Err(`Section not found: ${sectionId}`);
       }
 
-      // Check for active (non-archived) workspaces in this section
       const workspacesInSection = project.workspaces.filter((w) => w.sectionId === sectionId);
-      const activeWorkspaces = workspacesInSection.filter(
-        (w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt)
-      );
 
-      if (activeWorkspaces.length > 0) {
-        return Err(
-          `Cannot remove section: ${activeWorkspaces.length} active workspace(s) still assigned. ` +
-            `Archive or move workspaces first.`
-        );
-      }
-
-      // Remove sectionId from archived workspaces in this section
+      // Unsection all workspaces in this section
       for (const workspace of workspacesInSection) {
         workspace.sectionId = undefined;
       }
@@ -1037,7 +1324,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove section: ${message}`);
     }
   }
@@ -1073,7 +1360,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to reorder sections: ${message}`);
     }
   }
@@ -1112,7 +1399,7 @@ export class ProjectService {
       await this.config.saveConfig(config);
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to assign workspace to section: ${message}`);
     }
   }

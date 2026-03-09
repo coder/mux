@@ -1,7 +1,7 @@
 import React from "react";
 
 import type { StreamingMessageAggregator } from "mux/browser/utils/messages/StreamingMessageAggregator";
-import { StreamingBarrierView } from "mux/browser/components/Messages/ChatBarrier/StreamingBarrierView";
+import { StreamingBarrierView } from "mux/browser/features/Messages/ChatBarrier/StreamingBarrierView";
 import { getModelName } from "mux/common/utils/ai/models";
 import { formatKeybind, KEYBINDS } from "mux/browser/utils/ui/keybinds";
 import { VIM_ENABLED_KEY, getModelKey } from "mux/common/constants/storage";

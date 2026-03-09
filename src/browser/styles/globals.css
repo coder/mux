@@ -65,6 +65,8 @@
     --color-ask-mode-light: hsl(246 100% 85%);
     --color-ask-mode-alpha: hsla(246 100% 68% / 0.1);
 
+    --color-auto-mode: #A4E8F2;
+
     --color-exec-mode: hsl(268.56 94.04% 55.19%);
     --color-exec-mode-hover: hsl(268.56 94.04% 67%);
     --color-exec-mode-light: hsl(268.56 94.04% 78%);
@@ -114,6 +116,16 @@
     --color-text-secondary: hsl(0 0% 42%);
     --color-muted-foreground: hsl(0 0% 60%);
     --color-secondary: hsl(0 0% 42%);
+    --color-surface-primary: hsla(240, 10%, 4%, 1);
+    --color-surface-secondary: hsla(240, 6%, 10%, 1);
+    --color-content-destructive: hsla(0, 91%, 71%, 1);
+    --color-surface-destructive: hsla(0, 75%, 15%, 1);
+    --color-surface-invert-secondary: hsla(240, 5%, 65%, 1);
+    --color-surface-tertiary: hsla(240, 4%, 16%, 1);
+    --color-content-success: hsla(142, 76%, 36%, 1);
+    --color-surface-green: hsla(145, 80%, 10%, 1);
+    --color-border-pending: hsla(188, 75%, 80%, 1);
+    --color-surface-sky: hsla(193, 67%, 12%, 1);
 
     /* Code */
     --color-code-bg: hsl(0 6.43% 8.04%);
@@ -403,6 +415,16 @@
   --color-text-secondary: hsl(210 12% 42%);
   --color-muted-foreground: hsl(210 14% 48%);
   --color-secondary: hsl(210 18% 60%);
+  --color-surface-primary: hsla(0, 0%, 100%, 1);
+  --color-surface-secondary: hsla(240, 5%, 96%, 1);
+  --color-content-destructive: hsla(0, 84%, 60%, 1);
+  --color-surface-destructive: hsla(0, 93%, 94%, 1);
+  --color-surface-invert-secondary: hsla(240, 5%, 26%, 1);
+  --color-surface-tertiary: hsla(240, 6%, 90%, 1);
+  --color-content-success: hsla(142, 72%, 29%, 1);
+  --color-surface-green: hsla(141, 79%, 85%, 1);
+  --color-border-pending: hsla(194, 49%, 45%, 1);
+  --color-surface-sky: hsla(191, 67%, 89%, 1);
 
   --color-code-bg: hsl(210 40% 96%);
 
@@ -648,6 +670,16 @@
   --color-text-secondary: #6f6e69;
   --color-muted-foreground: #6f6e69;
   --color-secondary: #6f6e69;
+  --color-surface-primary: #fffcf0;
+  --color-surface-secondary: #f8f5e8;
+  --color-content-destructive: #af3029;
+  --color-surface-destructive: color-mix(in srgb, var(--color-danger) 12%, var(--color-background) 88%);
+  --color-surface-invert-secondary: #403e3c;
+  --color-surface-tertiary: #f2f0e5;
+  --color-content-success: #66800b;
+  --color-surface-green: color-mix(in srgb, var(--color-success) 20%, var(--color-background) 80%);
+  --color-border-pending: #24837b;
+  --color-surface-sky: color-mix(in srgb, var(--color-info) 16%, var(--color-background) 84%);
 
   --color-code-bg: #f2f0e5;
 
@@ -687,6 +719,17 @@
   --color-token-output: #205ea6;
   --color-token-cached: #6f6e69;
   --color-token-cache-create: #66800b;
+
+  --color-task-mode: #24837b; /* Flexoki cyan-600 */
+  --color-task-mode-light: color-mix(in srgb, var(--color-task-mode), white 35%);
+  --surface-task-gradient: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-task-mode), transparent 94%) 0%,
+    color-mix(in srgb, var(--color-task-mode), transparent 97%) 100%
+  );
+  --surface-task-border: color-mix(in srgb, var(--color-task-mode), transparent 78%);
+  --surface-task-border-strong: color-mix(in srgb, var(--color-task-mode), transparent 68%);
+  --surface-task-divider: color-mix(in srgb, var(--color-task-mode), transparent 86%);
 
   --color-toggle-bg: #f2f0e5;
   --color-toggle-active: #e6e4d9;
@@ -854,6 +897,16 @@
   --color-text-secondary: #575653;
   --color-muted-foreground: #878580;
   --color-secondary: #575653;
+  --color-surface-primary: #100f0f;
+  --color-surface-secondary: #1c1b1a;
+  --color-content-destructive: #d14d41;
+  --color-surface-destructive: color-mix(in srgb, var(--color-danger) 16%, var(--color-background) 84%);
+  --color-surface-invert-secondary: #b7b5ac;
+  --color-surface-tertiary: #282726;
+  --color-content-success: #879a39;
+  --color-surface-green: color-mix(in srgb, var(--color-success) 18%, var(--color-background) 82%);
+  --color-border-pending: #3aa99f;
+  --color-surface-sky: color-mix(in srgb, var(--color-info) 16%, var(--color-background) 84%);
 
   --color-code-bg: #1c1b1a;
 
@@ -893,6 +946,17 @@
   --color-token-output: #4385be;
   --color-token-cached: #575653;
   --color-token-cache-create: #879a39;
+
+  --color-task-mode: #3aa99f; /* Flexoki cyan-400 */
+  --color-task-mode-light: color-mix(in srgb, var(--color-task-mode), white 22%);
+  --surface-task-gradient: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-task-mode), transparent 92%) 0%,
+    color-mix(in srgb, var(--color-task-mode), transparent 95%) 100%
+  );
+  --surface-task-border: color-mix(in srgb, var(--color-task-mode), transparent 70%);
+  --surface-task-border-strong: color-mix(in srgb, var(--color-task-mode), transparent 55%);
+  --surface-task-divider: color-mix(in srgb, var(--color-task-mode), transparent 80%);
 
   --color-toggle-bg: #1c1b1a;
   --color-toggle-active: #282726;
@@ -1019,7 +1083,7 @@ h3 {
 }
 
 body {
-  background-color: var(--color-background);
+  background-color: var(--color-surface-primary);
   color: var(--color-foreground);
   font-family: var(--font-primary);
   font-size: 14px;
@@ -1050,12 +1114,30 @@ body {
   scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
 
+/*
+ * Override for Tailwind's scrollbar-none utility.
+ * The global ::-webkit-scrollbar rules above opt Chromium/Electron into
+ * WebKit custom scrollbar rendering, which ignores the standard
+ * scrollbar-width: none that scrollbar-none generates. This explicit
+ * pseudo-element override restores the hidden behavior.
+ */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Keep `.scrollbar-none` fully hidden even with global Firefox scrollbar theming. */
+.scrollbar-none {
+  scrollbar-width: none;
+  scrollbar-color: auto;
+}
+
 /* Root container */
 html,
 body,
 #root,
 #storybook-root {
   overflow: hidden;
+  background-color: var(--color-surface-primary);
 }
 
 /* Mobile improvements - only apply to touch devices */
@@ -1464,10 +1546,11 @@ code {
 
 .plan-content blockquote {
   border-left: 3px solid var(--color-plan-mode);
-  padding-left: 12px;
+  background: color-mix(in srgb, var(--color-plan-mode) 8%, transparent);
+  padding: 6px 12px;
   margin: 8px 0;
-  color: var(--color-secondary);
-  font-style: italic;
+  color: var(--color-muted-foreground);
+  border-radius: 0 4px 4px 0;
 }
 
 [title]:hover::before {
@@ -1587,11 +1670,12 @@ code {
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid var(--color-border);
-  padding-left: 12px;
+  border-left: 3px solid var(--color-muted);
+  background: color-mix(in srgb, var(--color-border) 15%, transparent);
+  padding: 6px 12px;
   margin: 1em 0;
-  color: var(--color-secondary);
-  font-style: italic;
+  color: var(--color-muted-foreground);
+  border-radius: 0 4px 4px 0;
 }
 
 .markdown-content strong {
@@ -2023,6 +2107,17 @@ pre code {
   }
 }
 
+/* Semantic numeric typography — use on incrementing counters (costs, timers, token counts).
+   counter-nums: tabular figures only.  counter-nums-mono: tabular + monospace. */
+@utility counter-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@utility counter-nums-mono {
+  font-family: var(--font-monospace);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Font utility classes */
 .font-primary {
   font-family: var(--font-primary);
@@ -2058,6 +2153,11 @@ input[type="checkbox"] {
   animation: tutorial-pulse 1.5s ease-in-out infinite;
 }
 
+/* Active workspace status dot pulse (animate-pulse style, slightly stronger) */
+.workspace-status-dot-active {
+  animation: workspace-status-dot-pulse 1.8s cubic-bezier(0.5, 0, 0.6, 1) infinite;
+}
+
 @keyframes tutorial-pulse {
   0%,
   100% {
@@ -2067,6 +2167,16 @@ input[type="checkbox"] {
     box-shadow:
       0 0 0 3px var(--color-accent),
       0 0 12px var(--color-accent);
+  }
+}
+
+@keyframes workspace-status-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
   }
 }
 
@@ -2104,11 +2214,43 @@ input[type="checkbox"] {
   -webkit-app-region: no-drag;
 }
 
+/* Titlebar-safe inset classes — consume the CSS custom properties set by
+ * initTitlebarInsets() so components declare layout intent without
+ * reimplementing platform-specific pixel math.
+ *
+ * Each utility takes the max of the platform inset and the component's
+ * baseline gutter (set via a companion --titlebar-safe-*-gutter token),
+ * so existing px-* spacing is never regressed to 0px. */
+.titlebar-safe-left {
+  padding-left: max(var(--titlebar-left-inset, 0px), var(--titlebar-safe-left-gutter, 0px));
+}
+
+.titlebar-safe-right {
+  padding-right: max(var(--titlebar-right-inset, 0px), var(--titlebar-safe-right-gutter, 0px));
+}
+
+/* Right inset minus the 20px collapsed right-sidebar rail. Used by headers
+ * that stretch under the overlay only when the sidebar is collapsed. */
+.titlebar-safe-right-minus-sidebar {
+  padding-right: max(
+    var(--titlebar-safe-right-gutter, 0px),
+    calc(var(--titlebar-right-inset, 0px) - 20px)
+  );
+}
+
+/* Baseline gutter tokens — pair with titlebar-safe-* classes to declare
+ * the component's built-in horizontal spacing as a CSS custom property.
+ * The titlebar-safe utilities read these to ensure padding never drops
+ * below the component's natural gutter. */
+.titlebar-safe-left-gutter-4 { --titlebar-safe-left-gutter: 1rem; }      /* px-4 */
+.titlebar-safe-right-gutter-3 { --titlebar-safe-right-gutter: 0.75rem; } /* px-3 */
+.titlebar-safe-right-gutter-2 { --titlebar-safe-right-gutter: 0.5rem; }  /* px-2 */
 
 
-/* Titlebar inset for WorkspaceHeader when left sidebar is collapsed.
+
+/* Titlebar inset for WorkspaceMenuBar when left sidebar is collapsed.
  * The sidebar collapse state is synced to a data attribute on :root by App.tsx.
- * This centralizes the concern - WorkspaceHeader doesn't need props or JS logic. */
-:root[data-left-sidebar-collapsed="true"] [data-testid="workspace-header"] {
+ * This centralizes the concern - WorkspaceMenuBar doesn't need props or JS logic. */
+:root[data-left-sidebar-collapsed="true"] [data-testid="workspace-menu-bar"] {
   padding-left: 60px;
 }

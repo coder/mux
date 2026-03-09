@@ -19,6 +19,7 @@ import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService
 import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
+import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
@@ -37,23 +38,28 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
 } from "@/common/types/stream";
-import { FeatureFlagService } from "@/node/services/featureFlagService";
+import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
+import { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
   createStartCoderOnUnarchiveHook,
   createStopCoderOnArchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
+import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
+import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
 import type { ORPCContext } from "@/node/orpc/context";
+import type { ExternalSecretResolver } from "@/common/types/secrets";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
 const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
@@ -96,6 +102,8 @@ export class ServiceContainer {
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
   public readonly copilotOauthService: CopilotOauthService;
+  private _onePasswordService: OnePasswordService | null | undefined = undefined;
+  private _onePasswordServiceAccountName: string | undefined;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -107,13 +115,15 @@ export class ServiceContainer {
   public readonly mcpOauthService: McpOauthService;
   public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   public readonly telemetryService: TelemetryService;
-  public readonly featureFlagService: FeatureFlagService;
   public readonly sessionTimingService: SessionTimingService;
+  public readonly devToolsService: DevToolsService;
+  public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   public readonly serverAuthService: ServerAuthService;
+  public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
 
@@ -129,10 +139,23 @@ export class ServiceContainer {
       muxHome: config.rootDir,
     });
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+    this.analyticsService = new AnalyticsService(config);
+    this.devToolsService = new DevToolsService(config);
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
+
+    // 1Password integration — resolve references lazily so config updates are picked
+    // up without requiring an app restart.
+    const opResolver: ExternalSecretResolver = async (ref: string) => {
+      const service = this.onePasswordService;
+      if (!service) {
+        return undefined;
+      }
+
+      return service.resolve(ref);
+    };
 
     const core = createCoreServices({
       config,
@@ -142,11 +165,14 @@ export class ServiceContainer {
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
+      devToolsService: this.devToolsService,
+      opResolver,
     });
 
     // Spread core services into class fields
     this.historyService = core.historyService;
     this.aiService = core.aiService;
+    this.aiService.setAnalyticsService(this.analyticsService);
     this.workspaceService = core.workspaceService;
     this.taskService = core.taskService;
     this.providerService = core.providerService;
@@ -156,14 +182,15 @@ export class ServiceContainer {
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
 
-    this.projectService = new ProjectService(config);
+    this.projectService = new ProjectService(config, this.sshPromptService);
+    this.projectService.setWorkspaceService(this.workspaceService);
 
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
       config,
       this.historyService,
       this.extensionMetadata,
-      (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
+      (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
     );
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
@@ -192,17 +219,21 @@ export class ServiceContainer {
     this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
-    this.terminalService = new TerminalService(config, this.ptyService);
+    this.terminalService = new TerminalService(config, this.ptyService, opResolver);
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
-    this.updateService = new UpdateService();
+    this.updateService = new UpdateService(this.config);
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
-    this.voiceService = new VoiceService(config);
-    this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
+    this.voiceService = new VoiceService(
+      config,
+      this.providerService,
+      this.policyService,
+      opResolver
+    );
     this.signingService = getSigningService();
     this.coderService = coderService;
 
@@ -227,8 +258,10 @@ export class ServiceContainer {
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
+    setSshPromptService(this.sshPromptService);
+    setSSH2SshPromptService(this.sshPromptService);
 
-    // Backend timing stats (behind feature flag).
+    // Backend timing stats.
     this.aiService.on("stream-start", (data: StreamStartEvent) =>
       this.sessionTimingService.handleStreamStart(data)
     );
@@ -247,12 +280,57 @@ export class ServiceContainer {
     this.aiService.on("tool-call-end", (data: ToolCallEndEvent) =>
       this.sessionTimingService.handleToolCallEnd(data)
     );
-    this.aiService.on("stream-end", (data: StreamEndEvent) =>
-      this.sessionTimingService.handleStreamEnd(data)
-    );
+    this.aiService.on("stream-end", (data: StreamEndEvent) => {
+      this.sessionTimingService.handleStreamEnd(data);
+
+      const workspaceLookup = this.config.findWorkspace(data.workspaceId);
+      const sessionDir = this.config.getSessionDir(data.workspaceId);
+      // Newly created sub-agent workspaces are ingested here before a full rebuild,
+      // so keep workspaceName + parentWorkspaceId to avoid NULL analytics attribution.
+      this.analyticsService.ingestWorkspace(data.workspaceId, sessionDir, {
+        projectPath: workspaceLookup?.projectPath,
+        projectName: workspaceLookup?.projectPath
+          ? path.basename(workspaceLookup.projectPath)
+          : undefined,
+        workspaceName: workspaceLookup?.workspaceName,
+        parentWorkspaceId: workspaceLookup?.parentWorkspaceId,
+      });
+    });
+    // WorkspaceService emits metadata:null after successful remove().
+    // Clear analytics rows immediately so deleted workspaces disappear from stats
+    // without waiting for a future ingest pass.
+    this.workspaceService.on("metadata", (event) => {
+      if (event.metadata !== null) {
+        return;
+      }
+
+      this.analyticsService.clearWorkspace(event.workspaceId);
+    });
+
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );
+  }
+
+  get onePasswordService(): OnePasswordService | null {
+    const opAccountName = this.config.loadConfigOrDefault().onePasswordAccountName;
+
+    if (!opAccountName) {
+      this._onePasswordService = null;
+      this._onePasswordServiceAccountName = undefined;
+      return null;
+    }
+
+    if (
+      this._onePasswordService === undefined ||
+      this._onePasswordService === null ||
+      this._onePasswordServiceAccountName !== opAccountName
+    ) {
+      this._onePasswordService = new OnePasswordService(opAccountName);
+      this._onePasswordServiceAccountName = opAccountName;
+    }
+
+    return this._onePasswordService;
   }
 
   async initialize(): Promise<void> {
@@ -263,22 +341,15 @@ export class ServiceContainer {
     // Initialize policy service (startup gating)
     await this.policyService.initialize();
 
-    // Initialize feature flag state (don't block startup on network).
-    this.featureFlagService
-      .getStatsTabState()
-      .then((state) => this.sessionTimingService.setStatsTabState(state))
-      .catch(() => {
-        // Ignore feature flag failures.
-      });
     await this.experimentsService.initialize();
     await this.taskService.initialize();
     // Start idle compaction checker
     this.idleCompactionService.start();
 
-    // Refresh Coder SSH config in background (handles binary path changes on restart)
+    // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
-    void this.coderService.ensureSSHConfig().catch(() => {
-      // Ignore errors - coder may not be installed
+    void this.coderService.ensureMuxCoderSSHConfig().catch((error: unknown) => {
+      log.warn("Background mux SSH config setup failed", { error });
     });
 
     // Ensure the built-in Chat with Mux system workspace exists.
@@ -347,6 +418,9 @@ export class ServiceContainer {
         config.projects.set(projectPath, projectConfig);
       }
 
+      // Foundational invariant: built-in project is always marked system.
+      projectConfig.projectKind = "system";
+
       const existing = projectConfig.workspaces.find((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID);
 
       // Self-heal: enforce invariants for the system workspace and collapse duplicates
@@ -408,6 +482,8 @@ export class ServiceContainer {
    * (desktop/main.ts, cli/server.ts) don't duplicate a 30-field spread.
    */
   toORPCContext(): Omit<ORPCContext, "headers"> {
+    const resolveOnePasswordService = () => this.onePasswordService;
+
     return {
       config: this.config,
       aiService: this.aiService,
@@ -419,6 +495,9 @@ export class ServiceContainer {
       muxGovernorOauthService: this.muxGovernorOauthService,
       codexOauthService: this.codexOauthService,
       copilotOauthService: this.copilotOauthService,
+      get onePasswordService() {
+        return resolveOnePasswordService();
+      },
       terminalService: this.terminalService,
       editorService: this.editorService,
       windowService: this.windowService,
@@ -431,15 +510,17 @@ export class ServiceContainer {
       mcpOauthService: this.mcpOauthService,
       workspaceMcpOverridesService: this.workspaceMcpOverridesService,
       mcpServerManager: this.mcpServerManager,
-      featureFlagService: this.featureFlagService,
       sessionTimingService: this.sessionTimingService,
       telemetryService: this.telemetryService,
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
+      devToolsService: this.devToolsService,
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
+      sshPromptService: this.sshPromptService,
+      analyticsService: this.analyticsService,
     };
   }
 
@@ -448,6 +529,7 @@ export class ServiceContainer {
    */
   async shutdown(): Promise<void> {
     this.idleCompactionService.stop();
+    await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
 
@@ -464,6 +546,7 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();
     await this.mcpOauthService.dispose();

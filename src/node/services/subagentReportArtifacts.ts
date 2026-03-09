@@ -26,6 +26,8 @@ export interface SubagentReportArtifactIndexEntry {
   title?: string;
   /** Full ancestor chain (parent first). Used for descendant scope checks after cleanup. */
   ancestorWorkspaceIds: string[];
+  /** Estimated token count of delivered report markdown (~4 chars/token). */
+  reportTokenEstimate?: number;
 }
 
 export interface SubagentReportArtifact extends SubagentReportArtifactIndexEntry {
@@ -37,6 +39,7 @@ const SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION = 1 as const;
 const SUBAGENT_REPORT_ARTIFACTS_FILE_NAME = "subagent-reports.json";
 const SUBAGENT_REPORT_DIR_NAME = "subagent-reports";
 const SUBAGENT_REPORT_FILE_NAME = "report.json";
+export const CHARS_PER_TOKEN_ESTIMATE = 4;
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
@@ -289,6 +292,9 @@ export async function upsertSubagentReportArtifact(params: {
       title: params.title,
       ancestorWorkspaceIds: params.ancestorWorkspaceIds,
     };
+    updated.reportTokenEstimate = Math.ceil(
+      params.reportMarkdown.length / CHARS_PER_TOKEN_ESTIMATE
+    );
     file.artifactsByChildTaskId[params.childTaskId] = updated;
 
     try {

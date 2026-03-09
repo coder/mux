@@ -1,6 +1,8 @@
 import { autoUpdater } from "electron-updater";
 import type { UpdateInfo } from "electron-updater";
+import packageJson from "../../package.json";
 import { log } from "@/node/services/log";
+import type { UpdateChannel } from "@/common/types/project";
 import { parseDebugUpdater } from "@/common/utils/env";
 import {
   clearUpdateInstallInProgress,
@@ -9,6 +11,36 @@ import {
 
 // Update check timeout in milliseconds (30 seconds)
 const UPDATE_CHECK_TIMEOUT_MS = 30_000;
+
+/** Derive GitHub owner/repo from package.json repository URL instead of hardcoding. */
+function getGitHubRepo(): { owner: string; repo: string } {
+  const url =
+    typeof packageJson.repository === "string"
+      ? packageJson.repository
+      : packageJson.repository?.url;
+
+  if (url) {
+    // Matches github.com/owner/repo in URLs like:
+    //   git+https://github.com/coder/mux.git
+    //   https://github.com/coder/mux
+    //   git@github.com:coder/mux.git
+    //   git+https://github.com/acme/mux.desktop.git
+    const match = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
+    if (match) {
+      return { owner: match[1], repo: match[2] };
+    }
+  }
+
+  // Fallback for non-standard repository URLs
+  return { owner: "coder", repo: "mux" };
+}
+
+// Nightly releases are published in phases, so latest-*.yml can briefly 404.
+// Keep manual checks actionable with a friendly retry message instead of
+// exposing low-level electron-updater stack traces in the About dialog.
+const MISSING_UPDATE_METADATA_MESSAGE =
+  "Update metadata isn't available yet. The latest release may still be publishing; please try again in a few minutes.";
+const MAX_USER_VISIBLE_UPDATE_ERROR_LENGTH = 240;
 
 /**
  * Detect transient errors that should trigger silent backoff rather than
@@ -26,6 +58,32 @@ function isTransientUpdateError(error: Error): boolean {
     /network|socket hang up/i.test(msg) ||
     /rate limit/i.test(msg)
   );
+}
+
+function isMissingLatestManifestError(error: Error): boolean {
+  const msg = error.message;
+  return /404|Not Found/i.test(msg) && /latest-[^\s"']+\.yml/i.test(msg);
+}
+
+function sanitizeUpdateCheckErrorMessage(message: string): string {
+  const firstLine = message.split(/\r?\n/)[0]?.trim() ?? "";
+  if (!firstLine) {
+    return "Unknown error";
+  }
+
+  if (firstLine.length <= MAX_USER_VISIBLE_UPDATE_ERROR_LENGTH) {
+    return firstLine;
+  }
+
+  return `${firstLine.slice(0, MAX_USER_VISIBLE_UPDATE_ERROR_LENGTH - 1)}…`;
+}
+
+function getUserVisibleCheckErrorMessage(error: Error): string {
+  if (isMissingLatestManifestError(error)) {
+    return MISSING_UPDATE_METADATA_MESSAGE;
+  }
+
+  return sanitizeUpdateCheckErrorMessage(error.message);
 }
 
 // Backend UpdateStatus type (uses full UpdateInfo from electron-updater)
@@ -59,11 +117,18 @@ export class UpdaterService {
   };
   private checkSource: "auto" | "manual" = "auto";
   private subscribers = new Set<(status: UpdateStatus) => void>();
+  private currentChannel: UpdateChannel = "stable";
 
-  constructor() {
+  constructor(initialChannel: UpdateChannel = "stable") {
     // Configure auto-updater
     autoUpdater.autoDownload = false; // Wait for user confirmation
     autoUpdater.autoInstallOnAppQuit = true;
+
+    // Set up event handlers
+    this.setupEventHandlers();
+
+    this.currentChannel = initialChannel;
+    this.applyChannel(initialChannel);
 
     // Parse DEBUG_UPDATER for dev mode and optional fake version/fail phase
     const debugConfig = parseDebugUpdater(
@@ -101,9 +166,30 @@ export class UpdaterService {
         }
       }
     }
+  }
 
-    // Set up event handlers
-    this.setupEventHandlers();
+  private applyChannel(channel: UpdateChannel) {
+    const { owner, repo } = getGitHubRepo();
+    if (channel === "nightly") {
+      autoUpdater.allowPrerelease = true;
+      autoUpdater.channel = "nightly";
+      // Point at GitHub pre-releases for the nightly channel
+      autoUpdater.setFeedURL({
+        provider: "github",
+        owner,
+        repo,
+        releaseType: "prerelease",
+      });
+    } else {
+      autoUpdater.allowPrerelease = false;
+      autoUpdater.channel = "latest";
+      autoUpdater.setFeedURL({
+        provider: "github",
+        owner,
+        repo,
+        releaseType: "release",
+      });
+    }
   }
 
   private setupEventHandlers() {
@@ -150,7 +236,7 @@ export class UpdaterService {
             this.updateStatus = {
               type: "error",
               phase: "check",
-              message: error.message,
+              message: getUserVisibleCheckErrorMessage(error),
             };
             this.notifyRenderer();
             return;
@@ -166,7 +252,7 @@ export class UpdaterService {
         this.updateStatus = {
           type: "error",
           phase: "check",
-          message: error.message,
+          message: getUserVisibleCheckErrorMessage(error),
         };
         this.notifyRenderer();
         return;
@@ -307,7 +393,7 @@ export class UpdaterService {
             this.updateStatus = {
               type: "error",
               phase: "check",
-              message: err.message,
+              message: getUserVisibleCheckErrorMessage(err),
             };
           } else {
             log.debug(
@@ -320,14 +406,22 @@ export class UpdaterService {
           return;
         }
         log.error("Update check failed:", err.message);
-        this.updateStatus = { type: "error", phase: "check", message: err.message };
+        this.updateStatus = {
+          type: "error",
+          phase: "check",
+          message: getUserVisibleCheckErrorMessage(err),
+        };
         this.notifyRenderer();
       });
     } catch (error) {
       this.clearCheckTimeout();
-      const message = error instanceof Error ? error.message : "Unknown error";
-      log.error("Update check error:", message);
-      this.updateStatus = { type: "error", phase: "check", message };
+      const err = error instanceof Error ? error : new Error("Unknown error");
+      log.error("Update check error:", err.message);
+      this.updateStatus = {
+        type: "error",
+        phase: "check",
+        message: getUserVisibleCheckErrorMessage(err),
+      };
       this.notifyRenderer();
     }
   }
@@ -429,6 +523,28 @@ export class UpdaterService {
       this.updateStatus = { type: "error", phase: "install", message };
       this.notifyRenderer();
     }
+  }
+
+  getChannel(): UpdateChannel {
+    return this.currentChannel;
+  }
+
+  setChannel(channel: UpdateChannel): void {
+    if (this.currentChannel === channel) {
+      return;
+    }
+
+    const blockedStates = ["checking", "downloading", "downloaded"] as const;
+    if ((blockedStates as readonly string[]).includes(this.updateStatus.type)) {
+      throw new Error(
+        `Cannot switch update channel while ${this.updateStatus.type === "checking" ? "checking for updates" : this.updateStatus.type === "downloading" ? "downloading an update" : "an update is ready to install"}`
+      );
+    }
+
+    this.currentChannel = channel;
+    this.applyChannel(channel);
+    this.updateStatus = { type: "idle" };
+    this.notifyRenderer();
   }
 
   /**

@@ -8,6 +8,7 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import * as fs from "fs/promises";
 import writeFileAtomic from "write-file-atomic";
 import * as path from "path";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export type { ExperimentValue };
 
@@ -209,7 +210,7 @@ export class ExperimentsService {
     } catch (error) {
       log.debug("Failed to refresh experiment from PostHog", {
         experimentId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

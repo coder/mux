@@ -3,7 +3,11 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 import { Config } from "@/node/config";
+import { Ok } from "@/common/types/result";
+import type { SshPromptRequest } from "@/common/orpc/schemas/ssh";
+import { SshPromptService } from "@/node/services/sshPromptService";
 import { ProjectService, type CloneEvent } from "./projectService";
 
 async function createLocalGitRepository(rootDir: string, repoName: string): Promise<string> {
@@ -337,6 +341,237 @@ exit 1
       }
     });
 
+    it("sanitizes repo-derived folder names that contain shell metacharacters", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "sanitized-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-sanitize");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-sanitize-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const markerName = `WIN_marker_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({
+          repoUrl: `git://localhost/$(touch ${markerName}).git`,
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+        const expectedFolderName = `touch-${markerName}`;
+
+        expect(cloneWorkPath).not.toContain("$(");
+        expect(path.dirname(cloneWorkPath)).toBe(path.resolve(cloneParentDir));
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+      }
+    });
+
+    it("preserves combining-mark script names when deriving clone folder names", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "unicode-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-unicode");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-unicode-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const repoUrl = "https://example.com/org/हिन्दी.git";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({ repoUrl, cloneParentDir });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+        const expectedFolderName = "हिन्दी";
+
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+      }
+    });
+
+    it("falls back to deterministic safe folder names when repo basename sanitizes to empty", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "fallback-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-fallback");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-fallback-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+      const repoUrl = "https://example.com/org/🚀🚀.git";
+      const expectedFolderName = `repo-${createHash("sha256").update(repoUrl).digest("hex").slice(0, 10)}`;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({ repoUrl, cloneParentDir });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+      }
+    });
+
+    it("avoids Windows reserved destination names", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "reserved-name-clones");
+      const fakeBinDir = path.join(tempDir, "fake-bin-reserved");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitArgsLogPath = path.join(tempDir, "fake-git-reserved-args.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalFakeGitArgsLogPath = process.env.FAKE_GIT_ARGS_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.FAKE_GIT_ARGS_LOG = fakeGitArgsLogPath;
+
+      try {
+        const result = await service.clone({
+          repoUrl: "https://example.com/org/con.txt.git",
+          cloneParentDir,
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("Expected success");
+
+        const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+        const cloneWorkPath = loggedArgs[4] ?? "";
+        const expectedFolderName = "con-repo.txt";
+
+        expect(path.basename(cloneWorkPath)).toMatch(
+          new RegExp(`^${expectedFolderName}\\.mux-clone-[a-f0-9]{12}$`)
+        );
+        expect(result.data.normalizedPath).toBe(path.resolve(cloneParentDir, expectedFolderName));
+      } finally {
+        process.env.PATH = originalPath;
+        if (originalFakeGitArgsLogPath === undefined) {
+          delete process.env.FAKE_GIT_ARGS_LOG;
+        } else {
+          process.env.FAKE_GIT_ARGS_LOG = originalFakeGitArgsLogPath;
+        }
+      }
+    });
+
     it("returns error when clone destination already exists", async () => {
       const sourceRepoPath = await createLocalGitRepository(tempDir, "source-repo");
       const cloneParentDir = path.join(tempDir, "clones");
@@ -658,6 +893,884 @@ exit 1
     });
   });
 
+  describe("cloneWithProgress SSH askpass", () => {
+    async function collectCloneEvents(
+      projectService: ProjectService,
+      repoUrl: string,
+      cloneParentDir: string
+    ): Promise<CloneEvent[]> {
+      const events: CloneEvent[] = [];
+      for await (const event of projectService.cloneWithProgress({ repoUrl, cloneParentDir })) {
+        events.push(event);
+      }
+      return events;
+    }
+
+    async function readLoggedEnv(logPath: string): Promise<Record<string, string>> {
+      const envContent = await fs.readFile(logPath, "utf-8");
+      return Object.fromEntries(
+        envContent
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.includes("="))
+          .map((line) => {
+            const separatorIndex = line.indexOf("=");
+            return [line.slice(0, separatorIndex), line.slice(separatorIndex + 1)] as const;
+          })
+      );
+    }
+
+    async function writeFakeGitCloneEnvLoggingShim(
+      fakeGitPath: string,
+      options: { failIfSshAskpassIsSet: boolean }
+    ): Promise<void> {
+      const sshAskpassGuard = options.failIfSshAskpassIsSet
+        ? `
+  if [ -n "$SSH_ASKPASS" ]; then
+    echo "Unexpected SSH_ASKPASS for non-SSH clone" >&2
+    exit 128
+  fi`
+        : "";
+
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=%s\nGIT_TERMINAL_PROMPT=%s\n' "\${SSH_ASKPASS:-}" "\${SSH_ASKPASS_REQUIRE:-}" "\${GIT_TERMINAL_PROMPT:-}" > "$FAKE_GIT_ENV_LOG"${sshAskpassGuard}
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+    }
+
+    async function cloneAndCaptureAskpassEnv(options: {
+      testCaseId: string;
+      repoUrl: string;
+      failIfSshAskpassIsSet: boolean;
+    }): Promise<Record<string, string>> {
+      const cloneParentDir = path.join(tempDir, `${options.testCaseId}-clone-parent`);
+      const fakeBinDir = path.join(tempDir, `fake-bin-${options.testCaseId}`);
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitEnvLogPath = path.join(tempDir, `fake-git-${options.testCaseId}-env.log`);
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      const originalFakeGitEnvLogPath = process.env.FAKE_GIT_ENV_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await writeFakeGitCloneEnvLoggingShim(fakeGitPath, {
+        failIfSshAskpassIsSet: options.failIfSshAskpassIsSet,
+      });
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const onRequest = (request: SshPromptRequest) => {
+        sshPromptService.respond(request.requestId, "yes");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+      process.env.FAKE_GIT_ENV_LOG = fakeGitEnvLogPath;
+
+      try {
+        const events = await collectCloneEvents(sshCloneService, options.repoUrl, cloneParentDir);
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        return await readLoggedEnv(fakeGitEnvLogPath);
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        if (originalFakeGitEnvLogPath === undefined) {
+          delete process.env.FAKE_GIT_ENV_LOG;
+        } else {
+          process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
+        }
+      }
+    }
+
+    it("SSH clone invokes askpass for host-key prompt and succeeds when accepted", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-accept");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-accept");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitEnvLogPath = path.join(tempDir, "fake-git-ssh-host-key-accept-env.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      const originalFakeGitEnvLogPath = process.env.FAKE_GIT_ENV_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=%s\nGIT_TERMINAL_PROMPT=%s\n' "\${SSH_ASKPASS:-}" "\${SSH_ASKPASS_REQUIRE:-}" "\${GIT_TERMINAL_PROMPT:-}" > "$FAKE_GIT_ENV_LOG"
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const capturedRequests: SshPromptRequest[] = [];
+      const onRequest = (request: SshPromptRequest) => {
+        capturedRequests.push(request);
+        sshPromptService.respond(request.requestId, "yes");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+      process.env.FAKE_GIT_ENV_LOG = fakeGitEnvLogPath;
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "testuser/testrepo",
+          cloneParentDir
+        );
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        const promptRequest = capturedRequests[0];
+        expect(promptRequest?.kind).toBe("host-key");
+        if (promptRequest?.kind !== "host-key") throw new Error("Expected host-key prompt request");
+        expect(promptRequest.prompt).toContain("continue connecting");
+
+        const env = await readLoggedEnv(fakeGitEnvLogPath);
+        expect(env.SSH_ASKPASS).toContain("mux-askpass");
+        expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+        expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        if (originalFakeGitEnvLogPath === undefined) {
+          delete process.env.FAKE_GIT_ENV_LOG;
+        } else {
+          process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
+        }
+      }
+    });
+
+    it("coalesces concurrent host-key prompts for the same SSH endpoint", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-dedupe");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-dedupe");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const capturedRequests: SshPromptRequest[] = [];
+      const onRequest = (request: SshPromptRequest) => {
+        capturedRequests.push(request);
+        setTimeout(() => {
+          sshPromptService.respond(request.requestId, "yes");
+        }, 200);
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const [eventsA, eventsB] = await Promise.all([
+          collectCloneEvents(sshCloneService, "github.com:org/repo-a.git", cloneParentDir),
+          collectCloneEvents(sshCloneService, "github.com:org/repo-b.git", cloneParentDir),
+        ]);
+
+        expect(eventsA.some((event) => event.type === "success")).toBe(true);
+        expect(eventsB.some((event) => event.type === "success")).toBe(true);
+
+        const hostKeyRequests = capturedRequests.filter((request) => request.kind === "host-key");
+        expect(hostKeyRequests).toHaveLength(1);
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("SSH clone yields ssh_host_key_rejected when host-key prompt is rejected", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-reject");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-reject");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const capturedRequests: SshPromptRequest[] = [];
+      const onRequest = (request: SshPromptRequest) => {
+        capturedRequests.push(request);
+        sshPromptService.respond(request.requestId, "no");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "testuser/testrepo",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("ssh_host_key_rejected");
+        expect(terminalEvent.error).toContain("Host key verification failed");
+
+        expect(capturedRequests[0]?.kind).toBe("host-key");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("SSH clone yields ssh_prompt_timeout when host-key prompt expires", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-host-key-timeout");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-host-key-timeout");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
+  if [ "$RESPONSE" != "yes" ]; then
+    echo "Host key verification failed." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(50);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "github.com:org/repo-timeout.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("ssh_prompt_timeout");
+      } finally {
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("keeps ambiguous SSH transport failures as clone_failed", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-ambiguous-failure");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-ambiguous-failure");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo "Connection closed by remote host" >&2
+  exit 128
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "github.com:org/repo-ambiguous.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("clone_failed");
+        expect(terminalEvent.error).toContain("Connection closed by remote host");
+      } finally {
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("SSH clone yields ssh_credential_cancelled when credential prompt is cancelled", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-credential-cancel");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-credential-cancel");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Enter passphrase for key '/home/user/.ssh/id_ed25519':")
+  if [ -z "$RESPONSE" ]; then
+    echo "Permission denied, please try again." >&2
+    echo "git@github.com: Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const capturedRequests: SshPromptRequest[] = [];
+      const onRequest = (request: SshPromptRequest) => {
+        capturedRequests.push(request);
+        sshPromptService.respond(request.requestId, "");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "github.com:org/repo-credential-cancel.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("ssh_credential_cancelled");
+        expect(terminalEvent.error).toContain("Permission denied");
+
+        expect(capturedRequests[0]?.kind).toBe("credential");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("clone failures include the last three meaningful stderr lines", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "clone-stderr-summary");
+      const fakeBinDir = path.join(tempDir, "fake-bin-clone-stderr-summary");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo "remote: Resolving deltas: 100% (1/1)" >&2
+  echo "fatal: Could not read from remote repository." >&2
+  echo "Please make sure you have the correct access rights" >&2
+  echo "and the repository exists." >&2
+  exit 128
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+
+      try {
+        const events = await collectCloneEvents(
+          service,
+          "https://github.com/org/repo-summary.git",
+          cloneParentDir
+        );
+
+        const terminalEvent = events[events.length - 1];
+        expect(terminalEvent?.type).toBe("error");
+        if (terminalEvent?.type !== "error") throw new Error("Expected error event");
+        expect(terminalEvent.code).toBe("clone_failed");
+        expect(terminalEvent.error).toBe(
+          [
+            "fatal: Could not read from remote repository.",
+            "Please make sure you have the correct access rights",
+            "and the repository exists.",
+          ].join("\n")
+        );
+        expect(terminalEvent.error).toContain("\n");
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    });
+
+    it("SSH clone invokes askpass for credential prompt and succeeds", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "ssh-askpass-credential");
+      const fakeBinDir = path.join(tempDir, "fake-bin-ssh-credential");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  if [ -z "$SSH_ASKPASS" ]; then
+    echo "Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  RESPONSE=$("$SSH_ASKPASS" "Enter passphrase for key '/home/user/.ssh/id_ed25519':")
+  if [ -z "$RESPONSE" ]; then
+    echo "Permission denied (publickey,password)." >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      const capturedRequests: SshPromptRequest[] = [];
+      const onRequest = (request: SshPromptRequest) => {
+        capturedRequests.push(request);
+        sshPromptService.respond(request.requestId, "test-passphrase");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "testuser/testrepo",
+          cloneParentDir
+        );
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        const promptRequest = capturedRequests[0];
+        expect(promptRequest?.kind).toBe("credential");
+        if (promptRequest?.kind !== "credential")
+          throw new Error("Expected credential prompt request");
+        expect(promptRequest.prompt).toContain("Enter passphrase");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+      }
+    });
+
+    it("HTTPS clone does not set SSH askpass env vars", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const cloneParentDir = path.join(tempDir, "https-no-askpass");
+      const fakeBinDir = path.join(tempDir, "fake-bin-https-no-askpass");
+      const fakeGitPath = path.join(fakeBinDir, "git");
+      const fakeGitEnvLogPath = path.join(tempDir, "fake-git-https-no-askpass-env.log");
+      const originalPath = process.env.PATH ?? "";
+      const originalHome = process.env.HOME;
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      const originalFakeGitEnvLogPath = process.env.FAKE_GIT_ENV_LOG;
+
+      await fs.mkdir(fakeBinDir, { recursive: true });
+      await fs.writeFile(
+        fakeGitPath,
+        `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  printf 'SSH_ASKPASS=%s\nSSH_ASKPASS_REQUIRE=%s\nGIT_TERMINAL_PROMPT=%s\n' "\${SSH_ASKPASS:-}" "\${SSH_ASKPASS_REQUIRE:-}" "\${GIT_TERMINAL_PROMPT:-}" > "$FAKE_GIT_ENV_LOG"
+  if [ -n "$SSH_ASKPASS" ]; then
+    echo "Unexpected SSH_ASKPASS for HTTPS clone" >&2
+    exit 128
+  fi
+  mkdir -p "$5/.git"
+  exit 0
+fi
+exit 1
+`,
+        "utf-8"
+      );
+      await fs.chmod(fakeGitPath, 0o755);
+
+      const sshPromptService = new SshPromptService(5000);
+      const release = sshPromptService.registerInteractiveResponder();
+      const sshCloneService = new ProjectService(config, sshPromptService);
+      let sawPromptRequest = false;
+      const onRequest = (request: SshPromptRequest) => {
+        sawPromptRequest = true;
+        sshPromptService.respond(request.requestId, "yes");
+      };
+      sshPromptService.on("request", onRequest);
+
+      process.env.PATH = `${fakeBinDir}${path.delimiter}${originalPath}`;
+      process.env.HOME = tempDir;
+      process.env.SSH_AUTH_SOCK = path.join(tempDir, "fake-ssh-agent.sock");
+      process.env.FAKE_GIT_ENV_LOG = fakeGitEnvLogPath;
+
+      try {
+        const events = await collectCloneEvents(
+          sshCloneService,
+          "https://github.com/testuser/testrepo.git",
+          cloneParentDir
+        );
+
+        const successEvent = events.find((event) => event.type === "success");
+        expect(successEvent?.type).toBe("success");
+
+        expect(sawPromptRequest).toBe(false);
+
+        const env = await readLoggedEnv(fakeGitEnvLogPath);
+        expect(env.SSH_ASKPASS).toBe("");
+        expect(env.SSH_ASKPASS_REQUIRE).toBe("");
+        expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+      } finally {
+        sshPromptService.off("request", onRequest);
+        release();
+        process.env.PATH = originalPath;
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        if (originalFakeGitEnvLogPath === undefined) {
+          delete process.env.FAKE_GIT_ENV_LOG;
+        } else {
+          process.env.FAKE_GIT_ENV_LOG = originalFakeGitEnvLogPath;
+        }
+      }
+    });
+
+    it("sets SSH askpass env for ssh:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-ssh-scheme",
+        repoUrl: "ssh://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: false,
+      });
+
+      expect(env.SSH_ASKPASS).not.toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    });
+
+    it("sets SSH askpass env for git+ssh:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-git-plus-ssh",
+        repoUrl: "git+ssh://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: false,
+      });
+
+      expect(env.SSH_ASKPASS).not.toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    });
+
+    it("sets SSH askpass env for ssh+git:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-ssh-plus-git",
+        repoUrl: "ssh+git://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: false,
+      });
+
+      expect(env.SSH_ASKPASS).not.toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("force");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    });
+
+    it("does not set SSH askpass env for git:// clone URL", async () => {
+      if (process.platform === "win32") {
+        // This test relies on a POSIX shell shim named "git" in PATH.
+        return;
+      }
+
+      const env = await cloneAndCaptureAskpassEnv({
+        testCaseId: "ssh-transport-git-scheme",
+        repoUrl: "git://github.com/testuser/testrepo.git",
+        failIfSshAskpassIsSet: true,
+      });
+
+      expect(env.SSH_ASKPASS).toBe("");
+      expect(env.SSH_ASKPASS_REQUIRE).toBe("");
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    });
+  });
+
   describe("gitInit", () => {
     it("initializes git repo in non-git directory with initial commit", async () => {
       const testDir = path.join(tempDir, "new-project");
@@ -726,6 +1839,333 @@ exit 1
       expect(result.success).toBe(false);
       if (result.success) throw new Error("Expected failure");
       expect(result.error).toContain("does not exist");
+    });
+  });
+
+  describe("remove", () => {
+    it("removes project with no workspaces", async () => {
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [] });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("returns project_not_found for unknown project", async () => {
+      const result = await service.remove("/no/such/project");
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("project_not_found");
+    });
+
+    it("with force=true cascade-deletes archived workspaces then removes project", async () => {
+      const archivedWorkspaceDirOne = path.join(tempDir, "archived-workspace-one");
+      const archivedWorkspaceDirTwo = path.join(tempDir, "archived-workspace-two");
+      await fs.mkdir(archivedWorkspaceDirOne, { recursive: true });
+      await fs.mkdir(archivedWorkspaceDirTwo, { recursive: true });
+
+      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          { id: "archived-workspace-1", path: archivedWorkspaceDirOne, archivedAt },
+          { id: "archived-workspace-2", path: archivedWorkspaceDirTwo, archivedAt },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds.sort()).toEqual(["archived-workspace-1", "archived-workspace-2"]);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("with force=true resolves metadata IDs for workspaces missing config IDs", async () => {
+      const archivedWorkspaceDir = path.join(tempDir, "legacy-archived-workspace");
+      await fs.mkdir(archivedWorkspaceDir, { recursive: true });
+
+      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
+      const projectPath = "/fake/project";
+      const migratedWorkspaceId = "migrated-archived-workspace-id";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ path: archivedWorkspaceDir, archivedAt }],
+      });
+      await config.saveConfig(cfg);
+
+      const legacyWorkspaceId = config.generateLegacyId(projectPath, archivedWorkspaceDir);
+      const metadataPath = path.join(config.getSessionDir(legacyWorkspaceId), "metadata.json");
+      await fs.mkdir(path.dirname(metadataPath), { recursive: true });
+      await fs.writeFile(
+        metadataPath,
+        JSON.stringify({ id: migratedWorkspaceId, name: "legacy-archived-workspace" }),
+        "utf-8"
+      );
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds).toEqual([migratedWorkspaceId]);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("with force=true deletes active and archived workspaces then removes project", async () => {
+      const activeWorkspaceDir = path.join(tempDir, "active-workspace");
+      const archivedWorkspaceDir = path.join(tempDir, "archived-workspace");
+      await fs.mkdir(activeWorkspaceDir, { recursive: true });
+      await fs.mkdir(archivedWorkspaceDir, { recursive: true });
+
+      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          { id: "active-workspace-1", path: activeWorkspaceDir },
+          { id: "archived-workspace-1", path: archivedWorkspaceDir, archivedAt },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds.sort()).toEqual(["active-workspace-1", "archived-workspace-1"]);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("force=true cascade-deletes active workspaces then removes project", async () => {
+      const activeWorkspaceDirOne = path.join(tempDir, "active-workspace-one");
+      const activeWorkspaceDirTwo = path.join(tempDir, "active-workspace-two");
+      await fs.mkdir(activeWorkspaceDirOne, { recursive: true });
+      await fs.mkdir(activeWorkspaceDirTwo, { recursive: true });
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          { id: "active-workspace-1", path: activeWorkspaceDirOne },
+          { id: "active-workspace-2", path: activeWorkspaceDirTwo },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds.sort()).toEqual(["active-workspace-1", "active-workspace-2"]);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("force=true cascade-deletes mixed active + archived workspaces then removes project", async () => {
+      const activeWorkspaceDir = path.join(tempDir, "mixed-active-workspace");
+      const archivedWorkspaceDir = path.join(tempDir, "mixed-archived-workspace");
+      await fs.mkdir(activeWorkspaceDir, { recursive: true });
+      await fs.mkdir(archivedWorkspaceDir, { recursive: true });
+
+      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          { id: "mixed-active-workspace-id", path: activeWorkspaceDir },
+          { id: "mixed-archived-workspace-id", path: archivedWorkspaceDir, archivedAt },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds.sort()).toEqual([
+        "mixed-active-workspace-id",
+        "mixed-archived-workspace-id",
+      ]);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("with force=false (default) still returns workspace_blockers when archived exist", async () => {
+      const archivedWorkspaceDir = path.join(tempDir, "default-force-flag-test");
+      await fs.mkdir(archivedWorkspaceDir, { recursive: true });
+
+      const archivedAt = new Date("2026-01-01T00:00:00.000Z").toISOString();
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ id: "archived-workspace-1", path: archivedWorkspaceDir, archivedAt }],
+      });
+      await config.saveConfig(cfg);
+
+      let removeCallCount = 0;
+      service.setWorkspaceService({
+        remove: () => {
+          removeCallCount += 1;
+          return Promise.resolve(Ok(undefined));
+        },
+      });
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+      if (result.error.type !== "workspace_blockers") {
+        throw new Error("Expected workspace blockers error");
+      }
+      expect(result.error.activeCount).toBe(0);
+      expect(result.error.archivedCount).toBe(1);
+      expect(removeCallCount).toBe(0);
+    });
+
+    it("blocks removal when workspaces still exist on disk", async () => {
+      const wsDir = path.join(tempDir, "real-workspace");
+      await fs.mkdir(wsDir, { recursive: true });
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ path: wsDir }],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+    });
+
+    it("auto-prunes stale workspace entries and removes project", async () => {
+      const stalePath = path.join(tempDir, "deleted-workspace-dir");
+      // Do NOT create the directory — simulating manual deletion
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ path: stalePath }],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(false);
+    });
+
+    it("preserves remote runtime workspace entries even if path is not local", async () => {
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          {
+            path: "/remote/host/workspace",
+            runtimeConfig: { type: "ssh", host: "remote", srcBaseDir: "/remote" },
+          },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      // Should block on the SSH workspace, not prune it
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+
+      // Workspace entry should still be in config
+      const after = config.loadConfigOrDefault();
+      const project = after.projects.get(projectPath);
+      expect(project).toBeDefined();
+      expect(project!.workspaces).toHaveLength(1);
+    });
+
+    it("prunes stale entries but blocks on remaining real workspaces", async () => {
+      const stalePath = path.join(tempDir, "gone-workspace");
+      const realDir = path.join(tempDir, "still-here");
+      await fs.mkdir(realDir, { recursive: true });
+
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ path: stalePath }, { path: realDir }],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+
+      // Stale entry should have been pruned from config even though removal was blocked
+      const after = config.loadConfigOrDefault();
+      const project = after.projects.get(projectPath);
+      expect(project).toBeDefined();
+      expect(project!.workspaces).toHaveLength(1);
+      expect(project!.workspaces[0]?.path).toBe(realDir);
     });
   });
 });

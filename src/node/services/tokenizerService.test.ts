@@ -4,6 +4,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import * as tokenizerUtils from "@/node/utils/main/tokenizer";
 import * as statsUtils from "@/common/utils/tokens/tokenStatsCalculator";
 import { createMuxMessage } from "@/common/types/message";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 describe("TokenizerService", () => {
   let sessionUsageService: SessionUsageService;
@@ -74,7 +75,10 @@ describe("TokenizerService", () => {
 
       const result = await service.calculateStats("test-workspace", messages, "gpt-4");
       expect(result).toBe(mockResult);
-      expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4");
+      expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
+        enableAgentReport: false,
+        enableSkillsCatalogTools: false,
+      });
       expect(persistSpy).toHaveBeenCalledWith(
         "test-workspace",
         expect.objectContaining({
@@ -91,6 +95,59 @@ describe("TokenizerService", () => {
       nowSpy.mockRestore();
       statsSpy.mockRestore();
       persistSpy.mockRestore();
+    });
+
+    test("passes enableSkillsCatalogTools based on workspace ID", async () => {
+      const messages = [createMuxMessage("msg1", "user", "Hello")];
+      const mockResult = {
+        consumers: [{ name: "User", tokens: 1, percentage: 100 }],
+        totalTokens: 1,
+        model: "gpt-4",
+        tokenizerName: "cl100k",
+        usageHistory: [],
+      };
+
+      const statsSpy = spyOn(statsUtils, "calculateTokenStats").mockResolvedValue(mockResult);
+      const persistSpy = spyOn(sessionUsageService, "setTokenStatsCache").mockResolvedValue(
+        undefined
+      );
+
+      await service.calculateStats(MUX_HELP_CHAT_WORKSPACE_ID, messages, "gpt-4");
+      await service.calculateStats("another-workspace", messages, "gpt-4");
+
+      expect(statsSpy).toHaveBeenNthCalledWith(1, messages, "gpt-4", null, {
+        enableAgentReport: false,
+        enableSkillsCatalogTools: true,
+      });
+      expect(statsSpy).toHaveBeenNthCalledWith(2, messages, "gpt-4", null, {
+        enableAgentReport: false,
+        enableSkillsCatalogTools: false,
+      });
+
+      statsSpy.mockRestore();
+      persistSpy.mockRestore();
+    });
+
+    test("passes enableAgentReport true when parentWorkspaceId is provided", async () => {
+      const messages = [createMuxMessage("msg1", "user", "Hello")];
+      const mockResult = {
+        consumers: [{ name: "User", tokens: 1, percentage: 100 }],
+        totalTokens: 1,
+        model: "gpt-4",
+        tokenizerName: "cl100k",
+        usageHistory: [],
+      };
+
+      const statsSpy = spyOn(statsUtils, "calculateTokenStats").mockResolvedValue(mockResult);
+
+      await service.calculateStats("child-workspace", messages, "gpt-4", null, "parent-workspace");
+
+      expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
+        enableAgentReport: true,
+        enableSkillsCatalogTools: false,
+      });
+
+      statsSpy.mockRestore();
     });
 
     test("skips persisting stale token stats cache when calculations overlap", async () => {

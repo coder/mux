@@ -5,9 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { installDom } from "../dom";
 
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { GATEWAY_CONFIGURED_KEY } from "@/common/constants/storage";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import type { StreamErrorMessage } from "@/common/orpc/types";
 
@@ -48,9 +46,7 @@ describe("applyWorkspaceChatEventToAggregator (Mux Gateway session expiry)", () 
     cleanupDom = null;
   });
 
-  test("disables gateway routing and dispatches event for session-expired stream errors", () => {
-    updatePersistedState(GATEWAY_CONFIGURED_KEY, true);
-
+  test("dispatches session-expired event for session-expired stream errors", () => {
     let dispatchCount = 0;
     window.addEventListener(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED, () => {
       dispatchCount += 1;
@@ -66,13 +62,12 @@ describe("applyWorkspaceChatEventToAggregator (Mux Gateway session expiry)", () 
     const hint = applyWorkspaceChatEventToAggregator(stubAggregator, event);
 
     expect(hint).toBe("immediate");
-    expect(readPersistedState(GATEWAY_CONFIGURED_KEY, true)).toBe(false);
+    // No localStorage write — useGateway() handles the optimistic config update
+    // when it receives the MUX_GATEWAY_SESSION_EXPIRED event.
     expect(dispatchCount).toBe(1);
   });
 
   test("does not trigger gateway side effects when allowSideEffects is false", () => {
-    updatePersistedState(GATEWAY_CONFIGURED_KEY, true);
-
     let dispatchCount = 0;
     window.addEventListener(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED, () => {
       dispatchCount += 1;
@@ -90,7 +85,6 @@ describe("applyWorkspaceChatEventToAggregator (Mux Gateway session expiry)", () 
     });
 
     expect(hint).toBe("immediate");
-    expect(readPersistedState(GATEWAY_CONFIGURED_KEY, true)).toBe(true);
     expect(dispatchCount).toBe(0);
   });
 });

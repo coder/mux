@@ -8,7 +8,10 @@ import type {
 import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
 
 // Keep pending edit data normalized with required arrays so edits can't drop attachments/reviews.
-export interface PendingUserMessage extends Omit<QueuedMessage, "id" | "hasCompactionRequest"> {
+export interface PendingUserMessage extends Omit<
+  QueuedMessage,
+  "id" | "hasCompactionRequest" | "queueDispatchMode"
+> {
   fileParts: FilePart[];
   reviews: ReviewNoteDataForDisplay[];
 }
@@ -30,25 +33,11 @@ export const buildPendingFromDisplayed = (message: DisplayedUserMessage): Pendin
   reviews: message.reviews ?? [],
 });
 
-export const buildPendingFromContent = (content: string): PendingUserMessage => ({
-  content,
-  fileParts: [],
-  reviews: [],
-});
-
 export const buildEditingStateFromDisplayed = (
   message: DisplayedUserMessage
 ): EditingMessageState => ({
   id: message.historyId,
   pending: buildPendingFromDisplayed(message),
-});
-
-export const buildEditingStateFromContent = (
-  messageId: string,
-  content: string
-): EditingMessageState => ({
-  id: messageId,
-  pending: buildPendingFromContent(content),
 });
 
 /**

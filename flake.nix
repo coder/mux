@@ -76,7 +76,7 @@
 
             outputHashMode = "recursive";
             # Marker used by scripts/update_flake_hash.sh to update this hash in place.
-            outputHash = "sha256-+6o2twg8KOUBuq2RoEqY/OwqCnWSrUiXFuaeLUiuF3k="; # mux-offline-cache-hash
+            outputHash = "sha256-1yvAVU4d8jkmYyGKkwGvA40gN/k5rnkcROG7ota+mY4="; # mux-offline-cache-hash
           };
 
           configurePhase = ''
@@ -172,6 +172,7 @@
               # Node + build tooling
               nodejs
               gnumake
+              stdenv.cc.cc.lib # Provides libstdc++.so.6 for DuckDB native bindings under Bun
 
               # Common CLIs
               git
@@ -182,10 +183,12 @@
 
               # Repo linting (make static-check)
               go
+              hadolint
               shellcheck
               shfmt
               gh
               jq
+              duckdb
 
               # Documentation
               mdbook
@@ -198,6 +201,10 @@
               asciinema
             ]
             ++ lib.optionals stdenv.isLinux [ docker ];
+
+          # Bun does not carry libstdc++ on Linux, so native modules like @duckdb/node-bindings
+          # fail to dlopen during tests unless we expose the GCC runtime in the shell.
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ];
         };
       }
     );

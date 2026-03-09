@@ -2,6 +2,12 @@ import assert from "@/common/utils/assert";
 
 export interface Keybind {
   key: string;
+  /**
+   * Optional physical key identifier (KeyboardEvent.code).
+   * Use this for shifted punctuation shortcuts where event.key differs by layout,
+   * but the physical key should remain stable.
+   */
+  code?: string;
   ctrl?: boolean;
   /**
    * Allow Shift even when this keybind doesn't require it.
@@ -40,6 +46,10 @@ export function normalizeKeybind(raw: unknown): Keybind | undefined {
     return undefined;
   }
 
+  const code =
+    typeof record.code === "string" && record.code.trim().length > 0
+      ? record.code.trim()
+      : undefined;
   const allowShift = typeof record.allowShift === "boolean" ? record.allowShift : undefined;
   const ctrl = typeof record.ctrl === "boolean" ? record.ctrl : undefined;
   const shift = typeof record.shift === "boolean" ? record.shift : undefined;
@@ -55,6 +65,7 @@ export function normalizeKeybind(raw: unknown): Keybind | undefined {
 
   const result: Keybind = {
     key,
+    code,
     allowShift,
     ctrl,
     shift,

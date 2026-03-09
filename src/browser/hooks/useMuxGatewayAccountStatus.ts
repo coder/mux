@@ -1,10 +1,9 @@
 import { useCallback, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { GATEWAY_CONFIGURED_KEY } from "@/common/constants/storage";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { formatCostWithDollar } from "@/common/utils/tokens/usageAggregator";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface MuxGatewayAccountStatus {
   remaining_microdollars: number;
@@ -25,9 +24,9 @@ export function useMuxGatewayAccountStatus() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<MuxGatewayAccountStatus | null> => {
     if (!api) {
-      return;
+      return null;
     }
 
     setIsLoading(true);
@@ -37,22 +36,25 @@ export function useMuxGatewayAccountStatus() {
       const result = await api.muxGateway.getAccountStatus();
       if (result.success) {
         setData(result.data);
-        return;
+        return result.data;
       }
 
       if (result.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
-        updatePersistedState(GATEWAY_CONFIGURED_KEY, false);
+        // Dispatch session-expired event; useGateway() listens for it and
+        // optimistically marks the gateway as unconfigured to stop routing.
         window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
 
         setData(null);
         setError(null);
-        return;
+        return null;
       }
 
       setError(result.error);
+      return null;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       setError(message);
+      return null;
     } finally {
       setIsLoading(false);
     }

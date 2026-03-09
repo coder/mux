@@ -439,7 +439,12 @@ describe("CompactionHandler", () => {
       const compactionReq = createCompactionRequest();
       await seedHistory(compactionReq);
 
-      const usage = { inputTokens: 200, outputTokens: 100, totalTokens: 300 };
+      const usage = {
+        inputTokens: 200,
+        outputTokens: 100,
+        reasoningTokens: 30,
+        totalTokens: 300,
+      };
       const event = createStreamEndEvent("Summary", {
         model: "claude-3-5-sonnet-20241022",
         usage,
@@ -464,8 +469,53 @@ describe("CompactionHandler", () => {
         compacted: "user",
         compactionBoundary: true,
         compactionEpoch: 1,
+        contextUsage: {
+          // 100 system prompt tokens + (100 output - 30 reasoning) summary tokens
+          inputTokens: 170,
+          outputTokens: 0,
+          totalTokens: 170,
+        },
       });
       expect(sevt.metadata?.providerMetadata).toBeUndefined();
+    });
+
+    it("falls back to contextUsage and provider reasoning metadata when total usage is unavailable", async () => {
+      const compactionReq = createCompactionRequest();
+      await seedHistory(compactionReq);
+
+      const event = createStreamEndEvent("Summary", {
+        usage: undefined,
+        contextUsage: {
+          inputTokens: 9_000,
+          outputTokens: 80,
+          totalTokens: 9_080,
+        },
+        contextProviderMetadata: { openai: { reasoningTokens: 30 } },
+        systemMessageTokens: 20,
+      });
+
+      const result = await handler.handleCompletion(event);
+      expect(result).toBe(true);
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.role === "assistant" && m?.metadata?.compactionBoundary === true;
+      });
+      expect(summaryEvent).toBeDefined();
+      const summaryMessage = summaryEvent?.data.message as MuxMessage;
+      expect(summaryMessage.metadata?.contextUsage).toEqual({
+        // 20 system prompt tokens + (80 output - 30 reasoning) summary tokens
+        inputTokens: 70,
+        outputTokens: 0,
+        totalTokens: 70,
+      });
+
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg?.metadata.contextUsage).toEqual({
+        inputTokens: 70,
+        outputTokens: 0,
+        totalTokens: 70,
+      });
     });
 
     it("should emit stream-end event to frontend", async () => {
@@ -596,6 +646,12 @@ describe("CompactionHandler", () => {
       expect(updatedSummary.metadata?.historySequence).toBe(6);
       expect(updatedSummary.metadata?.compactionBoundary).toBe(true);
       expect(updatedSummary.metadata?.compactionEpoch).toBe(1);
+      expect(updatedSummary.metadata?.contextUsage).toEqual({
+        // 0 system prompt tokens + 50 summary output tokens
+        inputTokens: 50,
+        outputTokens: 0,
+        totalTokens: 50,
+      });
       expect(updatedSummary.metadata?.providerMetadata).toBeUndefined();
       expect(updatedSummary.metadata?.contextProviderMetadata).toBeUndefined();
 
@@ -620,8 +676,16 @@ describe("CompactionHandler", () => {
       await seedHistory(compactionReq, streamedSummary);
 
       const event = createStreamEndEvent("Summary", {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          reasoningTokens: 20,
+          totalTokens: 150,
+        },
         providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
         contextProviderMetadata: { anthropic: { cacheReadInputTokens: 10_000 } },
+        contextUsage: { inputTokens: 123_456, outputTokens: 99_999, totalTokens: undefined },
+        systemMessageTokens: 75,
         customField: "preserved",
       });
 
@@ -633,9 +697,52 @@ describe("CompactionHandler", () => {
       expect(streamMsg?.messageId).toBe("msg-id");
       expect(streamMsg?.metadata.providerMetadata).toBeUndefined();
       expect(streamMsg?.metadata.contextProviderMetadata).toBeUndefined();
+      expect(streamMsg?.metadata.contextUsage).toEqual({
+        // 75 system prompt tokens + (50 output - 20 reasoning) summary tokens
+        inputTokens: 105,
+        outputTokens: 0,
+        totalTokens: 105,
+      });
       expect((streamMsg?.metadata as Record<string, unknown> | undefined)?.customField).toBe(
         "preserved"
       );
+    });
+
+    it("omits context usage estimate when stream-end metadata has no visible summary tokens", async () => {
+      const compactionReq = createMuxMessage(
+        "req-streamed-no-estimate",
+        "user",
+        "Please summarize",
+        {
+          historySequence: 5,
+          muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+        }
+      );
+      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+        historySequence: 6,
+        timestamp: Date.now(),
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      await seedHistory(compactionReq, streamedSummary);
+
+      const event = createStreamEndEvent("Summary", {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          reasoningTokens: 20,
+          totalTokens: 120,
+        },
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
+      });
+
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect(streamMsg?.metadata.contextUsage).toBeUndefined();
+      expect(streamMsg?.metadata.providerMetadata).toBeUndefined();
     });
 
     it("should skip malformed compaction boundary markers when deriving next epoch", async () => {

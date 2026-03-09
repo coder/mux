@@ -29,6 +29,7 @@ import {
   type FileEditDiff,
 } from "@/common/utils/messages/extractEditedFiles";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Check if a string is just a raw JSON object, which suggests the model
@@ -369,7 +370,7 @@ export class CompactionHandler {
     } catch (error) {
       log.warn("Failed to persist post-compaction state", {
         workspaceId: this.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }
@@ -518,19 +519,85 @@ export class CompactionHandler {
     const { providerMetadata, contextProviderMetadata, contextUsage, timestamp, ...cleanMetadata } =
       event.metadata;
 
+    // Carry a post-compaction context estimate (system prompt + summary) so the
+    // usage meter shows "near empty" after workspace switches instead of vanishing.
+    const postCompactionContextEstimate = this.computePostCompactionContextEstimate(
+      cleanMetadata.systemMessageTokens,
+      cleanMetadata.usage,
+      contextUsage,
+      providerMetadata,
+      contextProviderMetadata
+    );
+
     const sanitizedEvent: StreamEndEvent = {
       ...event,
-      metadata: cleanMetadata,
+      metadata: {
+        ...cleanMetadata,
+        ...(postCompactionContextEstimate && { contextUsage: postCompactionContextEstimate }),
+      },
     };
 
     assert(
       sanitizedEvent.metadata.providerMetadata === undefined &&
-        sanitizedEvent.metadata.contextProviderMetadata === undefined &&
-        sanitizedEvent.metadata.contextUsage === undefined,
-      "Compaction stream-end event must not carry stale provider metadata or context usage"
+        sanitizedEvent.metadata.contextProviderMetadata === undefined,
+      "Compaction stream-end event must not carry stale provider metadata"
     );
 
     return sanitizedEvent;
+  }
+
+  /**
+   * Approximate context window size after compaction (system prompt + summary).
+   * Excludes reasoning tokens because they are not replayed into the next prompt.
+   */
+  private computePostCompactionContextEstimate(
+    systemMessageTokens: number | undefined,
+    usage: LanguageModelV2Usage | undefined,
+    contextUsage: LanguageModelV2Usage | undefined,
+    providerMetadata: Record<string, unknown> | undefined,
+    contextProviderMetadata: Record<string, unknown> | undefined
+  ): LanguageModelV2Usage | undefined {
+    // totalUsage and contextUsage resolve independently with separate timeout/error
+    // paths, so usage can be missing while contextUsage is still available.
+    const usageForEstimate = usage ?? contextUsage;
+    const totalSummaryOutputTokens = usageForEstimate?.outputTokens;
+    if (totalSummaryOutputTokens == null || totalSummaryOutputTokens <= 0) {
+      return undefined;
+    }
+
+    const providerReasoningTokens =
+      this.getOpenAIReasoningTokens(contextProviderMetadata) ??
+      this.getOpenAIReasoningTokens(providerMetadata) ??
+      0;
+    const reasoningTokens = usageForEstimate?.reasoningTokens ?? providerReasoningTokens;
+    const summaryTokens = Math.max(0, totalSummaryOutputTokens - reasoningTokens);
+    if (summaryTokens <= 0) {
+      return undefined;
+    }
+
+    const systemTokens = systemMessageTokens ?? 0;
+    const estimatedInputTokens = systemTokens + summaryTokens;
+    return {
+      inputTokens: estimatedInputTokens,
+      outputTokens: 0,
+      totalTokens: estimatedInputTokens,
+    };
+  }
+
+  private getOpenAIReasoningTokens(
+    providerMetadata: Record<string, unknown> | undefined
+  ): number | undefined {
+    const reasoningTokens = (providerMetadata?.openai as { reasoningTokens?: unknown } | undefined)
+      ?.reasoningTokens;
+    if (
+      typeof reasoningTokens !== "number" ||
+      !Number.isFinite(reasoningTokens) ||
+      reasoningTokens < 0
+    ) {
+      return undefined;
+    }
+
+    return reasoningTokens;
   }
 
   private findPersistedStreamSummaryMessage(
@@ -584,8 +651,10 @@ export class CompactionHandler {
     metadata: {
       model: string;
       usage?: LanguageModelV2Usage;
+      contextUsage?: LanguageModelV2Usage;
       duration?: number;
       providerMetadata?: Record<string, unknown>;
+      contextProviderMetadata?: Record<string, unknown>;
       systemMessageTokens?: number;
     },
     messages: MuxMessage[],
@@ -684,6 +753,14 @@ export class CompactionHandler {
     );
     const persistedSummaryHistorySequence = persistedStreamSummary?.metadata?.historySequence;
 
+    const postCompactionContextEstimate = this.computePostCompactionContextEstimate(
+      metadata.systemMessageTokens,
+      metadata.usage,
+      metadata.contextUsage,
+      metadata.providerMetadata,
+      metadata.contextProviderMetadata
+    );
+
     const summaryMessage = createMuxMessage(
       persistedStreamSummary?.id ?? createCompactionSummaryMessageId(),
       "assistant",
@@ -700,6 +777,7 @@ export class CompactionHandler {
         usage: metadata.usage,
         duration: metadata.duration,
         systemMessageTokens: metadata.systemMessageTokens,
+        ...(postCompactionContextEstimate && { contextUsage: postCompactionContextEstimate }),
         muxMetadata: summaryMuxMetadata,
       }
     );

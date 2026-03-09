@@ -12,13 +12,20 @@ import { getTokenizerForModel, type Tokenizer } from "./tokenizer";
  */
 export class StreamingTokenTracker {
   private tokenizer: Tokenizer | null = null;
+  private tokenizerModelKey: string | null = null;
 
   /**
    * Initialize tokenizer for the current model
    * Should be called when model changes or on first stream
    */
-  async setModel(model: string): Promise<void> {
-    this.tokenizer ??= await getTokenizerForModel(model);
+  async setModel(model: string, metadataModelOverride?: string): Promise<void> {
+    const tokenizerModelKey = metadataModelOverride ?? model;
+    if (this.tokenizer && this.tokenizerModelKey === tokenizerModelKey) {
+      return;
+    }
+
+    this.tokenizer = await getTokenizerForModel(model, metadataModelOverride);
+    this.tokenizerModelKey = tokenizerModelKey;
   }
 
   /**

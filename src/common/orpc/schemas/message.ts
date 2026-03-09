@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ThinkingLevelSchema } from "../../types/thinking";
 import { AgentIdSchema } from "./agentDefinition";
 import { StreamErrorTypeSchema } from "./errors";
 import { AgentSkillScopeSchema, SkillNameSchema } from "./agentSkill";
@@ -112,16 +113,19 @@ export const MuxMessageSchema = z.object({
       historySequence: z.number().optional(),
       timestamp: z.number().optional(),
       model: z.string().optional(),
-      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+      thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       usage: z.any().optional(),
       contextUsage: z.any().optional(),
       providerMetadata: z.record(z.string(), z.unknown()).optional(),
       contextProviderMetadata: z.record(z.string(), z.unknown()).optional(),
       duration: z.number().optional(),
+      ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
       muxMetadata: z.any().optional(),
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
+      // ACP prompt correlation id for reconnect/diagnostic continuity.
+      acpPromptId: z.string().optional(),
       // Compaction source: "user" (manual), "idle" (auto), or legacy boolean (true)
       compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
       // Monotonic compaction epoch id. Incremented whenever compaction succeeds.
@@ -130,6 +134,8 @@ export const MuxMessageSchema = z.object({
       // Durable boundary marker for compaction summaries.
       compactionBoundary: z.boolean().optional(),
       toolPolicy: z.any().optional(),
+      disableWorkspaceAgents: z.boolean().optional(),
+      retrySendOptions: z.any().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),

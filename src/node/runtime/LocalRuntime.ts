@@ -8,7 +8,7 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
 } from "./Runtime";
-import { checkInitHookExists, getMuxEnv } from "./initHook";
+import { checkInitHookExists, getMuxEnv, shouldSkipInitHook } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 
@@ -86,12 +86,10 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env, skipInitHook } =
-      params;
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
 
     try {
-      if (skipInitHook) {
-        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+      if (shouldSkipInitHook(params, initLogger)) {
         initLogger.logComplete(0);
         return { success: true };
       }

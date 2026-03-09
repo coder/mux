@@ -7,6 +7,7 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { getModelKey } from "@/common/constants/storage";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
@@ -16,10 +17,10 @@ import { createAppHarness } from "../harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
-const OPENAI_MODEL = "openai:gpt-5.2";
-// Use Sonnet 4.5 as the model that caps at HIGH (4 levels, no xhigh).
-// Opus 4.6 supports xhigh so it can't be used to test clamping behavior.
-const CAPPED_MODEL = "anthropic:claude-sonnet-4-5";
+const OPENAI_MODEL = KNOWN_MODELS.GPT.id;
+// Use Haiku 4.5 as the model that caps at HIGH (4 levels, no xhigh).
+// Opus 4.6 and Sonnet 4.6 support xhigh so they can't be used to test clamping behavior.
+const CAPPED_MODEL = "anthropic:claude-haiku-4-5";
 
 async function openModelSelector(container: HTMLElement): Promise<HTMLInputElement> {
   window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.OPEN_MODEL_SELECTOR));

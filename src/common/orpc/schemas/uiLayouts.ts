@@ -9,6 +9,7 @@ export const KeybindSchema = z
   // otherwise reject normalized config objects that include optional fields.
   .object({
     key: z.string().min(1),
+    code: z.string().min(1).optional(),
     allowShift: z.boolean().optional(),
     ctrl: z.boolean().optional(),
     shift: z.boolean().optional(),

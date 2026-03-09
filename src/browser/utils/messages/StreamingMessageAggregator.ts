@@ -4,7 +4,7 @@ import type {
   MuxFilePart,
   DisplayedMessage,
   CompactionRequestData,
-  MuxFrontendMetadata,
+  MuxMessageMetadata,
 } from "@/common/types/message";
 import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
 
@@ -26,7 +26,13 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
-import type { WorkspaceChatMessage, StreamErrorMessage, DeleteMessage } from "@/common/orpc/types";
+import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
+import type {
+  WorkspaceChatMessage,
+  StreamErrorMessage,
+  DeleteMessage,
+  OnChatCursor,
+} from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
 import type {
   DynamicToolPart,
@@ -38,6 +44,7 @@ import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { z } from "zod";
 import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalculator";
+import { buildTranscriptTruncationPlan } from "./transcriptTruncationPlan";
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
@@ -76,7 +83,7 @@ type AgentStatus = z.infer<typeof AgentStatusSchema>;
 /**
  * Maximum number of DisplayedMessages to render before truncation kicks in.
  * We keep all user prompts and structural markers, while allowing older assistant
- * content to collapse behind the history-hidden marker for faster initial paint.
+ * content to collapse behind history-hidden markers for faster initial paint.
  */
 const MAX_DISPLAYED_MESSAGES = 64;
 
@@ -106,6 +113,7 @@ interface StreamingContext {
   isComplete: boolean;
   isCompacting: boolean;
   hasCompactionContinue: boolean;
+  isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
 
@@ -260,6 +268,11 @@ export class StreamingMessageAggregator {
   private recencyTimestamp: number | null = null;
   private lastResponseCompletedAt: number | null = null;
 
+  /** Oldest historySequence from the server's last replay window.
+   *  Used for reconnect cursors instead of the absolute minimum (which
+   *  includes user-loaded older pages via loadOlderHistory). */
+  private establishedOldestHistorySequence: number | null = null;
+
   // Delta history for token counting and TPS calculation
   private deltaHistory = new Map<string, DeltaRecordStorage>();
 
@@ -396,7 +409,7 @@ export class StreamingMessageAggregator {
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    compaction?: { hasContinueMessage: boolean },
+    compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
     completedAt?: number | null
   ) => void;
 
@@ -493,6 +506,27 @@ export class StreamingMessageAggregator {
 
     context.lastServerTimestamp = serverTimestamp;
     context.clockOffsetMs = Date.now() - serverTimestamp;
+  }
+
+  /**
+   * Detect the replay→live transition for reconnect streams.
+   *
+   * During reconnect, `replayStream()` emits all catch-up events with `replay: true`.
+   * Once the catch-up phase is over, fresh live deltas arrive without the flag.
+   * This helper flips `isReplay` to false on the first non-replay event so that
+   * `streamPresentation.source` correctly transitions to "live" and smoothing
+   * resumes instead of staying bypassed.
+   *
+   * IMPORTANT: Only call from content handlers (handleStreamDelta, handleReasoningDelta).
+   * Tool events are not buffered by the reconnect relay and can arrive before replay
+   * text finishes flushing — calling this from tool handlers would prematurely end
+   * replay phase and reclassify catch-up content as live.
+   */
+  private syncReplayPhase(messageId: string, replay?: boolean): void {
+    const context = this.activeStreams.get(messageId);
+    if (context && context.isReplay && replay !== true) {
+      context.isReplay = false;
+    }
   }
 
   private translateServerTime(context: StreamingContext, serverTimestamp: number): number {
@@ -811,50 +845,100 @@ export class StreamingMessageAggregator {
    *
    * @param messages - Historical messages to load
    * @param hasActiveStream - Whether there's an active stream in buffered events (for reconnection scenario)
+   * @param opts.mode - "replace" clears existing state first, "append" merges into existing state
+   * @param opts.skipDerivedState - Skip replaying messages into derived state when appending older history
    */
-  loadHistoricalMessages(messages: MuxMessage[], hasActiveStream = false): void {
-    // Clear existing state to prevent stale messages from persisting.
-    // This method replaces all messages, not merges them.
-    this.messages.clear();
-    this.displayedMessageCache.clear();
-    this.messageVersions.clear();
-    this.deltaHistory.clear();
-    this.activeStreamUsage.clear();
-    this.loadedSkills.clear();
-    this.loadedSkillsCache = [];
-    this.skillLoadErrors.clear();
-    this.skillLoadErrorsCache = [];
-    this.lastResponseCompletedAt = null;
+  loadHistoricalMessages(
+    messages: MuxMessage[],
+    hasActiveStream = false,
+    opts?: { mode?: "replace" | "append"; skipDerivedState?: boolean }
+  ): void {
+    const mode = opts?.mode ?? "replace";
 
-    // Add all messages to the map
+    if (mode === "replace") {
+      // Clear existing state to prevent stale messages from persisting.
+      this.messages.clear();
+      this.displayedMessageCache.clear();
+      this.messageVersions.clear();
+      this.deltaHistory.clear();
+      this.activeStreamUsage.clear();
+      this.loadedSkills.clear();
+      this.loadedSkillsCache = [];
+      this.skillLoadErrors.clear();
+      this.skillLoadErrorsCache = [];
+      this.lastResponseCompletedAt = null;
+
+      // Track the replay window's oldest sequence for reconnect cursors.
+      let minSeq: number | null = null;
+      for (const msg of messages) {
+        const seq = msg.metadata?.historySequence;
+        if (typeof seq === "number" && (minSeq === null || seq < minSeq)) {
+          minSeq = seq;
+        }
+      }
+      this.establishedOldestHistorySequence = minSeq;
+    }
+
+    const overwrittenMessageIds: string[] = [];
+    const appliedMessages: MuxMessage[] = [];
+
+    // Add/overwrite messages in the map
     for (const message of messages) {
+      const existing = mode === "append" ? this.messages.get(message.id) : undefined;
+
+      if (existing) {
+        const existingParts = Array.isArray(existing.parts) ? existing.parts.length : 0;
+        const incomingParts = Array.isArray(message.parts) ? message.parts.length : 0;
+
+        // Since-replay can include a stale boundary row for an active stream message while
+        // richer in-memory parts already exist. Keep the richer message to avoid dropping
+        // in-flight tool/text parts that filtered replay deltas may not resend.
+        if (incomingParts < existingParts) {
+          continue;
+        }
+
+        overwrittenMessageIds.push(message.id);
+      }
+
       this.messages.set(message.id, message);
+      appliedMessages.push(message);
+    }
+
+    if (mode === "append") {
+      for (const messageId of overwrittenMessageIds) {
+        // Append replay can overwrite an existing message ID (e.g., partial -> finalized).
+        // Bump per-message version so displayed row caches are invalidated and rebuilt.
+        this.bumpMessageVersion(messageId);
+        this.displayedMessageCache.delete(messageId);
+      }
     }
 
     // Use "streaming" context if there's an active stream (reconnection), otherwise "historical"
     const context = hasActiveStream ? "streaming" : "historical";
 
-    // Sort messages in chronological order for processing
-    const chronologicalMessages = [...messages].sort(
+    // Sort applied messages in chronological order for processing
+    const chronologicalMessages = [...appliedMessages].sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
-    // Replay historical messages in order to reconstruct derived state
-    for (const message of chronologicalMessages) {
-      this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
+    if (!opts?.skipDerivedState) {
+      // Replay historical messages in order to reconstruct derived state
+      for (const message of chronologicalMessages) {
+        this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
 
-      if (message.role === "user") {
-        // Mirror live behavior: clear stream-scoped state on new user turn
-        // but keep persisted status for fallback on reload.
-        this.currentTodos = [];
-        this.agentStatus = undefined;
-        continue;
-      }
+        if (message.role === "user") {
+          // Mirror live behavior: clear stream-scoped state on new user turn
+          // but keep persisted status for fallback on reload.
+          this.currentTodos = [];
+          this.agentStatus = undefined;
+          continue;
+        }
 
-      if (message.role === "assistant") {
-        for (const part of message.parts) {
-          if (isDynamicToolPart(part) && part.state === "output-available") {
-            this.processToolResult(part.toolName, part.input, part.output, context);
+        if (message.role === "assistant") {
+          for (const part of message.parts) {
+            if (isDynamicToolPart(part) && part.state === "output-available") {
+              this.processToolResult(part.toolName, part.input, part.output, context);
+            }
           }
         }
       }
@@ -872,6 +956,10 @@ export class StreamingMessageAggregator {
     this.invalidateCache();
   }
 
+  setEstablishedOldestHistorySequence(sequence: number | null): void {
+    this.establishedOldestHistorySequence = sequence;
+  }
+
   getAllMessages(): MuxMessage[] {
     this.cache.allMessages ??= Array.from(this.messages.values()).sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
@@ -879,6 +967,83 @@ export class StreamingMessageAggregator {
     return this.cache.allMessages;
   }
 
+  /**
+   * Build a cursor for incremental onChat reconnection.
+   * Returns undefined when we cannot safely represent the current state,
+   * forcing a full replay.
+   */
+  getOnChatCursor(): OnChatCursor | undefined {
+    let maxHistorySequence = -1;
+    let maxHistoryMessageId: string | undefined;
+    let minHistorySequence = Number.POSITIVE_INFINITY;
+
+    for (const message of this.messages.values()) {
+      const historySequence = message.metadata?.historySequence;
+      if (historySequence === undefined) {
+        continue;
+      }
+
+      if (historySequence > maxHistorySequence) {
+        maxHistorySequence = historySequence;
+        maxHistoryMessageId = message.id;
+      }
+
+      if (historySequence < minHistorySequence) {
+        minHistorySequence = historySequence;
+      }
+    }
+
+    if (!maxHistoryMessageId || !Number.isFinite(minHistorySequence)) {
+      return undefined;
+    }
+
+    if (this.activeStreams.size > 1) {
+      // Defensive fallback: multiple active streams is anomalous, so force a full replay.
+      return undefined;
+    }
+
+    const allMessages = this.getAllMessages();
+    const establishedOldestHistorySequence = this.establishedOldestHistorySequence;
+    const fingerprintMessages =
+      establishedOldestHistorySequence != null
+        ? allMessages.filter(
+            (message) =>
+              (message.metadata?.historySequence ?? Number.POSITIVE_INFINITY) >=
+              establishedOldestHistorySequence
+          )
+        : allMessages;
+
+    // Scope fingerprint input to the established replay window. The server computes
+    // priorHistoryFingerprint from getHistoryFromLatestBoundary(skip=0), so client-
+    // paginated rows from older compaction epochs must be excluded to avoid false
+    // mismatches that force unnecessary full replay on reconnect.
+    const priorHistoryFingerprint = computePriorHistoryFingerprint(
+      fingerprintMessages,
+      maxHistorySequence
+    );
+    const oldestHistorySequence = establishedOldestHistorySequence ?? minHistorySequence;
+
+    const cursor: OnChatCursor = {
+      history: {
+        messageId: maxHistoryMessageId,
+        historySequence: maxHistorySequence,
+        oldestHistorySequence,
+        ...(priorHistoryFingerprint !== undefined ? { priorHistoryFingerprint } : {}),
+      },
+    };
+
+    if (this.activeStreams.size === 1) {
+      const activeStreamEntry = this.activeStreams.entries().next().value;
+      assert(activeStreamEntry, "activeStreams size reported 1 but no entry found");
+      const [messageId, context] = activeStreamEntry;
+      cursor.stream = {
+        messageId,
+        lastTimestamp: context.lastServerTimestamp,
+      };
+    }
+
+    return cursor;
+  }
   // Efficient methods to check message state without creating arrays
   getMessageCount(): number {
     return this.messages.size;
@@ -1240,6 +1405,7 @@ export class StreamingMessageAggregator {
     this.interruptingMessageId = null;
     this.lastAbortReason = null;
     this.lastResponseCompletedAt = null;
+    this.establishedOldestHistorySequence = null;
     this.invalidateCache();
   }
 
@@ -1291,6 +1457,7 @@ export class StreamingMessageAggregator {
       isComplete: false,
       isCompacting,
       hasCompactionContinue,
+      isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
       serverFirstTokenTime: null,
@@ -1300,8 +1467,40 @@ export class StreamingMessageAggregator {
       thinkingLevel: data.thinkingLevel,
     };
 
+    // For incremental replay: stream-start may be re-emitted to re-establish context.
+    // If we already have this message with accumulated parts, don't wipe its content.
+    const existingMessage = this.messages.get(data.messageId);
+    const existingContext = this.activeStreams.get(data.messageId);
+    if (data.replay && existingMessage && existingMessage.parts.length > 0) {
+      if (existingContext) {
+        // Preserve the highest observed server timestamp across reconnect boundaries.
+        // If replay emits only stream-start (no newer parts), regressing this value
+        // would cause the next since cursor to request already-seen stream events.
+        context.lastServerTimestamp = Math.max(
+          context.lastServerTimestamp,
+          existingContext.lastServerTimestamp
+        );
+        context.clockOffsetMs = Date.now() - context.lastServerTimestamp;
+
+        // Preserve in-flight timing context so reconnect doesn't reset active tool timing stats.
+        context.serverFirstTokenTime = existingContext.serverFirstTokenTime;
+        context.toolExecutionMs = existingContext.toolExecutionMs;
+        context.pendingToolStarts = new Map(existingContext.pendingToolStarts);
+      }
+
+      this.activeStreams.set(data.messageId, context);
+      if (existingMessage.metadata) {
+        existingMessage.metadata.model = data.model;
+        existingMessage.metadata.routedThroughGateway = data.routedThroughGateway;
+        existingMessage.metadata.mode = data.mode;
+        existingMessage.metadata.thinkingLevel = data.thinkingLevel;
+      }
+      this.markMessageDirty(data.messageId);
+      return;
+    }
+
     // Use messageId as key - ensures only ONE stream per message
-    // If called twice (e.g., during replay), second call safely overwrites first
+    // If called twice, second call safely overwrites first
     this.activeStreams.set(data.messageId, context);
 
     // Create initial streaming message with empty parts (deltas will append)
@@ -1321,6 +1520,8 @@ export class StreamingMessageAggregator {
   handleStreamDelta(data: StreamDeltaEvent): void {
     const message = this.messages.get(data.messageId);
     if (!message) return;
+
+    this.syncReplayPhase(data.messageId, data.replay);
 
     const context = this.activeStreams.get(data.messageId);
     if (context) {
@@ -1853,6 +2054,8 @@ export class StreamingMessageAggregator {
     const message = this.messages.get(data.messageId);
     if (!message) return;
 
+    this.syncReplayPhase(data.messageId, data.replay);
+
     const context = this.activeStreams.get(data.messageId);
     if (context) {
       this.updateStreamClock(context, data.timestamp);
@@ -1982,13 +2185,12 @@ export class StreamingMessageAggregator {
       }
 
       // When a compaction boundary arrives during a live session, prune messages
-      // older than the penultimate boundary so the UI matches what a fresh load
-      // would show (emitHistoricalEvents reads from skip=1, the penultimate boundary).
-      // The user sees the previous epoch + current epoch; older epochs are pruned.
-      // Without this, all pre-boundary messages persist until the next page refresh.
-      // TODO: support paginated history loading so users can view older epochs on demand.
+      // older than the incoming boundary sequence so the UI matches a fresh load
+      // (emitHistoricalEvents now reads from skip=0, the latest boundary only).
+      // This keeps only the current epoch visible in-session; older epochs remain
+      // available via Load More history pagination.
       if (this.isCompactionBoundarySummaryMessage(incomingMessage)) {
-        this.pruneBeforePenultimateBoundary(incomingMessage);
+        this.pruneBeforeLatestBoundary(incomingMessage);
       }
 
       // Now add the new message
@@ -2008,9 +2210,7 @@ export class StreamingMessageAggregator {
         this.currentTodos = [];
 
         // Capture pending compaction metadata for pre-stream UI ("starting" phase).
-        const muxMetadata = incomingMessage.metadata?.muxMetadata as
-          | MuxFrontendMetadata
-          | undefined;
+        const muxMetadata = incomingMessage.metadata?.muxMetadata as MuxMessageMetadata | undefined;
         this.pendingCompactionRequest =
           muxMetadata?.type === "compaction-request" ? muxMetadata.parsed : null;
 
@@ -2040,37 +2240,33 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Keep the previous epoch visible: when the new (Nth) boundary arrives,
-   * find the penultimate (N-1) boundary among existing messages and prune
-   * everything before it. This matches the backend's getHistoryFromLatestBoundary
-   * which reads from the n-1 boundary.
+   * Keep only the latest epoch visible during a live session.
    *
-   * If only one boundary exists (the incoming one), nothing is pruned — the
-   * user sees their full first-epoch history.
+   * When a new boundary arrives, existing messages still represent older epochs.
+   * Prune every existing message with a lower sequence than the incoming boundary
+   * so once the incoming boundary is appended, the transcript matches fresh loads
+   * from getHistoryFromLatestBoundary(skip=0). Older epochs remain accessible via
+   * Load More.
    */
-  private pruneBeforePenultimateBoundary(_incomingBoundary: MuxMessage): void {
-    // Find the penultimate boundary among the *existing* messages (before adding
-    // the incoming one). With the incoming boundary about to become the latest,
-    // the existing latest boundary becomes the penultimate one.
-    let penultimateBoundarySeq: number | undefined;
-    for (const [, msg] of this.messages.entries()) {
-      if (!this.isCompactionBoundarySummaryMessage(msg)) continue;
-      const seq = msg.metadata?.historySequence;
-      if (seq === undefined) continue;
-      // The highest-sequence boundary in existing messages is the one that
-      // will become the penultimate once the incoming boundary is added.
-      if (penultimateBoundarySeq === undefined || seq > penultimateBoundarySeq) {
-        penultimateBoundarySeq = seq;
-      }
-    }
+  private pruneBeforeLatestBoundary(incomingBoundary: MuxMessage): void {
+    const incomingBoundarySequence = incomingBoundary.metadata?.historySequence;
+    // Self-healing guard: malformed boundary metadata should not crash live sessions.
+    if (incomingBoundarySequence === undefined) return;
 
-    // No existing boundary → this is the first compaction, nothing to prune
-    if (penultimateBoundarySeq === undefined) return;
+    // Live compaction advances the replay window floor to the incoming boundary.
+    // Keep reconnect cursors aligned with the server's latest-boundary replay window
+    // so incremental reconnects remain eligible after compaction.
+    if (
+      this.establishedOldestHistorySequence === null ||
+      incomingBoundarySequence > this.establishedOldestHistorySequence
+    ) {
+      this.establishedOldestHistorySequence = incomingBoundarySequence;
+    }
 
     const toRemove: string[] = [];
     for (const [id, msg] of this.messages.entries()) {
       const seq = msg.metadata?.historySequence;
-      if (seq !== undefined && seq < penultimateBoundarySeq) {
+      if (seq !== undefined && seq < incomingBoundarySequence) {
         toRemove.push(id);
       }
     }
@@ -2219,6 +2415,7 @@ export class StreamingMessageAggregator {
       // Check if this message has an active stream (for inferring streaming status)
       // Direct Map.has() check - O(1) instead of O(n) iteration
       const hasActiveStream = this.activeStreams.has(message.id);
+      const streamContext = hasActiveStream ? this.activeStreams.get(message.id) : undefined;
 
       // isPartial from metadata (set by stream-abort event)
       const isPartial = message.metadata?.partial === true;
@@ -2264,6 +2461,9 @@ export class StreamingMessageAggregator {
             isPartial,
             isLastPartOfMessage: isLastPart,
             timestamp: part.timestamp ?? baseTimestamp,
+            streamPresentation: isStreaming
+              ? { source: streamContext?.isReplay ? "replay" : "live" }
+              : undefined,
           });
         } else if (part.type === "text" && part.text) {
           // Skip empty text parts
@@ -2285,6 +2485,9 @@ export class StreamingMessageAggregator {
             mode: message.metadata?.mode,
             agentId: message.metadata?.agentId ?? message.metadata?.mode,
             timestamp: part.timestamp ?? baseTimestamp,
+            streamPresentation: isStreaming
+              ? { source: streamContext?.isReplay ? "replay" : "live" }
+              : undefined,
           });
         } else if (isDynamicToolPart(part)) {
           // Determine status based on part state and result
@@ -2506,52 +2709,20 @@ export class StreamingMessageAggregator {
       let resultMessages = displayedMessages;
 
       // Limit messages for DOM performance (unless explicitly disabled).
-      // Strategy: keep user prompts + structural markers while allowing older assistant/tool/
-      // reasoning rows to collapse behind a history-hidden marker.
+      // Strategy: keep recent rows intact, preserve structural rows in older history,
+      // and materialize omission runs as explicit history-hidden marker rows.
       // Full history is still maintained internally for token counting.
       if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
-        // Split into "old" (candidates for filtering) and "recent" (always keep intact)
-        const recentMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
-        const oldMessages = displayedMessages.slice(0, -MAX_DISPLAYED_MESSAGES);
+        const truncationPlan = buildTranscriptTruncationPlan({
+          displayedMessages,
+          maxDisplayedMessages: MAX_DISPLAYED_MESSAGES,
+          alwaysKeepMessageTypes: ALWAYS_KEEP_MESSAGE_TYPES,
+        });
 
-        const omittedMessageCounts = { tool: 0, reasoning: 0 };
-        let hiddenCount = 0;
-        let insertionIndex: number | null = null;
-        const filteredOldMessages: DisplayedMessage[] = [];
-
-        for (const msg of oldMessages) {
-          if (ALWAYS_KEEP_MESSAGE_TYPES.has(msg.type)) {
-            filteredOldMessages.push(msg);
-            continue;
-          }
-
-          if (msg.type === "tool") {
-            omittedMessageCounts.tool += 1;
-          } else if (msg.type === "reasoning") {
-            omittedMessageCounts.reasoning += 1;
-          }
-
-          hiddenCount += 1;
-          insertionIndex ??= filteredOldMessages.length;
-        }
-
-        const hasOmissions = hiddenCount > 0;
-
-        if (hasOmissions) {
-          const insertAt = insertionIndex ?? filteredOldMessages.length;
-          const messagesWithMarker = [...filteredOldMessages];
-          messagesWithMarker.splice(insertAt, 0, {
-            type: "history-hidden" as const,
-            id: "history-hidden",
-            hiddenCount,
-            historySequence: -1, // Non-persisted marker for truncated history
-            omittedMessageCounts,
-          });
-
-          resultMessages = this.normalizeLastPartFlags([...messagesWithMarker, ...recentMessages]);
-        } else {
-          resultMessages = [...filteredOldMessages, ...recentMessages];
-        }
+        resultMessages =
+          truncationPlan.hiddenCount > 0
+            ? this.normalizeLastPartFlags(truncationPlan.rows)
+            : truncationPlan.rows;
       }
 
       // Add init state if present (ephemeral, appears at top)

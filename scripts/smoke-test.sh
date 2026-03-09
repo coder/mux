@@ -251,6 +251,10 @@ async function runTests() {
   }
   console.log('✅ Project created via oRPC HTTP');
 
+  // Trust the project so workspace creation succeeds (backend rejects untrusted projects)
+  await client.projects.setTrust({ projectPath: PROJECT_DIR, trusted: true });
+  console.log('✅ Project trusted via oRPC HTTP');
+
   // Test 2: HTTP oRPC client - create workspace
   console.log('Testing oRPC workspace creation via HTTP...');
   const workspaceResult = await client.workspace.create({

@@ -1,17 +1,12 @@
 import { z } from "zod";
+import { AgentIdSchema } from "@/common/schemas/ids";
+import { ThinkingLevelSchema } from "../../types/thinking";
 
 export const AgentDefinitionScopeSchema = z.enum(["built-in", "project", "global"]);
 
-// Agent IDs come from filenames (<agentId>.md).
-// Keep constraints conservative so IDs are safe to use in storage keys, URLs, etc.
-export const AgentIdSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/);
+export { AgentIdSchema } from "@/common/schemas/ids";
 
 const AgentDefinitionUiRequirementSchema = z.enum(["plan"]);
-const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 const AgentDefinitionUiSchema = z
   .object({
@@ -26,6 +21,10 @@ const AgentDefinitionUiSchema = z
 
     // UI color (CSS color value). Inherited from base agent if not specified.
     color: z.string().min(1).optional(),
+
+    // When true, this agent is eligible for switch_agent routing even when hidden.
+    // Defaults to the same policy as uiSelectable when omitted.
+    routable: z.boolean().optional(),
 
     // Requirements for this agent to be selectable in the UI.
     // Enforced in agents.list by toggling uiSelectable.
@@ -59,14 +58,19 @@ const AgentDefinitionPromptSchema = z
   })
   .strip();
 
-// Tool configuration: add/remove patterns (regex).
+// Tool configuration:
+// - add/remove are regex patterns
+// - require is a concrete tool name (single-tool require semantics)
 // Layers are processed in order during inheritance (base first, then child).
 const AgentDefinitionToolsSchema = z
   .object({
-    // Patterns to add (enable). Processed before remove.
+    // Patterns to add (enable). Processed before remove and require.
     add: z.array(z.string().min(1)).optional(),
     // Patterns to remove (disable). Processed after add.
     remove: z.array(z.string().min(1)).optional(),
+    // Tool names to require (last entry wins). Processed after add/remove so agents
+    // can force a single concrete tool for this turn.
+    require: z.array(z.string().min(1)).optional(),
   })
   .strip();
 
@@ -96,7 +100,7 @@ export const AgentDefinitionFrontmatterSchema = z
 
     ai: AgentDefinitionAiDefaultsSchema.optional(),
 
-    // Tool configuration: add/remove patterns (regex).
+    // Tool configuration: add/remove/require patterns (regex).
     // If omitted and no base, no tools are available.
     tools: AgentDefinitionToolsSchema.optional(),
   })
@@ -109,6 +113,7 @@ export const AgentDefinitionDescriptorSchema = z
     name: z.string().min(1).max(128),
     description: z.string().min(1).max(1024).optional(),
     uiSelectable: z.boolean(),
+    uiRoutable: z.boolean(),
     uiColor: z.string().min(1).optional(),
     subagentRunnable: z.boolean(),
     // Base agent ID for inheritance (e.g., "exec", "plan", or custom agent)

@@ -23,7 +23,6 @@ Object.freeze(STORAGE_KEYS);
  * - `model:{workspaceId}`
  * - `thinkingLevel:{workspaceId}`
  * - `input:{workspaceId}`
- * - `{workspaceId}-autoRetry`
  *
  * The global defaults themselves CANNOT be changed by users.
  * Only per-workspace overrides are mutable.
@@ -40,8 +39,8 @@ import { DEFAULT_MODEL } from "@/common/constants/knownModels";
  * Type assertions ensure proper typing while maintaining immutability.
  */
 export const WORKSPACE_DEFAULTS = {
-  /** Default agent id for new workspaces (built-in exec agent). */
-  agentId: "exec" as const,
+  /** Default agent id for new workspaces (built-in auto router agent). */
+  agentId: "auto" as const,
 
   /** Default thinking/reasoning level for new workspaces */
   thinkingLevel: THINKING_LEVEL_OFF,
@@ -52,25 +51,15 @@ export const WORKSPACE_DEFAULTS = {
    */
   model: DEFAULT_MODEL as string,
 
-  /** Default auto-retry preference for new workspaces */
-  autoRetry: true as boolean,
-
   /** Default input text for new workspaces (empty) */
   input: "" as string,
 
-  /** Default diff base for code review (compare against origin/main) */
+  /**
+   * Fallback diff base for code review when trunk auto-detection is unavailable.
+   * Most flows will override this with origin/<detected-trunk>.
+   */
   reviewBase: "origin/main" as string,
 };
 
 // Freeze the object at runtime to prevent accidental mutation
 Object.freeze(WORKSPACE_DEFAULTS);
-
-/**
- * Type-safe keys for workspace settings
- */
-export type WorkspaceSettingKey = keyof typeof WORKSPACE_DEFAULTS;
-
-/**
- * Type-safe values for workspace settings
- */
-export type WorkspaceSettingValue<K extends WorkspaceSettingKey> = (typeof WORKSPACE_DEFAULTS)[K];

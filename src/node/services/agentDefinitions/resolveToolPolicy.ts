@@ -1,4 +1,9 @@
-import { collectToolConfigsFromResolvedChain, type ToolsConfig } from "@/common/utils/agentTools";
+import {
+  collectToolConfigsFromResolvedChain,
+  isPlanLikeInResolvedChain,
+  normalizeLiteralRequiredToolPattern,
+  type ToolsConfig,
+} from "@/common/utils/agentTools";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 /**
@@ -19,16 +24,52 @@ export interface ResolveToolPolicyOptions {
   disableTaskToolsForDepth: boolean;
 }
 
-// Runtime restrictions that cannot be overridden by agent definitions
-const SUBAGENT_HARD_DENY: ToolPolicy = [
-  { regex_match: "propose_plan", action: "disable" },
-  { regex_match: "ask_user_question", action: "disable" },
-];
+// Tools that are never allowed in autonomous sub-agent flows.
+// Single source of truth: SUBAGENT_HARD_DENY is derived from this list.
+const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question", "switch_agent"] as const;
+
+const SUBAGENT_HARD_DENY: ToolPolicy = SUBAGENT_HARD_DENIED_TOOLS.map((tool) => ({
+  regex_match: tool,
+  action: "disable" as const,
+}));
 
 const DEPTH_HARD_DENY: ToolPolicy = [
   { regex_match: "task", action: "disable" },
   { regex_match: "task_.*", action: "disable" },
 ];
+
+function matchesToolPattern(pattern: string, toolName: string): boolean {
+  try {
+    const regex = new RegExp(`^${pattern}$`);
+    return regex.test(toolName);
+  } catch {
+    return false;
+  }
+}
+
+function matchesSwitchAgentPattern(pattern: string): boolean {
+  const trimmed = pattern.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  return matchesToolPattern(trimmed, "switch_agent");
+}
+
+function isExplicitSwitchAgentEnablePattern(pattern: string): boolean {
+  const trimmed = pattern.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  // switch_agent opt-in must be explicit and literal; broad or alternate regexes
+  // should not implicitly unlock autonomous handoff behavior.
+  return trimmed === "switch_agent";
+}
+
+function matchesSubagentHardDeniedTool(pattern: string): boolean {
+  return SUBAGENT_HARD_DENIED_TOOLS.some((toolName) => matchesToolPattern(pattern, toolName));
+}
 
 /**
  * Resolves tool policy for an agent, including inherited tools from base agents.
@@ -37,6 +78,7 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * 1. Inheritance chain processed base → child:
  *    - Each layer's `tools.add` patterns (enable)
  *    - Each layer's `tools.remove` patterns (disable)
+ *    - Effective `tools.require` pattern (require), where child layers override base layers
  * 2. Runtime restrictions (subagent limits, depth limits) applied last
  *
  * Example: ask (base: exec)
@@ -44,7 +86,9 @@ const DEPTH_HARD_DENY: ToolPolicy = [
  * - ask has remove: [file_edit_.*]
  * - Result: deny-all → enable .* → disable propose_plan → disable ask_user_question → disable file_edit_.*
  *
- * Subagents always get `agent_report` enabled regardless of their tool list.
+ * Subagent completion tool is mode-dependent:
+ * - plan-like subagents: enable `propose_plan`, disable `agent_report`
+ * - non-plan subagents: disable `propose_plan`, enable `agent_report`
  */
 export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): ToolPolicy {
   const { agents, isSubagent, disableTaskToolsForDepth } = options;
@@ -54,6 +98,8 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
 
   // Process inheritance chain: base → child
   const configs = collectToolConfigsFromResolvedChain(agents);
+  let switchAgentEnabledByConfig = false;
+  let effectiveRequirePattern: string | undefined;
   for (const config of configs) {
     // Enable tools from add list (treated as regex patterns)
     if (config.add) {
@@ -61,6 +107,9 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "enable" });
+          if (isExplicitSwitchAgentEnablePattern(trimmed)) {
+            switchAgentEnabledByConfig = true;
+          }
         }
       }
     }
@@ -71,7 +120,31 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "disable" });
+          if (matchesSwitchAgentPattern(trimmed)) {
+            switchAgentEnabledByConfig = false;
+          }
         }
+      }
+    }
+
+    // Require tools from require list. Child layers override base layers and
+    // the last entry in each list wins so policy construction can never emit
+    // multiple required tools.
+    if (config.require) {
+      const cleanedPatterns = config.require
+        .map((pattern) => normalizeLiteralRequiredToolPattern(pattern))
+        .filter((pattern): pattern is string => pattern !== undefined);
+      effectiveRequirePattern = cleanedPatterns.at(-1);
+    }
+  }
+
+  if (effectiveRequirePattern) {
+    // Subagents must not require tools that are hard-denied at runtime: a disabled
+    // required tool can collapse the entire toolset.
+    if (!(isSubagent && matchesSubagentHardDeniedTool(effectiveRequirePattern))) {
+      agentPolicy.push({ regex_match: effectiveRequirePattern, action: "require" });
+      if (!isSubagent && isExplicitSwitchAgentEnablePattern(effectiveRequirePattern)) {
+        switchAgentEnabledByConfig = true;
       }
     }
   }
@@ -83,10 +156,26 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     runtimePolicy.push(...DEPTH_HARD_DENY);
   }
 
+  // switch_agent is disabled by default and only re-enabled when the resolved
+  // agent chain explicitly requests it (e.g. tools.require: ["switch_agent"]).
+  runtimePolicy.push({ regex_match: "switch_agent", action: "disable" });
+  if (!isSubagent && switchAgentEnabledByConfig) {
+    runtimePolicy.push({ regex_match: "switch_agent", action: "require" });
+  }
+
   if (isSubagent) {
     runtimePolicy.push(...SUBAGENT_HARD_DENY);
-    // Subagents always need agent_report to return results
-    runtimePolicy.push({ regex_match: "agent_report", action: "enable" });
+
+    const isPlanLikeSubagent = isPlanLikeInResolvedChain(agents);
+    if (isPlanLikeSubagent) {
+      // Plan-mode subagents must finish by proposing a plan, not by reporting.
+      runtimePolicy.push({ regex_match: "propose_plan", action: "require" });
+      runtimePolicy.push({ regex_match: "agent_report", action: "disable" });
+    } else {
+      // Non-plan subagents should complete through agent_report.
+      runtimePolicy.push({ regex_match: "propose_plan", action: "disable" });
+      runtimePolicy.push({ regex_match: "agent_report", action: "require" });
+    }
   }
 
   return [...agentPolicy, ...runtimePolicy];

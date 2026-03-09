@@ -5,8 +5,11 @@
  * different AI providers (Anthropic, OpenAI, etc.)
  */
 
+import { z } from "zod";
+
 export const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 /**
  * User-facing display labels for thinking levels.
@@ -30,7 +33,7 @@ export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: stri
   // xhigh and max are synonyms; show provider-aligned label
   if ((level === "xhigh" || level === "max") && modelString) {
     const normalized = modelString.trim().toLowerCase();
-    // OpenAI models: "openai:gpt-5.2" or "mux-gateway:openai/gpt-5.2"
+    // OpenAI models: "openai:gpt-5.4" or "mux-gateway:openai/gpt-5.4"
     if (normalized.startsWith("openai:")) return "XHIGH";
     const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
     if (withoutPrefix.startsWith("openai/")) return "XHIGH";
@@ -67,15 +70,6 @@ const DISPLAY_LABEL_TO_LEVEL: Record<string, ThinkingLevel> = {
 };
 
 /**
- * Parse a thinking level from user input (display label or legacy value)
- * Returns undefined if not recognized
- */
-export function parseThinkingDisplayLabel(value: string): ThinkingLevel | undefined {
-  const normalized = value.trim().toLowerCase();
-  return DISPLAY_LABEL_TO_LEVEL[normalized];
-}
-
-/**
  * Result of parsing a thinking level input. Named levels resolve to a
  * ThinkingLevel string immediately; numeric indices are deferred and
  * resolved against the target model's thinking policy at send time
@@ -107,7 +101,7 @@ export function parseThinkingInput(value: string): ParsedThinkingInput | undefin
   if (named) return named;
 
   // Numeric index — resolved later against the model's thinking policy
-  // (e.g., 0 = lowest allowed level, which is "medium" for gpt-5.2-pro)
+  // (e.g., 0 = lowest allowed level, which is "medium" for gpt-5.4-pro)
   const num = parseInt(normalized, 10);
   if (!Number.isNaN(num) && String(num) === normalized && num >= 0 && num <= MAX_THINKING_INDEX) {
     return num;

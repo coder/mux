@@ -3,22 +3,29 @@ import { Readable } from "stream";
 import { describe, it, expect, vi, beforeEach, afterEach, spyOn } from "bun:test";
 import { CoderService, compareVersions } from "./coderService";
 import * as childProcess from "child_process";
+import * as muxSshConfigWriter from "@/node/runtime/muxSshConfigWriter";
 import * as disposableExec from "@/node/utils/disposableExec";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
 
 /**
- * Mock execAsync for non-streaming tests.
+ * Mock execAsync / execFileAsync for non-streaming tests.
  * Uses spyOn instead of vi.mock to avoid polluting other test files.
  */
 let execAsyncSpy: ReturnType<typeof spyOn<typeof disposableExec, "execAsync">> | null = null;
+let execFileAsyncSpy: ReturnType<typeof spyOn<typeof disposableExec, "execFileAsync">> | null =
+  null;
 
 // Minimal mock that satisfies the interface used by CoderService
 // Uses cast via `unknown` because we only implement the subset actually used by tests
 function createMockExecResult(
   result: Promise<{ stdout: string; stderr: string }>
-): ReturnType<typeof disposableExec.execAsync> {
+): ReturnType<typeof disposableExec.execFileAsync> {
+  // Prevent Bun from surfacing immediate Promise.reject() as an unhandled rejection
+  // before CoderService awaits proc.result.
+  void result.catch(noop);
+
   const mock = {
     result,
     get promise() {
@@ -27,22 +34,30 @@ function createMockExecResult(
     child: {}, // not used by CoderService
     [Symbol.dispose]: noop,
   };
-  return mock as unknown as ReturnType<typeof disposableExec.execAsync>;
+  return mock as unknown as ReturnType<typeof disposableExec.execFileAsync>;
 }
 
 function mockExecOk(stdout: string, stderr = ""): void {
-  execAsyncSpy?.mockReturnValue(createMockExecResult(Promise.resolve({ stdout, stderr })));
+  execFileAsyncSpy?.mockReturnValue(createMockExecResult(Promise.resolve({ stdout, stderr })));
 }
 
 function mockExecError(error: Error): void {
-  execAsyncSpy?.mockReturnValue(createMockExecResult(Promise.reject(error)));
+  execFileAsyncSpy?.mockReturnValue(createMockExecResult(Promise.reject(error)));
+}
+
+function isCoderCommand(file: string, args: string[], expectedArgs: string[]): boolean {
+  return (
+    file === "coder" &&
+    args.length === expectedArgs.length &&
+    args.every((arg, i) => arg === expectedArgs[i])
+  );
 }
 
 function mockVersionAndWhoami(options: { version: string; username?: string }): void {
   execAsyncSpy?.mockImplementationOnce(() =>
     createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
   );
-  execAsyncSpy?.mockImplementationOnce(() =>
+  execFileAsyncSpy?.mockImplementationOnce(() =>
     createMockExecResult(
       Promise.resolve({ stdout: JSON.stringify({ version: options.version }), stderr: "" })
     )
@@ -51,7 +66,7 @@ function mockVersionAndWhoami(options: { version: string; username?: string }): 
     url: "https://coder.example.com",
     ...(options.username ? { username: options.username } : {}),
   };
-  execAsyncSpy?.mockImplementationOnce(() =>
+  execFileAsyncSpy?.mockImplementationOnce(() =>
     createMockExecResult(Promise.resolve({ stdout: JSON.stringify([whoamiPayload]), stderr: "" }))
   );
 }
@@ -93,6 +108,7 @@ describe("CoderService", () => {
     vi.clearAllMocks();
     // Set up spies for mocking - uses spyOn instead of vi.mock to avoid polluting other test files
     execAsyncSpy = spyOn(disposableExec, "execAsync");
+    execFileAsyncSpy = spyOn(disposableExec, "execFileAsync");
     spawnSpy = spyOn(childProcess, "spawn");
   });
 
@@ -100,6 +116,8 @@ describe("CoderService", () => {
     service.clearCache();
     execAsyncSpy?.mockRestore();
     execAsyncSpy = null;
+    execFileAsyncSpy?.mockRestore();
+    execFileAsyncSpy = null;
     spawnSpy?.mockRestore();
     spawnSpy = null;
   });
@@ -135,7 +153,7 @@ describe("CoderService", () => {
       execAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.resolve({ stdout: JSON.stringify({ version: "2.24.9" }), stderr: "" })
         )
@@ -155,7 +173,7 @@ describe("CoderService", () => {
       execAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.reject(new Error("lookup failed")))
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.resolve({ stdout: JSON.stringify({ version: "2.24.9" }), stderr: "" })
         )
@@ -185,12 +203,12 @@ describe("CoderService", () => {
       execAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
         )
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.reject(
             new Error(
@@ -224,12 +242,12 @@ describe("CoderService", () => {
       execAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
         )
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.reject(new Error("error: Connection refused")))
       );
 
@@ -237,12 +255,12 @@ describe("CoderService", () => {
       execAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
         )
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.reject(new Error("error: Connection refused")))
       );
 
@@ -262,8 +280,11 @@ describe("CoderService", () => {
       const second = await service.getCoderInfo();
       expect(second).toMatchObject({ state: "unavailable", reason: { kind: "error" } });
 
-      const cmds = execAsyncSpy?.mock.calls.map(([cmd]) => cmd) ?? [];
-      expect(cmds.filter((c) => c === "coder whoami --output=json")).toHaveLength(2);
+      const whoamiCalls =
+        execFileAsyncSpy?.mock.calls.filter(([file, args]) =>
+          isCoderCommand(file, args, ["whoami", "--output=json"])
+        ) ?? [];
+      expect(whoamiCalls).toHaveLength(2);
     });
 
     it("re-checks login status after not-logged-in and caches once logged in", async () => {
@@ -271,12 +292,12 @@ describe("CoderService", () => {
       execAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
         )
       );
-      execAsyncSpy?.mockImplementationOnce(() =>
+      execFileAsyncSpy?.mockImplementationOnce(() =>
         createMockExecResult(
           Promise.reject(
             new Error(
@@ -314,14 +335,19 @@ describe("CoderService", () => {
         url: "https://coder.example.com",
       });
 
-      const callsAfterSecond = execAsyncSpy?.mock.calls.length ?? 0;
+      const asyncCallsAfterSecond = execAsyncSpy?.mock.calls.length ?? 0;
+      const fileCallsAfterSecond = execFileAsyncSpy?.mock.calls.length ?? 0;
 
-      // Third call should come from cache (no extra execAsync calls)
+      // Third call should come from cache (no extra exec calls)
       await service.getCoderInfo();
-      expect(execAsyncSpy?.mock.calls.length ?? 0).toBe(callsAfterSecond);
+      expect(execAsyncSpy?.mock.calls.length ?? 0).toBe(asyncCallsAfterSecond);
+      expect(execFileAsyncSpy?.mock.calls.length ?? 0).toBe(fileCallsAfterSecond);
 
-      const cmds = execAsyncSpy?.mock.calls.map(([cmd]) => cmd) ?? [];
-      expect(cmds.filter((c) => c === "coder whoami --output=json")).toHaveLength(2);
+      const whoamiCalls =
+        execFileAsyncSpy?.mock.calls.filter(([file, args]) =>
+          isCoderCommand(file, args, ["whoami", "--output=json"])
+        ) ?? [];
+      expect(whoamiCalls).toHaveLength(2);
     });
 
     it("returns unavailable state with reason missing when CLI not installed", async () => {
@@ -360,13 +386,56 @@ describe("CoderService", () => {
       await service.getCoderInfo();
       await service.getCoderInfo();
 
-      expect(execAsyncSpy).toHaveBeenCalledTimes(3);
+      expect(execAsyncSpy).toHaveBeenCalledTimes(1);
+      expect(execFileAsyncSpy).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("verifyAuthenticatedSession", () => {
+    it("resolves when coder whoami succeeds", async () => {
+      execFileAsyncSpy?.mockImplementation((file: string, args: string[]) => {
+        if (isCoderCommand(file, args, ["whoami", "--output=json"])) {
+          return createMockExecResult(
+            Promise.resolve({
+              stdout: JSON.stringify([
+                { url: "https://coder.example.com", username: "coder-user", id: "user-1" },
+              ]),
+              stderr: "",
+            })
+          );
+        }
+        return createMockExecResult(
+          Promise.reject(new Error(`Unexpected command: ${file} ${args.join(" ")}`))
+        );
+      });
+
+      await service.verifyAuthenticatedSession();
+      expect(execFileAsyncSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws when coder whoami fails (not logged in)", async () => {
+      execFileAsyncSpy?.mockImplementation((file: string, args: string[]) => {
+        if (isCoderCommand(file, args, ["whoami", "--output=json"])) {
+          return createMockExecResult(Promise.reject(new Error("error: not logged in")));
+        }
+        return createMockExecResult(
+          Promise.reject(new Error(`Unexpected command: ${file} ${args.join(" ")}`))
+        );
+      });
+
+      try {
+        await service.verifyAuthenticatedSession();
+        throw new Error("expected verifyAuthenticatedSession to throw");
+      } catch (error) {
+        expect((error as Error).message).toContain("not logged in");
+      }
+      expect(execFileAsyncSpy).toHaveBeenCalledTimes(1);
     });
   });
 
   describe("listTemplates", () => {
     it("returns templates with display names", async () => {
-      execAsyncSpy?.mockReturnValue(
+      execFileAsyncSpy?.mockReturnValue(
         createMockExecResult(
           Promise.resolve({
             stdout: JSON.stringify([
@@ -396,7 +465,7 @@ describe("CoderService", () => {
     });
 
     it("uses name as displayName when display_name not present", async () => {
-      execAsyncSpy?.mockReturnValue(
+      execFileAsyncSpy?.mockReturnValue(
         createMockExecResult(
           Promise.resolve({
             stdout: JSON.stringify([{ Template: { name: "my-template" } }]),
@@ -676,110 +745,25 @@ describe("CoderService", () => {
     });
   });
 
-  describe("fetchDeploymentSshConfig", () => {
-    let originalFetch: typeof fetch;
-
-    beforeEach(() => {
-      originalFetch = global.fetch;
-    });
-
-    afterEach(() => {
-      global.fetch = originalFetch;
-    });
-
-    function mockWhoami() {
-      execAsyncSpy?.mockImplementation((cmd: string) => {
-        if (cmd === "coder whoami --output=json") {
-          return createMockExecResult(
-            Promise.resolve({
-              stdout: JSON.stringify([
-                { url: "https://coder.example.com", username: "coder-user" },
-              ]),
-              stderr: "",
-            })
-          );
-        }
-        return createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)));
-      });
-    }
-
-    it("uses provided session and normalizes leading dot", async () => {
-      mockWhoami();
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ hostname_suffix: ".corp" }),
-      });
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      const session = {
-        token: "session-token",
-        dispose: vi.fn().mockResolvedValue(undefined),
-      };
-      const result = await service.fetchDeploymentSshConfig(session);
-
-      expect(result).toEqual({ hostnameSuffix: "corp" });
-      const calledUrl = fetchSpy.mock.calls[0]?.[0] as URL | undefined;
-      const options = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
-      expect(calledUrl?.toString()).toBe("https://coder.example.com/api/v2/deployment/ssh");
-      expect(options).toEqual({
-        headers: { "Coder-Session-Token": "session-token" },
-      });
-      expect(execAsyncSpy).toHaveBeenCalledTimes(1);
-    });
-
-    it("reuses cached whoami after getCoderInfo", async () => {
-      mockVersionAndWhoami({ version: "2.28.2", username: "coder-user" });
-      execAsyncSpy?.mockImplementation((cmd: string) =>
-        createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)))
-      );
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ hostname_suffix: ".corp" }),
-      });
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      await service.getCoderInfo();
-
-      const session = {
-        token: "session-token",
-        dispose: vi.fn().mockResolvedValue(undefined),
-      };
-      await service.fetchDeploymentSshConfig(session);
-
-      expect(execAsyncSpy).toHaveBeenCalledTimes(3);
-      const whoamiCalls =
-        execAsyncSpy?.mock.calls.filter(([cmd]) => cmd === "coder whoami --output=json") ?? [];
-      expect(whoamiCalls).toHaveLength(1);
-    });
-
-    it("defaults to coder when hostname suffix missing", async () => {
-      mockWhoami();
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({}),
-      });
-      global.fetch = fetchSpy as unknown as typeof fetch;
-
-      const session = {
-        token: "session-token",
-        dispose: vi.fn().mockResolvedValue(undefined),
-      };
-      const result = await service.fetchDeploymentSshConfig(session);
-
-      expect(result).toEqual({ hostnameSuffix: "coder" });
-    });
-  });
-
   describe("provisioning sessions", () => {
     function mockTokenCommands() {
-      execAsyncSpy?.mockImplementation((cmd: string) => {
-        if (cmd.startsWith("coder tokens create --lifetime 5m --name")) {
+      execFileAsyncSpy?.mockImplementation((file: string, args: string[]) => {
+        if (
+          file === "coder" &&
+          args[0] === "tokens" &&
+          args[1] === "create" &&
+          args[2] === "--lifetime" &&
+          args[3] === "5m" &&
+          args[4] === "--name"
+        ) {
           return createMockExecResult(Promise.resolve({ stdout: "token-123", stderr: "" }));
         }
-        if (cmd.startsWith("coder tokens delete")) {
+        if (file === "coder" && args[0] === "tokens" && args[1] === "delete") {
           return createMockExecResult(Promise.resolve({ stdout: "", stderr: "" }));
         }
-        return createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)));
+        return createMockExecResult(
+          Promise.reject(new Error(`Unexpected command: ${file} ${args.join(" ")}`))
+        );
       });
     }
 
@@ -792,7 +776,7 @@ describe("CoderService", () => {
       expect(session1.token).toBe("token-123");
 
       await service.disposeProvisioningSession("ws");
-      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
+      expect(execFileAsyncSpy).toHaveBeenCalledTimes(2);
     });
 
     it("takeProvisioningSession returns and clears the session", async () => {
@@ -804,7 +788,7 @@ describe("CoderService", () => {
       expect(service.takeProvisioningSession("ws")).toBeUndefined();
 
       await taken?.dispose();
-      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
+      expect(execFileAsyncSpy).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -826,8 +810,8 @@ describe("CoderService", () => {
       // Mock getActiveTemplateVersionId (coder templates list)
       // Mock getPresetParamNames (coder templates presets list)
       // Mock getTemplateRichParameters (coder tokens create + fetch)
-      execAsyncSpy?.mockImplementation((cmd: string) => {
-        if (cmd === "coder whoami --output=json") {
+      execFileAsyncSpy?.mockImplementation((file: string, args: string[]) => {
+        if (isCoderCommand(file, args, ["whoami", "--output=json"])) {
           return createMockExecResult(
             Promise.resolve({
               stdout: JSON.stringify([
@@ -837,7 +821,7 @@ describe("CoderService", () => {
             })
           );
         }
-        if (cmd === "coder templates list --output=json") {
+        if (isCoderCommand(file, args, ["templates", "list", "--output=json"])) {
           return createMockExecResult(
             Promise.resolve({
               stdout: JSON.stringify([
@@ -848,7 +832,12 @@ describe("CoderService", () => {
             })
           );
         }
-        if (cmd.startsWith("coder templates presets list")) {
+        if (
+          file === "coder" &&
+          args[0] === "templates" &&
+          args[1] === "presets" &&
+          args[2] === "list"
+        ) {
           const paramNames = options?.presetParamNames ?? [];
           return createMockExecResult(
             Promise.resolve({
@@ -864,14 +853,23 @@ describe("CoderService", () => {
             })
           );
         }
-        if (cmd.startsWith("coder tokens create --lifetime 5m --name")) {
+        if (
+          file === "coder" &&
+          args[0] === "tokens" &&
+          args[1] === "create" &&
+          args[2] === "--lifetime" &&
+          args[3] === "5m" &&
+          args[4] === "--name"
+        ) {
           return createMockExecResult(Promise.resolve({ stdout: "fake-token-123", stderr: "" }));
         }
-        if (cmd.startsWith("coder tokens delete")) {
+        if (file === "coder" && args[0] === "tokens" && args[1] === "delete") {
           return createMockExecResult(Promise.resolve({ stdout: "", stderr: "" }));
         }
         // Fallback for any other command
-        return createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)));
+        return createMockExecResult(
+          Promise.reject(new Error(`Unexpected command: ${file} ${args.join(" ")}`))
+        );
       });
     }
 
@@ -1566,6 +1564,78 @@ describe("deleteWorkspaceEventually", () => {
     expect(result.success).toBe(true);
     expect(serviceHack.runCoderCommand).toHaveBeenCalledTimes(1);
     expect(serviceHack.sleep).not.toHaveBeenCalled();
+  });
+});
+
+describe("CoderService.ensureMuxCoderSSHConfig", () => {
+  it("skips SSH config writes when coder binary is unavailable", async () => {
+    const service = new CoderService();
+    const resolveCoderBinaryPathSpy = spyOn(
+      service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
+      "resolveCoderBinaryPath"
+    ).mockResolvedValue(null);
+    const ensureMuxCoderSSHConfigFileSpy = spyOn(
+      muxSshConfigWriter,
+      "ensureMuxCoderSSHConfigFile"
+    ).mockResolvedValue();
+
+    try {
+      await service.ensureMuxCoderSSHConfig();
+
+      expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
+      expect(ensureMuxCoderSSHConfigFileSpy).not.toHaveBeenCalled();
+    } finally {
+      resolveCoderBinaryPathSpy.mockRestore();
+      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+    }
+  });
+
+  it("writes SSH config when coder binary is resolved", async () => {
+    const service = new CoderService();
+    const resolveCoderBinaryPathSpy = spyOn(
+      service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
+      "resolveCoderBinaryPath"
+    ).mockResolvedValue("/usr/local/bin/coder");
+    const ensureMuxCoderSSHConfigFileSpy = spyOn(
+      muxSshConfigWriter,
+      "ensureMuxCoderSSHConfigFile"
+    ).mockResolvedValue();
+
+    try {
+      await service.ensureMuxCoderSSHConfig();
+
+      expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
+      expect(ensureMuxCoderSSHConfigFileSpy).toHaveBeenCalledWith({
+        coderBinaryPath: "/usr/local/bin/coder",
+      });
+    } finally {
+      resolveCoderBinaryPathSpy.mockRestore();
+      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+    }
+  });
+
+  it("writes SSH config when coder binary resolves to normalized Windows path", async () => {
+    const service = new CoderService();
+    const resolveCoderBinaryPathSpy = spyOn(
+      service as unknown as { resolveCoderBinaryPath: () => Promise<string | null> },
+      "resolveCoderBinaryPath"
+    ).mockResolvedValue("C:\\Users\\me\\bin\\coder.exe");
+    const ensureMuxCoderSSHConfigFileSpy = spyOn(
+      muxSshConfigWriter,
+      "ensureMuxCoderSSHConfigFile"
+    ).mockResolvedValue();
+
+    try {
+      await service.ensureMuxCoderSSHConfig();
+
+      expect(resolveCoderBinaryPathSpy).toHaveBeenCalledTimes(1);
+      expect(ensureMuxCoderSSHConfigFileSpy).toHaveBeenCalledWith({
+        coderBinaryPath: "C:\\Users\\me\\bin\\coder.exe",
+      });
+    } finally {
+      resolveCoderBinaryPathSpy.mockRestore();
+      ensureMuxCoderSSHConfigFileSpy.mockRestore();
+    }
   });
 });
 

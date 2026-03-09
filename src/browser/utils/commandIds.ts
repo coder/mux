@@ -64,6 +64,9 @@ export const CommandIds = {
   themeToggle: () => "appearance:theme:toggle" as const,
   themeSet: (theme: string) => `appearance:theme:set:${theme}` as const,
 
+  // Analytics commands
+  analyticsRebuildDatabase: () => "analytics:rebuild-database" as const,
+
   // Layout commands
   layoutApplySlot: (slot: number) => `layout:apply-slot:${slot}` as const,
   layoutCaptureSlot: (slot: number) => `layout:capture-slot:${slot}` as const,

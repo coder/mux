@@ -4,14 +4,13 @@
  * Tests cover:
  * - Built-in agents appear in dropdown
  * - Custom project agents appear alongside built-ins
- * - Refresh button reloads agents after filesystem changes
- * - Broken agent definitions show error indicators
+ * - Selecting an agent updates the trigger
+ * - Auto-select toggle behavior
  */
 
 import "../dom";
 
 import { fireEvent, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -57,10 +56,6 @@ async function openAgentPicker(container: HTMLElement): Promise<void> {
   // Wait for dropdown to appear with agent rows
   await waitFor(
     () => {
-      const dropdown = container.querySelector('[placeholder="Search agents…"]');
-      if (!dropdown) throw new Error("Agent picker dropdown not open");
-
-      // Also wait for at least one agent row to appear (agents loaded)
       const rows = container.querySelectorAll("[data-agent-id]");
       if (rows.length === 0) throw new Error("No agents loaded yet");
     },
@@ -92,53 +87,6 @@ function getAgentIdByName(container: HTMLElement, name: string): string | null {
     }
   }
   return null;
-}
-
-/**
- * Click the refresh button in the agent picker dropdown.
- */
-async function clickRefreshButton(container: HTMLElement): Promise<void> {
-  const refreshBtn = await waitFor(
-    () => {
-      const btn = container.querySelector('[aria-label="Reload agents"]') as HTMLElement;
-      if (!btn) throw new Error("Refresh button not found");
-      return btn;
-    },
-    { timeout: 2_000 }
-  );
-  fireEvent.click(refreshBtn);
-}
-
-/**
- * Wait for refresh to complete (spinning icon stops).
- */
-async function waitForRefreshComplete(container: HTMLElement): Promise<void> {
-  await waitFor(
-    () => {
-      const svg = container.querySelector('[aria-label="Reload agents"] svg');
-      if (!svg) throw new Error("Refresh icon not found");
-      const classes = svg.getAttribute("class") ?? "";
-      if (classes.includes("animate-spin")) {
-        throw new Error("Still refreshing");
-      }
-    },
-    { timeout: 10_000 }
-  );
-}
-
-/**
- * Check if an agent has a help indicator (? button with tooltip).
- */
-function agentHasHelpIndicator(container: HTMLElement, agentName: string): boolean {
-  const rows = container.querySelectorAll("[data-agent-id]");
-  for (const row of Array.from(rows)) {
-    const nameSpan = row.querySelector('[data-testid="agent-name"]');
-    if (nameSpan?.textContent === agentName) {
-      // Look for the ? help indicator
-      return row.textContent?.includes("?") ?? false;
-    }
-  }
-  return false;
 }
 
 /**
@@ -241,72 +189,9 @@ You are a code review agent. Review code for quality, readability, and best prac
 
         // Custom agent should have correct ID
         expect(getAgentIdByName(view.container, "Code Review")).toBe("code-review");
-
-        // Custom agent with description should have help indicator
-        expect(agentHasHelpIndicator(view.container, "Code Review")).toBe(true);
       } finally {
         // Cleanup custom agent
         await removeAgentFile(workspacePath, "code-review");
-        await cleanupView(view, cleanupDom);
-      }
-    });
-  }, 30_000);
-
-  test("refresh button reloads agents after filesystem changes", async () => {
-    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      // With workspaceId provided, agents are discovered from workspace worktree path.
-      const workspacePath = metadata.namedWorkspacePath;
-
-      const cleanupDom = setupTestDom();
-      const view = renderApp({ apiClient: env.orpc, metadata });
-
-      try {
-        await setupWorkspaceView(view, metadata, workspaceId);
-        await openAgentPicker(view.container);
-
-        // Verify custom agent doesn't exist yet
-        let agentNames = getVisibleAgentNames(view.container);
-        expect(agentNames).not.toContain("Hot Reload Test");
-
-        // Create a new agent in the workspace worktree while dropdown is open
-        const newAgentContent = `---
-name: Hot Reload Test
-description: Test agent for verifying hot reload.
-base: exec
----
-
-This is a test agent.
-`;
-        await createAgentFile(workspacePath, "hot-reload-test", newAgentContent);
-
-        // Click refresh button
-        await clickRefreshButton(view.container);
-        await waitForRefreshComplete(view.container);
-
-        // New agent should now appear
-        agentNames = getVisibleAgentNames(view.container);
-        expect(agentNames).toContain("Hot Reload Test");
-      } finally {
-        // Cleanup
-        await removeAgentFile(workspacePath, "hot-reload-test");
-        await cleanupView(view, cleanupDom);
-      }
-    });
-  }, 30_000);
-
-  test("agents with descriptions show help indicators", async () => {
-    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = setupTestDom();
-      const view = renderApp({ apiClient: env.orpc, metadata });
-
-      try {
-        await setupWorkspaceView(view, metadata, workspaceId);
-        await openAgentPicker(view.container);
-
-        // Built-in agents have descriptions, so they should have help indicators
-        expect(agentHasHelpIndicator(view.container, "Exec")).toBe(true);
-        expect(agentHasHelpIndicator(view.container, "Plan")).toBe(true);
-      } finally {
         await cleanupView(view, cleanupDom);
       }
     });
@@ -320,7 +205,7 @@ This is a test agent.
       try {
         await setupWorkspaceView(view, metadata, workspaceId);
 
-        // Get initial agent name from trigger
+        // Get agent name from trigger
         const getTriggerText = () => {
           const trigger = view.container.querySelector('[aria-label="Select agent"]');
           return trigger?.textContent?.replace(/[⌘⌃⇧\d]/g, "").trim() ?? "";
@@ -328,26 +213,16 @@ This is a test agent.
 
         await openAgentPicker(view.container);
 
-        // Click on Plan agent
-        const dropdown = view.container
-          .querySelector('[placeholder="Search agents…"]')
-          ?.closest("div")?.parentElement;
-        const rows = dropdown?.querySelectorAll('[role="button"]') ?? [];
-        let planRow: HTMLElement | null = null;
-        for (const row of Array.from(rows)) {
-          if (row.textContent?.includes("Plan")) {
-            planRow = row as HTMLElement;
-            break;
-          }
-        }
+        // Click on Plan agent row
+        const planRow = view.container.querySelector('[data-agent-id="plan"]') as HTMLElement;
         expect(planRow).toBeTruthy();
         fireEvent.click(planRow!);
 
-        // Wait for dropdown to close and trigger to update
+        // Wait for dropdown to close
         await waitFor(
           () => {
-            const dropdown = view.container.querySelector('[placeholder="Search agents…"]');
-            if (dropdown) throw new Error("Dropdown still open");
+            const rows = view.container.querySelectorAll("[data-agent-id]");
+            if (rows.length > 0) throw new Error("Dropdown still open");
           },
           { timeout: 2_000 }
         );
@@ -388,7 +263,7 @@ This is a test agent.
       // Open agent picker
       await openAgentPicker(view.container);
 
-      // Should show agents, not "No matching agents"
+      // Should show agents, not empty
       const agentNames = getVisibleAgentNames(view.container);
       expect(agentNames.length).toBeGreaterThan(0);
       expect(agentNames).toContain("Exec");
@@ -396,50 +271,5 @@ This is a test agent.
     } finally {
       await cleanupView(view, cleanupDom);
     }
-  }, 30_000);
-
-  // Note: Search filtering test is skipped because happy-dom doesn't reliably
-  // trigger onChange handlers. The filtering logic is covered by unit tests.
-  test.skip("search filters agents by name and id", async () => {
-    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = setupTestDom();
-      const view = renderApp({ apiClient: env.orpc, metadata });
-
-      try {
-        await setupWorkspaceView(view, metadata, workspaceId);
-        await openAgentPicker(view.container);
-
-        // Get initial count
-        let agentNames = getVisibleAgentNames(view.container);
-        const initialCount = agentNames.length;
-        expect(initialCount).toBeGreaterThanOrEqual(2); // At least exec, plan
-
-        // Type in search
-        const searchInput = view.container.querySelector(
-          '[placeholder="Search agents…"]'
-        ) as HTMLInputElement;
-        expect(searchInput).toBeTruthy();
-        const user = userEvent.setup({ document: view.container.ownerDocument });
-        await user.clear(searchInput);
-        await user.type(searchInput, "exec");
-
-        // Should filter to just exec
-        await waitFor(() => {
-          agentNames = getVisibleAgentNames(view.container);
-          expect(agentNames.length).toBeLessThan(initialCount);
-          expect(agentNames).toContain("Exec");
-        });
-
-        // Clear and search by partial name
-        await user.clear(searchInput);
-        await user.type(searchInput, "pla");
-        await waitFor(() => {
-          agentNames = getVisibleAgentNames(view.container);
-          expect(agentNames).toContain("Plan");
-        });
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
-    });
   }, 30_000);
 });

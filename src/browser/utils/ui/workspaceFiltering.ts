@@ -102,6 +102,142 @@ export function computeWorkspaceDepthMap(
   return Object.fromEntries(depths);
 }
 
+export interface AgentRowRenderMeta {
+  depth: number;
+  rowKind: "primary" | "subagent";
+  connectorPosition: "single" | "middle" | "last";
+  hasHiddenCompletedChildren: boolean;
+  visibleCompletedChildrenCount: number;
+}
+
+/**
+ * Hide completed child tasks (taskStatus=reported) by default unless their parent is expanded.
+ * Child visibility is inherited from ancestors so hidden parents also hide descendants.
+ */
+export function filterVisibleAgentRows(
+  flattenedWorkspaces: FrontendWorkspaceMetadata[],
+  expandedParentIds: ReadonlySet<string> = new Set()
+): FrontendWorkspaceMetadata[] {
+  if (flattenedWorkspaces.length === 0) {
+    return [];
+  }
+
+  const byId = new Map<string, FrontendWorkspaceMetadata>();
+  for (const workspace of flattenedWorkspaces) {
+    byId.set(workspace.id, workspace);
+  }
+
+  const visibilityById = new Map<string, boolean>();
+  const visiting = new Set<string>();
+
+  const isVisible = (workspace: FrontendWorkspaceMetadata): boolean => {
+    const cached = visibilityById.get(workspace.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    if (visiting.has(workspace.id)) {
+      // Defensive cycle handling: keep nodes visible instead of accidentally hiding them forever.
+      return true;
+    }
+
+    visiting.add(workspace.id);
+
+    const parentId = workspace.parentWorkspaceId;
+    if (!parentId) {
+      visiting.delete(workspace.id);
+      visibilityById.set(workspace.id, true);
+      return true;
+    }
+
+    const parent = byId.get(parentId);
+    if (!parent) {
+      visiting.delete(workspace.id);
+      visibilityById.set(workspace.id, true);
+      return true;
+    }
+
+    const parentVisible = isVisible(parent);
+    const isReportedChildTask = workspace.taskStatus === "reported";
+    const shouldHideCompletedChild = isReportedChildTask && !expandedParentIds.has(parentId);
+    const visible = parentVisible && !shouldHideCompletedChild;
+
+    visiting.delete(workspace.id);
+    visibilityById.set(workspace.id, visible);
+    return visible;
+  };
+
+  return flattenedWorkspaces.filter((workspace) => isVisible(workspace));
+}
+
+/**
+ * Build render metadata for visible rows in a flattened workspace tree.
+ */
+export function computeAgentRowRenderMeta(
+  flattenedWorkspaces: FrontendWorkspaceMetadata[],
+  depthByWorkspaceId: Record<string, number>,
+  expandedParentIds: ReadonlySet<string> = new Set()
+): Map<string, AgentRowRenderMeta> {
+  const visibleRows = filterVisibleAgentRows(flattenedWorkspaces, expandedParentIds);
+  const visibleWorkspaceIds = new Set(visibleRows.map((workspace) => workspace.id));
+
+  const visibleChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+  const reportedChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+
+  for (const workspace of visibleRows) {
+    const parentId = workspace.parentWorkspaceId;
+    if (!parentId) {
+      continue;
+    }
+
+    const siblings = visibleChildrenByParent.get(parentId) ?? [];
+    siblings.push(workspace);
+    visibleChildrenByParent.set(parentId, siblings);
+  }
+
+  for (const workspace of flattenedWorkspaces) {
+    if (!workspace.parentWorkspaceId || workspace.taskStatus !== "reported") {
+      continue;
+    }
+
+    const reportedChildren = reportedChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+    reportedChildren.push(workspace);
+    reportedChildrenByParent.set(workspace.parentWorkspaceId, reportedChildren);
+  }
+
+  const metadataByWorkspaceId = new Map<string, AgentRowRenderMeta>();
+
+  for (const workspace of visibleRows) {
+    const rowKind = workspace.parentWorkspaceId ? "subagent" : "primary";
+
+    let connectorPosition: AgentRowRenderMeta["connectorPosition"] = "single";
+    if (workspace.parentWorkspaceId) {
+      const siblings = visibleChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+      if (siblings.length > 1) {
+        connectorPosition = siblings[siblings.length - 1]?.id === workspace.id ? "last" : "middle";
+      }
+    }
+
+    const reportedChildren = reportedChildrenByParent.get(workspace.id) ?? [];
+    let visibleCompletedChildrenCount = 0;
+    for (const child of reportedChildren) {
+      if (visibleWorkspaceIds.has(child.id)) {
+        visibleCompletedChildrenCount += 1;
+      }
+    }
+
+    metadataByWorkspaceId.set(workspace.id, {
+      depth: depthByWorkspaceId[workspace.id] ?? 0,
+      rowKind,
+      connectorPosition,
+      hasHiddenCompletedChildren: visibleCompletedChildrenCount < reportedChildren.length,
+      visibleCompletedChildrenCount,
+    });
+  }
+
+  return metadataByWorkspaceId;
+}
+
 /**
  * Age thresholds for workspace filtering, in ascending order.
  * Each tier hides workspaces older than the specified duration.
@@ -230,6 +366,81 @@ export function findNextNonEmptyTier(
     if (buckets[i].length > 0) return i;
   }
   return -1;
+}
+
+export interface PinnedCompletedChildOptions {
+  workspaces: FrontendWorkspaceMetadata[];
+  workspaceRecency: Record<string, number>;
+  expandedParentIds: ReadonlySet<string>;
+  isTierExpanded: (tierIndex: number) => boolean;
+}
+
+/**
+ * Determine which expanded completed child rows should bypass age-tier collapsing.
+ * Reported children are pinned only when their parent row is currently visible
+ * (recent rows, expanded old tiers, or rows pinned earlier in this same pass).
+ */
+export function computePinnedCompletedChildIdsForAgeTiers(
+  opts: PinnedCompletedChildOptions
+): Set<string> {
+  const potentialPinnedChildren = opts.workspaces.filter((workspace) => {
+    const parentId = workspace.parentWorkspaceId;
+    return (
+      workspace.taskStatus === "reported" &&
+      typeof parentId === "string" &&
+      opts.expandedParentIds.has(parentId)
+    );
+  });
+
+  if (potentialPinnedChildren.length === 0) {
+    return new Set<string>();
+  }
+
+  const { recent, buckets } = partitionWorkspacesByAge(opts.workspaces, opts.workspaceRecency);
+  const visibleParentIds = new Set<string>(recent.map((workspace) => workspace.id));
+
+  const markExpandedTierRowsVisible = (tierIndex: number): void => {
+    const bucket = buckets[tierIndex];
+    const remainingCount = buckets
+      .slice(tierIndex)
+      .reduce((sum, bucketRows) => sum + bucketRows.length, 0);
+    if (remainingCount === 0 || !opts.isTierExpanded(tierIndex)) {
+      return;
+    }
+
+    for (const workspace of bucket) {
+      visibleParentIds.add(workspace.id);
+    }
+
+    const nextTier = findNextNonEmptyTier(buckets, tierIndex + 1);
+    if (nextTier !== -1) {
+      markExpandedTierRowsVisible(nextTier);
+    }
+  };
+
+  const firstTier = findNextNonEmptyTier(buckets, 0);
+  if (firstTier !== -1) {
+    markExpandedTierRowsVisible(firstTier);
+  }
+
+  const pinnedIds = new Set<string>();
+  let pinnedInPass = true;
+  while (pinnedInPass) {
+    pinnedInPass = false;
+
+    for (const workspace of potentialPinnedChildren) {
+      const parentId = workspace.parentWorkspaceId;
+      if (!parentId || pinnedIds.has(workspace.id) || !visibleParentIds.has(parentId)) {
+        continue;
+      }
+
+      pinnedIds.add(workspace.id);
+      visibleParentIds.add(workspace.id);
+      pinnedInPass = true;
+    }
+  }
+
+  return pinnedIds;
 }
 
 /**

@@ -1,0 +1,279 @@
+name: Desktop Release Build (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to build (tag, branch, or SHA)"
+        required: true
+        type: string
+      release_tag:
+        description: "Release tag used by scripts/generate-version.sh"
+        required: true
+        type: string
+      version_override:
+        description: "Optional package.json version override (e.g., 1.2.4-dev.7)"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-macos:
+    name: Build and Release macOS
+    runs-on: macos-15
+    permissions:
+      contents: write # Upload release assets
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Setup code signing
+        run: ./scripts/setup-macos-signing.sh
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          AC_APIKEY_P8_BASE64: ${{ secrets.AC_APIKEY_P8_BASE64 }}
+          AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
+          AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
+
+      - name: Package and publish for macOS
+        # Retry for transient Apple timestamp-server failures during code signing.
+        run: ./scripts/retry.sh 3 30 make dist-mac-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # electron-builder's --publish always silently skips uploads when the
+          # release was created >2 hours ago (its internal staleness check),
+          # which breaks reruns. Force-upload all macOS assets with --clobber
+          # so reruns reliably attach artifacts to the release.
+          gh release upload "$RELEASE_TAG" \
+            release/mux-*.dmg \
+            release/mux-*.dmg.blockmap \
+            release/mux-*.zip \
+            release/mux-*.zip.blockmap \
+            release/*-mac.yml \
+            --clobber
+
+  build-linux:
+    name: Build and Release Linux
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: write # Upload release assets
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Package and publish for Linux
+        run: bun x electron-builder --linux --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Linux assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Same electron-builder 2-hour staleness workaround as macOS.
+          gh release upload "$RELEASE_TAG" \
+            release/mux-*.AppImage \
+            release/*-linux.yml \
+            --clobber
+
+  build-linux-arm64:
+    name: Build and Release Linux arm64
+    # Native arm64 runner required for node-pty and duckdb native modules.
+    # Falls back to GitHub's hosted arm64 runner for forks.
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-arm-16' || 'ubuntu-24.04-arm' }}
+    # Depends on x64 job to ensure the release exists and latest-linux.yml
+    # is published first. The arm64 job only uploads the AppImage artifact
+    # to avoid overwriting the auto-update manifest.
+    needs: [build-linux]
+    permissions:
+      contents: write # Upload release assets
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Package for Linux arm64
+        run: bun x electron-builder --linux --arm64 --publish never
+
+      - name: Upload arm64 AppImage to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Upload only the AppImage (not latest-linux.yml) to avoid
+          # overwriting the auto-update manifest produced by the x64 job.
+          gh release upload "$RELEASE_TAG" release/mux-*-arm64.AppImage --clobber
+
+  build-windows:
+    name: Build and Release Windows
+    runs-on: windows-latest
+    permissions:
+      contents: write # Upload release assets
+      id-token: write # GCP workload identity for code signing
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      VERSION_OVERRIDE: ${{ inputs.version_override }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Add MSYS2 make to PATH
+        shell: pwsh
+        run: |
+          # MSYS2 is pre-installed on Windows runners, just needs to be in PATH
+          # Install make via pacman (faster than choco)
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm make
+          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify tools
+        shell: bash
+        run: |
+          make --version
+          bun --version
+          magick --version | head -1
+
+      - name: Patch package.json version
+        if: inputs.version_override != ''
+        shell: bash
+        run: |
+          # Keep this in a script so nightly/release workflows can share behavior.
+          node ./scripts/set-package-version.js "$VERSION_OVERRIDE"
+
+      - name: Build application
+        run: bun run build
+
+      - name: Setup code signing
+        id: signing
+        uses: ./.github/actions/setup-windows-signing
+        with:
+          ev_signing_cert: ${{ secrets.EV_SIGNING_CERT }}
+          gcp_workload_id_provider: ${{ vars.GCP_WORKLOAD_ID_PROVIDER }}
+          gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Package and publish for Windows (.exe)
+        run: bun x electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # EV signing environment variables (used by custom sign script if configured)
+          EV_KEYSTORE: ${{ vars.EV_KEYSTORE }}
+          EV_KEY: ${{ vars.EV_KEY }}
+          EV_TSA_URL: ${{ vars.EV_TSA_URL }}
+          GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
+
+      - name: Upload Windows assets to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Same electron-builder 2-hour staleness workaround as macOS.
+          gh release upload "$RELEASE_TAG" \
+            release/mux-*.exe \
+            release/mux-*.exe.blockmap \
+            release/*.yml \
+            --clobber
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: windows-release
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+          if-no-files-found: error
+
+  checksums-linux:
+    name: Generate Linux checksums
+    needs: [build-linux, build-linux-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Upload release assets
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Download and checksum Linux artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "mux-*-x86_64.AppImage" \
+            --pattern "mux-*-arm64.AppImage" \
+            --dir artifacts
+
+          cd artifacts
+          for file in mux-*.AppImage; do
+            sha256sum "$file" > "${file}.sha256"
+          done
+
+          gh release upload "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            ./*.sha256

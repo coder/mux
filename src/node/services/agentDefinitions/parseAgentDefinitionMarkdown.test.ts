@@ -109,7 +109,7 @@ Body
     ).toThrow(AgentDefinitionParseError);
   });
 
-  test("parses tools as add/remove patterns", () => {
+  test("parses tools as add/remove/require patterns", () => {
     const content = `---
 name: Regex Tools
 tools:
@@ -119,6 +119,8 @@ tools:
     - "task_.*"
   remove:
     - task
+  require:
+    - switch_agent
 ---
 Body
 `;
@@ -131,6 +133,7 @@ Body
     expect(result.frontmatter.tools).toEqual({
       add: ["file_read", "bash.*", "task_.*"],
       remove: ["task"],
+      require: ["switch_agent"],
     });
   });
 });

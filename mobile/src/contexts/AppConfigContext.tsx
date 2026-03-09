@@ -1,6 +1,6 @@
 import type { JSX, ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import * as SecureStore from "expo-secure-store";
+import * as Storage from "../lib/storage";
 import Constants from "expo-constants";
 import { assert } from "@/common/utils/assert";
 
@@ -81,8 +81,8 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
     async function loadStoredValues() {
       try {
         const [storedBaseUrl, storedAuthToken] = await Promise.all([
-          SecureStore.getItemAsync(STORAGE_KEY_BASE_URL),
-          SecureStore.getItemAsync(STORAGE_KEY_AUTH_TOKEN),
+          Storage.getItem(STORAGE_KEY_BASE_URL),
+          Storage.getItem(STORAGE_KEY_AUTH_TOKEN),
         ]);
         if (!mounted) return;
         if (typeof storedBaseUrl === "string") {
@@ -112,7 +112,7 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
     if (trimmed.length === 0) {
       setResolvedBaseUrl(DEFAULT_BASE_URL);
       try {
-        await SecureStore.deleteItemAsync(STORAGE_KEY_BASE_URL);
+        await Storage.deleteItem(STORAGE_KEY_BASE_URL);
       } catch (error) {
         console.error("Failed to clear base URL", error);
       }
@@ -127,7 +127,7 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
 
     setResolvedBaseUrl(normalized);
     try {
-      await SecureStore.setItemAsync(STORAGE_KEY_BASE_URL, normalized);
+      await Storage.setItem(STORAGE_KEY_BASE_URL, normalized);
     } catch (error) {
       console.error("Failed to persist base URL", error);
     }
@@ -138,9 +138,9 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
     const trimmed = value.trim();
     try {
       if (trimmed.length > 0) {
-        await SecureStore.setItemAsync(STORAGE_KEY_AUTH_TOKEN, trimmed);
+        await Storage.setItem(STORAGE_KEY_AUTH_TOKEN, trimmed);
       } else {
-        await SecureStore.deleteItemAsync(STORAGE_KEY_AUTH_TOKEN);
+        await Storage.deleteItem(STORAGE_KEY_AUTH_TOKEN);
       }
     } catch (error) {
       console.error("Failed to persist auth token", error);

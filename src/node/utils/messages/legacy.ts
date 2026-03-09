@@ -1,7 +1,7 @@
-import type { MuxFrontendMetadata, MuxMessage, MuxMetadata } from "@/common/types/message";
+import type { MuxMessageMetadata, MuxMessage, MuxMetadata } from "@/common/types/message";
 
 interface LegacyMuxMetadata extends MuxMetadata {
-  cmuxMetadata?: MuxFrontendMetadata;
+  cmuxMetadata?: MuxMessageMetadata;
   idleCompacted?: boolean;
 }
 

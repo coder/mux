@@ -61,7 +61,7 @@ function renderReviewPanelForRefreshTests(params: {
   // These refresh tests make uncommitted filesystem changes and expect them to show up in the
   // ReviewPanel diff without toggling includeUncommitted.
   //
-  // With the app's default review base now set to a branch ref (e.g. origin/main), the default
+  // With the app's default review base now set to a trunk ref (e.g. origin/<trunk>), the default
   // diff would exclude uncommitted changes unless includeUncommitted is enabled. Force HEAD so the
   // diff always reflects the working tree.
   updatePersistedState(STORAGE_KEYS.reviewDiffBase(params.workspaceId), "HEAD");

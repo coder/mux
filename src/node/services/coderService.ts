@@ -2,9 +2,10 @@
  * Service for interacting with the Coder CLI.
  * Used to create/manage Coder workspaces as SSH targets for Mux workspaces.
  */
-import { shescape } from "@/node/runtime/streamUtils";
-import { execAsync } from "@/node/utils/disposableExec";
+import { ensureMuxCoderSSHConfigFile } from "@/node/runtime/muxSshConfigWriter";
+import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { toWindowsPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
 import { spawn, type ChildProcess } from "child_process";
 import type { Result } from "@/common/types/result";
@@ -15,28 +16,14 @@ import {
   type CoderListPresetsResult,
   type CoderListTemplatesResult,
   type CoderListWorkspacesResult,
-  type CoderTemplate,
-  type CoderPreset,
-  type CoderWorkspace,
   type CoderWorkspaceStatus,
 } from "@/common/orpc/schemas/coder";
-
-// Re-export types for consumers that import from this module
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface CoderApiSession {
   token: string;
   dispose: () => Promise<void>;
 }
-export type {
-  CoderInfo,
-  CoderListPresetsResult,
-  CoderListTemplatesResult,
-  CoderListWorkspacesResult,
-  CoderTemplate,
-  CoderPreset,
-  CoderWorkspace,
-  CoderWorkspaceStatus,
-};
 
 interface CoderWhoamiData {
   url: string;
@@ -332,17 +319,40 @@ export class CoderService {
   private cachedWhoami: CoderWhoamiData | null = null;
 
   private async resolveCoderBinaryPath(): Promise<string | null> {
-    let shell: string | undefined;
     if (process.platform === "win32") {
+      // Prefer native Windows lookup — returns paths cmd.exe can execute directly.
+      try {
+        using proc = execAsync("where.exe coder");
+        const { stdout } = await proc.result;
+        const firstLine = stdout.split(/\r?\n/)[0]?.trim();
+        if (firstLine) return firstLine;
+      } catch {
+        // where.exe may not find coder; fall through to Git Bash lookup.
+      }
+
+      // Fallback: Git Bash lookup. Normalize MSYS paths (/c/...) to Windows (C:\...).
+      let shell: string | undefined;
       try {
         shell = getBashPath();
       } catch {
-        // Best-effort; if Git Bash isn't available, the lookup may fail and we'll fall back to null.
+        return null;
+      }
+
+      try {
+        using proc = execAsync("command -v coder", { shell });
+        const { stdout } = await proc.result;
+        const firstLine = stdout.split(/\r?\n/)[0]?.trim();
+        // Convert MSYS path format to native Windows path for cmd.exe compatibility.
+        // SSH ProxyCommand runs through cmd.exe, not Git Bash.
+        return firstLine ? toWindowsPath(firstLine) : null;
+      } catch {
+        return null;
       }
     }
 
+    // POSIX: command -v is universally available
     try {
-      using proc = execAsync("command -v coder", shell ? { shell } : undefined);
+      using proc = execAsync("command -v coder");
       const { stdout } = await proc.result;
       const firstLine = stdout.split(/\r?\n/)[0]?.trim();
       return firstLine || null;
@@ -364,7 +374,7 @@ export class CoderService {
     const binaryPath = await this.resolveCoderBinaryPath();
 
     try {
-      using proc = execAsync("coder version --output=json");
+      using proc = execFileAsync("coder", ["version", "--output=json"]);
       const { stdout } = await proc.result;
 
       // Parse JSON output
@@ -480,9 +490,14 @@ export class CoderService {
    * Create a short-lived Coder API token for deployment endpoints.
    */
   private async createApiSession(tokenName: string): Promise<CoderApiSession> {
-    using tokenProc = execAsync(
-      `coder tokens create --lifetime 5m --name ${shescape.quote(tokenName)}`
-    );
+    using tokenProc = execFileAsync("coder", [
+      "tokens",
+      "create",
+      "--lifetime",
+      "5m",
+      "--name",
+      tokenName,
+    ]);
     const { stdout: token } = await tokenProc.result;
     const trimmed = token.trim();
 
@@ -490,7 +505,7 @@ export class CoderService {
       token: trimmed,
       dispose: async () => {
         try {
-          using deleteProc = execAsync(`coder tokens delete ${shescape.quote(tokenName)}`);
+          using deleteProc = execFileAsync("coder", ["tokens", "delete", tokenName]);
           await deleteProc.result;
         } catch {
           // Best-effort cleanup; token will expire in 5 minutes anyway.
@@ -541,30 +556,14 @@ export class CoderService {
     await session.dispose();
   }
 
-  private normalizeHostnameSuffix(raw: string | undefined): string {
-    const cleaned = (raw ?? "").trim().replace(/^\./, "");
-    return cleaned || "coder";
+  /**
+   * Verify the current Coder CLI session is authenticated.
+   * Forces a fresh whoami check instead of using cached data.
+   */
+  async verifyAuthenticatedSession(): Promise<void> {
+    await this.getWhoamiData({ useCache: false });
   }
 
-  async fetchDeploymentSshConfig(session?: CoderApiSession): Promise<{ hostnameSuffix: string }> {
-    const deploymentUrl = await this.getDeploymentUrl();
-    const tokenName = `mux-ssh-config-${Date.now().toString(36)}`;
-
-    const run = async (api: CoderApiSession) => {
-      const url = new URL("/api/v2/deployment/ssh", deploymentUrl);
-      const response = await fetch(url, {
-        headers: { "Coder-Session-Token": api.token },
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch SSH config: ${response.status}`);
-      }
-
-      const data = (await response.json()) as { hostname_suffix?: string };
-      return { hostnameSuffix: this.normalizeHostnameSuffix(data.hostname_suffix) };
-    };
-
-    return session ? run(session) : this.withApiSession(tokenName, run);
-  }
   /**
    * Clear cached Coder info. Used for testing.
    */
@@ -580,7 +579,7 @@ export class CoderService {
       return this.cachedWhoami;
     }
 
-    using proc = execAsync("coder whoami --output=json");
+    using proc = execFileAsync("coder", ["whoami", "--output=json"]);
     const { stdout } = await proc.result;
 
     const data = JSON.parse(stdout) as Array<Partial<CoderWhoamiData>>;
@@ -612,7 +611,7 @@ export class CoderService {
    */
   private async getActiveTemplateVersionId(templateName: string, org?: string): Promise<string> {
     // Note: `coder templates list` doesn't support --org flag, so we filter client-side
-    using proc = execAsync("coder templates list --output=json");
+    using proc = execFileAsync("coder", ["templates", "list", "--output=json"]);
     const { stdout } = await proc.result;
 
     if (!stdout.trim()) {
@@ -649,10 +648,9 @@ export class CoderService {
     org?: string
   ): Promise<Set<string>> {
     try {
-      const orgFlag = org ? ` --org ${shescape.quote(org)}` : "";
-      using proc = execAsync(
-        `coder templates presets list ${shescape.quote(templateName)}${orgFlag} --output=json`
-      );
+      const args = ["templates", "presets", "list", templateName, "--output=json"];
+      if (org) args.push("--org", org);
+      using proc = execFileAsync("coder", args);
       const { stdout } = await proc.result;
 
       // Same non-JSON guard as listPresets (CLI prints info message for no presets)
@@ -833,7 +831,7 @@ export class CoderService {
    */
   async listTemplates(): Promise<CoderListTemplatesResult> {
     try {
-      using proc = execAsync("coder templates list --output=json");
+      using proc = execFileAsync("coder", ["templates", "list", "--output=json"]);
       const { stdout } = await proc.result;
 
       // Handle empty output (no templates)
@@ -873,10 +871,9 @@ export class CoderService {
    */
   async listPresets(templateName: string, org?: string): Promise<CoderListPresetsResult> {
     try {
-      const orgFlag = org ? ` --org ${shescape.quote(org)}` : "";
-      using proc = execAsync(
-        `coder templates presets list ${shescape.quote(templateName)}${orgFlag} --output=json`
-      );
+      const args = ["templates", "presets", "list", templateName, "--output=json"];
+      if (org) args.push("--org", org);
+      using proc = execFileAsync("coder", args);
       const { stdout } = await proc.result;
 
       // Handle empty output or non-JSON info messages (no presets).
@@ -921,9 +918,12 @@ export class CoderService {
    */
   async workspaceExists(workspaceName: string): Promise<boolean> {
     try {
-      using proc = execAsync(
-        `coder list --search ${shescape.quote(`name:${workspaceName}`)} --output=json`
-      );
+      using proc = execFileAsync("coder", [
+        "list",
+        "--search",
+        `name:${workspaceName}`,
+        "--output=json",
+      ]);
       const { stdout } = await proc.result;
 
       if (!stdout.trim()) {
@@ -948,7 +948,7 @@ export class CoderService {
     const KNOWN_STATUSES = new Set<string>(CoderWorkspaceStatusSchema.options);
 
     try {
-      using proc = execAsync("coder list --output=json");
+      using proc = execFileAsync("coder", ["list", "--output=json"]);
       const { stdout } = await proc.result;
 
       // Handle empty output (no workspaces)
@@ -1128,7 +1128,7 @@ export class CoderService {
 
       return { kind: "ok", status: parsed.data };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.debug("Failed to get Coder workspace status", { workspaceName, error: message });
       return { kind: "error", error: message };
     }
@@ -1158,7 +1158,7 @@ export class CoderService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }
@@ -1187,7 +1187,7 @@ export class CoderService {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(message);
     }
   }
@@ -1456,13 +1456,20 @@ export class CoderService {
   }
 
   /**
-   * Ensure SSH config is set up for Coder workspaces.
+   * Ensure mux-owned SSH config is set up for Coder workspaces.
    * Run before every Coder workspace connection (idempotent).
    */
-  async ensureSSHConfig(): Promise<void> {
-    log.debug("Ensuring Coder SSH config");
-    using proc = execAsync("coder config-ssh --yes");
-    await proc.result;
+  async ensureMuxCoderSSHConfig(): Promise<void> {
+    log.debug("Ensuring mux-owned Coder SSH config");
+    const coderBinary = await this.resolveCoderBinaryPath();
+    if (coderBinary == null) {
+      log.debug("Skipping mux-owned Coder SSH config setup because coder binary is unavailable");
+      return;
+    }
+
+    await ensureMuxCoderSSHConfigFile({
+      coderBinaryPath: coderBinary,
+    });
   }
 }
 

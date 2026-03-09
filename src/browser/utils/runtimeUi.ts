@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { RuntimeMode } from "@/common/types/runtime";
+import type { RuntimeEnablementId, RuntimeMode } from "@/common/types/runtime";
 import {
   SSHIcon,
   WorktreeIcon,
@@ -7,16 +7,61 @@ import {
   DockerIcon,
   DevcontainerIcon,
   CoderIcon,
-} from "@/browser/components/icons/RuntimeIcons";
+} from "@/browser/components/icons/RuntimeIcons/RuntimeIcons";
 
 export interface RuntimeIconProps {
   size?: number;
   className?: string;
 }
 
+export interface RuntimeOptionFieldSpec {
+  readonly field: string;
+  readonly label: string;
+  readonly placeholder: string;
+  readonly summary: string;
+}
+
+export const RUNTIME_OPTION_FIELDS = {
+  ssh: {
+    field: "host",
+    label: "Host",
+    placeholder: "user@host",
+    summary: "Host (user@host)",
+  },
+  docker: {
+    field: "image",
+    label: "Image",
+    placeholder: "node:20",
+    summary: "Image name (e.g. node:20)",
+  },
+  devcontainer: {
+    field: "configPath",
+    label: "Config",
+    placeholder: ".devcontainer/devcontainer.json",
+    summary: "Config path (devcontainer.json)",
+  },
+} as const satisfies Partial<Record<RuntimeEnablementId, RuntimeOptionFieldSpec>>;
+
+export function getRuntimeOptionField(
+  runtimeId: RuntimeEnablementId
+): RuntimeOptionFieldSpec | null {
+  switch (runtimeId) {
+    case "ssh":
+      return RUNTIME_OPTION_FIELDS.ssh;
+    case "docker":
+      return RUNTIME_OPTION_FIELDS.docker;
+    case "devcontainer":
+      return RUNTIME_OPTION_FIELDS.devcontainer;
+    default:
+      return null;
+  }
+}
+
 export interface RuntimeUiSpec {
   label: string;
   description: string;
+  /** What user-provided options this runtime requires at creation time. */
+  options?: string;
   docsPath: string;
   Icon: ComponentType<RuntimeIconProps>;
   button: {
@@ -34,7 +79,6 @@ export interface RuntimeUiSpec {
 }
 
 export type RuntimeChoice = RuntimeMode | "coder";
-export type RuntimeBadgeType = RuntimeChoice;
 
 export const RUNTIME_UI = {
   local: {
@@ -86,6 +130,7 @@ export const RUNTIME_UI = {
   ssh: {
     label: "SSH",
     description: "Remote clone on SSH host",
+    options: RUNTIME_OPTION_FIELDS.ssh.summary,
     docsPath: "/runtime/ssh",
     Icon: SSHIcon,
     button: {
@@ -109,6 +154,7 @@ export const RUNTIME_UI = {
   docker: {
     label: "Docker",
     description: "Isolated container per workspace",
+    options: RUNTIME_OPTION_FIELDS.docker.summary,
     docsPath: "/runtime/docker",
     Icon: DockerIcon,
     button: {
@@ -132,6 +178,7 @@ export const RUNTIME_UI = {
   devcontainer: {
     label: "Dev container",
     description: "Uses project's devcontainer.json configuration",
+    options: RUNTIME_OPTION_FIELDS.devcontainer.summary,
     docsPath: "/runtime/devcontainer",
     Icon: DevcontainerIcon,
     button: {
@@ -158,6 +205,7 @@ const CODER_RUNTIME_UI: RuntimeUiSpec = {
   ...RUNTIME_UI.ssh,
   label: "Coder",
   description: "Coder workspace via the Coder CLI",
+  options: "Coder workspace template",
   docsPath: "/runtime/coder",
   Icon: CoderIcon,
 };
@@ -192,4 +240,4 @@ export const RUNTIME_BADGE_UI = {
     Icon: RUNTIME_UI.devcontainer.Icon,
     badge: RUNTIME_UI.devcontainer.badge,
   },
-} satisfies Record<RuntimeBadgeType, Pick<RuntimeUiSpec, "Icon" | "badge">>;
+} satisfies Record<RuntimeChoice, Pick<RuntimeUiSpec, "Icon" | "badge">>;

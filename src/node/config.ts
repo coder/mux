@@ -5,13 +5,24 @@ import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { secretsToRecord, type Secret, type SecretsConfig } from "@/common/types/secrets";
+import {
+  isSecretReferenceValue,
+  isOpSecretValue,
+  type Secret,
+  type SecretsConfig,
+} from "@/common/types/secrets";
 import type {
   Workspace,
   ProjectConfig,
   ProjectsConfig,
   FeatureFlagOverride,
+  UpdateChannel,
 } from "@/common/types/project";
+import type {
+  AppConfigOnDisk,
+  BaseProviderConfig as ProviderConfig,
+  ProvidersConfig as CanonicalProvidersConfig,
+} from "@/common/config/schemas";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -19,24 +30,19 @@ import {
 } from "@/common/types/tasks";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { RUNTIME_ENABLEMENT_IDS, type RuntimeEnablementId } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
-// Re-export project types from dedicated types file (for preload usage)
-export type { Workspace, ProjectConfig, ProjectsConfig };
-
-export interface ProviderConfig {
-  apiKey?: string;
-  baseUrl?: string;
-  baseURL?: string;
-  headers?: Record<string, string>;
-  [key: string]: unknown;
-}
+// Re-export project/provider types from dedicated schema/types files (for preload usage)
+export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
+export type ProvidersConfig = CanonicalProvidersConfig | Record<string, ProviderConfig>;
 
 function parseOptionalNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -69,6 +75,14 @@ function parseOptionalEnvBoolean(value: unknown): boolean | undefined {
 }
 function parseOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function parseUpdateChannel(value: unknown): UpdateChannel | undefined {
+  if (value === "stable" || value === "nightly") {
+    return value;
+  }
+
+  return undefined;
 }
 
 function parseOptionalStringArray(value: unknown): string[] | undefined {
@@ -131,8 +145,94 @@ function parseOptionalPort(value: unknown): number | undefined {
 
   return value;
 }
-export type ProvidersConfig = Record<string, ProviderConfig>;
 
+function normalizeRuntimeEnablementId(value: unknown): RuntimeEnablementId | undefined {
+  const trimmed = parseOptionalNonEmptyString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (RUNTIME_ENABLEMENT_IDS.includes(normalized as RuntimeEnablementId)) {
+    return normalized as RuntimeEnablementId;
+  }
+
+  return undefined;
+}
+
+function normalizeRuntimeEnablementOverrides(
+  value: unknown
+): Partial<Record<RuntimeEnablementId, false>> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const overrides: Partial<Record<RuntimeEnablementId, false>> = {};
+
+  for (const runtimeId of RUNTIME_ENABLEMENT_IDS) {
+    // Default ON: store `false` only so config.json stays minimal.
+    if (record[runtimeId] === false) {
+      overrides[runtimeId] = false;
+    }
+  }
+
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+function normalizeProjectKind(value: unknown): "user" | "system" | undefined {
+  if (value === "user" || value === "system") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectConfig {
+  // Per-project runtime overrides are optional; keep config.json sparse by persisting only explicit
+  // overrides (false enablement + explicit default runtime selections).
+  if (!projectConfig || typeof projectConfig !== "object") {
+    return { workspaces: [] };
+  }
+
+  const record = projectConfig as ProjectConfig & {
+    runtimeEnablement?: unknown;
+    defaultRuntime?: unknown;
+    runtimeOverridesEnabled?: unknown;
+    projectKind?: unknown;
+  };
+  const runtimeEnablement = normalizeRuntimeEnablementOverrides(record.runtimeEnablement);
+  const defaultRuntime = normalizeRuntimeEnablementId(record.defaultRuntime);
+  const runtimeOverridesEnabled = record.runtimeOverridesEnabled === true ? true : undefined;
+
+  const next = { ...record };
+  if (runtimeEnablement) {
+    next.runtimeEnablement = runtimeEnablement;
+  } else {
+    delete next.runtimeEnablement;
+  }
+
+  if (runtimeOverridesEnabled) {
+    next.runtimeOverridesEnabled = runtimeOverridesEnabled;
+  } else {
+    delete next.runtimeOverridesEnabled;
+  }
+
+  if (defaultRuntime) {
+    next.defaultRuntime = defaultRuntime;
+  } else {
+    delete next.defaultRuntime;
+  }
+
+  const projectKind = normalizeProjectKind(record.projectKind);
+  if (projectKind !== undefined) {
+    next.projectKind = projectKind;
+  } else {
+    delete next.projectKind;
+  }
+
+  return next;
+}
 /**
  * Config - Centralized configuration management
  *
@@ -160,108 +260,91 @@ export class Config {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as {
-          projects?: unknown;
-          apiServerBindHost?: unknown;
-          apiServerPort?: unknown;
-          apiServerServeWebUi?: unknown;
-          mdnsAdvertisementEnabled?: unknown;
-          mdnsServiceName?: unknown;
-          serverSshHost?: string;
-          serverAuthGithubOwner?: unknown;
-          defaultProjectDir?: unknown;
-          viewedSplashScreens?: string[];
-          featureFlagOverrides?: Record<string, "default" | "on" | "off">;
-          layoutPresets?: unknown;
-          taskSettings?: unknown;
-          muxGatewayEnabled?: unknown;
-          muxGatewayModels?: unknown;
-          defaultModel?: unknown;
-          hiddenModels?: unknown;
-          preferredCompactionModel?: unknown;
-          agentAiDefaults?: unknown;
-          subagentAiDefaults?: unknown;
-          useSSH2Transport?: unknown;
-          muxGovernorUrl?: unknown;
-          muxGovernorToken?: unknown;
-          stopCoderWorkspaceOnArchive?: unknown;
+        const parsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
+
+        // Config is stored as array of [path, config] pairs.
+        // Older/newer files may omit `projects`; treat missing/invalid values as an empty map
+        // so top-level settings (provider/runtime/server preferences) still load.
+        const rawPairs = Array.isArray(parsed.projects) ? parsed.projects : [];
+        // Migrate: normalize project paths by stripping trailing slashes
+        // This fixes configs created with paths like "/home/user/project/"
+        // Also filter out any malformed entries (null/undefined paths)
+        const normalizedPairs = rawPairs
+          .filter(([projectPath]) => {
+            if (!projectPath || typeof projectPath !== "string") {
+              log.warn("Filtering out project with invalid path", { projectPath });
+              return false;
+            }
+            return true;
+          })
+          .map(([projectPath, projectConfig]) => {
+            const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
+            return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
+              string,
+              ProjectConfig,
+            ];
+          });
+        const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
+
+        const taskSettings = normalizeTaskSettings(parsed.taskSettings);
+
+        const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
+        const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
+
+        const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
+        const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
+        const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
+
+        // Default ON: store `false` only so config.json stays minimal.
+        const stopCoderWorkspaceOnArchive =
+          parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
+        const updateChannel = parseUpdateChannel(parsed.updateChannel);
+
+        const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
+        const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
+
+        const agentAiDefaults =
+          parsed.agentAiDefaults !== undefined
+            ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
+            : normalizeAgentAiDefaults(legacySubagentAiDefaults);
+
+        const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
+        const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
+          ? undefined
+          : layoutPresetsRaw;
+
+        return {
+          projects: projectsMap,
+          apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
+          apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi) ? true : undefined,
+          apiServerPort: parseOptionalPort(parsed.apiServerPort),
+          mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
+          mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
+          serverSshHost: parsed.serverSshHost,
+          serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
+          defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
+          viewedSplashScreens: parsed.viewedSplashScreens,
+          layoutPresets,
+          taskSettings,
+          muxGatewayEnabled,
+          llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
+          muxGatewayModels,
+          defaultModel,
+          hiddenModels,
+          agentAiDefaults,
+          // Legacy fields are still parsed and returned for downgrade compatibility.
+          subagentAiDefaults: legacySubagentAiDefaults,
+          featureFlagOverrides: parsed.featureFlagOverrides,
+          useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
+          muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
+          muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
+          stopCoderWorkspaceOnArchive,
+          terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
+          updateChannel,
+          defaultRuntime,
+          runtimeEnablement,
+          onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
-
-        // Config is stored as array of [path, config] pairs
-        if (parsed.projects && Array.isArray(parsed.projects)) {
-          const rawPairs = parsed.projects as Array<[string, ProjectConfig]>;
-          // Migrate: normalize project paths by stripping trailing slashes
-          // This fixes configs created with paths like "/home/user/project/"
-          // Also filter out any malformed entries (null/undefined paths)
-          const normalizedPairs = rawPairs
-            .filter(([projectPath]) => {
-              if (!projectPath || typeof projectPath !== "string") {
-                log.warn("Filtering out project with invalid path", { projectPath });
-                return false;
-              }
-              return true;
-            })
-            .map(([projectPath, projectConfig]) => {
-              return [stripTrailingSlashes(projectPath), projectConfig] as [string, ProjectConfig];
-            });
-          const projectsMap = new Map<string, ProjectConfig>(normalizedPairs);
-
-          const taskSettings = normalizeTaskSettings(parsed.taskSettings);
-
-          const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
-          const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
-
-          const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
-          const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
-          const preferredCompactionModel = normalizeOptionalModelString(
-            parsed.preferredCompactionModel
-          );
-          const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
-
-          // Default ON: store `false` only so config.json stays minimal.
-          const stopCoderWorkspaceOnArchive =
-            parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
-
-          const agentAiDefaults =
-            parsed.agentAiDefaults !== undefined
-              ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
-              : normalizeAgentAiDefaults(legacySubagentAiDefaults);
-
-          const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
-          const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
-            ? undefined
-            : layoutPresetsRaw;
-
-          return {
-            projects: projectsMap,
-            apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
-            apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi)
-              ? true
-              : undefined,
-            apiServerPort: parseOptionalPort(parsed.apiServerPort),
-            mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
-            mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
-            serverSshHost: parsed.serverSshHost,
-            serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
-            defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
-            viewedSplashScreens: parsed.viewedSplashScreens,
-            layoutPresets,
-            taskSettings,
-            muxGatewayEnabled,
-            muxGatewayModels,
-            defaultModel,
-            hiddenModels,
-            preferredCompactionModel,
-            agentAiDefaults,
-            // Legacy fields are still parsed and returned for downgrade compatibility.
-            subagentAiDefaults: legacySubagentAiDefaults,
-            featureFlagOverrides: parsed.featureFlagOverrides,
-            useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
-            muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
-            muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
-            stopCoderWorkspaceOnArchive,
-          };
-        }
       }
     } catch (error) {
       log.error("Error loading config:", error);
@@ -279,42 +362,27 @@ export class Config {
   async saveConfig(config: ProjectsConfig): Promise<void> {
     try {
       if (!fs.existsSync(this.rootDir)) {
-        fs.mkdirSync(this.rootDir, { recursive: true });
+        ensurePrivateDirSync(this.rootDir);
       }
 
-      const data: {
+      const data: Partial<Record<keyof AppConfigOnDisk, unknown>> & {
         projects: Array<[string, ProjectConfig]>;
-        apiServerBindHost?: string;
-        apiServerPort?: number;
-        apiServerServeWebUi?: boolean;
-        mdnsAdvertisementEnabled?: boolean;
-        mdnsServiceName?: string;
-        serverSshHost?: string;
-        serverAuthGithubOwner?: string;
-        defaultProjectDir?: string;
-        viewedSplashScreens?: string[];
-        layoutPresets?: ProjectsConfig["layoutPresets"];
-        featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
-        taskSettings?: ProjectsConfig["taskSettings"];
-        muxGatewayEnabled?: ProjectsConfig["muxGatewayEnabled"];
-        muxGatewayModels?: ProjectsConfig["muxGatewayModels"];
-        defaultModel?: ProjectsConfig["defaultModel"];
-        hiddenModels?: ProjectsConfig["hiddenModels"];
-        preferredCompactionModel?: ProjectsConfig["preferredCompactionModel"];
-        agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
-        subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
-        useSSH2Transport?: boolean;
-        muxGovernorUrl?: string;
-        muxGovernorToken?: string;
-        stopCoderWorkspaceOnArchive?: boolean;
       } = {
-        projects: Array.from(config.projects.entries()),
+        projects: Array.from(config.projects.entries()).map(
+          ([projectPath, projectConfig]) =>
+            [projectPath, normalizeProjectRuntimeSettings(projectConfig)] as [string, ProjectConfig]
+        ),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
 
       const muxGatewayEnabled = parseOptionalBoolean(config.muxGatewayEnabled);
       if (muxGatewayEnabled !== undefined) {
         data.muxGatewayEnabled = muxGatewayEnabled;
+      }
+
+      const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);
+      if (llmDebugLogs !== undefined) {
+        data.llmDebugLogs = llmDebugLogs;
       }
 
       const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);
@@ -332,12 +400,6 @@ export class Config {
         data.hiddenModels = hiddenModels;
       }
 
-      const preferredCompactionModel = normalizeOptionalModelString(
-        config.preferredCompactionModel
-      );
-      if (preferredCompactionModel !== undefined) {
-        data.preferredCompactionModel = preferredCompactionModel;
-      }
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
       if (apiServerBindHost) {
         data.apiServerBindHost = apiServerBindHost;
@@ -423,6 +485,31 @@ export class Config {
         data.stopCoderWorkspaceOnArchive = false;
       }
 
+      const terminalDefaultShell = parseOptionalNonEmptyString(config.terminalDefaultShell);
+      if (terminalDefaultShell) {
+        data.terminalDefaultShell = terminalDefaultShell;
+      }
+
+      const updateChannel = parseUpdateChannel(config.updateChannel);
+      if (updateChannel) {
+        data.updateChannel = updateChannel;
+      }
+
+      const runtimeEnablement = normalizeRuntimeEnablementOverrides(config.runtimeEnablement);
+      if (runtimeEnablement) {
+        data.runtimeEnablement = runtimeEnablement;
+      }
+
+      const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
+      if (defaultRuntime !== undefined) {
+        data.defaultRuntime = defaultRuntime;
+      }
+
+      const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
+      if (onePasswordAccountName) {
+        data.onePasswordAccountName = onePasswordAccountName;
+      }
+
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
     } catch (error) {
       log.error("Error saving config:", error);
@@ -437,6 +524,22 @@ export class Config {
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
+  }
+
+  getUpdateChannel(): UpdateChannel {
+    const config = this.loadConfigOrDefault();
+    return config.updateChannel === "nightly" ? "nightly" : "stable";
+  }
+
+  getLlmDebugLogsEnabled(): boolean {
+    return this.loadConfigOrDefault().llmDebugLogs === true;
+  }
+
+  async setUpdateChannel(channel: UpdateChannel): Promise<void> {
+    await this.editConfig((config) => {
+      config.updateChannel = channel;
+      return config;
+    });
   }
 
   /**
@@ -573,16 +676,26 @@ export class Config {
 
   /**
    * Find a workspace path and project path by workspace ID
-   * @returns Object with workspace and project paths, or null if not found
+   * @returns Object with workspace/project paths and available workspace metadata, or null
    */
-  findWorkspace(workspaceId: string): { workspacePath: string; projectPath: string } | null {
+  findWorkspace(workspaceId: string): {
+    workspacePath: string;
+    projectPath: string;
+    workspaceName?: string;
+    parentWorkspaceId?: string;
+  } | null {
     const config = this.loadConfigOrDefault();
 
     for (const [projectPath, project] of config.projects) {
       for (const workspace of project.workspaces) {
         // NEW FORMAT: Check config first (primary source of truth after migration)
         if (workspace.id === workspaceId) {
-          return { workspacePath: workspace.path, projectPath };
+          return {
+            workspacePath: workspace.path,
+            projectPath,
+            workspaceName: workspace.name,
+            parentWorkspaceId: workspace.parentWorkspaceId,
+          };
         }
 
         // LEGACY FORMAT: Fall back to metadata.json and legacy ID for unmigrated workspaces
@@ -598,7 +711,12 @@ export class Config {
               const data = fs.readFileSync(metadataPath, "utf-8");
               const metadata = JSON.parse(data) as WorkspaceMetadata;
               if (metadata.id === workspaceId) {
-                return { workspacePath: workspace.path, projectPath };
+                return {
+                  workspacePath: workspace.path,
+                  projectPath,
+                  workspaceName: undefined,
+                  parentWorkspaceId: undefined,
+                };
               }
             } catch {
               // Ignore parse errors, try legacy ID
@@ -608,7 +726,12 @@ export class Config {
           // Try legacy ID format as last resort
           const legacyId = this.generateLegacyId(projectPath, workspace.path);
           if (legacyId === workspaceId) {
-            return { workspacePath: workspace.path, projectPath };
+            return {
+              workspacePath: workspace.path,
+              projectPath,
+              workspaceName: undefined,
+              parentWorkspaceId: undefined,
+            };
           }
         }
       }
@@ -704,6 +827,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentId: workspace.agentId,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -790,6 +914,7 @@ export class Config {
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
             metadata.agentType ??= workspace.agentType;
+            metadata.agentId ??= workspace.agentId;
             metadata.taskStatus ??= workspace.taskStatus;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
@@ -801,6 +926,7 @@ export class Config {
             metadata.unarchivedAt ??= workspace.unarchivedAt;
             // Preserve section assignment from config
             metadata.sectionId ??= workspace.sectionId;
+
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
               configModified = true;
@@ -840,6 +966,7 @@ export class Config {
                   : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
+              agentId: workspace.agentId,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -884,6 +1011,7 @@ export class Config {
                 : undefined),
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
+            agentId: workspace.agentId,
             taskStatus: workspace.taskStatus,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
@@ -892,6 +1020,7 @@ export class Config {
             taskTrunkBranch: workspace.taskTrunkBranch,
             sectionId: workspace.sectionId,
           };
+
           workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
         }
       }
@@ -1038,7 +1167,7 @@ export class Config {
   saveProvidersConfig(config: ProvidersConfig): void {
     try {
       if (!fs.existsSync(this.rootDir)) {
-        fs.mkdirSync(this.rootDir, { recursive: true });
+        ensurePrivateDirSync(this.rootDir);
       }
 
       // Format with 2-space indentation for readability
@@ -1080,21 +1209,12 @@ ${jsonString}`;
     return stripTrailingSlashes(projectPath);
   }
 
-  private static isSecretReferenceValue(value: unknown): value is { secret: string } {
-    return (
-      typeof value === "object" &&
-      value !== null &&
-      "secret" in value &&
-      typeof (value as { secret?: unknown }).secret === "string"
-    );
-  }
-
   private static isSecretValue(value: unknown): value is Secret["value"] {
     if (typeof value === "string") {
       return true;
     }
 
-    return Config.isSecretReferenceValue(value);
+    return isSecretReferenceValue(value) || isOpSecretValue(value);
   }
 
   private static isSecret(value: unknown): value is Secret {
@@ -1182,7 +1302,7 @@ ${jsonString}`;
   async saveSecretsConfig(config: SecretsConfig): Promise<void> {
     try {
       if (!fs.existsSync(this.rootDir)) {
-        fs.mkdirSync(this.rootDir, { recursive: true });
+        ensurePrivateDirSync(this.rootDir);
       }
 
       await writeFileAtomic(this.secretsFile, JSON.stringify(config, null, 2), {
@@ -1223,10 +1343,68 @@ ${jsonString}`;
     const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
     const projectSecrets = config[normalizedProjectPath] ?? [];
-    const globalSecretsByKey = secretsToRecord(config[Config.GLOBAL_SECRETS_KEY] ?? []);
+
+    // Keep global reference resolution synchronous so getEffectiveSecrets remains fast and side-effect free.
+    const globalRawByKey = new Map<string, Secret["value"]>();
+    for (const globalSecret of config[Config.GLOBAL_SECRETS_KEY] ?? []) {
+      if (!globalSecret || typeof globalSecret.key !== "string") {
+        continue;
+      }
+
+      globalRawByKey.set(globalSecret.key, globalSecret.value);
+    }
+
+    const globalResolved = new Map<string, Secret["value"] | undefined>();
+    const globalResolving = new Set<string>();
+
+    const resolveGlobalKey = (key: string): Secret["value"] | undefined => {
+      if (globalResolved.has(key)) {
+        return globalResolved.get(key);
+      }
+
+      if (globalResolving.has(key)) {
+        globalResolved.set(key, undefined);
+        return undefined;
+      }
+
+      globalResolving.add(key);
+      try {
+        const raw = globalRawByKey.get(key);
+
+        if (typeof raw === "string" || isOpSecretValue(raw)) {
+          globalResolved.set(key, raw);
+          return raw;
+        }
+
+        if (isSecretReferenceValue(raw)) {
+          const target = raw.secret.trim();
+          if (!target) {
+            globalResolved.set(key, undefined);
+            return undefined;
+          }
+
+          const value = resolveGlobalKey(target);
+          globalResolved.set(key, value);
+          return value;
+        }
+
+        globalResolved.set(key, undefined);
+        return undefined;
+      } finally {
+        globalResolving.delete(key);
+      }
+    };
+
+    const globalSecretsByKey = new Map<string, Secret["value"]>();
+    for (const key of globalRawByKey.keys()) {
+      const value = resolveGlobalKey(key);
+      if (value !== undefined) {
+        globalSecretsByKey.set(key, value);
+      }
+    }
 
     return projectSecrets.map((secret) => {
-      if (!Config.isSecretReferenceValue(secret.value)) {
+      if (!isSecretReferenceValue(secret.value)) {
         return secret;
       }
 
@@ -1236,7 +1414,7 @@ ${jsonString}`;
       }
 
       // Allow empty-string global secrets by checking for undefined explicitly.
-      const resolvedGlobalValue = globalSecretsByKey[targetKey];
+      const resolvedGlobalValue = globalSecretsByKey.get(targetKey);
       if (resolvedGlobalValue !== undefined) {
         return {
           ...secret,

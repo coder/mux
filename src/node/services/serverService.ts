@@ -37,6 +37,12 @@ export interface StartServerOptions {
   router?: AppRouter;
   /** Whether to serve static files */
   serveStatic?: boolean;
+  /**
+   * Allow HTTPS browser origins when a TLS-terminating proxy forwards
+   * X-Forwarded-Proto=http to mux. If omitted, falls back to
+   * MUX_SERVER_ALLOW_HTTP_ORIGIN for non-CLI server starts.
+   */
+  allowHttpOrigin?: boolean;
 }
 
 type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
@@ -69,6 +75,16 @@ function formatHostForUrl(host: string): string {
 
 function buildHttpBaseUrl(host: string, port: number): string {
   return `http://${formatHostForUrl(host)}:${port}`;
+}
+
+function resolveAllowHttpOriginEnvFlag(): boolean {
+  const raw = process.env.MUX_SERVER_ALLOW_HTTP_ORIGIN;
+  if (!raw) {
+    return false;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
 }
 
 function getNonInternalInterfaceAddresses(
@@ -223,17 +239,34 @@ export class ServerService {
 
     this.apiAuthToken = options.authToken;
 
-    const staticDir = path.join(__dirname, "../..");
-    let serveStatic = options.serveStatic ?? false;
-    if (serveStatic) {
-      const indexPath = path.join(staticDir, "index.html");
-      try {
-        await fs.access(indexPath);
-      } catch {
-        log.warn(`API server static UI requested, but ${indexPath} is missing. Disabling.`);
-        serveStatic = false;
+    // Resolve the static assets directory (dist/) that contains index.html.
+    // Non-bundled (Electron): __dirname is dist/node/services/, so ../.. reaches dist/.
+    // Bundled (Docker):       __dirname is dist/runtime/, so .. reaches dist/.
+    const staticDirCandidates = [path.join(__dirname, "../.."), path.join(__dirname, "..")];
+
+    let staticDir: string | undefined;
+    if (options.serveStatic) {
+      for (const candidate of staticDirCandidates) {
+        try {
+          await fs.access(path.join(candidate, "index.html"));
+          staticDir = candidate;
+          break;
+        } catch {
+          // Try the next candidate.
+        }
+      }
+
+      if (!staticDir) {
+        log.warn(
+          `API server static UI requested, but index.html is missing near ${__dirname}. Disabling.`
+        );
       }
     }
+    const serveStatic = options.serveStatic === true && staticDir !== undefined;
+
+    // Non-CLI starts (desktop/browser mode) do not parse CLI flags, so allow an
+    // explicit env override for TLS-terminating proxies that rewrite forwarded proto.
+    const allowHttpOrigin = options.allowHttpOrigin ?? resolveAllowHttpOriginEnvFlag();
 
     const serverOptions: OrpcServerOptions = {
       host: bindHost,
@@ -243,6 +276,7 @@ export class ServerService {
       router: options.router,
       serveStatic,
       staticDir,
+      allowHttpOrigin,
     };
 
     const server = await createOrpcServer(serverOptions);

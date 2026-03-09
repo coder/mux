@@ -2,16 +2,28 @@ import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
-import { NameGenerationErrorSchema, SendMessageErrorSchema } from "./errors";
+import {
+  NameGenerationErrorSchema,
+  ProjectRemoveErrorSchema,
+  SendMessageErrorSchema,
+} from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
 import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
-import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
+import { SshPromptEventSchema, SshPromptResponseInputSchema } from "./ssh";
+import {
+  RuntimeConfigSchema,
+  RuntimeAvailabilitySchema,
+  RuntimeEnablementIdSchema,
+} from "./runtime";
 import { SecretSchema } from "./secrets";
 import {
   CompletedMessagePartSchema,
+  HeartbeatEventSchema,
+  OnChatModeSchema,
   SendMessageOptionsSchema,
   StreamEndEventSchema,
+  ToolPolicySchema,
   UpdateStatusSchema,
   WorkspaceChatMessageSchema,
 } from "./stream";
@@ -53,6 +65,19 @@ import {
   WorkspaceMCPOverridesSchema,
 } from "./mcp";
 import { PolicyGetResponseSchema } from "./policy";
+import {
+  AgentAiDefaultsSchema,
+  SubagentAiDefaultsSchema,
+  UpdateChannelSchema,
+} from "../../config/schemas/appConfigOnDisk";
+import {
+  CacheTtlSchema,
+  CodexOauthDefaultAuthSchema,
+  ServiceTierSchema,
+} from "../../config/schemas/providersConfig";
+import { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
+import { TaskSettingsSchema } from "../../config/schemas/taskSettings";
+import { ThinkingLevelSchema } from "../../types/thinking";
 
 // Experiments
 export const ExperimentValueSchema = z.object({
@@ -76,7 +101,13 @@ export { telemetry, TelemetryEventSchema } from "./telemetry";
 // Re-export signing schemas
 export { signing, type SigningCapabilities, type SignatureEnvelope } from "./signing";
 
+// Re-export analytics schemas
+export { analytics } from "./analytics";
+export { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
+
 // --- API Router Schemas ---
+
+const BackgroundProcessStatusSchema = z.enum(["running", "exited", "killed", "failed"]);
 
 // Background process info (for UI display)
 export const BackgroundProcessInfoSchema = z.object({
@@ -85,7 +116,7 @@ export const BackgroundProcessInfoSchema = z.object({
   script: z.string(),
   displayName: z.string().optional(),
   startTime: z.number(),
-  status: z.enum(["running", "exited", "killed", "failed"]),
+  status: BackgroundProcessStatusSchema,
   exitCode: z.number().optional(),
 });
 
@@ -121,18 +152,13 @@ export const AWSCredentialStatusSchema = z.object({
   secretAccessKeySet: z.boolean(),
 });
 
-export const ProviderModelEntrySchema = z.union([
-  z.string().min(1),
-  z
-    .object({
-      id: z.string().min(1),
-      contextWindowTokens: z.number().int().positive().optional(),
-    })
-    .strict(),
-]);
-
 export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
+  apiKeyIsOpRef: z.boolean().optional(),
+  /** Non-secret op:// reference URI when apiKey points to 1Password. */
+  apiKeyOpRef: z.string().optional(),
+  /** Human-readable label for apiKeyOpRef to display in the UI. */
+  apiKeyOpLabel: z.string().optional(),
   /** Whether this provider is enabled for model requests */
   isEnabled: z.boolean().default(true),
   /** Whether this provider is configured and ready to use */
@@ -140,20 +166,25 @@ export const ProviderConfigInfoSchema = z.object({
   baseUrl: z.string().optional(),
   models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
-  serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
+  serviceTier: ServiceTierSchema.optional(),
+  wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
+  store: z.boolean().optional(),
   /** Anthropic-specific fields */
-  cacheTtl: z.enum(["5m", "1h"]).optional(),
+  cacheTtl: CacheTtlSchema.optional(),
+  disableBetaFeatures: z.boolean().optional(),
   /** OpenAI-only: whether Codex OAuth tokens are present in providers.jsonc */
   codexOauthSet: z.boolean().optional(),
   /**
    * OpenAI-only: default auth precedence to use for Codex-OAuth-allowed models when BOTH
    * ChatGPT OAuth and an OpenAI API key are configured.
    */
-  codexOauthDefaultAuth: z.enum(["oauth", "apiKey"]).optional(),
+  codexOauthDefaultAuth: CodexOauthDefaultAuthSchema.optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */
   couponCodeSet: z.boolean().optional(),
+  /** Mux Gateway-specific: which models are enabled for gateway routing */
+  gatewayModels: z.array(z.string()).optional(),
 });
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);
@@ -163,7 +194,7 @@ export const providers = {
     input: z.object({
       provider: z.string(),
       keyPath: z.array(z.string()),
-      value: z.string(),
+      value: z.union([z.string(), z.boolean()]),
     }),
     output: ResultSchema(z.void(), z.string()),
   },
@@ -477,7 +508,15 @@ export const projects = {
         }),
         z.object({
           type: z.literal("error"),
+          code: z.enum([
+            "ssh_host_key_rejected",
+            "ssh_credential_cancelled",
+            "ssh_prompt_timeout",
+            "clone_failed",
+            "destination_exists",
+          ]),
           error: z.string(),
+          normalizedPath: z.string().nullish(),
         }),
       ])
     ),
@@ -487,8 +526,8 @@ export const projects = {
     output: z.string().nullable(),
   },
   remove: {
-    input: z.object({ projectPath: z.string() }),
-    output: ResultSchema(z.void(), z.string()),
+    input: z.object({ projectPath: z.string(), force: z.boolean().nullish() }).passthrough(),
+    output: ResultSchema(z.void(), ProjectRemoveErrorSchema),
   },
   list: {
     input: z.void(),
@@ -515,6 +554,10 @@ export const projects = {
   gitInit: {
     input: z.object({ projectPath: z.string() }),
     output: ResultSchema(z.void(), z.string()),
+  },
+  setTrust: {
+    input: z.object({ projectPath: z.string(), trusted: z.boolean() }),
+    output: z.void(),
   },
   mcp: {
     list: {
@@ -907,12 +950,53 @@ export const workspace = {
       .strict(),
     output: ResultSchema(z.void(), z.string()),
   },
+  answerDelegatedToolCall: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        toolCallId: z.string(),
+        result: z.unknown(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
   resumeStream: {
     input: z.object({
       workspaceId: z.string(),
       options: SendMessageOptionsSchema,
     }),
-    output: ResultSchema(z.void(), SendMessageErrorSchema),
+    output: ResultSchema(
+      z.object({
+        started: z.boolean(),
+      }),
+      SendMessageErrorSchema
+    ),
+  },
+  setAutoRetryEnabled: {
+    input: z.object({
+      workspaceId: z.string(),
+      enabled: z.boolean(),
+      // Runtime-only toggle for temporary retry flows (do not mutate persisted preference).
+      persist: z.boolean().nullish(),
+    }),
+    output: ResultSchema(
+      z.object({
+        previousEnabled: z.boolean(),
+        enabled: z.boolean(),
+      }),
+      z.string()
+    ),
+  },
+  getStartupAutoRetryModel: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.string().nullable(), z.string()),
+  },
+  setAutoCompactionThreshold: {
+    input: z.object({
+      workspaceId: z.string(),
+      threshold: z.number().finite().min(0.1).max(1.0),
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
   interruptStream: {
     input: z.object({
@@ -975,6 +1059,29 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: z.array(WorkspaceChatMessageSchema),
   },
+  history: {
+    loadMore: {
+      input: z.object({
+        workspaceId: z.string(),
+        cursor: z
+          .object({
+            beforeHistorySequence: z.number(),
+            beforeMessageId: z.string().nullish(),
+          })
+          .nullish(),
+      }),
+      output: z.object({
+        messages: z.array(WorkspaceChatMessageSchema),
+        nextCursor: z
+          .object({
+            beforeHistorySequence: z.number(),
+            beforeMessageId: z.string().nullish(),
+          })
+          .nullable(),
+        hasOlder: z.boolean(),
+      }),
+    },
+  },
   /**
    * Load an archived subagent transcript (chat.jsonl + optional partial.json) from this workspace's
    * session dir.
@@ -991,13 +1098,17 @@ export const workspace = {
       /** Task-level model string used when running the sub-agent (optional for legacy entries). */
       model: z.string().optional(),
       /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
-      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+      thinkingLevel: ThinkingLevelSchema.optional(),
     }),
   },
   executeBash: {
     input: z.object({
       workspaceId: z.string(),
       script: z.string(),
+      // Optional argv mode. When provided, backend executes command+args directly where possible
+      // (without shell interpolation) and falls back to shell-quoted argv for remote runtimes.
+      command: z.string().nullish(),
+      args: z.array(z.string()).nullish(),
       options: z
         .object({
           timeout_secs: z.number().optional(),
@@ -1018,7 +1129,13 @@ export const workspace = {
   },
   // Subscriptions
   onChat: {
-    input: z.object({ workspaceId: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      mode: OnChatModeSchema.optional(),
+      // One-shot migration hint: legacy renderer localStorage opt-out value.
+      // Used only when backend auto-retry preference file is missing.
+      legacyAutoRetryEnabled: z.boolean().optional(),
+    }),
     output: eventIterator(WorkspaceChatMessageSchema), // Stream event
   },
   onMetadata: {
@@ -1038,10 +1155,14 @@ export const workspace = {
     subscribe: {
       input: z.void(),
       output: eventIterator(
-        z.object({
-          workspaceId: z.string(),
-          activity: WorkspaceActivitySnapshotSchema.nullable(),
-        })
+        z.discriminatedUnion("type", [
+          z.object({
+            type: z.literal("activity"),
+            workspaceId: z.string(),
+            activity: WorkspaceActivitySnapshotSchema.nullable(),
+          }),
+          HeartbeatEventSchema,
+        ])
       ),
     },
   },
@@ -1099,7 +1220,7 @@ export const workspace = {
       }),
       output: ResultSchema(
         z.object({
-          status: z.enum(["running", "exited", "killed", "failed"]),
+          status: BackgroundProcessStatusSchema,
           output: z.string(),
           nextOffset: z.number().int().nonnegative(),
           truncatedStart: z.boolean(),
@@ -1349,6 +1470,39 @@ export const terminal = {
     output: z.void(),
   },
   /**
+   * Subscribe to terminal activity changes across all workspaces.
+   * First event is a snapshot of all workspace aggregates.
+   * Subsequent events are per-workspace updates.
+   */
+  activity: {
+    subscribe: {
+      input: z.void(),
+      output: eventIterator(
+        z.discriminatedUnion("type", [
+          z.object({
+            type: z.literal("snapshot"),
+            workspaces: z.record(
+              z.string(),
+              z.object({
+                activeCount: z.number(),
+                totalSessions: z.number(),
+              })
+            ),
+          }),
+          z.object({
+            type: z.literal("update"),
+            workspaceId: z.string(),
+            activity: z.object({
+              activeCount: z.number(),
+              totalSessions: z.number(),
+            }),
+          }),
+          HeartbeatEventSchema,
+        ])
+      ),
+    },
+  },
+  /**
    * List active terminal sessions for a workspace.
    * Used by frontend to discover existing sessions to reattach to after reload.
    */
@@ -1440,57 +1594,36 @@ export const serverAuth = {
 };
 
 // Config (global settings)
-const SubagentAiDefaultsEntrySchema = z
-  .object({
-    modelString: z.string().min(1).optional(),
-    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict();
-
-const AgentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
-const SubagentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
+const ResolvedTaskSettingsSchema = TaskSettingsSchema.required({
+  maxParallelAgentTasks: true,
+  maxTaskNestingDepth: true,
+});
 
 export const config = {
   getConfig: {
     input: z.void(),
     output: z.object({
-      taskSettings: z.object({
-        maxParallelAgentTasks: z.number().int(),
-        maxTaskNestingDepth: z.number().int(),
-        proposePlanImplementReplacesChatHistory: z.boolean().optional(),
-        bashOutputCompactionMinLines: z.number().int().optional(),
-        bashOutputCompactionMinTotalBytes: z.number().int().optional(),
-        bashOutputCompactionMaxKeptLines: z.number().int().optional(),
-        bashOutputCompactionTimeoutMs: z.number().int().optional(),
-        bashOutputCompactionHeuristicFallback: z.boolean().optional(),
-      }),
+      taskSettings: ResolvedTaskSettingsSchema,
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
       defaultModel: z.string().optional(),
       hiddenModels: z.array(z.string()).optional(),
-      preferredCompactionModel: z.string().optional(),
       stopCoderWorkspaceOnArchive: z.boolean(),
+      runtimeEnablement: z.record(z.string(), z.boolean()),
+      defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
       // Mux Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
+      llmDebugLogs: z.boolean(),
+      onePasswordAccountName: z.string().nullish(),
     }),
   },
   saveConfig: {
     input: z.object({
-      taskSettings: z.object({
-        maxParallelAgentTasks: z.number().int(),
-        maxTaskNestingDepth: z.number().int(),
-        proposePlanImplementReplacesChatHistory: z.boolean().optional(),
-        bashOutputCompactionMinLines: z.number().int().optional(),
-        bashOutputCompactionMinTotalBytes: z.number().int().optional(),
-        bashOutputCompactionMaxKeptLines: z.number().int().optional(),
-        bashOutputCompactionTimeoutMs: z.number().int().optional(),
-        bashOutputCompactionHeuristicFallback: z.boolean().optional(),
-      }),
+      taskSettings: ResolvedTaskSettingsSchema,
       agentAiDefaults: AgentAiDefaultsSchema.optional(),
       // Legacy field (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
@@ -1514,7 +1647,6 @@ export const config = {
     input: z.object({
       defaultModel: z.string().optional(),
       hiddenModels: z.array(z.string()).optional(),
-      preferredCompactionModel: z.string().optional(),
     }),
     output: z.void(),
   },
@@ -1526,9 +1658,177 @@ export const config = {
       .strict(),
     output: z.void(),
   },
+  updateOnePasswordAccountName: {
+    input: z
+      .object({
+        onePasswordAccountName: z.string().nullish(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateRuntimeEnablement: {
+    input: z
+      .object({
+        projectPath: z.string().nullish(),
+        runtimeEnablement: z.record(z.string(), z.boolean()).nullish(),
+        defaultRuntime: RuntimeEnablementIdSchema.nullish(),
+        runtimeOverridesEnabled: z.boolean().nullish(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateLlmDebugLogs: {
+    input: z
+      .object({
+        enabled: z.boolean(),
+      })
+      .strict(),
+    output: z.void(),
+  },
   unenrollMuxGovernor: {
     input: z.void(),
     output: z.void(),
+  },
+};
+
+const DevToolsInputTokenBreakdownSchema = z.object({
+  total: z.number(),
+  noCache: z.number().optional(),
+  cacheRead: z.number().optional(),
+  cacheWrite: z.number().optional(),
+});
+
+const DevToolsOutputTokenBreakdownSchema = z.object({
+  total: z.number(),
+  text: z.number().optional(),
+  reasoning: z.number().optional(),
+});
+
+const DevToolsUsageSchema = z.object({
+  inputTokens: z.union([z.number(), DevToolsInputTokenBreakdownSchema]).optional(),
+  outputTokens: z.union([z.number(), DevToolsOutputTokenBreakdownSchema]).optional(),
+  totalTokens: z.number().optional(),
+  raw: z.unknown().optional(),
+});
+
+const DevToolsStepInputSchema = z.object({
+  prompt: z.unknown(),
+  tools: z.unknown().optional(),
+  toolChoice: z.unknown().optional(),
+  maxOutputTokens: z.number().optional(),
+  temperature: z.number().optional(),
+  providerOptions: z.unknown().optional(),
+});
+
+const DevToolsStepOutputSchema = z.object({
+  content: z.unknown().optional(),
+  finishReason: z.string().optional(),
+  textParts: z.array(z.object({ id: z.string(), text: z.string() })).optional(),
+  reasoningParts: z.array(z.object({ id: z.string(), text: z.string() })).optional(),
+  toolCalls: z.array(z.unknown()).optional(),
+});
+
+const DevToolsStepSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  stepNumber: z.number(),
+  type: z.enum(["generate", "stream"]),
+  modelId: z.string(),
+  provider: z.string().nullable(),
+  startedAt: z.string(),
+  durationMs: z.number().nullable(),
+  input: DevToolsStepInputSchema.nullable(),
+  output: DevToolsStepOutputSchema.nullable(),
+  usage: DevToolsUsageSchema.nullable(),
+  error: z.string().nullable(),
+  rawRequest: z.unknown().nullable(),
+  requestHeaders: z.record(z.string(), z.string()).nullable(),
+  responseHeaders: z.record(z.string(), z.string()).nullable(),
+  rawResponse: z.unknown().nullable(),
+  rawChunks: z.unknown().nullable(),
+});
+
+const DevToolsRunSummarySchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  startedAt: z.string(),
+  // Tolerate malformed historical run data from devtools.jsonl without failing
+  // the entire API response; invalid values are dropped at the boundary.
+  toolPolicy: ToolPolicySchema.optional().catch(undefined),
+  stepCount: z.number(),
+  firstMessage: z.string(),
+  hasError: z.boolean(),
+  isInProgress: z.boolean(),
+  totalDurationMs: z.number().nullable(),
+  modelId: z.string().nullable(),
+});
+
+const DevToolsEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("snapshot"),
+    runs: z.array(DevToolsRunSummarySchema),
+  }),
+  z.object({
+    type: z.literal("run-created"),
+    run: DevToolsRunSummarySchema,
+  }),
+  z.object({
+    type: z.literal("run-updated"),
+    run: DevToolsRunSummarySchema,
+  }),
+  z.object({
+    type: z.literal("step-created"),
+    step: DevToolsStepSchema,
+  }),
+  z.object({
+    type: z.literal("step-updated"),
+    step: DevToolsStepSchema,
+  }),
+  z.object({
+    type: z.literal("cleared"),
+  }),
+]);
+
+export const devtools = {
+  getRuns: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: z.array(DevToolsRunSummarySchema),
+  },
+  getRunDetail: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        runId: z.string(),
+      })
+      .strict(),
+    output: z
+      .object({
+        run: DevToolsRunSummarySchema,
+        steps: z.array(DevToolsStepSchema),
+      })
+      .nullable(),
+  },
+  clear: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: z.object({
+      success: z.boolean(),
+    }),
+  },
+  subscribe: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: eventIterator(DevToolsEventSchema),
   },
 };
 
@@ -1580,6 +1880,14 @@ export const update = {
     input: z.void(),
     output: eventIterator(UpdateStatusSchema),
   },
+  getChannel: {
+    input: z.void(),
+    output: UpdateChannelSchema,
+  },
+  setChannel: {
+    input: z.object({ channel: UpdateChannelSchema }),
+    output: z.void(),
+  },
 };
 
 // Editor config schema for openWorkspaceInEditor
@@ -1589,25 +1897,7 @@ const EditorConfigSchema = z.object({
   customCommand: z.string().optional(),
 });
 
-const StatsTabVariantSchema = z.enum(["control", "stats"]);
-const StatsTabOverrideSchema = z.enum(["default", "on", "off"]);
-const StatsTabStateSchema = z.object({
-  enabled: z.boolean(),
-  variant: StatsTabVariantSchema,
-  override: StatsTabOverrideSchema,
-});
-
-// Feature gates (PostHog-backed)
-export const features = {
-  getStatsTabState: {
-    input: z.void(),
-    output: StatsTabStateSchema,
-  },
-  setStatsTabOverride: {
-    input: z.object({ override: StatsTabOverrideSchema }),
-    output: StatsTabStateSchema,
-  },
-};
+const LogLevelSchema = z.enum(["error", "warn", "info", "debug"]);
 
 // General
 export const general = {
@@ -1667,7 +1957,7 @@ export const general = {
   },
   subscribeLogs: {
     input: z.object({
-      level: z.enum(["error", "warn", "info", "debug"]).nullish(),
+      level: LogLevelSchema.nullish(),
     }),
     output: eventIterator(
       z.discriminatedUnion("type", [
@@ -1677,7 +1967,7 @@ export const general = {
           entries: z.array(
             z.object({
               timestamp: z.number(),
-              level: z.enum(["error", "warn", "info", "debug"]),
+              level: LogLevelSchema,
               message: z.string(),
               location: z.string(),
             })
@@ -1689,7 +1979,7 @@ export const general = {
           entries: z.array(
             z.object({
               timestamp: z.number(),
-              level: z.enum(["error", "warn", "info", "debug"]),
+              level: LogLevelSchema,
               message: z.string(),
               location: z.string(),
             })
@@ -1732,5 +2022,18 @@ export const debug = {
       errorMessage: z.string().optional(),
     }),
     output: z.boolean(), // true if error was triggered on an active stream
+  },
+};
+
+export const ssh = {
+  prompt: {
+    subscribe: {
+      input: z.void(),
+      output: eventIterator(SshPromptEventSchema),
+    },
+    respond: {
+      input: SshPromptResponseInputSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
 };

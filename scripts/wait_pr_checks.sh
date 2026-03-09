@@ -27,82 +27,43 @@ if [ $# -eq 2 ]; then
   fi
 fi
 
+# Polling every 30s reduces GitHub API churn while still giving timely readiness updates.
+POLL_INTERVAL_SECS=30
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_REVIEWS_SCRIPT="$SCRIPT_DIR/check_pr_reviews.sh"
-CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
+SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
+# shellcheck source=./lib/branch_sync_guard.sh
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/branch_sync_guard.sh"
 
 if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   echo "❌ PR number must be numeric. Got: '$PR_NUMBER'" >&2
   exit 1
 fi
 
-for helper in "$CHECK_REVIEWS_SCRIPT" "$CHECK_CODEX_COMMENTS_SCRIPT"; do
-  if [ ! -x "$helper" ]; then
-    echo "❌ assertion failed: missing executable helper script: $helper" >&2
-    exit 1
-  fi
-done
-
-# Check for dirty working tree
-if ! git diff-index --quiet HEAD --; then
-  echo "❌ Error: You have uncommitted changes in your working directory." >&2
-  echo "" >&2
-  git status --short >&2
-  echo "" >&2
-  echo "Please commit or stash your changes before checking PR status." >&2
+if [ ! -x "$CHECK_REVIEWS_SCRIPT" ]; then
+  echo "❌ assertion failed: missing executable helper script: $CHECK_REVIEWS_SCRIPT" >&2
   exit 1
 fi
 
-# Get current branch name
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
-# Get remote tracking branch
-REMOTE_BRANCH=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")
-
-if [[ -z "$REMOTE_BRANCH" ]]; then
-  echo "⚠️  Current branch '$CURRENT_BRANCH' has no upstream branch." >&2
-  echo "Setting upstream to origin/$CURRENT_BRANCH..." >&2
-
-  # Try to set upstream
-  if git push -u origin "$CURRENT_BRANCH" 2>&1; then
-    echo "✅ Upstream set successfully!" >&2
-    REMOTE_BRANCH="origin/$CURRENT_BRANCH"
-  else
-    echo "❌ Error: Failed to set upstream branch." >&2
-    echo "You may need to push manually: git push -u origin $CURRENT_BRANCH" >&2
-    exit 1
-  fi
+if [ "$SKIP_FETCH_SYNC" != "0" ] && [ "$SKIP_FETCH_SYNC" != "1" ]; then
+  echo "❌ assertion failed: MUX_SKIP_FETCH_SYNC must be '0' or '1' (got '$SKIP_FETCH_SYNC')" >&2
+  exit 1
 fi
 
-# Fetch latest remote state before comparing
-git fetch origin "$CURRENT_BRANCH" --quiet 2>/dev/null || true
-
-# Check if local and remote are in sync
-LOCAL_HASH=$(git rev-parse HEAD)
-REMOTE_HASH=$(git rev-parse "$REMOTE_BRANCH")
-
-if [[ "$LOCAL_HASH" != "$REMOTE_HASH" ]]; then
-  echo "❌ Error: Local branch is not in sync with remote." >&2
-  echo "" >&2
-  echo "Local:  $LOCAL_HASH" >&2
-  echo "Remote: $REMOTE_HASH" >&2
-  echo "" >&2
-
-  # Check if we're ahead, behind, or diverged
-  if git merge-base --is-ancestor "$REMOTE_HASH" HEAD 2>/dev/null; then
-    AHEAD=$(git rev-list --count "$REMOTE_BRANCH"..HEAD)
-    echo "Your branch is $AHEAD commit(s) ahead of '$REMOTE_BRANCH'." >&2
-    echo "Push your changes with: git push" >&2
-  elif git merge-base --is-ancestor HEAD "$REMOTE_HASH" 2>/dev/null; then
-    BEHIND=$(git rev-list --count HEAD.."$REMOTE_BRANCH")
-    echo "Your branch is $BEHIND commit(s) behind '$REMOTE_BRANCH'." >&2
-    echo "Pull the latest changes with: git pull" >&2
-  else
-    echo "Your branch has diverged from '$REMOTE_BRANCH'." >&2
-    echo "You may need to rebase or merge." >&2
+if [ "$SKIP_FETCH_SYNC" = "0" ]; then
+  # Check for dirty working tree
+  if ! git diff-index --quiet HEAD --; then
+    echo "❌ Error: You have uncommitted changes in your working directory." >&2
+    echo "" >&2
+    git status --short >&2
+    echo "" >&2
+    echo "Please commit or stash your changes before checking PR status." >&2
+    exit 1
   fi
 
-  exit 1
+  assert_branch_synced || exit 1
 fi
 
 LAST_MERGE_STATE="UNKNOWN"
@@ -113,6 +74,7 @@ CHECK_PR_CHECKS_ONCE() {
   local mergeable
   local merge_state
   local checks
+  local reviews_output
 
   # Get PR status
   status=$(gh pr view "$PR_NUMBER" --json mergeable,mergeStateStatus,state 2>/dev/null || echo "error")
@@ -210,7 +172,7 @@ CHECK_PR_CHECKS_ONCE() {
   if [ "$has_fail" -eq 1 ]; then
     echo "❌ Some checks failed:"
     echo ""
-    gh pr checks "$PR_NUMBER"
+    echo "$checks"
     echo ""
     echo "💡 To extract detailed logs from the failed run:"
     echo "   ./scripts/extract_pr_logs.sh $PR_NUMBER"
@@ -226,34 +188,25 @@ CHECK_PR_CHECKS_ONCE() {
     return 1
   fi
 
-  # Check for unresolved review comments in the hot loop
-  if ! "$CHECK_REVIEWS_SCRIPT" "$PR_NUMBER" >/dev/null 2>&1; then
-    echo ""
-    echo "❌ Unresolved review comments found!"
-    echo "   👉 Tip: run ./scripts/check_pr_reviews.sh $PR_NUMBER to list them."
-    "$CHECK_REVIEWS_SCRIPT" "$PR_NUMBER"
-    return 1
-  fi
-
-  # Check if all checks passed and merge state is clean
+  # Once checks pass, review-thread resolution must be enforced even when merge_state is
+  # still BLOCKED. Otherwise wait_pr_ready can spin in pending without surfacing actionable
+  # thread IDs to resolve.
   if [ "$has_pass" -eq 1 ] && [ "$has_pending" -eq 0 ] && [ "$has_fail" -eq 0 ]; then
+    if ! reviews_output=$("$CHECK_REVIEWS_SCRIPT" "$PR_NUMBER" 2>&1); then
+      echo ""
+      echo "❌ Unresolved review comments found!"
+      echo "   👉 Tip: run ./scripts/check_pr_reviews.sh $PR_NUMBER to list them."
+      echo "$reviews_output"
+      return 1
+    fi
+
     if [ "$merge_state" = "CLEAN" ]; then
-      # Check for unresolved Codex comments
       echo "✅ All checks passed!"
       echo ""
-      gh pr checks "$PR_NUMBER"
+      echo "$checks"
       echo ""
-      echo "🤖 Checking for unresolved Codex comments..."
-      if "$CHECK_CODEX_COMMENTS_SCRIPT" "$PR_NUMBER"; then
-        echo ""
-        echo "✅ PR is ready to merge!"
-        return 0
-      fi
-
-      echo ""
-      echo "❌ Please resolve Codex comments before merging."
-      echo "   👉 Tip: use ./scripts/check_pr_reviews.sh $PR_NUMBER to list unresolved comments."
-      return 1
+      echo "✅ PR checks and mergeability gates passed."
+      return 0
     fi
 
     # GitHub can transiently report UNKNOWN/UNSTABLE/HAS_HOOKS even when checks have
@@ -309,7 +262,7 @@ while true; do
       ;;
     10)
       echo -ne "\r⏳ Checks in progress... (${LAST_MERGE_STATE})  "
-      sleep 5
+      sleep "$POLL_INTERVAL_SECS"
       ;;
     *)
       echo "❌ assertion failed: unexpected checks status code '$rc'" >&2

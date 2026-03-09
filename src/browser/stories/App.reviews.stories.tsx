@@ -353,39 +353,62 @@ export const QueuedMessageWithReviews: AppStory = {
             }),
           ],
           onChat: (wsId, emit) => {
-            // Emit the queued message with reviews (simulating user queued a message with reviews)
+            const queuedReviews = [
+              {
+                filePath: "src/api/auth.ts",
+                lineRange: "42-48",
+                selectedCode:
+                  "const token = generateToken();\nconst expiry = Date.now() + 3600000;",
+                userNote: "Consider using a constant for the token expiry duration",
+              },
+              {
+                filePath: "src/utils/helpers.ts",
+                lineRange: "15",
+                selectedCode: "function validate(input) { return input.length > 0; }",
+                userNote: "This validation could be more robust",
+              },
+            ];
+            const queuedFileParts = [
+              {
+                url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300'%3E%3Crect width='400' height='300' fill='%23e2e8f0'/%3E%3Ctext x='200' y='150' text-anchor='middle' dy='.3em' font-family='system-ui' font-size='18' fill='%2364748b'%3EScreenshot%3C/text%3E%3C/svg%3E",
+                mediaType: "image/png",
+                filename: "queued-screenshot.png",
+              },
+            ];
+
+            // Emit queued mixed-content message (text + reviews + image attachment)
             emit({
               type: "queued-message-changed",
               workspaceId: wsId,
-              queuedMessages: ["Please also check this issue"],
-              displayText: "Please also check this issue",
-              reviews: [
+              queuedMessages: [
                 {
-                  filePath: "src/api/auth.ts",
-                  lineRange: "42-48",
-                  selectedCode:
-                    "const token = generateToken();\nconst expiry = Date.now() + 3600000;",
-                  userNote: "Consider using a constant for the token expiry duration",
-                },
-                {
-                  filePath: "src/utils/helpers.ts",
-                  lineRange: "15",
-                  selectedCode: "function validate(input) { return input.length > 0; }",
-                  userNote: "This validation could be more robust",
+                  content: "Please also check this issue",
+                  reviews: queuedReviews,
+                  fileParts: queuedFileParts,
                 },
               ],
-            } as WorkspaceChatMessage);
+              displayText: "Please also check this issue",
+              fileParts: queuedFileParts,
+              reviews: queuedReviews,
+              queueDispatchMode: "tool-end",
+            } as unknown as WorkspaceChatMessage);
           },
         });
       }}
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    // Wait for the queued message to appear
     const canvas = within(canvasElement);
-    await waitFor(() => {
-      canvas.getByText("Queued");
-    });
+
+    // Header is always visible. Expand only if the queued body is currently collapsed.
+    const header = await canvas.findByRole("button", { name: /queued/i });
+    if (!canvas.queryByText("Consider using a constant for the token expiry duration")) {
+      await userEvent.click(header);
+    }
+
+    await canvas.findByText("Consider using a constant for the token expiry duration");
+    await canvas.findByRole("img", { name: "Attachment 1" });
+
     await waitForChatInputAutofocusDone(canvasElement);
     blurActiveElement();
   },

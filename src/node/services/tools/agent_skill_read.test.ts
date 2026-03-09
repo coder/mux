@@ -24,7 +24,26 @@ async function writeProjectSkill(workspacePath: string, name: string): Promise<v
   );
 }
 
-describe("agent_skill_read (Chat with Mux sandbox)", () => {
+async function writeGlobalSkill(muxRoot: string, name: string): Promise<void> {
+  const skillDir = path.join(muxRoot, "skills", name);
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(
+    path.join(skillDir, "SKILL.md"),
+    `---\nname: ${name}\ndescription: test\n---\nBody\n`,
+    "utf-8"
+  );
+}
+
+function restoreMuxRoot(previousMuxRoot: string | undefined): void {
+  if (previousMuxRoot === undefined) {
+    delete process.env.MUX_ROOT;
+    return;
+  }
+
+  process.env.MUX_ROOT = previousMuxRoot;
+}
+
+describe("agent_skill_read", () => {
   it("allows reading built-in skills", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-mux-chat");
     const baseConfig = createTestToolConfig(tempDir.path, {
@@ -51,16 +70,52 @@ describe("agent_skill_read (Chat with Mux sandbox)", () => {
     }
   });
 
-  it("rejects project/global skills on disk", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-read-mux-chat-reject");
-    await writeProjectSkill(tempDir.path, "foo");
+  it("allows reading global skills on disk in Chat with Mux workspace", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-global");
+    const previousMuxRoot = process.env.MUX_ROOT;
+    process.env.MUX_ROOT = tempDir.path;
+
+    try {
+      await writeGlobalSkill(tempDir.path, "foo");
+
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      });
+      const tool = createAgentSkillReadTool(baseConfig);
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!({ name: "foo" }, mockToolCallOptions)
+      );
+
+      const parsed = AgentSkillReadToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+
+      const result = parsed.data;
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.skill.scope).toBe("global");
+        expect(result.skill.frontmatter.name).toBe("foo");
+      }
+    } finally {
+      restoreMuxRoot(previousMuxRoot);
+    }
+  });
+
+  it("allows reading project skills on disk outside Chat with Mux workspace", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-project");
+    await writeProjectSkill(tempDir.path, "project-skill");
 
     const baseConfig = createTestToolConfig(tempDir.path, {
-      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+      workspaceId: "regular-workspace",
     });
     const tool = createAgentSkillReadTool(baseConfig);
 
-    const raw: unknown = await Promise.resolve(tool.execute!({ name: "foo" }, mockToolCallOptions));
+    const raw: unknown = await Promise.resolve(
+      tool.execute!({ name: "project-skill" }, mockToolCallOptions)
+    );
 
     const parsed = AgentSkillReadToolResultSchema.safeParse(raw);
     expect(parsed.success).toBe(true);
@@ -69,9 +124,10 @@ describe("agent_skill_read (Chat with Mux sandbox)", () => {
     }
 
     const result = parsed.data;
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toMatch(/only built-in skills/i);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.skill.scope).toBe("project");
+      expect(result.skill.frontmatter.name).toBe("project-skill");
     }
   });
 });

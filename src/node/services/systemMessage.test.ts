@@ -13,6 +13,9 @@ const extractTagContent = (message: string, tagName: string): string | null => {
 import { describe, test, expect, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
+// Note: in this file we avoid tests that are merely tautological assertions of constants. Only
+// tests that verify branching logic should be here.
+
 describe("extractToolInstructions", () => {
   // Use a model that has bash tool available
   const modelString = "anthropic:claude-sonnet-4-20250514";
@@ -125,6 +128,28 @@ describe("buildSystemMessage", () => {
 
     // Restore the original homedir
     mockHomedir?.mockRestore();
+  });
+
+  test("includes anti-reverification guidance in the subagent report prelude", async () => {
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
+
+    expect(systemMessage).toContain("<subagent-reports>");
+    expect(systemMessage).toContain("spawn a narrower Explore task instead");
+    expect(systemMessage).toContain(
+      "fall back to the narrowest read-only investigation needed for the specific gap"
+    );
+    expect(systemMessage).toContain("Such reports count as having read the referenced files.");
+    expect(systemMessage).not.toContain(
+      "Do not redo the same investigation unless the report is ambiguous or contradicts other evidence"
+    );
   });
 
   test("includes general instructions in custom-instructions", async () => {
@@ -407,23 +432,5 @@ OpenAI-only instructions.
         scenario.assert(systemMessage);
       });
     }
-  });
-
-  // NOTE: Available sub-agents are now injected into the task tool description
-  // (see tools.ts ToolConfiguration.availableSubagents) rather than the system prompt.
-  // This change follows Anthropic's best practices for tool description placement.
-  test("does not include available-subagents section (moved to tool description)", async () => {
-    const metadata: WorkspaceMetadata = {
-      id: "test-workspace",
-      name: "test-workspace",
-      projectName: "test-project",
-      projectPath: projectDir,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    };
-
-    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
-
-    // Sub-agents are now listed in the task tool description, not system prompt
-    expect(systemMessage).not.toContain("<available-subagents>");
   });
 });

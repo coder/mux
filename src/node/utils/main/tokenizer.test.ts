@@ -4,6 +4,7 @@ import {
   __resetTokenizerForTests,
   countTokens,
   countTokensBatch,
+  getToolDefinitionTokens,
   getTokenizerForModel,
   loadTokenizerModules,
 } from "./tokenizer";
@@ -12,7 +13,7 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 jest.setTimeout(20000);
 
 const openaiModel = KNOWN_MODELS.GPT.id;
-const googleModel = KNOWN_MODELS.GEMINI_3_PRO.id;
+const googleModel = KNOWN_MODELS.GEMINI_31_PRO.id;
 
 beforeAll(async () => {
   // warm up the worker_thread and tokenizer before running tests
@@ -62,5 +63,19 @@ describe("tokenizer", () => {
     const second = await countTokens(googleModel, text);
     expect(first).toBeGreaterThan(0);
     expect(second).toBe(first);
+  });
+
+  test("counts skills catalog tool schema tokens when explicitly enabled", async () => {
+    const tokens = await getToolDefinitionTokens("skills_catalog_read", openaiModel, undefined, {
+      enableSkillsCatalogTools: true,
+    });
+    expect(tokens).toBeGreaterThan(0);
+  });
+
+  test("does not count skills catalog tool schema tokens when explicitly disabled", async () => {
+    const tokens = await getToolDefinitionTokens("skills_catalog_read", openaiModel, undefined, {
+      enableSkillsCatalogTools: false,
+    });
+    expect(tokens).toBe(0);
   });
 });

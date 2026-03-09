@@ -2,45 +2,17 @@ import * as path from "path";
 import * as fsPromises from "fs/promises";
 import { tool } from "ai";
 
-import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import {
+  FILE_EDIT_DIFF_OMITTED_MESSAGE,
+  type MuxGlobalAgentsWriteToolArgs,
+  type MuxGlobalAgentsWriteToolResult,
+} from "@/common/types/tools";
+import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
+import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/shared/configToolUtils";
 import { generateDiff } from "./fileCommon";
-
-function getMuxHomeFromWorkspaceSessionDir(config: ToolConfiguration): string {
-  if (!config.workspaceSessionDir) {
-    throw new Error("mux_global_agents_write requires workspaceSessionDir");
-  }
-
-  // workspaceSessionDir = <muxHome>/sessions/<workspaceId>
-  const sessionsDir = path.dirname(config.workspaceSessionDir);
-  return path.dirname(sessionsDir);
-}
-
-export interface MuxGlobalAgentsWriteToolArgs {
-  newContent: string;
-  confirm: boolean;
-}
-
-export interface MuxGlobalAgentsWriteToolResult {
-  success: true;
-  diff: string;
-  ui_only?: {
-    file_edit?: {
-      diff: string;
-    };
-  };
-}
-
-export interface MuxGlobalAgentsWriteToolError {
-  success: false;
-  error: string;
-}
-
-export type MuxGlobalAgentsWriteToolOutput =
-  | MuxGlobalAgentsWriteToolResult
-  | MuxGlobalAgentsWriteToolError;
+import { hasErrorCode } from "./skillFileUtils";
 
 export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -49,16 +21,8 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
     execute: async (
       args: MuxGlobalAgentsWriteToolArgs,
       { abortSignal: _abortSignal }
-    ): Promise<MuxGlobalAgentsWriteToolOutput> => {
+    ): Promise<MuxGlobalAgentsWriteToolResult> => {
       try {
-        if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-          return {
-            success: false,
-            error:
-              "mux_global_agents_write is only available in the Chat with Mux system workspace",
-          };
-        }
-
         if (!args.confirm) {
           return {
             success: false,
@@ -66,7 +30,7 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
           };
         }
 
-        const muxHome = getMuxHomeFromWorkspaceSessionDir(config);
+        const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "mux_global_agents_write");
         await fsPromises.mkdir(muxHome, { recursive: true });
 
         // Canonicalize muxHome before constructing the file path.
@@ -93,7 +57,7 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
             };
           }
         } catch (error) {
-          if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+          if (!hasErrorCode(error, "ENOENT")) {
             throw error;
           }
           // File missing is OK (will create).
@@ -113,7 +77,7 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
           },
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `Failed to write global AGENTS.md: ${message}`,

@@ -366,22 +366,17 @@ export const GitStatusVariations: AppStory = {
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
     const plus = within(row).getByText("+12.3k");
 
-    // Hover to open tooltip
-    await userEvent.hover(plus);
+    // Click to open the divergence details dialog.
+    await userEvent.click(plus);
 
-    // HoverCard content is portaled with data-state="open" when visible
-    const getVisibleTooltip = () =>
-      document.body.querySelector<HTMLElement>('.bg-modal-bg[data-state="open"]');
-
-    // Wait for tooltip (portaled) and toggle to commits mode
     await waitFor(() => {
-      const tooltip = getVisibleTooltip();
-      if (!tooltip) throw new Error("git status tooltip not visible");
-      within(tooltip).getByText("Commits");
+      within(document.body).getByText("Git divergence details");
     });
 
-    const tooltip = getVisibleTooltip()!;
-    await userEvent.click(within(tooltip).getByText("Commits"));
+    const dialog = within(document.body).getByRole("dialog", {
+      name: "Git divergence details",
+    });
+    await userEvent.click(within(dialog).getByText("Commits"));
 
     // Verify indicator switches to divergence view for the same workspace row
     await waitFor(() => {
@@ -512,9 +507,8 @@ export const RuntimeBadgeVariations: AppStory = {
 };
 
 /**
- * Workspace title hover card with runtime badge.
- * Shows the HoverCard that appears when hovering over a workspace title,
- * containing the RuntimeBadge which can be further hovered for details.
+ * Workspace title hover behavior.
+ * Verifies that hovering a workspace title no longer opens a preview card.
  */
 export const WorkspaceTitleHoverCard: AppStory = {
   render: () => (
@@ -547,19 +541,19 @@ export const WorkspaceTitleHoverCard: AppStory = {
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-ssh-hover"]')!;
 
-    // Find the workspace title span and hover it
+    // Hovering titles should no longer open a workspace preview card.
     const titleSpan = within(row).getByText("Implement new feature with detailed description");
     await userEvent.hover(titleSpan);
 
-    // Wait for HoverCard to appear (portaled to body)
-    await waitFor(() => {
-      const hoverCard = document.body.querySelector<HTMLElement>(
-        "[data-radix-popper-content-wrapper] .bg-modal-bg"
-      );
-      if (!hoverCard) throw new Error("HoverCard not visible");
-      // Verify it contains the project name (WorkspaceHoverPreview content)
-      within(hoverCard).getByText("hover-demo");
-    });
+    // Wait past the prior HoverCard openDelay window to prove no delayed preview appears.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const hoverCard = document.body.querySelector<HTMLElement>(
+      "[data-radix-popper-content-wrapper] .bg-modal-bg"
+    );
+    if (hoverCard) {
+      throw new Error("Workspace title hover preview should not be visible");
+    }
   },
 };
 

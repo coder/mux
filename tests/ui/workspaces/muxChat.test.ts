@@ -2,8 +2,9 @@
  * UI integration tests for the built-in "Chat with Mux" system workspace.
  *
  * These tests validate:
- * - App boots into /workspace/mux-chat instead of the Welcome screen.
- * - Clicking the Mux logo navigates to /workspace/mux-chat.
+ * - App boots into the landing page (no auto-navigate to mux-chat).
+ * - Clicking the help button navigates to /workspace/mux-chat from the landing page.
+ * - Clicking the help button navigates back to /workspace/mux-chat from another workspace.
  * - Chat with Mux is permanent: no Archive button + Ctrl+N does not start workspace creation.
  */
 
@@ -11,7 +12,12 @@ import "../dom";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 
 import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } from "../../ipc/setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../../ipc/helpers";
 
 import { detectDefaultTrunkBranch } from "@/node/git";
 import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
@@ -38,7 +44,7 @@ describe("Chat with Mux system workspace (UI)", () => {
     await preloadTestModules();
   });
 
-  test("boots into Chat with Mux (no Welcome screen)", async () => {
+  test("boots into landing page, help button navigates to mux-chat", async () => {
     const env = await createTestEnvironment();
     const cleanupDom = installDom();
 
@@ -46,10 +52,28 @@ describe("Chat with Mux system workspace (UI)", () => {
 
     try {
       await view.waitForReady();
-      await waitForWorkspaceChatToRender(view.container);
 
+      // App should start at the landing page (home), not auto-navigate to mux-chat.
+      expect(window.location.pathname).toBe("/");
+
+      // Click the help button to navigate to Chat with Mux.
+      const helpButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            'button[aria-label="Open Chat with Mux"]'
+          ) as HTMLElement | null;
+          if (!btn) throw new Error("Help button not found");
+          return btn;
+        },
+        { timeout: 10_000 }
+      );
+
+      await act(async () => {
+        fireEvent.click(helpButton);
+      });
+
+      await waitForWorkspaceChatToRender(view.container);
       expect(window.location.pathname).toBe(`/workspace/${MUX_HELP_CHAT_WORKSPACE_ID}`);
-      expect(view.queryByText("Welcome to Mux")).toBeNull();
 
       // On first boot, the mux-chat workspace should seed a synthetic welcome message.
       await waitFor(
@@ -64,9 +88,10 @@ describe("Chat with Mux system workspace (UI)", () => {
     }
   }, 60_000);
 
-  test("Mux logo navigates back to Chat with Mux", async () => {
+  test("Help button navigates back to Chat with Mux", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
     const cleanupDom = installDom();
 
     const workspaceIdToRemove: string[] = [];
@@ -97,15 +122,15 @@ describe("Chat with Mux system workspace (UI)", () => {
 
       expect(window.location.pathname).toBe(`/workspace/${encodeURIComponent(wsId)}`);
 
-      const logoButton = view.container.querySelector(
+      const helpButton = view.container.querySelector(
         'button[aria-label="Open Chat with Mux"]'
       ) as HTMLElement | null;
-      if (!logoButton) {
-        throw new Error("Mux logo button not found");
+      if (!helpButton) {
+        throw new Error("Help button not found");
       }
 
       await act(async () => {
-        fireEvent.click(logoButton);
+        fireEvent.click(helpButton);
       });
 
       await waitFor(
@@ -142,6 +167,23 @@ describe("Chat with Mux system workspace (UI)", () => {
 
     try {
       await view.waitForReady();
+
+      // Navigate to mux-chat via the help button (app starts at landing page).
+      const helpButton = await waitFor(
+        () => {
+          const btn = view.container.querySelector(
+            'button[aria-label="Open Chat with Mux"]'
+          ) as HTMLElement | null;
+          if (!btn) throw new Error("Help button not found");
+          return btn;
+        },
+        { timeout: 10_000 }
+      );
+
+      await act(async () => {
+        fireEvent.click(helpButton);
+      });
+
       await waitForWorkspaceChatToRender(view.container);
 
       // The system project itself should be hidden from the sidebar projects list.
@@ -155,8 +197,8 @@ describe("Chat with Mux system workspace (UI)", () => {
         { timeout: 10_000 }
       );
 
-      // Chat with Mux is no longer rendered as a WorkspaceListItem in the sidebar;
-      // it's accessed via the Mux logo / help icon in the header. Verify no workspace
+      // Chat with Mux is no longer rendered as a AgentListItem in the sidebar;
+      // it's accessed via the help button in the header. Verify no workspace
       // row exists for it (which means no Archive button by design).
       expect(
         view.container.querySelector(`[data-workspace-id="${MUX_HELP_CHAT_WORKSPACE_ID}"]`)
@@ -173,5 +215,5 @@ describe("Chat with Mux system workspace (UI)", () => {
       await cleanupView(view, cleanupDom);
       await cleanupTestEnvironment(env);
     }
-  }, 30_000);
+  }, 60_000);
 });

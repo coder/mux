@@ -9,7 +9,12 @@ import {
   HAIKU_MODEL,
   createStreamCollector,
 } from "../helpers";
-import { isMuxMessage, isQueuedMessageChanged, isRestoreToInput } from "@/common/orpc/types";
+import {
+  isMuxMessage,
+  isQueuedMessageChanged,
+  isRestoreToInput,
+  type WorkspaceChatMessage,
+} from "@/common/orpc/types";
 import type { HistoryService } from "@/node/services/historyService";
 
 function createDeferred<T>(): {
@@ -25,6 +30,20 @@ function createDeferred<T>(): {
   });
 
   return { promise, resolve, reject };
+}
+
+type QueuedMessageChangedEvent = Extract<WorkspaceChatMessage, { type: "queued-message-changed" }>;
+
+function findQueuedMessageEvent(
+  collector: ReturnType<typeof createStreamCollector>,
+  queuedText: string
+): QueuedMessageChangedEvent | undefined {
+  return collector
+    .getEvents()
+    .find(
+      (event): event is QueuedMessageChangedEvent =>
+        isQueuedMessageChanged(event) && event.queuedMessages.includes(queuedText)
+    );
 }
 
 describe("Queued messages during stream completion", () => {
@@ -260,8 +279,15 @@ describe("Queued messages during stream completion", () => {
       );
       expect(secondSendResult.success).toBe(true);
 
-      const queuedEvent = await collector.waitForEvent("queued-message-changed", 5000);
-      if (!queuedEvent || !isQueuedMessageChanged(queuedEvent)) {
+      let queuedEvent = findQueuedMessageEvent(collector, "Second message");
+      const sawQueuedSecondMessage =
+        queuedEvent !== undefined
+          ? true
+          : await waitFor(() => {
+              queuedEvent = findQueuedMessageEvent(collector, "Second message");
+              return queuedEvent !== undefined;
+            }, 5000);
+      if (!sawQueuedSecondMessage || !queuedEvent) {
         throw new Error("Queued message event missing after follow-up send during completion");
       }
       expect(queuedEvent.queuedMessages).toEqual(["Second message"]);
@@ -607,8 +633,15 @@ describe("Queued messages during stream completion", () => {
       );
       expect(queuedSendResult.success).toBe(true);
 
-      const queuedEvent = await collector.waitForEvent("queued-message-changed", 5000);
-      if (!queuedEvent || !isQueuedMessageChanged(queuedEvent)) {
+      let queuedEvent = findQueuedMessageEvent(collector, queuedText);
+      const sawQueuedMessage =
+        queuedEvent !== undefined
+          ? true
+          : await waitFor(() => {
+              queuedEvent = findQueuedMessageEvent(collector, queuedText);
+              return queuedEvent !== undefined;
+            }, 5000);
+      if (!sawQueuedMessage || !queuedEvent) {
         throw new Error("Queued message event missing after follow-up send during completion");
       }
       expect(queuedEvent.queuedMessages).toEqual([queuedText]);

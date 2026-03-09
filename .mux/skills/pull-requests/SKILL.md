@@ -119,8 +119,19 @@ PR bodies should generally follow this structure; omit sections that are N/A or 
 
 ### Edits
 
-Prefer storing the body in an out-of-tree file such as `/tmp/pr-<num>.txt`, using
-file edit tools to modify it, and then `gh pr edit [num] --body-file <file>` to update it.
+Always use `mktemp` to create a unique temp file for the PR body — never use a
+hard-coded path like `/tmp/pr-body.md` (concurrent agents will race):
+
+```bash
+PR_BODY=$(mktemp /tmp/pr-XXXXXX.md)
+```
+
+Use file edit tools to build the body in `$PR_BODY`, then:
+
+```bash
+gh pr edit <num> --body-file "$PR_BODY"
+rm -f "$PR_BODY"
+```
 
 When updating the PR body, consider condensing information that is no longer important
 into a toggle.

@@ -32,6 +32,7 @@
             "pages": [
               "index",
               "install",
+              "getting-started/chat",
               {
                 "group": "Models",
                 "pages": ["config/models", "config/providers"]
@@ -47,6 +48,7 @@
               "workspaces",
               "workspaces/fork",
               "workspaces/sharing",
+              "workspaces/muxignore",
               {
                 "group": "Compaction",
                 "pages": [
@@ -98,6 +100,7 @@
               "config/agentic-git-identity",
               "config/keybinds",
               "config/notifications",
+              "config/server-access",
               "config/vim-mode"
             ]
           },
@@ -114,12 +117,14 @@
             "group": "Integrations",
             "pages": [
               "integrations/vscode-extension",
+              "integrations/acp",
               "integrations/mux-governor"
             ]
           },
           {
             "group": "Reference",
             "pages": [
+              "reference/debugging",
               "reference/telemetry",
               "reference/storybook",
               "reference/benchmarking",
@@ -158,6 +163,7 @@
     { "source": "/agentic-git-identity", "destination": "/config/agentic-git-identity" },
     { "source": "/keybinds", "destination": "/config/keybinds" },
     { "source": "/notifications", "destination": "/config/notifications" },
+    { "source": "/server-access", "destination": "/config/server-access" },
     { "source": "/cli", "destination": "/reference/cli" },
     { "source": "/guides/cli", "destination": "/reference/cli" },
     { "source": "/context-management", "destination": "/workspaces/compaction" },
@@ -173,8 +179,10 @@
     { "source": "/vim-mode", "destination": "/config/vim-mode" },
     { "source": "/guides/vim-mode", "destination": "/config/vim-mode" },
     { "source": "/vscode-extension", "destination": "/integrations/vscode-extension" },
+    { "source": "/acp", "destination": "/integrations/acp" },
     { "source": "/telemetry", "destination": "/reference/telemetry" },
     { "source": "/storybook", "destination": "/reference/storybook" },
-    { "source": "/benchmarking", "destination": "/reference/benchmarking" }
+    { "source": "/benchmarking", "destination": "/reference/benchmarking" },
+    { "source": "/debugging", "destination": "/reference/debugging" }
   ]
 }

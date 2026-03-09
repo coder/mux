@@ -4,6 +4,7 @@ import { EventStore } from "@/node/utils/eventStore";
 import type { WorkspaceInitEvent } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Output line with timestamp for replay timing.
@@ -493,7 +494,7 @@ export class InitStateManager extends EventEmitter {
     } catch (error) {
       // Init promise was rejected (e.g., workspace deleted)
       // Log and proceed anyway - let the tool fail with its own error if needed
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       log.error(`Init wait interrupted for ${workspaceId}: ${errorMsg} - proceeding anyway`);
     } finally {
       // Clean up timeout to prevent spurious error logs

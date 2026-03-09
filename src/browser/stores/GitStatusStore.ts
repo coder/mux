@@ -76,6 +76,9 @@ export class GitStatusStore {
     // Create refresh controller with proactive focus refresh (catches external git changes)
     this.refreshController = new RefreshController({
       onRefresh: () => this.updateGitStatus(),
+      onRefreshError: (failure) => {
+        console.error("[GitStatusStore] refresh failed:", failure.errorMessage);
+      },
       debounceMs: 3000, // Same as TOOL_REFRESH_DEBOUNCE_MS in ReviewPanel
       refreshOnFocus: true, // Proactively refresh on focus to catch external changes
       focusDebounceMs: 500, // Prevent spam from rapid alt-tabbing

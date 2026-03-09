@@ -32,6 +32,11 @@ export interface ChatUsageDisplay {
 
   // True if any model in the sum had unknown pricing (costs are partial/incomplete)
   hasUnknownCosts?: boolean;
+
+  // True when costs were explicitly zeroed because the provider gateway includes
+  // billing (providerMetadata.mux.costsIncluded). These entries should not be
+  // repriced when model mappings change.
+  costsIncluded?: boolean;
 }
 
 /**
@@ -41,8 +46,13 @@ export interface ChatUsageDisplay {
 export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisplay | undefined {
   if (usageHistory.length === 0) return undefined;
 
-  // Track if any costs are undefined (model pricing unknown)
-  let hasUndefinedCosts = false;
+  // Track if any entry already knows its costs are incomplete/approximate.
+  let hasIncompleteCosts = false;
+  // Track if any entry is gateway-billed (costs explicitly zeroed).
+  // If even one entry was costsIncluded, the aggregated bucket should not be
+  // repriced during mapping changes — we can't separate which tokens were billed
+  // by the gateway vs. which were priced from model metadata.
+  let anyCostsIncluded = false;
 
   const sum: ChatUsageDisplay = {
     input: { tokens: 0, cost_usd: 0 },
@@ -53,6 +63,8 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
   };
 
   for (const usage of usageHistory) {
+    if (usage.costsIncluded) anyCostsIncluded = true;
+    if (usage.hasUnknownCosts) hasIncompleteCosts = true;
     // Iterate over each component and sum tokens and costs
     const componentKeys: Array<"input" | "cached" | "cacheCreate" | "output" | "reasoning"> = [
       "input",
@@ -64,16 +76,22 @@ export function sumUsageHistory(usageHistory: ChatUsageDisplay[]): ChatUsageDisp
     for (const key of componentKeys) {
       sum[key].tokens += usage[key].tokens;
       if (usage[key].cost_usd === undefined) {
-        hasUndefinedCosts = true;
+        hasIncompleteCosts = true;
       } else {
         sum[key].cost_usd = (sum[key].cost_usd ?? 0) + (usage[key].cost_usd ?? 0);
       }
     }
   }
 
-  // Flag if any costs were undefined (partial/incomplete total)
-  if (hasUndefinedCosts) {
+  // Flag if any costs were incomplete/unknown (partial/inaccurate total)
+  if (hasIncompleteCosts) {
     sum.hasUnknownCosts = true;
+  }
+  // Preserve costsIncluded when any entry in the sum was gateway-billed.
+  // Mixed buckets (some costsIncluded, some not) cannot be safely repriced
+  // because we can't separate which tokens were billed by the gateway.
+  if (anyCostsIncluded) {
+    sum.costsIncluded = true;
   }
 
   return sum;

@@ -6,6 +6,8 @@
  */
 
 import { z } from "zod";
+import { ThinkingLevelSchema } from "../../types/thinking";
+import { MCPTransportSchema } from "./mcp";
 import { RuntimeModeSchema } from "./runtime";
 
 // Error context enum (matches payload.ts)
@@ -28,9 +30,6 @@ const FrontendPlatformInfoSchema = z.object({
   userAgent: z.string(),
   platform: z.string(),
 });
-
-// Thinking level enum (matches payload.ts TelemetryThinkingLevel)
-const TelemetryThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 // Command type enum (matches payload.ts TelemetryCommandType)
 const TelemetryCommandTypeSchema = z.enum([
@@ -69,7 +68,7 @@ const MessageSentPropertiesSchema = z.object({
   message_length_b2: z.number(),
   runtimeType: TelemetryRuntimeTypeSchema,
   frontendPlatform: FrontendPlatformInfoSchema,
-  thinkingLevel: TelemetryThinkingLevelSchema,
+  thinkingLevel: ThinkingLevelSchema,
 });
 
 // MCP transport mode enum (matches payload.ts TelemetryMCPTransportMode)
@@ -103,7 +102,6 @@ const MCPContextInjectedPropertiesSchema = z.object({
   mcp_setup_duration_ms_b2: z.number(),
 });
 
-const TelemetryMCPServerTransportSchema = z.enum(["stdio", "http", "sse", "auto"]);
 const TelemetryMCPTestErrorCategorySchema = z.enum([
   "timeout",
   "connect",
@@ -112,7 +110,7 @@ const TelemetryMCPTestErrorCategorySchema = z.enum([
 ]);
 
 const MCPServerTestedPropertiesSchema = z.object({
-  transport: TelemetryMCPServerTransportSchema,
+  transport: MCPTransportSchema,
   success: z.boolean(),
   duration_ms_b2: z.number(),
   error_category: TelemetryMCPTestErrorCategorySchema.optional(),
@@ -150,7 +148,7 @@ const StreamTimingInvalidPropertiesSchema = z.object({
 
 const MCPServerConfigChangedPropertiesSchema = z.object({
   action: TelemetryMCPServerConfigActionSchema,
-  transport: TelemetryMCPServerTransportSchema,
+  transport: MCPTransportSchema,
   has_headers: z.boolean(),
   uses_secret_headers: z.boolean(),
   tool_allowlist_size_b2: z.number().optional(),
@@ -165,20 +163,20 @@ const TelemetryMCPOAuthFlowErrorCategorySchema = z.enum([
 ]);
 
 const MCPOAuthFlowStartedPropertiesSchema = z.object({
-  transport: TelemetryMCPServerTransportSchema,
+  transport: MCPTransportSchema,
   has_scope_hint: z.boolean(),
   has_resource_metadata_hint: z.boolean(),
 });
 
 const MCPOAuthFlowCompletedPropertiesSchema = z.object({
-  transport: TelemetryMCPServerTransportSchema,
+  transport: MCPTransportSchema,
   duration_ms_b2: z.number(),
   has_scope_hint: z.boolean(),
   has_resource_metadata_hint: z.boolean(),
 });
 
 const MCPOAuthFlowFailedPropertiesSchema = z.object({
-  transport: TelemetryMCPServerTransportSchema,
+  transport: MCPTransportSchema,
   duration_ms_b2: z.number(),
   has_scope_hint: z.boolean(),
   has_resource_metadata_hint: z.boolean(),

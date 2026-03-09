@@ -9,7 +9,12 @@ import * as path from "path";
 
 import type { TestEnvironment } from "../setup";
 import { cleanupTestEnvironment, createTestEnvironment } from "../setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import { getPlanFilePath } from "../../../src/common/utils/planStorage";
 import { expandTilde } from "../../../src/node/runtime/tildeExpansion";
@@ -29,6 +34,7 @@ describe("agents.list plan requirements", () => {
 
     env = await createTestEnvironment();
     repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
   }, 30_000);
 
   afterAll(async () => {

@@ -1,7 +1,9 @@
 import { AgentDefinitionFrontmatterSchema } from "@/common/orpc/schemas";
 import type { AgentDefinitionFrontmatter } from "@/common/types/agentDefinition";
 import { MAX_FILE_SIZE } from "@/node/services/tools/fileCommon";
+import { formatZodIssues, normalizeNewlines, stripUtf8Bom } from "@/node/utils/markdownFrontmatter";
 import YAML from "yaml";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export class AgentDefinitionParseError extends Error {
   constructor(message: string) {
@@ -15,30 +17,10 @@ export interface ParsedAgentDefinitionMarkdown {
   body: string;
 }
 
-function normalizeNewlines(input: string): string {
-  return input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-}
-
-function stripUtf8Bom(input: string): string {
-  return input.startsWith("\uFEFF") ? input.slice(1) : input;
-}
-
 function assertObject(value: unknown, message: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new AgentDefinitionParseError(message);
   }
-}
-
-function formatZodIssues(
-  issues: ReadonlyArray<{ path: readonly PropertyKey[]; message: string }>
-): string {
-  return issues
-    .map((issue) => {
-      const issuePath =
-        issue.path.length > 0 ? issue.path.map((part) => String(part)).join(".") : "<root>";
-      return `${issuePath}: ${issue.message}`;
-    })
-    .join("; ");
 }
 
 /**
@@ -89,7 +71,7 @@ export function parseAgentDefinitionMarkdown(input: {
   try {
     raw = YAML.parse(yamlText);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     throw new AgentDefinitionParseError(`Failed to parse YAML frontmatter: ${message}`);
   }
 

@@ -14,33 +14,18 @@ describe("config.updateModelPreferences", () => {
     }
   });
 
-  it("persists model preferences and allows clearing preferredCompactionModel", async () => {
+  it("persists model preferences", async () => {
     await env.orpc.config.updateModelPreferences({
       defaultModel: "openai:gpt-4o",
       hiddenModels: ["openai:gpt-4o-mini"],
-      preferredCompactionModel: "openai:gpt-4o",
     });
 
-    const loaded1 = env.config.loadConfigOrDefault();
-    expect(loaded1.defaultModel).toBe("openai:gpt-4o");
-    expect(loaded1.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
-    expect(loaded1.preferredCompactionModel).toBe("openai:gpt-4o");
+    const loaded = env.config.loadConfigOrDefault();
+    expect(loaded.defaultModel).toBe("openai:gpt-4o");
+    expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
 
-    const cfg1 = await env.orpc.config.getConfig();
-    expect(cfg1.defaultModel).toBe("openai:gpt-4o");
-    expect(cfg1.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
-    expect(cfg1.preferredCompactionModel).toBe("openai:gpt-4o");
-
-    await env.orpc.config.updateModelPreferences({ preferredCompactionModel: "" });
-
-    const loaded2 = env.config.loadConfigOrDefault();
-    expect(loaded2.preferredCompactionModel).toBeUndefined();
-    expect(loaded2.defaultModel).toBe("openai:gpt-4o");
-    expect(loaded2.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
-
-    const cfg2 = await env.orpc.config.getConfig();
-    expect(cfg2.preferredCompactionModel).toBeUndefined();
-    expect(cfg2.defaultModel).toBe("openai:gpt-4o");
-    expect(cfg2.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+    const cfg = await env.orpc.config.getConfig();
+    expect(cfg.defaultModel).toBe("openai:gpt-4o");
+    expect(cfg.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
   });
 });

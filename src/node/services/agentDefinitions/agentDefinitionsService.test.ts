@@ -131,6 +131,36 @@ Replaced body.
     expect(replacerBody).not.toContain("Base instructions");
   });
 
+  test("project plan agents can replace the built-in plan prompt body without losing inherited frontmatter", async () => {
+    using tempDir = new DisposableTempDir("agent-plan-guidance");
+    const agentsRoot = path.join(tempDir.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(agentsRoot, "custom-plan.md"),
+      `---
+name: Custom Plan
+base: plan
+prompt:
+  append: false
+---
+Custom planning instructions.
+`,
+      "utf-8"
+    );
+
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const customPlanBody = await resolveAgentBody(runtime, tempDir.path, "custom-plan");
+    expect(customPlanBody).toBe("Custom planning instructions.\n");
+
+    const customPlanFrontmatter = await resolveAgentFrontmatter(
+      runtime,
+      tempDir.path,
+      "custom-plan"
+    );
+    expect(customPlanFrontmatter.tools?.require).toEqual(["propose_plan"]);
+  });
   test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {
     using project = new DisposableTempDir("agent-same-name");
     using global = new DisposableTempDir("agent-same-name-global");
@@ -344,7 +374,7 @@ subagent:
     expect(frontmatter.subagent?.skip_init_hook).toBe(false);
   });
 
-  test("resolveAgentFrontmatter concatenates tools.add/tools.remove (base first)", async () => {
+  test("resolveAgentFrontmatter concatenates add/remove and overrides require with child value", async () => {
     using tempDir = new DisposableTempDir("agent-frontmatter-tools");
     const agentsRoot = path.join(tempDir.path, ".mux", "agents");
     await fs.mkdir(agentsRoot, { recursive: true });
@@ -358,6 +388,8 @@ tools:
     - a
   remove:
     - b
+  require:
+    - switch_agent
 ---
 `,
       "utf-8"
@@ -373,6 +405,8 @@ tools:
     - c
   remove:
     - d
+  require:
+    - agent_report
 ---
 `,
       "utf-8"
@@ -385,6 +419,7 @@ tools:
 
     expect(frontmatter.tools?.add).toEqual(["a", "c"]);
     expect(frontmatter.tools?.remove).toEqual(["b", "d"]);
+    expect(frontmatter.tools?.require).toEqual(["agent_report"]);
   });
 
   test("resolveAgentFrontmatter detects cycles", async () => {

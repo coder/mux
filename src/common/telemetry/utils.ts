@@ -3,7 +3,7 @@
  */
 
 import type { RuntimeConfig } from "@/common/types/runtime";
-import type { FrontendPlatformInfo, TelemetryRuntimeType } from "./payload";
+import type { TelemetryRuntimeType } from "./payload";
 
 /**
  * Round a number to the nearest power of 2 for privacy-preserving metrics
@@ -15,25 +15,6 @@ export function roundToBase2(value: number): number {
   if (value <= 0) return 0;
   // Find the next power of 2
   return Math.pow(2, Math.ceil(Math.log2(value)));
-}
-
-/**
- * Get frontend platform information for telemetry.
- * Uses browser APIs (navigator) which are safe to send and widely shared.
- */
-export function getFrontendPlatformInfo(): FrontendPlatformInfo {
-  // Safe defaults for non-browser environments (SSR, tests)
-  if (typeof navigator === "undefined") {
-    return {
-      userAgent: "unknown",
-      platform: "unknown",
-    };
-  }
-
-  return {
-    userAgent: navigator.userAgent,
-    platform: navigator.platform,
-  };
 }
 
 /**

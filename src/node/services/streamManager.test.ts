@@ -1,15 +1,21 @@
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
+import * as aiSdk from "ai";
 import { APICallError, RetryError, type ModelMessage } from "ai";
+import * as modelStatsModule from "@/common/utils/tokens/modelStats";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { countTokens } from "@/node/utils/main/tokenizer";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
 import { DisposableTempDir } from "@/node/services/tempDir";
+import type { ExecOptions, ExecStream, Runtime } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { shellQuote } from "@/common/utils/shell";
 
 // Skip integration tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -30,6 +36,31 @@ beforeEach(async () => {
 afterEach(async () => {
   await historyCleanup();
 });
+
+function createExecStreamForTests(): ExecStream {
+  return {
+    stdout: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    }),
+    stderr: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    }),
+    stdin: new WritableStream<Uint8Array>({
+      write(_chunk) {
+        return Promise.resolve();
+      },
+      close() {
+        return Promise.resolve();
+      },
+    }),
+    exitCode: Promise.resolve(0),
+    duration: Promise.resolve(0),
+  };
+}
 
 describe("StreamManager - createTempDirForStream", () => {
   test("creates ~/.mux-tmp/<token> under the runtime's home", async () => {
@@ -71,31 +102,40 @@ describe("StreamManager - createTempDirForStream", () => {
   });
 });
 
+describe("StreamManager - cleanupStreamTempDir", () => {
+  test("quotes temp-dir basename in rm -rf command", () => {
+    const streamManager = new StreamManager(historyService);
+    const execCalls: Array<{ command: string; options: ExecOptions }> = [];
+    const runtime = {
+      exec: (command: string, options: ExecOptions) => {
+        execCalls.push({ command, options });
+        return Promise.resolve(createExecStreamForTests());
+      },
+    } as unknown as Runtime;
+
+    const cleanup = Reflect.get(streamManager, "cleanupStreamTempDir") as
+      | ((runtime: Runtime, runtimeTempDir: string) => void)
+      | undefined;
+
+    expect(typeof cleanup).toBe("function");
+
+    const runtimeTempDir = "/tmp/stream-$(echo injected)";
+    cleanup?.(runtime, runtimeTempDir);
+
+    expect(execCalls).toHaveLength(1);
+    expect(execCalls[0]?.command).toBe(`rm -rf ${shellQuote("stream-$(echo injected)")}`);
+    expect(execCalls[0]?.options).toMatchObject({ cwd: "/tmp", timeout: 10 });
+  });
+});
+
 describe("StreamManager - stopWhen configuration", () => {
   type StopWhenCondition = (options: { steps: unknown[] }) => boolean;
   type BuildStopWhenCondition = (request: {
-    toolChoice?: { type: "tool"; toolName: string } | "required";
     hasQueuedMessage?: () => boolean;
-  }) => StopWhenCondition | StopWhenCondition[];
+    toolPolicy?: ToolPolicy;
+  }) => StopWhenCondition[];
 
-  test("uses single-step stopWhen when a tool is required", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({ toolChoice: { type: "tool", toolName: "bash" } });
-    if (typeof stopWhen !== "function") {
-      throw new Error("Expected required-tool stopWhen to be a single condition function");
-    }
-
-    expect(stopWhen({ steps: [] })).toBe(false);
-    expect(stopWhen({ steps: [{}] })).toBe(true);
-    expect(stopWhen({ steps: [{}, {}] })).toBe(false);
-  });
-
-  test("uses autonomous step cap and queued-message interrupt conditions", () => {
+  test("returns step-cap and queued-message conditions with no policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
@@ -104,12 +144,9 @@ describe("StreamManager - stopWhen configuration", () => {
 
     let queued = false;
     const stopWhen = buildStopWhen!({ hasQueuedMessage: () => queued });
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to be an array of conditions");
-    }
     expect(stopWhen).toHaveLength(3);
 
-    const [maxStepCondition, queuedMessageCondition, agentReportCondition] = stopWhen;
+    const [maxStepCondition, queuedMessageCondition, requiredToolCondition] = stopWhen;
     expect(maxStepCondition({ steps: new Array(99999) })).toBe(false);
     expect(maxStepCondition({ steps: new Array(100000) })).toBe(true);
 
@@ -118,75 +155,459 @@ describe("StreamManager - stopWhen configuration", () => {
     expect(queuedMessageCondition({ steps: [] })).toBe(true);
 
     expect(
-      agentReportCondition({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  test("stops only after successful agent_report tool result in autonomous mode", () => {
+  test("stops on successful required tool result matching policy", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
       | undefined;
     expect(typeof buildStopWhen).toBe("function");
 
-    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => false });
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to be an array of conditions");
-    }
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "agent_report", action: "require" }],
+    });
 
-    const [, , reportStop] = stopWhen;
-    if (!reportStop) {
-      throw new Error("Expected autonomous stopWhen to include agent_report condition");
-    }
+    const [, , requiredToolCondition] = stopWhen;
 
-    // Returns true when step contains successful agent_report tool result.
     expect(
-      reportStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
       })
     ).toBe(true);
 
-    // Returns false when step contains failed agent_report output.
     expect(
-      reportStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "agent_report", output: { success: false } }] }],
       })
     ).toBe(false);
 
-    // Returns false when step only contains agent_report tool call (no successful result yet).
     expect(
-      reportStop({
-        steps: [{ toolCalls: [{ toolName: "agent_report" }] }],
-      })
-    ).toBe(false);
-
-    // Returns false when step contains other tool results.
-    expect(
-      reportStop({
+      requiredToolCondition({
         steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
       })
     ).toBe(false);
 
-    // Returns false when no steps.
-    expect(reportStop({ steps: [] })).toBe(false);
+    expect(requiredToolCondition({ steps: [] })).toBe(false);
   });
 
-  test("treats missing queued-message callback as not queued", () => {
+  test("stops on required tool result without success/ok markers (e.g. MCP tools)", () => {
     const streamManager = new StreamManager(historyService);
     const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
       | BuildStopWhenCondition
       | undefined;
     expect(typeof buildStopWhen).toBe("function");
 
-    const stopWhen = buildStopWhen!({});
-    if (!Array.isArray(stopWhen)) {
-      throw new Error("Expected autonomous stopWhen to remain array-based without callback");
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "chrome_take_screenshot",
+                output: { content: [{ type: "image", data: "..." }] },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  test("does not stop when required tool returns error-shaped output", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "chrome_take_screenshot",
+                output: { error: "connection refused" },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "chrome_take_screenshot",
+                output: {
+                  isError: true,
+                  content: [{ type: "text", text: "failed" }],
+                },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  test("does not stop when required tool explicitly returns success: false", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "propose_plan",
+                output: { success: false, error: "plan file missing" },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe(false);
+  });
+
+  test("handles pre-anchored require patterns from recovery paths", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
+      })
+    ).toBe(true);
+  });
+
+  test("stops on successful switch_agent when required by policy", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "switch_agent", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
+      })
+    ).toBe(true);
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: false } }] }],
+      })
+    ).toBe(false);
+  });
+
+  test("sets toolChoice for required literal tool when forced and still uses stopWhen", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | ((...args: unknown[]) => {
+          toolChoice?: { type: "tool"; toolName: string };
+          hasQueuedMessage?: () => boolean;
+          toolPolicy?: ToolPolicy;
+        })
+      | undefined;
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildRequestConfig).toBe("function");
+    expect(typeof buildStopWhen).toBe("function");
+
+    const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+    const request = buildRequestConfig!(
+      model,
+      "claude-sonnet-4-5",
+      [{ role: "user", content: "route this" }],
+      "system",
+      { switch_agent: {} },
+      undefined,
+      undefined,
+      undefined,
+      [{ regex_match: "switch_agent", action: "require" }],
+      true,
+      () => false,
+      undefined,
+      undefined
+    );
+
+    expect(request.toolChoice).toEqual({ type: "tool", toolName: "switch_agent" });
+
+    const [, , requiredToolCondition] = buildStopWhen!({
+      hasQueuedMessage: request.hasQueuedMessage,
+      toolPolicy: request.toolPolicy,
+    });
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
+      })
+    ).toBe(true);
+  });
+
+  test("stops on successful propose_plan when required by policy", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "propose_plan", output: { success: true } }] }],
+      })
+    ).toBe(true);
+  });
+
+  test("does not stop on tool results when no tools are required", () => {
+    const streamManager = new StreamManager(historyService);
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({
+      hasQueuedMessage: () => false,
+      toolPolicy: [{ regex_match: "bash", action: "enable" }],
+    });
+
+    const [, , requiredToolCondition] = stopWhen;
+
+    expect(
+      requiredToolCondition({
+        steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
+      })
+    ).toBe(false);
+  });
+});
+
+describe("StreamManager - call settings overrides", () => {
+  interface StreamRequestConfigForTests {
+    model: unknown;
+    messages: ModelMessage[];
+    system?: string;
+    tools?: Record<string, unknown>;
+    providerOptions?: Record<string, unknown>;
+    headers?: Record<string, string | undefined>;
+    maxOutputTokens?: number;
+    streamCallSettings?: Record<string, unknown>;
+  }
+
+  type BuildStreamRequestConfig = (...args: unknown[]) => StreamRequestConfigForTests;
+  type CreateStreamResult = (
+    request: StreamRequestConfigForTests,
+    abortController: AbortController
+  ) => unknown;
+
+  const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+  const modelString = KNOWN_MODELS.SONNET.id;
+  const messages: ModelMessage[] = [{ role: "user", content: "hello" }];
+
+  function getRequestHelpers(streamManager: StreamManager): {
+    buildRequestConfig: BuildStreamRequestConfig;
+    createStreamResult: CreateStreamResult;
+  } {
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | BuildStreamRequestConfig
+      | undefined;
+    const createStreamResultMethod = Reflect.get(streamManager, "createStreamResult") as
+      | CreateStreamResult
+      | undefined;
+
+    expect(typeof buildRequestConfig).toBe("function");
+    expect(typeof createStreamResultMethod).toBe("function");
+
+    if (!buildRequestConfig || !createStreamResultMethod) {
+      throw new Error("Expected StreamManager private helpers to exist");
     }
 
-    const [, queuedMessageCondition] = stopWhen;
-    expect(queuedMessageCondition({ steps: [] })).toBe(false);
+    return {
+      buildRequestConfig,
+      createStreamResult: (request, abortController) =>
+        createStreamResultMethod.call(streamManager, request, abortController),
+    };
+  }
+
+  function buildRequest(
+    buildRequestConfig: BuildStreamRequestConfig,
+    options: {
+      maxOutputTokens?: number;
+      callSettingsOverrides?: {
+        maxOutputTokens?: number;
+        temperature?: number;
+        topP?: number;
+      };
+    }
+  ): StreamRequestConfigForTests {
+    return buildRequestConfig(
+      model,
+      modelString,
+      messages,
+      "system",
+      undefined,
+      undefined,
+      options.maxOutputTokens,
+      options.callSettingsOverrides,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      undefined
+    );
+  }
+
+  function setupStreamTextSpy() {
+    return spyOn(aiSdk, "streamText").mockReturnValue({
+      fullStream: (async function* asyncGenerator() {
+        yield* [] as unknown[];
+        await Promise.resolve();
+      })(),
+      usage: Promise.resolve(undefined),
+      providerMetadata: Promise.resolve(undefined),
+      totalUsage: Promise.resolve(undefined),
+      steps: Promise.resolve([]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test("uses config maxOutputTokens override when explicit maxOutputTokens is missing", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    spyOn(modelStatsModule, "getModelStats").mockReturnValue({
+      max_input_tokens: 200000,
+      max_output_tokens: 8192,
+      input_cost_per_token: 0,
+      output_cost_per_token: 0,
+    });
+
+    const request = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: { maxOutputTokens: 4096 },
+    });
+
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledWith(expect.objectContaining({ maxOutputTokens: 4096 }));
+  });
+
+  test("uses explicit maxOutputTokens over config maxOutputTokens override", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    spyOn(modelStatsModule, "getModelStats").mockReturnValue({
+      max_input_tokens: 200000,
+      max_output_tokens: 8192,
+      input_cost_per_token: 0,
+      output_cost_per_token: 0,
+    });
+
+    const request = buildRequest(buildRequestConfig, {
+      maxOutputTokens: 1024,
+      callSettingsOverrides: { maxOutputTokens: 4096 },
+    });
+
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledWith(expect.objectContaining({ maxOutputTokens: 1024 }));
+  });
+
+  test("forwards stream call settings to streamText", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    const request = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: { temperature: 0.5, topP: 0.9 },
+    });
+
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        temperature: 0.5,
+        topP: 0.9,
+      })
+    );
+  });
+
+  test("does not store streamCallSettings when overrides are empty", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig } = getRequestHelpers(streamManager);
+
+    const requestWithUndefined = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: undefined,
+    });
+    const requestWithEmpty = buildRequest(buildRequestConfig, {
+      callSettingsOverrides: {},
+    });
+
+    expect(requestWithUndefined.streamCallSettings).toBeUndefined();
+    expect(requestWithEmpty.streamCallSettings).toBeUndefined();
   });
 });
 
@@ -729,6 +1150,242 @@ describe("StreamManager - Unavailable Tool Handling", () => {
   });
 });
 
+describe("StreamManager - TTFT metadata persistence", () => {
+  const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+  async function finalizeStreamAndReadMessage(params: {
+    workspaceId: string;
+    messageId: string;
+    historySequence: number;
+    startTime: number;
+    parts: unknown[];
+    usage?: {
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      reasoningTokens?: number;
+    };
+  }) {
+    const streamManager = new StreamManager(historyService);
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const replaceTokenTrackerResult = Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+    if (!replaceTokenTrackerResult) {
+      throw new Error("Failed to mock StreamManager.tokenTracker");
+    }
+
+    const appendResult = await historyService.appendToHistory(params.workspaceId, {
+      id: params.messageId,
+      role: "assistant",
+      metadata: {
+        historySequence: params.historySequence,
+        partial: true,
+      },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+    if (!appendResult.success) {
+      throw new Error(appendResult.error);
+    }
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+
+    const usage = params.usage ?? { inputTokens: 4, outputTokens: 6, totalTokens: 10 };
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          // No-op stream: tests verify stream-end finalization behavior from pre-populated parts.
+        })(),
+        totalUsage: Promise.resolve(usage),
+        usage: Promise.resolve(usage),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController: new AbortController(),
+      messageId: params.messageId,
+      token: "test-token",
+      startTime: params.startTime,
+      lastPartTimestamp: params.startTime,
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: KNOWN_MODELS.SONNET.id,
+      historySequence: params.historySequence,
+      parts: params.parts,
+      lastPartialWriteTime: 0,
+      partialWriteTimer: undefined,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      stepTracker: {},
+    };
+
+    await processStreamWithCleanup.call(
+      streamManager,
+      params.workspaceId,
+      streamInfo,
+      params.historySequence
+    );
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(params.workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(historyResult.error);
+    }
+
+    const updatedMessage = historyResult.data.find((message) => message.id === params.messageId);
+    expect(updatedMessage).toBeDefined();
+    if (!updatedMessage) {
+      throw new Error(`Expected updated message ${params.messageId} in history`);
+    }
+
+    return updatedMessage;
+  }
+
+  test("persists ttftMs in final assistant metadata when first-token timing is available", async () => {
+    const startTime = Date.now() - 1000;
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "ttft-present-workspace",
+      messageId: "ttft-present-message",
+      historySequence: 1,
+      startTime,
+      parts: [
+        {
+          type: "text",
+          text: "hello",
+          timestamp: startTime + 250,
+        },
+      ],
+    });
+
+    expect(updatedMessage.metadata?.ttftMs).toBe(250);
+  });
+
+  test("omits ttftMs in final assistant metadata when first-token timing is unavailable", async () => {
+    const startTime = Date.now() - 1000;
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "ttft-missing-workspace",
+      messageId: "ttft-missing-message",
+      historySequence: 1,
+      startTime,
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          state: "output-available",
+          input: { script: "echo hi" },
+          output: { ok: true },
+          timestamp: startTime + 100,
+        },
+      ],
+    });
+
+    expect(updatedMessage.metadata?.ttftMs).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "ttftMs")).toBe(
+      false
+    );
+  });
+
+  describe("StreamManager - reasoning token backfill", () => {
+    test("backfills reasoningTokens from concatenated reasoning text when provider reports undefined", async () => {
+      const startTime = Date.now() - 1000;
+      const reasoningSegments = ["Thinking through ", "tradeoffs"];
+      const expectedReasoningTokens = await countTokens(
+        KNOWN_MODELS.SONNET.id,
+        reasoningSegments.join("")
+      );
+
+      const updatedMessage = await finalizeStreamAndReadMessage({
+        workspaceId: "reasoning-backfill-workspace",
+        messageId: "reasoning-backfill-message",
+        historySequence: 1,
+        startTime,
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        parts: [
+          {
+            type: "reasoning",
+            text: reasoningSegments[0],
+            timestamp: startTime + 100,
+          },
+          {
+            type: "reasoning",
+            text: reasoningSegments[1],
+            timestamp: startTime + 150,
+          },
+          {
+            type: "text",
+            text: "Final answer",
+            timestamp: startTime + 200,
+          },
+        ],
+      });
+
+      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBe(expectedReasoningTokens);
+    });
+
+    test("preserves provider-reported reasoningTokens when present", async () => {
+      const startTime = Date.now() - 1000;
+      const updatedMessage = await finalizeStreamAndReadMessage({
+        workspaceId: "reasoning-provider-workspace",
+        messageId: "reasoning-provider-message",
+        historySequence: 1,
+        startTime,
+        usage: { inputTokens: 100, outputTokens: 250, totalTokens: 350, reasoningTokens: 200 },
+        parts: [
+          {
+            type: "reasoning",
+            text: "Model-supplied chain of thought",
+            timestamp: startTime + 150,
+          },
+          {
+            type: "text",
+            text: "Summarized response",
+            timestamp: startTime + 300,
+          },
+        ],
+      });
+
+      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBe(200);
+    });
+
+    test("does not inject reasoningTokens when no reasoning deltas occurred", async () => {
+      const startTime = Date.now() - 1000;
+      const updatedMessage = await finalizeStreamAndReadMessage({
+        workspaceId: "reasoning-none-workspace",
+        messageId: "reasoning-none-message",
+        historySequence: 1,
+        startTime,
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        parts: [
+          {
+            type: "text",
+            text: "Only final response",
+            timestamp: startTime + 200,
+          },
+        ],
+      });
+
+      expect(updatedMessage.metadata?.usage?.reasoningTokens).toBeUndefined();
+    });
+  });
+});
+
 describe("StreamManager - previousResponseId recovery", () => {
   test("isResponseIdLost returns false for unknown IDs", () => {
     const streamManager = new StreamManager(historyService);
@@ -1047,6 +1704,222 @@ describe("StreamManager - replayStream", () => {
 
     // If replayStream iterates the live array, it would also emit "b".
     expect(deltas).toEqual(["a"]);
+  });
+
+  test("replayStream filters output-available tool parts using completion timestamps", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-tool-filter";
+
+    const replayedToolEnds: string[] = [];
+    streamManager.on(
+      "tool-call-end",
+      (event: { replay?: boolean | undefined; toolCallId: string }) => {
+        expect(event.replay).toBe(true);
+        replayedToolEnds.push(event.toolCallId);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    const streamInfo = {
+      state: "streaming",
+      messageId: "msg-tools",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map([
+        ["tool-old", 15],
+        ["tool-new", 30],
+      ]),
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-old",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 10,
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-new",
+          toolName: "bash",
+          input: {},
+          state: "output-available",
+          output: { ok: true },
+          timestamp: 12,
+        },
+      ],
+    };
+
+    workspaceStreams.set(workspaceId, streamInfo);
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 20 });
+
+    expect(replayedToolEnds).toEqual(["tool-new"]);
+  });
+  test("replayStream emits replay usage-delta from tracked step/cumulative usage", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage";
+    const usageEvents: Array<{
+      replay?: boolean;
+      usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    }> = [];
+
+    streamManager.on(
+      "usage-delta",
+      (event: {
+        replay?: boolean;
+        usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+        cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      }) => {
+        usageEvents.push(event);
+      }
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId);
+
+    expect(usageEvents).toHaveLength(1);
+    expect(usageEvents[0]?.replay).toBe(true);
+    expect(usageEvents[0]?.usage).toEqual({ inputTokens: 21, outputTokens: 3, totalTokens: 24 });
+    expect(usageEvents[0]?.cumulativeUsage).toEqual({
+      inputTokens: 55,
+      outputTokens: 11,
+      totalTokens: 66,
+    });
+  });
+  test("replayStream skips replay usage-delta for incremental afterTimestamp replays", async () => {
+    const streamManager = new StreamManager(historyService);
+
+    // Suppress error events from bubbling up as uncaught exceptions during tests
+    streamManager.on("error", () => undefined);
+
+    const workspaceId = "ws-replay-usage-incremental";
+    const usageEvents: Array<{ replay?: boolean }> = [];
+
+    streamManager.on("usage-delta", (event: { replay?: boolean }) => {
+      usageEvents.push(event);
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "streaming",
+      messageId: "msg-usage-incremental",
+      model: "claude-sonnet-4",
+      metadataModel: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map<string, number>(),
+      parts: [{ type: "text", text: "hello", timestamp: 10 }],
+      lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
+      cumulativeUsage: { inputTokens: 55, outputTokens: 11, totalTokens: 66 },
+      lastStepProviderMetadata: { anthropic: { cacheReadInputTokens: 2 } },
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
+    });
+
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = () => Promise.resolve(1);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 999 });
+
+    expect(usageEvents).toHaveLength(0);
+  });
+});
+
+describe("StreamManager - getStreamInfo", () => {
+  test("returns startTime so reconnect cursors can preserve live-only boundaries", () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "ws-get-stream-info";
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    if (!(workspaceStreamsValue instanceof Map)) {
+      throw new Error("StreamManager.workspaceStreams is not a Map");
+    }
+    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
+
+    workspaceStreams.set(workspaceId, {
+      state: "starting",
+      messageId: "msg-starting",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 4_321,
+      initialMetadata: {},
+      parts: [],
+      toolCompletionTimestamps: new Map<string, number>(),
+    });
+
+    const streamInfo = streamManager.getStreamInfo(workspaceId);
+
+    expect(streamInfo?.messageId).toBe("msg-starting");
+    expect(streamInfo?.startTime).toBe(4_321);
   });
 });
 

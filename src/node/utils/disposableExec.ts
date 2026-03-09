@@ -1,5 +1,32 @@
 import { exec, execFileSync, spawn } from "child_process";
 import type { ChildProcess } from "child_process";
+import type { Readable } from "stream";
+
+/**
+ * Force-close a child process's stdio streams after a process kill.
+ * On Windows, killing a process tree via taskkill doesn't always close
+ * Node.js pipe handles immediately, causing Web ReadableStream readers
+ * (from Readable.toWeb()) to hang indefinitely on reader.read().
+ * Queues an EOF first so current readers complete cleanly, then destroys
+ * the underlying Node streams to close any stuck handles.
+ */
+export function forceCloseStdio(childProcess: {
+  stdout?: Readable | null;
+  stderr?: Readable | null;
+  stdin?: { destroy(): void } | null;
+}): void {
+  if (childProcess.stdout && !childProcess.stdout.destroyed && !childProcess.stdout.readableEnded) {
+    childProcess.stdout.push(null);
+  }
+  if (childProcess.stderr && !childProcess.stderr.destroyed && !childProcess.stderr.readableEnded) {
+    childProcess.stderr.push(null);
+  }
+  setImmediate(() => {
+    childProcess.stdout?.destroy();
+    childProcess.stderr?.destroy();
+    childProcess.stdin?.destroy();
+  });
+}
 
 export function killProcessTree(pid: number): void {
   if (!Number.isFinite(pid) || pid <= 0) {

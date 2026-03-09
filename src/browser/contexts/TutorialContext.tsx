@@ -1,12 +1,15 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { TutorialTooltip, type TutorialStep } from "@/browser/components/TutorialTooltip";
+import {
+  TutorialTooltip,
+  type TutorialStep,
+} from "@/browser/components/TutorialTooltip/TutorialTooltip";
 import {
   TUTORIAL_STATE_KEY,
   DEFAULT_TUTORIAL_STATE,
   type TutorialState,
   type TutorialSequence,
 } from "@/common/constants/storage";
-import { useIsSplashScreenActive } from "@/browser/components/splashScreens/SplashScreenProvider";
+import { useIsSplashScreenActive } from "@/browser/features/SplashScreens/SplashScreenProvider";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 // Tutorial step definitions for each sequence
@@ -45,6 +48,14 @@ const TUTORIAL_SEQUENCES: Record<TutorialSequence, TutorialStep[]> = {
       target: "terminal-button",
       title: "Terminal Access",
       content: "Open a terminal window in your workspace.",
+      position: "bottom",
+    },
+  ],
+  review: [
+    {
+      target: "immersive-review",
+      title: "Immersive Review",
+      content: "Try our new immersive keyboard-driven code review experience.",
       position: "bottom",
     },
   ],

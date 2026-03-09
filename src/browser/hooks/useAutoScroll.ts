@@ -28,6 +28,14 @@ export function useAutoScroll() {
   const observerRef = useRef<ResizeObserver | null>(null);
   // Track pending RAF to coalesce rapid resize events
   const rafIdRef = useRef<number | null>(null);
+  // Debounce timer for "scroll settled" detection — fires after scrolling stops
+  // to catch cases where iOS momentum/inertial scrolling reaches the bottom but
+  // the user-interaction window (100ms after last touchmove) has already expired.
+  const scrollSettledTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set by disableAutoScroll() to prevent the scroll-settled debounce from
+  // re-arming after programmatic scrolls (scrollIntoView, etc.). Cleared when
+  // the user touches the scroll container (markUserInteraction).
+  const programmaticDisableRef = useRef(false);
 
   // Sync ref with state to ensure callbacks always have latest value
   autoScrollRef.current = autoScroll;
@@ -94,11 +102,51 @@ export function useAutoScroll() {
     }
   }, []);
 
+  // Programmatic disable — clears any pending scroll-settled recovery timer so
+  // intentional disables (navigate-to-message, edit-message) aren't undone by the
+  // debounced re-enable. Use this instead of setAutoScroll(false) for explicit
+  // code-driven disables; the scroll handler's own disable (user scrolls up)
+  // deliberately does NOT clear the timer so the debounce can recover when the
+  // user scrolls back to the bottom.
+  const disableAutoScroll = useCallback(() => {
+    setAutoScroll(false);
+    autoScrollRef.current = false;
+    programmaticDisableRef.current = true;
+    if (scrollSettledTimerRef.current) {
+      clearTimeout(scrollSettledTimerRef.current);
+      scrollSettledTimerRef.current = null;
+    }
+  }, []);
+
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const element = e.currentTarget;
     const currentScrollTop = element.scrollTop;
     const threshold = 100;
     const isAtBottom = element.scrollHeight - currentScrollTop - element.clientHeight < threshold;
+
+    // Safety net: when auto-scroll is disabled and scrolling stops at the bottom,
+    // re-enable it. Only armed on downward movement, but NOT cleared on upward
+    // events — on iOS, rubber-band bounce and momentum deceleration produce
+    // upward scroll events at the tail end, which would cancel the timer and
+    // prevent recovery. The timer always re-checks position when it fires, so
+    // stale timers from earlier downward events are harmless.
+    const isMovingDown = currentScrollTop > lastScrollTopRef.current;
+    if (!autoScrollRef.current && isMovingDown && !programmaticDisableRef.current) {
+      if (scrollSettledTimerRef.current) {
+        clearTimeout(scrollSettledTimerRef.current);
+      }
+      scrollSettledTimerRef.current = setTimeout(() => {
+        scrollSettledTimerRef.current = null;
+        if (contentRef.current && !autoScrollRef.current) {
+          const el = contentRef.current;
+          const settledAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+          if (settledAtBottom) {
+            setAutoScroll(true);
+            autoScrollRef.current = true;
+          }
+        }
+      }, 150);
+    }
 
     // Only process user-initiated scrolls (within 100ms of interaction)
     const isUserScroll = Date.now() - lastUserInteractionRef.current < 100;
@@ -112,10 +160,24 @@ export function useAutoScroll() {
     const isScrollingUp = currentScrollTop < lastScrollTopRef.current;
     const isScrollingDown = currentScrollTop > lastScrollTopRef.current;
 
-    if (isScrollingUp) {
-      // Always disable auto-scroll when scrolling up
+    // Detect iOS rubber-band overscroll: during the bounce at the bottom,
+    // scrollTop + clientHeight exceeds scrollHeight (the content is "past" the
+    // physical end). The bounce-back decreases scrollTop, which looks like
+    // scrolling up but shouldn't disable auto-scroll.
+    const maxScrollTop = element.scrollHeight - element.clientHeight;
+    const isRubberBanding = lastScrollTopRef.current > maxScrollTop;
+
+    if (isScrollingUp && !isRubberBanding) {
+      // Disable auto-scroll when scrolling up, unless this is just iOS
+      // rubber-band bounce-back from the bottom edge.
       setAutoScroll(false);
       autoScrollRef.current = false;
+      // Cancel any pending scroll-settled timer — the user explicitly scrolled
+      // up, so we should not re-enable auto-scroll even if we're near the bottom.
+      if (scrollSettledTimerRef.current) {
+        clearTimeout(scrollSettledTimerRef.current);
+        scrollSettledTimerRef.current = null;
+      }
     } else if (isScrollingDown && isAtBottom) {
       // Only enable auto-scroll if scrolling down AND reached the bottom
       setAutoScroll(true);
@@ -129,6 +191,9 @@ export function useAutoScroll() {
 
   const markUserInteraction = useCallback(() => {
     lastUserInteractionRef.current = Date.now();
+    // Clear programmatic disable flag — the user is now interacting with the
+    // scroll container, so the debounced scroll-settled recovery can re-arm.
+    programmaticDisableRef.current = false;
   }, []);
 
   return {
@@ -136,6 +201,7 @@ export function useAutoScroll() {
     innerRef,
     autoScroll,
     setAutoScroll,
+    disableAutoScroll,
     performAutoScroll,
     jumpToBottom,
     handleScroll,

@@ -61,7 +61,7 @@ describe("buildMobileCompactionPayload", () => {
     expect(payload.metadata.parsed).toMatchObject({
       model: "anthropic:claude-opus-4-1",
       maxOutputTokens: 800,
-      continueMessage: {
+      followUpContent: {
         text: parsed.continueMessage,
         fileParts: [],
         model: baseOptions.model,
@@ -93,6 +93,6 @@ describe("buildMobileCompactionPayload", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(payload.metadata.parsed.continueMessage).toBeUndefined();
+    expect(payload.metadata.parsed.followUpContent).toBeUndefined();
   });
 });

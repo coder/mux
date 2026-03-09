@@ -16,7 +16,7 @@ import {
   PowerModeEngine,
   type PowerModeBurstKind,
 } from "@/browser/utils/powerMode/PowerModeEngine";
-import { PowerModeOverlay } from "@/browser/components/PowerMode/PowerModeOverlay";
+import { PowerModeOverlay } from "@/browser/features/PowerMode/PowerModeOverlay";
 
 interface PowerModeContextValue {
   enabled: boolean;

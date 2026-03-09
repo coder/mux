@@ -23,7 +23,11 @@ async function calculateTokenStatsLatest(
   latestRequestByWorkspace.set(workspaceId, requestId);
 
   try {
-    const stats = await orpcClient.tokenizer.calculateStats({ workspaceId, messages, model });
+    const stats = await orpcClient.tokenizer.calculateStats({
+      workspaceId,
+      messages,
+      model,
+    });
     const latestRequestId = latestRequestByWorkspace.get(workspaceId);
     if (latestRequestId !== requestId) {
       throw new Error(TOKENIZER_CANCELLED_MESSAGE);
@@ -79,12 +83,19 @@ export class WorkspaceConsumerManager {
 
   // Callback to bump the store when calculation completes
   private readonly onCalculationComplete: (workspaceId: string) => void;
+  // Stable provider-config fingerprint to stamp persisted token stats cache entries.
+  // Returns null before the first config fetch completes (blocks calculation).
+  private readonly getProvidersConfigVersion: () => number | null;
 
   // Track pending store notifications to avoid duplicate bumps within the same tick
   private pendingNotifications = new Set<string>();
 
-  constructor(onCalculationComplete: (workspaceId: string) => void) {
+  constructor(
+    onCalculationComplete: (workspaceId: string) => void,
+    getProvidersConfigVersion: () => number | null
+  ) {
     this.onCalculationComplete = onCalculationComplete;
+    this.getProvidersConfigVersion = getProvidersConfigVersion;
   }
 
   /**
@@ -203,15 +214,50 @@ export class WorkspaceConsumerManager {
         const messages = sliceMessagesFromLatestCompactionBoundary(aggregator.getAllMessages());
         const model = aggregator.getCurrentModel() ?? "unknown";
 
-        // Calculate in piscina pool with timeout protection
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Calculation timeout")), CALCULATION_TIMEOUT_MS)
-        );
+        const providersConfigFingerprint = this.getProvidersConfigVersion();
+        // Skip calculation until provider config has loaded — we don't know
+        // which tokenizer/pricing to use yet. When config arrives,
+        // refreshProvidersConfig() calls invalidateAll() which clears the cache,
+        // and the next component access will naturally re-schedule calculation.
+        // Don't set needsRecalc or throw — that would create an infinite retry
+        // loop since the finally block re-schedules from needsRecalc.
+        if (providersConfigFingerprint == null) {
+          // Config not ready yet. Cache a stable "blocked" state so repeated
+          // getWorkspaceConsumers() reads don't continuously requeue work while
+          // fingerprint is null. WorkspaceStore.invalidateAll() clears this
+          // cache when config changes so tokenization retries naturally.
+          this.cache.set(workspaceId, {
+            consumers: [],
+            tokenizerName: "",
+            totalTokens: 0,
+            isCalculating: false,
+          });
+          this.notifyStoreAsync(workspaceId);
+          return;
+        }
+
+        // Calculate in piscina pool with timeout protection.
+        // Store the timer ID so we can clear it on early exit to prevent
+        // unhandled promise rejections from orphaned timeout callbacks.
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error("Calculation timeout")),
+            CALCULATION_TIMEOUT_MS
+          );
+        });
 
         const fullStats = await Promise.race([
           calculateTokenStatsLatest(workspaceId, messages, model),
           timeoutPromise,
-        ]);
+        ]).finally(() => clearTimeout(timeoutId));
+
+        // Provider mappings may change while tokenization is in flight.
+        // Drop outdated results instead of repopulating cache with stale tokenizer metadata.
+        if (this.getProvidersConfigVersion() !== providersConfigFingerprint) {
+          this.needsRecalc.set(workspaceId, aggregator);
+          throw new Error(TOKENIZER_CANCELLED_MESSAGE);
+        }
 
         // Store result in cache
         this.cache.set(workspaceId, {
@@ -290,6 +336,15 @@ export class WorkspaceConsumerManager {
     this.pendingCalcs.delete(workspaceId);
     this.needsRecalc.delete(workspaceId);
     this.pendingNotifications.delete(workspaceId);
+  }
+
+  /**
+   * Invalidate cached consumer data for all workspaces.
+   * Clears the in-memory cache so the next access triggers recalculation
+   * (e.g., after provider config changes affect tokenizer/metadata resolution).
+   */
+  invalidateAll(): void {
+    this.cache.clear();
   }
 
   /**

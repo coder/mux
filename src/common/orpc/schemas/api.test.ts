@@ -3,6 +3,7 @@ import {
   AWSCredentialStatusSchema,
   ProviderConfigInfoSchema,
   ProvidersConfigMapSchema,
+  config,
 } from "./api";
 import type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap } from "../types";
 
@@ -98,12 +99,16 @@ describe("ProviderConfigInfoSchema conformance", () => {
     // This is the most comprehensive test - includes ALL possible fields
     const full: ProviderConfigInfo = {
       apiKeySet: true,
+      apiKeyIsOpRef: true,
+      apiKeyOpRef: "op://Personal/OpenAI/credential",
       isEnabled: true,
       isConfigured: true,
       baseUrl: "https://custom.endpoint.com",
       models: ["claude-3-opus", "claude-3-sonnet"],
       serviceTier: "flex",
+      store: false,
       cacheTtl: "1h",
+      disableBetaFeatures: true,
       codexOauthSet: true,
       codexOauthDefaultAuth: "apiKey",
       aws: {
@@ -123,11 +128,15 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
     // Explicit field-by-field verification for clarity
     expect(parsed.apiKeySet).toBe(full.apiKeySet);
+    expect(parsed.apiKeyIsOpRef).toBe(full.apiKeyIsOpRef);
+    expect(parsed.apiKeyOpRef).toBe(full.apiKeyOpRef);
     expect(parsed.isEnabled).toBe(full.isEnabled);
     expect(parsed.baseUrl).toBe(full.baseUrl);
     expect(parsed.models).toEqual(full.models);
     expect(parsed.serviceTier).toBe(full.serviceTier);
+    expect(parsed.store).toBe(full.store);
     expect(parsed.cacheTtl).toBe(full.cacheTtl);
+    expect(parsed.disableBetaFeatures).toBe(full.disableBetaFeatures);
     expect(parsed.codexOauthSet).toBe(full.codexOauthSet);
     expect(parsed.codexOauthDefaultAuth).toBe(full.codexOauthDefaultAuth);
     expect(parsed.aws).toEqual(full.aws);
@@ -175,5 +184,24 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
     expect(parsed).toEqual(full);
     expect(Object.keys(parsed)).toEqual(Object.keys(full));
+  });
+});
+
+describe("config.saveConfig schema", () => {
+  it("rejects payload missing taskSettings", () => {
+    const result = config.saveConfig.input.safeParse({ agentAiDefaults: {} });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts payload with required taskSettings", () => {
+    const result = config.saveConfig.input.safeParse({
+      taskSettings: {
+        maxParallelAgentTasks: 2,
+        maxTaskNestingDepth: 3,
+      },
+    });
+
+    expect(result.success).toBe(true);
   });
 });

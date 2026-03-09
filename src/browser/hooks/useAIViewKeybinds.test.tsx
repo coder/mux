@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { useAIViewKeybinds } from "./useAIViewKeybinds";
-import type { ChatInputAPI } from "@/browser/components/ChatInput";
+import type { ChatInputAPI } from "@/browser/features/ChatInput";
 import type { APIClient } from "@/browser/contexts/API";
 import type { RecursivePartial } from "@/browser/testUtils";
 
@@ -54,6 +54,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -92,6 +93,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -134,6 +136,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -177,6 +180,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,
@@ -201,6 +205,90 @@ describe("useAIViewKeybinds", () => {
     expect(interruptStream.mock.calls.length).toBe(1);
   });
 
+  test("Shift+H loads older history when callback is provided", () => {
+    const loadOlderHistory = mock(() => undefined);
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderHook(() =>
+      useAIViewKeybinds({
+        workspaceId: "ws",
+        canInterrupt: false,
+        showRetryBarrier: false,
+        chatInputAPI,
+        jumpToBottom: () => undefined,
+        loadOlderHistory,
+        handleOpenTerminal: () => undefined,
+        handleOpenInEditor: () => undefined,
+        aggregator: undefined,
+        setEditingMessage: () => undefined,
+        vimEnabled: false,
+      })
+    );
+
+    document.body.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "H",
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(loadOlderHistory.mock.calls.length).toBe(1);
+  });
+
+  test("Escape does not interrupt when immersive review captures Escape", () => {
+    const interruptStream = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    currentClientMock = {
+      workspace: {
+        interruptStream,
+      },
+    };
+
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderHook(() =>
+      useAIViewKeybinds({
+        workspaceId: "ws",
+        canInterrupt: true,
+        showRetryBarrier: false,
+        chatInputAPI,
+        jumpToBottom: () => undefined,
+        loadOlderHistory: null,
+        handleOpenTerminal: () => undefined,
+        handleOpenInEditor: () => undefined,
+        aggregator: undefined,
+        setEditingMessage: () => undefined,
+        vimEnabled: false,
+      })
+    );
+
+    const stopImmersiveEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    // Immersive review listens in capture phase so Escape never reaches bubble-phase
+    // stream interrupt listeners.
+    window.addEventListener("keydown", stopImmersiveEscape, { capture: true });
+
+    document.body.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    window.removeEventListener("keydown", stopImmersiveEscape, { capture: true });
+
+    expect(interruptStream.mock.calls.length).toBe(0);
+  });
+
   test("Escape does not interrupt when a modal stops propagation (e.g., Settings)", () => {
     const interruptStream = mock(() =>
       Promise.resolve({ success: true as const, data: undefined })
@@ -220,6 +308,7 @@ describe("useAIViewKeybinds", () => {
         showRetryBarrier: false,
         chatInputAPI,
         jumpToBottom: () => undefined,
+        loadOlderHistory: null,
         handleOpenTerminal: () => undefined,
         handleOpenInEditor: () => undefined,
         aggregator: undefined,

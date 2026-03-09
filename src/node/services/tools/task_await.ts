@@ -12,12 +12,28 @@ import {
   requireTaskService,
   requireWorkspaceId,
 } from "./toolUtils";
+import { getErrorMessage } from "@/common/utils/errors";
+import {
+  ForegroundWaitBackgroundedError,
+  type AgentTaskStatusLookup,
+} from "@/node/services/taskService";
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
   if (timeoutSecs < 0) return undefined;
   const timeoutMs = Math.floor(timeoutSecs * 1000);
   return timeoutMs;
+}
+
+function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[]) {
+  return {
+    status: "error" as const,
+    taskId,
+    error:
+      "Do not call task_await in the same parallel tool-call batch as task or bash. " +
+      "Wait for the spawning tool result first, then call task_await in a later step. " +
+      `Use one of these returned task IDs instead: ${suggestedTaskIds.join(", ")}.`,
+  };
 }
 
 export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
@@ -36,12 +52,15 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const requestedIds: string[] | null =
         args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;
 
-      let candidateTaskIds: string[] =
-        requestedIds ?? taskService.listActiveDescendantAgentTaskIds(workspaceId);
+      const activeDescendantAgentTaskIds =
+        taskService.listActiveDescendantAgentTaskIds(workspaceId);
+      const listInScopeBackgroundBashTaskIds = async (): Promise<string[]> => {
+        if (!config.backgroundProcessManager) {
+          return [];
+        }
 
-      if (!requestedIds && config.backgroundProcessManager) {
-        const processes = await config.backgroundProcessManager.list();
         const bashTaskIds: string[] = [];
+        const processes = await config.backgroundProcessManager.list();
         for (const proc of processes) {
           if (proc.status !== "running") continue;
           const inScope =
@@ -51,10 +70,21 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           bashTaskIds.push(toBashTaskId(proc.id));
         }
 
-        candidateTaskIds = [...candidateTaskIds, ...bashTaskIds];
-      }
-
-      const uniqueTaskIds = dedupeStrings(candidateTaskIds);
+        return dedupeStrings(bashTaskIds);
+      };
+      const listInScopeAwaitableTaskIds = async (): Promise<string[]> => {
+        const awaitableTaskIds = [...activeDescendantAgentTaskIds];
+        awaitableTaskIds.push(...(await listInScopeBackgroundBashTaskIds()));
+        return dedupeStrings(awaitableTaskIds);
+      };
+      let suggestionBashTaskIdsPromise: Promise<string[]> | undefined;
+      const getSuggestionBashTaskIds = async (): Promise<string[]> => {
+        suggestionBashTaskIdsPromise ??= listInScopeBackgroundBashTaskIds().catch(() => []);
+        return await suggestionBashTaskIdsPromise;
+      };
+      const uniqueTaskIds = requestedIds
+        ? dedupeStrings(requestedIds)
+        : await listInScopeAwaitableTaskIds();
 
       const agentTaskIds = uniqueTaskIds.filter((taskId) => !taskId.startsWith("bash:"));
       const bulkFilter = (
@@ -86,6 +116,13 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             ).filter((taskId): taskId is string => typeof taskId === "string");
 
       const descendantAgentTaskIdSet = new Set(descendantAgentTaskIds);
+      const rejectedAgentTaskIds = agentTaskIds.filter(
+        (taskId) => !descendantAgentTaskIdSet.has(taskId)
+      );
+      const rejectedAgentTaskStatuses =
+        rejectedAgentTaskIds.length > 0
+          ? taskService.getAgentTaskStatuses(rejectedAgentTaskIds)
+          : new Map<string, AgentTaskStatusLookup>();
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
@@ -156,7 +193,22 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           }
 
           if (!descendantAgentTaskIdSet.has(taskId)) {
-            return { status: "invalid_scope" as const, taskId };
+            const lookup = rejectedAgentTaskStatuses.get(taskId);
+            const activeTaskIds =
+              activeDescendantAgentTaskIds.length > 0 ? activeDescendantAgentTaskIds : undefined;
+            if (requestedIds) {
+              const suggestedTaskIds = dedupeStrings([
+                ...activeDescendantAgentTaskIds,
+                ...(await getSuggestionBashTaskIds()),
+              ]);
+              if (suggestedTaskIds.length > 0) {
+                return buildTaskAwaitSequencingError(taskId, suggestedTaskIds);
+              }
+            }
+            if (!lookup?.exists) {
+              return { status: "not_found" as const, taskId, activeTaskIds };
+            }
+            return { status: "invalid_scope" as const, taskId, activeTaskIds };
           }
 
           // When timeout_secs=0 (or rounds down to 0ms), task_await should be non-blocking.
@@ -175,6 +227,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 timeoutMs: 1,
                 abortSignal,
                 requestingWorkspaceId: workspaceId,
+                backgroundOnMessageQueued: true,
               });
 
               const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
@@ -186,7 +239,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
               };
             } catch (error: unknown) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               if (/not found/i.test(message)) {
                 return { status: "not_found" as const, taskId };
               }
@@ -199,6 +252,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               timeoutMs,
               abortSignal,
               requestingWorkspaceId: workspaceId,
+              backgroundOnMessageQueued: true,
             });
 
             const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
@@ -210,11 +264,26 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
             };
           } catch (error: unknown) {
+            if (error instanceof ForegroundWaitBackgroundedError) {
+              const currentStatus = taskService.getAgentTaskStatus(taskId);
+              const normalizedStatus =
+                currentStatus === "queued" ||
+                currentStatus === "running" ||
+                currentStatus === "awaiting_report"
+                  ? currentStatus
+                  : ("running" as const);
+              return {
+                status: normalizedStatus,
+                taskId,
+                note: "Task sent to background because a new message was queued. Use task_await to monitor progress.",
+              };
+            }
+
             if (abortSignal?.aborted) {
               return { status: "error" as const, taskId, error: "Interrupted" };
             }
 
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             if (/not found/i.test(message)) {
               return { status: "not_found" as const, taskId };
             }

@@ -200,12 +200,16 @@ export function loadTokenizerModules(
   );
 }
 
-export async function getTokenizerForModel(modelString: string): Promise<Tokenizer> {
+export async function getTokenizerForModel(
+  modelString: string,
+  metadataModelOverride?: string
+): Promise<Tokenizer> {
   if (shouldUseApproxTokenizer()) {
     return getApproxTokenizer();
   }
 
-  const modelName = resolveModelName(modelString);
+  const resolvedModel = metadataModelOverride ?? modelString;
+  const modelName = resolveModelName(resolvedModel);
   const encodingName = await resolveEncoding(modelName);
 
   return {
@@ -241,10 +245,14 @@ export function countTokensForData(data: unknown, tokenizer: Tokenizer): Promise
 
 export async function getToolDefinitionTokens(
   toolName: string,
-  modelString: string
+  modelString: string,
+  metadataModelOverride: string | undefined,
+  availableToolsOptions: Parameters<typeof getAvailableTools>[1]
 ): Promise<number> {
   try {
-    const availableTools = getAvailableTools(modelString);
+    // Tool availability is runtime-model specific (provider + model used for the request),
+    // but tokenization should follow metadata-model overrides when configured.
+    const availableTools = getAvailableTools(modelString, availableToolsOptions);
     if (!availableTools.includes(toolName)) {
       return 0;
     }
@@ -255,7 +263,8 @@ export async function getToolDefinitionTokens(
       return 40;
     }
 
-    return countTokens(modelString, JSON.stringify(toolSchema));
+    const tokenizerModel = metadataModelOverride ?? modelString;
+    return countTokens(tokenizerModel, JSON.stringify(toolSchema));
   } catch {
     const fallbackSizes: Record<string, number> = {
       bash: 65,

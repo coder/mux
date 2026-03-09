@@ -14,21 +14,21 @@ describe("resolveSSHConfig", () => {
       await fs.mkdir(path.join(tempDir, ".ssh"), { recursive: true });
 
       const config = [
-        "Host *.coder",
+        "Host *.mux--coder",
         "  User coder-user",
         "  UserKnownHostsFile /dev/null",
         "",
-        'Match host *.coder !exec "exit 1"',
+        'Match host *.mux--coder !exec "exit 1"',
         "  ProxyCommand /usr/local/bin/coder --stdio %h",
         "",
       ].join("\n");
 
       await fs.writeFile(path.join(tempDir, ".ssh", "config"), config, "utf8");
 
-      const resolved = await resolveSSHConfig("pog2.coder");
+      const resolved = await resolveSSHConfig("pog2.mux--coder");
 
       expect(resolved.user).toBe("coder-user");
-      expect(resolved.hostName).toBe("pog2.coder");
+      expect(resolved.hostName).toBe("pog2.mux--coder");
       expect(resolved.proxyCommand).toBe("/usr/local/bin/coder --stdio %h");
     } finally {
       if (previousUserProfile === undefined) {

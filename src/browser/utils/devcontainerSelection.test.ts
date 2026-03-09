@@ -3,7 +3,7 @@ import {
   resolveDevcontainerSelection,
   DEFAULT_DEVCONTAINER_CONFIG_PATH,
 } from "./devcontainerSelection";
-import type { RuntimeAvailabilityState } from "@/browser/components/ChatInput/useCreationWorkspace";
+import type { RuntimeAvailabilityState } from "@/browser/features/ChatInput/useCreationWorkspace";
 
 describe("resolveDevcontainerSelection", () => {
   describe("non-devcontainer mode", () => {

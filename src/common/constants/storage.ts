@@ -66,6 +66,14 @@ export const LAST_CUSTOM_MODEL_PROVIDER_KEY = "lastCustomModelProvider";
 export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
 
 /**
+ * User preference for what to show on app launch (global).
+ * Values: "dashboard" | "new-chat" | "last-workspace"
+ */
+export const LAUNCH_BEHAVIOR_KEY = "launchBehavior";
+
+export type LaunchBehavior = "dashboard" | "new-chat" | "last-workspace";
+
+/**
  * Get the localStorage key for expanded projects in sidebar (global)
  * Format: "expandedProjects"
  */
@@ -86,8 +94,17 @@ export const WORKSPACE_DRAFTS_BY_PROJECT_KEY = "workspaceDraftsByProject";
  * mirrored into ~/.mux/config.json for portability across server ports.
  */
 export const GATEWAY_MODELS_KEY = "gateway-models"; // enabled model IDs (canonical)
-export const GATEWAY_CONFIGURED_KEY = "gateway-available"; // synced from provider config
 export const GATEWAY_ENABLED_KEY = "gateway-enabled"; // global on/off toggle
+
+/**
+ * Storage key for runtime enablement settings (shared via ~/.mux/config.json).
+ */
+export const RUNTIME_ENABLEMENT_KEY = "runtimeEnablement";
+
+/**
+ * Storage key for global default runtime selection (shared via ~/.mux/config.json).
+ */
+export const DEFAULT_RUNTIME_KEY = "defaultRuntime";
 
 /**
  * Get the localStorage key for cached MCP server test results (per project)
@@ -105,6 +122,15 @@ export function getMCPTestResultsKey(projectPath: string): string {
  */
 export function getArchivedWorkspacesKey(projectPath: string): string {
   return `archivedWorkspaces:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for archived workspaces expand/collapse state.
+ * Format: "archivedWorkspacesExpanded:{projectPath}"
+ * Stores: boolean (true = expanded)
+ */
+export function getArchivedWorkspacesExpandedKey(projectPath: string): string {
+  return `archivedWorkspacesExpanded:${projectPath}`;
 }
 
 /**
@@ -189,18 +215,12 @@ export function getPendingWorkspaceSendErrorKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for auto-retry preference for a workspace
+ * LEGACY: Get the localStorage key for pre-backend auto-retry preference.
+ *
+ * Kept only for one-way migration during onChat subscription.
  */
 export function getAutoRetryKey(workspaceId: string): string {
   return `${workspaceId}-autoRetry`;
-}
-
-/**
- * Get the localStorage key for retry state for a workspace
- * Stores: { attempt, totalRetryTime, retryStartTime }
- */
-export function getRetryStateKey(workspaceId: string): string {
-  return `${workspaceId}-retryState`;
 }
 
 /**
@@ -289,12 +309,6 @@ export const DEFAULT_MODEL_KEY = "model-default";
 export const HIDDEN_MODELS_KEY = "hidden-models";
 
 /**
- * Get the localStorage key for the preferred compaction model (global)
- * Format: "preferredCompactionModel"
- */
-export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
-
-/**
  * Get the localStorage key for the preferred System 1 model (global)
  * Format: "preferredSystem1Model"
  */
@@ -374,11 +388,11 @@ export const DEFAULT_TERMINAL_FONT_CONFIG: TerminalFontConfig = {
 
 /**
  * Tutorial state storage key (global)
- * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true } }
+ * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true, review?: true } }
  */
 export const TUTORIAL_STATE_KEY = "tutorialState";
 
-export type TutorialSequence = "creation" | "workspace";
+export type TutorialSequence = "creation" | "workspace" | "review";
 
 export interface TutorialState {
   disabled: boolean;
@@ -476,15 +490,6 @@ export function getStatusStateKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for session timing stats for a workspace
- * Stores aggregate timing data: totalDurationMs, totalToolExecutionMs, totalTtftMs, ttftCount, responseCount
- * Format: "sessionTiming:{workspaceId}"
- */
-export function getSessionTimingKey(workspaceId: string): string {
-  return `sessionTiming:${workspaceId}`;
-}
-
-/**
  * Get the localStorage key for last-read timestamps per workspace.
  * Format: "workspaceLastRead:{workspaceId}"
  */
@@ -503,6 +508,15 @@ export const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
  * Format: "left-sidebar:width"
  */
 export const LEFT_SIDEBAR_WIDTH_KEY = "left-sidebar:width";
+
+/**
+ * Mobile left sidebar scroll position.
+ *
+ * The mobile sidebar content unmounts when collapsed, so we persist scrollTop
+ * to restore the previous browse position when the menu is reopened.
+ * Format: "mobile-left-sidebar:scroll-top"
+ */
+export const MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY = "mobile-left-sidebar:scroll-top";
 
 /**
  * Right sidebar tab selection (global)
@@ -560,6 +574,15 @@ export function getReviewsKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for immersive review mode state per workspace
+ * Tracks whether immersive mode is active
+ * Format: "review-immersive:{workspaceId}"
+ */
+export function getReviewImmersiveKey(workspaceId: string): string {
+  return `review-immersive:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for auto-compaction enabled preference per workspace
  * Format: "autoCompaction:enabled:{workspaceId}"
  */
@@ -588,8 +611,6 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getAgentIdKey,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
-  getAutoRetryKey,
-  getRetryStateKey,
   getReviewStateKey,
   getHunkFirstSeenKey,
   getReviewExpandStateKey,
@@ -597,6 +618,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getFileTreeExpandStateKey,
   getReviewSearchStateKey,
   getReviewsKey,
+  getReviewImmersiveKey,
   getAutoCompactionEnabledKey,
   getWorkspaceLastReadKey,
   getStatusStateKey,

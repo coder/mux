@@ -16,25 +16,18 @@ import type { Client } from "ssh2";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
-import type { SSHConnectionConfig } from "./sshConnectionPool";
+import type { SSHConnectionConfig, ConnectionHealth } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
+import type { SshPromptService } from "@/node/services/sshPromptService";
 
-/**
- * Connection health status
- */
-export type ConnectionStatus = "healthy" | "unhealthy" | "unknown";
+let sshPromptService: SshPromptService | undefined;
 
-/**
- * Connection health state for a single SSH target
- */
-export interface ConnectionHealth {
-  status: ConnectionStatus;
-  lastSuccess?: Date;
-  lastFailure?: Date;
-  lastError?: string;
-  backoffUntil?: Date;
-  consecutiveFailures: number;
+export function setSshPromptService(svc: SshPromptService): void {
+  sshPromptService = svc;
 }
+
+// ConnectionStatus and ConnectionHealth are shared with the OpenSSH pool —
+// imported from sshConnectionPool.ts to avoid duplication.
 
 /**
  * Backoff schedule in seconds: 1s → 2s → 4s → 7s → 10s (cap)
@@ -494,6 +487,9 @@ export class SSH2ConnectionPool {
         const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
         const keysToTry: Array<Buffer | undefined> =
           readableKeys.length > 0 ? readableKeys : [undefined];
+        // Keep the sshPromptService wiring in place so known_hosts-backed
+        // verification can be restored without changing the public module API.
+        void sshPromptService;
 
         const connectWithKey = async (
           privateKey: Buffer | undefined,
@@ -611,6 +607,10 @@ export class SSH2ConnectionPool {
               keepaliveInterval: 5000,
               keepaliveCountMax: 2,
               ...(privateKey ? { privateKey } : {}),
+              // TODO(ethanndickson): Implement known_hosts support for SSH2
+              // and restore interactive host key verification once approvals
+              // can be persisted between connections.
+              hostVerifier: () => true,
             };
 
             client.connect(connectOptions);

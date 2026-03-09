@@ -1,0 +1,567 @@
+import assert from "node:assert/strict";
+import { parentPort } from "node:worker_threads";
+import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
+import { getErrorMessage } from "@/common/utils/errors";
+import { decideSyncPlan, type SyncAction } from "./backfillDecision";
+import { shouldCheckpointAfterSync } from "./checkpointDecision";
+import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
+import {
+  CREATE_DELEGATION_ROLLUPS_TABLE_SQL,
+  CREATE_EVENTS_TABLE_SQL,
+  CREATE_WATERMARK_TABLE_SQL,
+} from "./schemaSql";
+import { discoverAllWorkspaces } from "./workspaceDiscovery";
+import { executeNamedQuery, executeRawQuery, type RawQueryResult } from "./queries";
+
+interface WorkerTaskRequest {
+  messageId: number;
+  taskName: string;
+  data: unknown;
+}
+
+interface WorkerShutdownRequest {
+  type: "shutdown";
+}
+
+type WorkerRequest = WorkerTaskRequest | WorkerShutdownRequest;
+
+interface WorkerSuccessResponse {
+  messageId: number;
+  result: unknown;
+}
+
+interface WorkerErrorResponse {
+  messageId: number;
+  error: {
+    message: string;
+    stack?: string;
+  };
+}
+
+interface InitData {
+  dbPath: string;
+}
+
+interface WorkspaceMeta {
+  projectPath?: string;
+  projectName?: string;
+  workspaceName?: string;
+  parentWorkspaceId?: string;
+}
+
+interface IngestData {
+  workspaceId: string;
+  sessionDir: string;
+  meta?: WorkspaceMeta;
+}
+
+interface RebuildAllData {
+  sessionsDir: string;
+  workspaceMetaById?: Record<string, WorkspaceMeta>;
+}
+
+interface SyncCheckData {
+  sessionsDir: string;
+  workspaceMetaById: Record<string, WorkspaceMeta>;
+}
+
+interface SyncCheckResult {
+  action: SyncAction;
+  workspacesIngested: number;
+  workspacesPurged: number;
+}
+
+interface ClearWorkspaceData {
+  workspaceId: string;
+}
+
+interface QueryData {
+  queryName: string;
+  params: Record<string, unknown>;
+}
+
+interface RawQueryData {
+  sql: string;
+}
+
+const DELEGATION_ROLLUPS_COLUMN_MIGRATIONS_SQL = [
+  "ALTER TABLE delegation_rollups ADD COLUMN IF NOT EXISTS input_tokens INTEGER DEFAULT 0",
+  "ALTER TABLE delegation_rollups ADD COLUMN IF NOT EXISTS output_tokens INTEGER DEFAULT 0",
+  "ALTER TABLE delegation_rollups ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER DEFAULT 0",
+  "ALTER TABLE delegation_rollups ADD COLUMN IF NOT EXISTS cached_tokens INTEGER DEFAULT 0",
+  "ALTER TABLE delegation_rollups ADD COLUMN IF NOT EXISTS cache_create_tokens INTEGER DEFAULT 0",
+] as const;
+
+let instance: DuckDBInstance | null = null;
+let conn: DuckDBConnection | null = null;
+let readOnlyConn: DuckDBConnection | null = null;
+let isShuttingDown = false;
+
+function getConn(): DuckDBConnection {
+  assert(conn, "analytics worker has not been initialized");
+  return conn;
+}
+
+function getReadOnlyConn(): DuckDBConnection {
+  assert(readOnlyConn, "analytics worker read-only connection has not been initialized");
+  return readOnlyConn;
+}
+
+async function handleInit(data: InitData): Promise<void> {
+  assert(data.dbPath.trim().length > 0, "init requires a non-empty dbPath");
+  assert(
+    instance == null && conn == null && readOnlyConn == null,
+    "analytics worker init must only run once per process"
+  );
+
+  const createdInstance = await DuckDBInstance.create(data.dbPath);
+  instance = createdInstance;
+  conn = await createdInstance.connect();
+  readOnlyConn = await createdInstance.connect();
+
+  // DuckDB access_mode is immutable after opening a database handle. We still
+  // keep a dedicated connection for raw queries, and enforce read-only behavior
+  // in executeRawQuery by wrapping user SQL in a SELECT subquery.
+
+  const activeConn = getConn();
+  await activeConn.run(CREATE_EVENTS_TABLE_SQL);
+  await activeConn.run(CREATE_WATERMARK_TABLE_SQL);
+  await activeConn.run(CREATE_DELEGATION_ROLLUPS_TABLE_SQL);
+  for (const migrationSql of DELEGATION_ROLLUPS_COLUMN_MIGRATIONS_SQL) {
+    await activeConn.run(migrationSql);
+  }
+}
+
+async function handleIngest(data: IngestData): Promise<void> {
+  assert(data.workspaceId.trim().length > 0, "ingest requires workspaceId");
+  assert(data.sessionDir.trim().length > 0, "ingest requires sessionDir");
+
+  await ingestWorkspace(getConn(), data.workspaceId, data.sessionDir, data.meta ?? {});
+}
+
+async function handleRebuildAll(data: RebuildAllData): Promise<{ workspacesIngested: number }> {
+  assert(data.sessionsDir.trim().length > 0, "rebuildAll requires sessionsDir");
+  if (data.workspaceMetaById != null) {
+    assert(
+      isRecord(data.workspaceMetaById) && !Array.isArray(data.workspaceMetaById),
+      "rebuildAll workspaceMetaById must be an object when provided"
+    );
+  }
+
+  return rebuildAll(getConn(), data.sessionsDir, data.workspaceMetaById ?? {});
+}
+
+async function handleClearWorkspace(data: ClearWorkspaceData): Promise<void> {
+  assert(data.workspaceId.trim().length > 0, "clearWorkspace requires workspaceId");
+  await clearWorkspaceAnalyticsState(getConn(), data.workspaceId);
+}
+
+async function handleQuery(data: QueryData): Promise<unknown> {
+  assert(data.queryName.trim().length > 0, "query requires queryName");
+  return executeNamedQuery(getConn(), data.queryName, data.params);
+}
+
+async function handleRawQuery(data: RawQueryData): Promise<RawQueryResult> {
+  assert(
+    typeof data.sql === "string" && data.sql.trim().length > 0,
+    "rawQuery requires non-empty sql"
+  );
+  return executeRawQuery(getReadOnlyConn(), data.sql);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseNonNegativeInteger(value: unknown): number | null {
+  if (typeof value === "bigint") {
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      return null;
+    }
+
+    return parsed;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return null;
+  }
+
+  return value;
+}
+
+function parseBooleanLike(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const parsed = parseNonNegativeInteger(value);
+  if (parsed === 0) {
+    return false;
+  }
+
+  if (parsed === 1) {
+    return true;
+  }
+
+  return null;
+}
+
+function parseNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  if (value.trim().length === 0) {
+    return null;
+  }
+
+  return value;
+}
+
+async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
+  const result = await getConn().run("SELECT workspace_id FROM ingest_watermarks");
+  const rows = await result.getRowObjectsJS();
+
+  const watermarkWorkspaceIds = new Set<string>();
+  for (const row of rows) {
+    const workspaceId = parseNonEmptyString(row.workspace_id);
+    assert(
+      workspaceId !== null,
+      "syncCheck expected ingest_watermarks rows to have non-empty workspace_id"
+    );
+    watermarkWorkspaceIds.add(workspaceId);
+  }
+
+  return watermarkWorkspaceIds;
+}
+
+async function checkpointIfNeeded(
+  action: SyncAction,
+  workspacesIngested: number,
+  workspacesPurged: number
+): Promise<void> {
+  if (!shouldCheckpointAfterSync(action, workspacesIngested, workspacesPurged)) {
+    return;
+  }
+
+  try {
+    await getConn().run("CHECKPOINT");
+  } catch (error) {
+    // Non-fatal: DuckDB will auto-checkpoint eventually or on next clean shutdown.
+    process.stderr.write(
+      `[analytics-worker] Post-sync checkpoint failed (non-fatal): ${getErrorMessage(error)}\n`
+    );
+  }
+}
+
+async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
+  assert(data.sessionsDir.trim().length > 0, "syncCheck requires sessionsDir");
+  assert(
+    isRecord(data.workspaceMetaById) && !Array.isArray(data.workspaceMetaById),
+    "syncCheck workspaceMetaById must be an object"
+  );
+
+  const syncStartMs = performance.now();
+
+  const result = await getConn().run(`
+    SELECT
+      (SELECT COUNT(*) FROM events) AS event_count,
+      (SELECT COUNT(*) FROM ingest_watermarks) AS watermark_count,
+      (SELECT EXISTS(SELECT 1 FROM ingest_watermarks WHERE last_sequence >= 0))
+        AS has_any_watermark_at_or_above_zero
+  `);
+  const rows = await result.getRowObjectsJS();
+  assert(rows.length === 1, "syncCheck should return exactly one row");
+
+  const eventCount = parseNonNegativeInteger(rows[0].event_count);
+  assert(eventCount !== null, "syncCheck expected a non-negative integer event_count");
+
+  const watermarkCount = parseNonNegativeInteger(rows[0].watermark_count);
+  assert(watermarkCount !== null, "syncCheck expected a non-negative integer watermark_count");
+
+  const hasAnyWatermarkAtOrAboveZero = parseBooleanLike(rows[0].has_any_watermark_at_or_above_zero);
+  assert(
+    hasAnyWatermarkAtOrAboveZero !== null,
+    "syncCheck expected boolean has_any_watermark_at_or_above_zero"
+  );
+
+  const discoveredWorkspacesById = await discoverAllWorkspaces(data.sessionsDir);
+  const knownWorkspaceIds = new Set(discoveredWorkspacesById.keys());
+
+  const watermarkWorkspaceIds = await listWatermarkWorkspaceIds();
+  assert(
+    watermarkWorkspaceIds.size === watermarkCount,
+    "syncCheck expected watermark_count to match ingest_watermarks workspace IDs"
+  );
+
+  const plan = decideSyncPlan({
+    eventCount,
+    watermarkCount,
+    knownWorkspaceIds,
+    watermarkWorkspaceIds,
+    hasAnyWatermarkAtOrAboveZero,
+  });
+
+  if (plan.action === "noop") {
+    const elapsedMs = Math.round(performance.now() - syncStartMs);
+    process.stderr.write(
+      `[analytics-worker] syncCheck: plan=noop, workspacesOnDisk=${knownWorkspaceIds.size}, watermarksInDB=${watermarkWorkspaceIds.size} (${elapsedMs}ms)\n`
+    );
+
+    return {
+      action: "noop",
+      workspacesIngested: 0,
+      workspacesPurged: 0,
+    };
+  }
+
+  if (plan.action === "full_rebuild") {
+    const { workspacesIngested } = await rebuildAll(
+      getConn(),
+      data.sessionsDir,
+      data.workspaceMetaById
+    );
+    await checkpointIfNeeded(plan.action, workspacesIngested, 0);
+
+    const elapsedMs = Math.round(performance.now() - syncStartMs);
+    process.stderr.write(
+      `[analytics-worker] syncCheck: plan=full_rebuild, workspacesIngested=${workspacesIngested}, workspacesOnDisk=${knownWorkspaceIds.size} (${elapsedMs}ms)\n`
+    );
+
+    return {
+      action: "full_rebuild",
+      workspacesIngested,
+      workspacesPurged: 0,
+    };
+  }
+
+  let workspacesIngested = 0;
+  for (const workspaceId of plan.workspaceIdsToIngest) {
+    const discoveredWorkspace = discoveredWorkspacesById.get(workspaceId);
+    assert(
+      discoveredWorkspace != null,
+      `syncCheck expected discovered workspace entry for ${workspaceId}`
+    );
+
+    let workspaceMeta = data.workspaceMetaById[workspaceId];
+    if (workspaceMeta == null && discoveredWorkspace.parentWorkspaceId != null) {
+      // Archived subagent workspaces are keyed under their parent workspace IDs in config
+      // metadata. Inherit parent project metadata to match rebuildAll behavior.
+      const parentMeta = data.workspaceMetaById[discoveredWorkspace.parentWorkspaceId];
+      if (parentMeta != null) {
+        workspaceMeta = {
+          projectPath: parentMeta.projectPath,
+          projectName: parentMeta.projectName,
+        };
+      }
+    }
+    workspaceMeta ??= {};
+
+    try {
+      await ingestWorkspace(getConn(), workspaceId, discoveredWorkspace.sessionDir, workspaceMeta);
+      workspacesIngested += 1;
+    } catch (error) {
+      process.stderr.write(
+        `[analytics-worker] Failed to ingest workspace during sync check (${workspaceId}): ${getErrorMessage(error)}\n`
+      );
+    }
+  }
+
+  let workspacesPurged = 0;
+  for (const workspaceId of plan.workspaceIdsToPurge) {
+    try {
+      await clearWorkspaceAnalyticsState(getConn(), workspaceId);
+      workspacesPurged += 1;
+    } catch (error) {
+      process.stderr.write(
+        `[analytics-worker] Failed to purge workspace during sync check (${workspaceId}): ${getErrorMessage(error)}\n`
+      );
+    }
+  }
+
+  await checkpointIfNeeded(plan.action, workspacesIngested, workspacesPurged);
+
+  const elapsedMs = Math.round(performance.now() - syncStartMs);
+  process.stderr.write(
+    `[analytics-worker] syncCheck: plan=incremental, ingested=${workspacesIngested}, purged=${workspacesPurged}, toIngest=${plan.workspaceIdsToIngest.length}, toPurge=${plan.workspaceIdsToPurge.length} (${elapsedMs}ms)\n`
+  );
+
+  return {
+    action: "incremental",
+    workspacesIngested,
+    workspacesPurged,
+  };
+}
+
+function isWorkerTaskRequest(message: unknown): message is WorkerTaskRequest {
+  if (!isRecord(message)) {
+    return false;
+  }
+
+  const messageId = message.messageId;
+  if (typeof messageId !== "number" || !Number.isInteger(messageId) || messageId < 0) {
+    return false;
+  }
+
+  const taskName = message.taskName;
+  return typeof taskName === "string" && taskName.trim().length > 0;
+}
+
+function isWorkerShutdownRequest(message: unknown): message is WorkerShutdownRequest {
+  return isRecord(message) && message.type === "shutdown";
+}
+
+function closeDuckDb(): void {
+  const activeReadOnlyConn = readOnlyConn;
+  const activeConn = conn;
+  const activeInstance = instance;
+  readOnlyConn = null;
+  conn = null;
+  instance = null;
+
+  try {
+    if (activeReadOnlyConn != null) {
+      activeReadOnlyConn.disconnectSync();
+    }
+  } finally {
+    try {
+      if (activeConn != null) {
+        activeConn.disconnectSync();
+      }
+    } finally {
+      if (activeInstance != null) {
+        activeInstance.closeSync();
+      }
+    }
+  }
+}
+
+// Shutdown runs in the serialized message queue, so we only close DuckDB
+// after earlier ETL/query tasks have completed on this worker thread.
+function handleShutdown(): void {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+  let exitCode = 0;
+
+  try {
+    process.stderr.write("[analytics-worker] Shutting down, closing DuckDB\n");
+    closeDuckDb();
+  } catch (error) {
+    exitCode = 1;
+    process.stderr.write(
+      `[analytics-worker] Failed to close DuckDB during shutdown: ${getErrorMessage(error)}\n`
+    );
+  }
+
+  workerParentPort.removeAllListeners("message");
+  workerParentPort.close();
+  process.exit(exitCode);
+}
+
+async function dispatchTask(taskName: string, data: unknown): Promise<unknown> {
+  switch (taskName) {
+    case "init":
+      return handleInit(data as InitData);
+    case "ingest":
+      return handleIngest(data as IngestData);
+    case "rebuildAll":
+      return handleRebuildAll(data as RebuildAllData);
+    case "clearWorkspace":
+      return handleClearWorkspace(data as ClearWorkspaceData);
+    case "query":
+      return handleQuery(data as QueryData);
+    case "rawQuery":
+      return handleRawQuery(data as RawQueryData);
+    case "syncCheck":
+      return handleSyncCheck(data as SyncCheckData);
+    default:
+      throw new Error(`Unknown analytics worker task: ${taskName}`);
+  }
+}
+
+function requireParentPort(): NonNullable<typeof parentPort> {
+  if (parentPort == null) {
+    throw new Error("analytics worker requires a parentPort");
+  }
+
+  return parentPort;
+}
+
+const workerParentPort = requireParentPort();
+
+function toResponseMessageId(message: WorkerTaskRequest): number {
+  if (Number.isInteger(message.messageId) && message.messageId >= 0) {
+    return message.messageId;
+  }
+
+  return -1;
+}
+
+function postWorkerResponse(response: WorkerSuccessResponse | WorkerErrorResponse): void {
+  try {
+    workerParentPort.postMessage(response);
+  } catch (error) {
+    process.stderr.write(
+      `[analytics-worker] Failed to post worker response: ${getErrorMessage(error)}\n`
+    );
+  }
+}
+
+async function processMessage(message: WorkerTaskRequest): Promise<void> {
+  const responseMessageId = toResponseMessageId(message);
+
+  try {
+    assert(
+      Number.isInteger(message.messageId) && message.messageId >= 0,
+      "analytics worker message must include a non-negative integer messageId"
+    );
+    assert(
+      typeof message.taskName === "string" && message.taskName.trim().length > 0,
+      "analytics worker message requires taskName"
+    );
+
+    const result = await dispatchTask(message.taskName, message.data);
+    const response: WorkerSuccessResponse = {
+      messageId: responseMessageId,
+      result,
+    };
+    postWorkerResponse(response);
+  } catch (error) {
+    const response: WorkerErrorResponse = {
+      messageId: responseMessageId,
+      error: {
+        message: getErrorMessage(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+    };
+    postWorkerResponse(response);
+  }
+}
+
+let messageQueue: Promise<void> = Promise.resolve();
+
+workerParentPort.on("message", (message: WorkerRequest) => {
+  // Serialize ETL/query tasks and shutdown so dispose can wait for in-flight
+  // DuckDB work to finish before we disconnect and close the database.
+  if (isWorkerShutdownRequest(message)) {
+    messageQueue = messageQueue.then(
+      () => handleShutdown(),
+      () => handleShutdown()
+    );
+    return;
+  }
+
+  if (!isWorkerTaskRequest(message)) {
+    process.stderr.write("[analytics-worker] Dropping invalid worker message payload\n");
+    return;
+  }
+
+  messageQueue = messageQueue.then(
+    () => processMessage(message),
+    () => processMessage(message)
+  );
+});

@@ -7,9 +7,10 @@ set -euo pipefail
 # This script orchestrates Codex + checks in one polling loop:
 #   1) wait_pr_codex.sh --once
 #   2) wait_pr_checks.sh --once
+#   3) check_codex_comments.sh (only when both gates pass)
 #
 # It exits immediately on the first terminal failure and succeeds only when
-# both gates report success.
+# all gates report success.
 
 if [ $# -ne 1 ]; then
   echo "Usage: $0 <pr_number>" >&2
@@ -22,11 +23,18 @@ if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+# Polling every 30s reduces GitHub API churn while still giving timely readiness updates.
+POLL_INTERVAL_SECS=30
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 WAIT_CODEX_SCRIPT="$SCRIPT_DIR/wait_pr_codex.sh"
 WAIT_CHECKS_SCRIPT="$SCRIPT_DIR/wait_pr_checks.sh"
+CHECK_CODEX_COMMENTS_SCRIPT="$SCRIPT_DIR/check_codex_comments.sh"
+# shellcheck source=./lib/branch_sync_guard.sh
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/branch_sync_guard.sh"
 
-for required in "$WAIT_CODEX_SCRIPT" "$WAIT_CHECKS_SCRIPT"; do
+for required in "$WAIT_CODEX_SCRIPT" "$WAIT_CHECKS_SCRIPT" "$CHECK_CODEX_COMMENTS_SCRIPT"; do
   if [ ! -x "$required" ]; then
     echo "❌ Required executable script is missing or not executable: $required" >&2
     exit 1
@@ -59,6 +67,56 @@ status_from_rc() {
       ;;
   esac
 }
+
+load_repo_context() {
+  local repo_info
+
+  if ! repo_info=$(gh repo view --json owner,name --jq '{owner: .owner.login, name: .name}' 2>/dev/null); then
+    echo "❌ Failed to resolve repository owner/name via 'gh repo view'." >&2
+    return 1
+  fi
+
+  MUX_GH_OWNER=$(echo "$repo_info" | jq -r '.owner // empty')
+  MUX_GH_REPO=$(echo "$repo_info" | jq -r '.name // empty')
+
+  if [[ -z "$MUX_GH_OWNER" || -z "$MUX_GH_REPO" ]]; then
+    echo "❌ assertion failed: unable to parse repository owner/name from gh output" >&2
+    echo "$repo_info" >&2
+    return 1
+  fi
+}
+
+assert_clean_and_synced_branch() {
+  if ! git diff-index --quiet HEAD --; then
+    echo "❌ Error: You have uncommitted changes in your working directory." >&2
+    echo "" >&2
+    git status --short >&2
+    echo "" >&2
+    echo "Please commit or stash your changes before checking PR status." >&2
+    return 1
+  fi
+
+  assert_branch_synced || return 1
+}
+
+load_repo_context
+assert_clean_and_synced_branch
+
+# Child scripts reuse this context to avoid repeated gh repo lookups and duplicate git fetch calls.
+export MUX_GH_OWNER
+export MUX_GH_REPO
+export MUX_SKIP_FETCH_SYNC=1
+
+PR_DATA_FILE=$(mktemp)
+REACTIONS_SCAN_CACHE_FILE="${PR_DATA_FILE}.reactions-scan"
+cleanup() {
+  rm -f "$PR_DATA_FILE" "$REACTIONS_SCAN_CACHE_FILE"
+}
+trap cleanup EXIT
+
+# Share the latest PR GraphQL payload across child scripts to avoid duplicate API calls.
+export MUX_PR_DATA_FILE="$PR_DATA_FILE"
+export MUX_REACTIONS_SCAN_CACHE_FILE="$REACTIONS_SCAN_CACHE_FILE"
 
 echo "🚦 Waiting for PR #$PR_NUMBER to become ready (Codex + CI, fail-fast)..."
 echo ""
@@ -123,11 +181,47 @@ while true; do
   fi
 
   if [ "$CODEX_RC" -eq 0 ] && [ "$CHECKS_RC" -eq 0 ]; then
+    # Avoid a false "not ready" result for already-merged PRs: historical unresolved
+    # Codex threads should not block a merged terminal state.
+    PR_STATE=$(gh pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || echo "error")
+
+    case "$PR_STATE" in
+      MERGED)
+        echo ""
+        echo ""
+        echo "🎉 PR #$PR_NUMBER is already merged."
+        exit 0
+        ;;
+      OPEN) ;;
+      *)
+        echo ""
+        echo ""
+        echo "❌ assertion failed: unable to classify PR state '$PR_STATE' for PR #$PR_NUMBER" >&2
+        exit 1
+        ;;
+    esac
+
+    if CODEX_COMMENTS_OUT=$("$CHECK_CODEX_COMMENTS_SCRIPT" "$PR_NUMBER" 2>&1); then
+      echo ""
+      echo ""
+      echo "🎉 PR #$PR_NUMBER is ready: Codex approved, required checks passed, and no unresolved Codex comments remain."
+      exit 0
+    fi
+
     echo ""
     echo ""
-    echo "🎉 PR #$PR_NUMBER is ready: Codex approved and required checks passed."
-    exit 0
+    echo "❌ PR #$PR_NUMBER is not ready."
+    echo ""
+    echo "--- Codex comment gate output ---"
+    if [ -n "$CODEX_COMMENTS_OUT" ]; then
+      echo "$CODEX_COMMENTS_OUT"
+    else
+      echo "(no output)"
+    fi
+    echo ""
+    echo "Resolve outstanding Codex comments (or request another @codex review) and rerun this script."
+    exit 1
   fi
 
-  sleep 5
+  sleep "$POLL_INTERVAL_SECS"
 done

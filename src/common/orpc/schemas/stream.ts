@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AgentIdSchema } from "./agentDefinition";
+import { ThinkingLevelSchema } from "../../types/thinking";
 import { AgentModeSchema } from "../../types/mode";
-import { THINKING_LEVELS } from "../../types/thinking";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
@@ -20,11 +20,59 @@ import { RuntimeModeSchema } from "./runtime";
 export const HeartbeatEventSchema = z.object({
   type: z.literal("heartbeat"),
 });
-export const CaughtUpMessageSchema = z.object({
-  type: z.literal("caught-up"),
+
+// --- OnChat subscription cursor/mode schemas ---
+
+/** Cursor for where the client left off in persisted history. */
+export const OnChatHistoryCursorSchema = z.object({
+  messageId: z.string(),
+  historySequence: z.number(),
+  // Oldest historySequence visible when the cursor was created.
+  // Server uses this to detect truncation/compaction that removed older rows
+  // while the client was disconnected, forcing a safe full replay fallback.
+  oldestHistorySequence: z.number().optional(),
+  // Fingerprint for all rows strictly older than historySequence.
+  // This lets the server detect middle-row deletions/rewrites below the cursor
+  // and force a full replay instead of leaving stale rows client-side.
+  priorHistoryFingerprint: z.string().optional(),
 });
 
-/** Sent when a workspace becomes eligible for idle compaction while connected */
+/** Cursor for where the client left off in an active stream. */
+export const OnChatStreamCursorSchema = z.object({
+  messageId: z.string(),
+  lastTimestamp: z.number(),
+});
+
+/** Combined cursor the client sends on reconnect. */
+export const OnChatCursorSchema = z.object({
+  history: OnChatHistoryCursorSchema.optional(),
+  stream: OnChatStreamCursorSchema.optional(),
+});
+
+/** Discriminated mode for workspace.onChat subscription. */
+export const OnChatModeSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("full") }),
+  z.object({
+    type: z.literal("since"),
+    // Since-mode requires a persisted-history anchor; stream-only cursors are unsafe
+    // because the frontend uses append semantics for since reconnects.
+    cursor: OnChatCursorSchema.extend({ history: OnChatHistoryCursorSchema }),
+  }),
+  z.object({ type: z.literal("live") }),
+]);
+
+export const CaughtUpMessageSchema = z.object({
+  type: z.literal("caught-up"),
+  /** Which replay strategy the server actually used. */
+  replay: z.enum(["full", "since", "live"]).optional(),
+  /**
+   * Authoritative pagination signal for full replays.
+   * Omitted for since/live replays so the client can preserve existing pagination state.
+   */
+  hasOlderHistory: z.boolean().optional(),
+  /** Server's cursor at end of replay (client should use this for next reconnect). */
+  cursor: OnChatCursorSchema.optional(),
+});
 
 /**
  * Progress event for runtime readiness checks.
@@ -39,8 +87,32 @@ export const RuntimeStatusEventSchema = z.object({
   detail: z.string().optional(), // Human-readable status like "Starting Coder workspace..."
 });
 
-export const IdleCompactionNeededEventSchema = z.object({
-  type: z.literal("idle-compaction-needed"),
+export const AutoCompactionTriggeredEventSchema = z.object({
+  type: z.literal("auto-compaction-triggered"),
+  reason: z.enum(["on-send", "mid-stream", "idle"]),
+  usagePercent: z.number(),
+});
+
+export const AutoCompactionCompletedEventSchema = z.object({
+  type: z.literal("auto-compaction-completed"),
+  newUsagePercent: z.number(),
+});
+
+export const AutoRetryScheduledEventSchema = z.object({
+  type: z.literal("auto-retry-scheduled"),
+  attempt: z.number(),
+  delayMs: z.number(),
+  scheduledAt: z.number(),
+});
+
+export const AutoRetryStartingEventSchema = z.object({
+  type: z.literal("auto-retry-starting"),
+  attempt: z.number(),
+});
+
+export const AutoRetryAbandonedEventSchema = z.object({
+  type: z.literal("auto-retry-abandoned"),
+  reason: z.string(),
 });
 
 export const StreamErrorMessageSchema = z.object({
@@ -48,14 +120,16 @@ export const StreamErrorMessageSchema = z.object({
   messageId: z.string(),
   error: z.string(),
   errorType: StreamErrorTypeSchema,
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
 });
 
 export const DeleteMessageSchema = z.object({
   type: z.literal("delete"),
   historySequences: z.array(z.number()),
 });
-
-const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
@@ -82,6 +156,10 @@ export const StreamStartEventSchema = z.object({
   thinkingLevel: ThinkingLevelSchema.optional().meta({
     description: "Effective thinking level after model policy clamping",
   }),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching stream events" }),
 });
 
 export const StreamDeltaEventSchema = z.object({
@@ -135,6 +213,10 @@ export const StreamEndEventSchema = z.object({
   type: z.literal("stream-end"),
   workspaceId: z.string(),
   messageId: z.string(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
   metadata: z
     .object({
       model: z.string(),
@@ -150,6 +232,7 @@ export const StreamEndEventSchema = z.object({
       // Last step's provider metadata (for context window cache display)
       contextProviderMetadata: z.record(z.string(), z.unknown()).optional(),
       duration: z.number().optional(),
+      ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
       historySequence: z.number().optional().meta({
         description: "Present when loading from history",
@@ -190,6 +273,10 @@ export const StreamAbortEventSchema = z.object({
       description: "Metadata may contain usage if abort occurred after stream completed processing",
     }),
   abandonPartial: z.boolean().optional(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
 });
 
 export const ToolCallStartEventSchema = z.object({
@@ -305,6 +392,10 @@ export const ErrorEventSchema = z.object({
   messageId: z.string(),
   error: z.string(),
   errorType: StreamErrorTypeSchema.optional(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for matching terminal events" }),
 });
 
 /**
@@ -322,6 +413,10 @@ export const UsageDeltaEventSchema = z.object({
   type: z.literal("usage-delta"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
 
   // Step-level: this step only (for context window display)
   usage: LanguageModelV2UsageSchema,
@@ -386,6 +481,7 @@ export const QueuedMessageChangedEventSchema = z.object({
   displayText: z.string(),
   fileParts: z.array(FilePartSchema).optional(),
   reviews: z.array(ReviewNoteDataSchema).optional(),
+  queueDispatchMode: z.enum(["tool-end", "turn-end"]).optional(),
   /** True when the queued message is a compaction request (/compact) */
   hasCompactionRequest: z.boolean().optional(),
 });
@@ -427,8 +523,13 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   SessionUsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
-  // Idle compaction notification
-  IdleCompactionNeededEventSchema,
+  // Auto-compaction status events
+  AutoCompactionTriggeredEventSchema,
+  AutoCompactionCompletedEventSchema,
+  // Auto-retry status events
+  AutoRetryScheduledEventSchema,
+  AutoRetryStartingEventSchema,
+  AutoRetryAbandonedEventSchema,
   // Runtime status events
   RuntimeStatusEventSchema,
   // Init events
@@ -478,9 +579,9 @@ export const ExperimentsSchema = z.object({
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+  thinkingLevel: ThinkingLevelSchema.optional(),
   model: z.string("No model specified"),
-  system1ThinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
+  system1ThinkingLevel: ThinkingLevelSchema.optional(),
   system1Model: z.string().optional(),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
@@ -492,6 +593,14 @@ export const SendMessageOptionsSchema = z.object({
     description: "Legacy base mode (plan/exec/compact) for backend fallback",
   }),
   providerOptions: MuxProviderOptionsSchema.optional(),
+  acpPromptId: z
+    .string()
+    .optional()
+    .meta({ description: "ACP prompt correlation id for terminal stream matching" }),
+  delegatedToolNames: z
+    .array(z.string())
+    .optional()
+    .meta({ description: "Tool names delegated back to ACP clients for this request" }),
   muxMetadata: z.any().optional(), // Black box
   /**
    * When true, skip persisting AI settings (e.g., for one-shot or compaction sends).
@@ -504,6 +613,7 @@ export const SendMessageOptionsSchema = z.object({
    * iterating on agent files - a broken agent in the worktree won't affect message sending.
    */
   disableWorkspaceAgents: z.boolean().optional(),
+  queueDispatchMode: z.enum(["tool-end", "turn-end"]).nullish(),
 });
 
 // Re-export ChatUsageDisplaySchema for convenience

@@ -23,7 +23,12 @@ import * as os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "../setup";
-import { generateBranchName, cleanupTempGitRepo, waitForInitComplete } from "../helpers";
+import {
+  generateBranchName,
+  cleanupTempGitRepo,
+  waitForInitComplete,
+  trustProject,
+} from "../helpers";
 import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import {
   isDockerAvailable,
@@ -164,6 +169,7 @@ describeIntegration("Origin fetch ordering during workspace creation", () => {
           const branchName = generateBranchName("origin-fetch-test");
 
           // Create workspace with new branch
+          await trustProject(env, repoPath);
           const result = await env.orpc.workspace.create({
             projectPath: repoPath,
             branchName,
@@ -232,6 +238,7 @@ describeIntegration("Origin fetch ordering during workspace creation", () => {
           // The local branch exists but doesn't have the origin commit
 
           // Create workspace with the existing branch
+          await trustProject(env, repoPath);
           const result = await env.orpc.workspace.create({
             projectPath: repoPath,
             branchName,
@@ -300,6 +307,7 @@ describeIntegration("Origin fetch ordering during workspace creation", () => {
           const branchName = generateBranchName("fallback-test");
 
           // Create workspace - should succeed despite unreachable origin
+          await trustProject(env, repoPath);
           const result = await env.orpc.workspace.create({
             projectPath: repoPath,
             branchName,
@@ -382,6 +390,7 @@ describeIntegration("Origin fetch ordering during workspace creation", () => {
           const branchName = generateBranchName("local-ahead-test");
 
           // Create workspace - should preserve local unpushed work
+          await trustProject(env, repoPath);
           const result = await env.orpc.workspace.create({
             projectPath: repoPath,
             branchName,
@@ -460,6 +469,7 @@ describeIntegration("Origin fetch ordering during workspace creation", () => {
 
           // Create workspace - origin fetch will fail (local path inaccessible from SSH),
           // but workspace should still be created from bundled local state
+          await trustProject(env, repoPath);
           const result = await env.orpc.workspace.create({
             projectPath: repoPath,
             branchName,
@@ -527,6 +537,7 @@ describeIntegration("Origin fetch ordering during workspace creation", () => {
           const branchName = generateBranchName("ssh-unreachable-origin");
           const runtimeConfig = getSSHRuntimeConfig();
 
+          await trustProject(env, repoPath);
           const result = await env.orpc.workspace.create({
             projectPath: repoPath,
             branchName,

@@ -8,11 +8,21 @@ import { log } from "@/node/services/log";
  * Extension metadata for a single workspace.
  * Shared between main app (ExtensionMetadataService) and VS Code extension.
  */
+export interface ExtensionAgentStatus {
+  emoji: string;
+  message: string;
+  url?: string;
+}
+
 export interface ExtensionMetadata {
   recency: number;
   streaming: boolean;
   lastModel: string | null;
   lastThinkingLevel: ThinkingLevel | null;
+  agentStatus: ExtensionAgentStatus | null;
+  // Persists the latest status_set URL so later status_set calls without a URL
+  // can still carry the last deep link even after agentStatus is cleared.
+  lastStatusUrl?: string | null;
 }
 
 /**
@@ -32,9 +42,41 @@ export function getExtensionMetadataPath(rootDir?: string): string {
 }
 
 /**
+ * Coerce an unknown value into a valid ExtensionAgentStatus, or null if invalid.
+ * Shared between the sync reader (extensionMetadata.ts) and ExtensionMetadataService.
+ */
+export function coerceAgentStatus(value: unknown): ExtensionAgentStatus | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (typeof record.emoji !== "string" || typeof record.message !== "string") {
+    return null;
+  }
+
+  if (record.url !== undefined && typeof record.url !== "string") {
+    return null;
+  }
+
+  return {
+    emoji: record.emoji,
+    message: record.message,
+    ...(typeof record.url === "string" ? { url: record.url } : {}),
+  };
+}
+
+/**
+ * Coerce an unknown value into a string URL, or null if not a string.
+ */
+export function coerceStatusUrl(url: unknown): string | null {
+  return typeof url === "string" ? url : null;
+}
+
+/**
  * Read extension metadata from JSON file.
  * Returns a map of workspace ID to metadata.
- * Used by both the main app and VS Code extension.
+ * Used by both the main app and VS Code extension (vscode/src/muxConfig.ts).
  */
 export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
   const metadataPath = getExtensionMetadataPath();
@@ -56,11 +98,15 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
     const map = new Map<string, ExtensionMetadata>();
     for (const [workspaceId, metadata] of Object.entries(data.workspaces || {})) {
       const rawThinkingLevel = (metadata as { lastThinkingLevel?: unknown }).lastThinkingLevel;
+      const rawAgentStatus = (metadata as { agentStatus?: unknown }).agentStatus;
+      const rawLastStatusUrl = (metadata as { lastStatusUrl?: unknown }).lastStatusUrl;
       map.set(workspaceId, {
         recency: metadata.recency,
         streaming: metadata.streaming,
         lastModel: metadata.lastModel ?? null,
         lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
+        agentStatus: coerceAgentStatus(rawAgentStatus),
+        lastStatusUrl: coerceStatusUrl(rawLastStatusUrl),
       });
     }
 

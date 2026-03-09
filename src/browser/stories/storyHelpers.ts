@@ -15,6 +15,7 @@ import type {
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
@@ -322,8 +323,9 @@ export function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
     if (handler) {
       return handler(emit);
     }
-    // Default: emit caught-up immediately
-    queueMicrotask(() => emit({ type: "caught-up" }));
+    // Default: emit caught-up immediately. Modern backends include hasOlderHistory
+    // on full replays; default to false in stories to avoid phantom pagination UI.
+    queueMicrotask(() => emit({ type: "caught-up", hasOlderHistory: false }));
     return undefined;
   };
 }
@@ -352,6 +354,7 @@ export interface SimpleChatSetupOptions {
   /** Git diff output for Review tab */
   gitDiff?: GitDiffFixture;
   providersConfig?: ProvidersConfigMap;
+  agentAiDefaults?: AgentAiDefaults;
   backgroundProcesses?: BackgroundProcessFixture[];
   /** Session usage data for Costs tab */
   statsTabEnabled?: boolean;
@@ -467,8 +470,8 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     onChat,
     executeBash,
     providersConfig: opts.providersConfig,
+    agentAiDefaults: opts.agentAiDefaults,
     backgroundProcesses: bgProcesses,
-    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
     sessionUsage: sessionUsageMap,
     subagentTranscripts: opts.subagentTranscripts,
     idleCompactionHours,
@@ -575,7 +578,6 @@ export function setupStreamingChatStory(opts: StreamingChatSetupOptions): APICli
     onChat: createOnChatAdapter(chatHandlers),
     executeBash: createGitStatusExecutor(gitStatus),
     workspaceStatsSnapshots,
-    statsTabVariant: opts.statsTabEnabled ? "stats" : "control",
   });
 }
 

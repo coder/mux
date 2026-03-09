@@ -35,11 +35,14 @@ import { createMuxMessage } from "@/common/types/message";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
+import type { DevToolsService } from "./devToolsService";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
 import * as toolsModule from "@/common/utils/tools/tools";
+import * as providerOptionsModule from "@/common/utils/ai/providerOptions";
 import * as systemMessageModule from "./systemMessage";
 
 describe("AIService", () => {
@@ -60,6 +63,247 @@ describe("AIService", () => {
   it("should create an AIService instance", () => {
     expect(service).toBeDefined();
     expect(service).toBeInstanceOf(AIService);
+  });
+});
+
+describe("AIService.setupStreamEventForwarding", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("forwards stream-abort even when partial cleanup throws", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-abort-forwarding");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const cleanupError = new Error("disk full");
+    const deletePartialSpy = spyOn(historyService, "deletePartial").mockImplementation(() =>
+      Promise.reject(cleanupError)
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    const abortEvent: StreamAbortEvent = {
+      type: "stream-abort",
+      workspaceId: "workspace-1",
+      messageId: "message-1",
+      abandonPartial: true,
+    };
+    internals.pendingDevToolsRunMetadataByMessageId.set(abortEvent.messageId, {
+      workspaceId: abortEvent.workspaceId,
+      metadataId: "metadata-1",
+    });
+
+    const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
+      service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
+    });
+
+    streamManager.emit("stream-abort", abortEvent);
+
+    expect(await forwardedAbortPromise).toEqual(abortEvent);
+    expect(deletePartialSpy).toHaveBeenCalledWith(abortEvent.workspaceId);
+    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(abortEvent.workspaceId, "metadata-1");
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has(abortEvent.messageId)).toBe(false);
+  });
+
+  it("forwards stream-abort with empty messageId without throwing", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-abort-empty-message-id");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    internals.pendingDevToolsRunMetadataByMessageId.set("message-1", {
+      workspaceId: "workspace-1",
+      metadataId: "metadata-1",
+    });
+
+    const abortEvent: StreamAbortEvent = {
+      type: "stream-abort",
+      workspaceId: "workspace-1",
+      messageId: "",
+      abandonPartial: true,
+    };
+
+    const forwardedAbortPromise = new Promise<StreamAbortEvent>((resolve) => {
+      service.once("stream-abort", (event) => resolve(event as StreamAbortEvent));
+    });
+
+    streamManager.emit("stream-abort", abortEvent);
+
+    expect(await forwardedAbortPromise).toEqual(abortEvent);
+    expect(clearPendingRunMetadataSpy).not.toHaveBeenCalled();
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has("message-1")).toBe(true);
+  });
+
+  it("clears tracked devtools run metadata on stream error", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-error-devtools-cleanup");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    const errorEvent: ErrorEvent = {
+      type: "error",
+      workspaceId: "workspace-1",
+      messageId: "message-1",
+      error: "request failed",
+      errorType: "rate_limit",
+    };
+    internals.pendingDevToolsRunMetadataByMessageId.set(errorEvent.messageId, {
+      workspaceId: errorEvent.workspaceId,
+      metadataId: "metadata-1",
+    });
+
+    const forwardedErrorPromise = new Promise<ErrorEvent>((resolve) => {
+      service.once("error", (event) => resolve(event as ErrorEvent));
+    });
+
+    streamManager.emit("error", errorEvent);
+
+    expect(await forwardedErrorPromise).toEqual(errorEvent);
+    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(errorEvent.workspaceId, "metadata-1");
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has(errorEvent.messageId)).toBe(false);
+  });
+
+  it("clears tracked devtools run metadata on stream-end", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-end-devtools-cleanup");
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const clearPendingRunMetadataSpy = mock(
+      (_workspaceId: string, _metadataId?: string) => undefined
+    );
+    const devToolsService = {
+      enabled: true,
+      clearPendingRunMetadata: clearPendingRunMetadataSpy,
+    } as unknown as DevToolsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      devToolsService
+    );
+
+    const internals = service as unknown as {
+      streamManager: StreamManager;
+      pendingDevToolsRunMetadataByMessageId: Map<
+        string,
+        { workspaceId: string; metadataId: string }
+      >;
+    };
+    const streamManager = internals.streamManager;
+    const endEvent: StreamEndEvent = {
+      type: "stream-end",
+      workspaceId: "workspace-1",
+      messageId: "message-1",
+      metadata: {
+        model: "anthropic:claude-opus-4-1",
+      },
+      parts: [],
+    };
+    internals.pendingDevToolsRunMetadataByMessageId.set(endEvent.messageId, {
+      workspaceId: endEvent.workspaceId,
+      metadataId: "metadata-1",
+    });
+
+    const forwardedEndPromise = new Promise<StreamEndEvent>((resolve) => {
+      service.once("stream-end", (event) => resolve(event as StreamEndEvent));
+    });
+
+    streamManager.emit("stream-end", endEvent);
+
+    expect(await forwardedEndPromise).toEqual(endEvent);
+    expect(clearPendingRunMetadataSpy).toHaveBeenCalledWith(endEvent.workspaceId, "metadata-1");
+    expect(internals.pendingDevToolsRunMetadataByMessageId.has(endEvent.messageId)).toBe(false);
   });
 });
 
@@ -271,11 +515,35 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     delete process.env.OPENAI_API_KEY;
     try {
       const service = createService(muxHome.path);
-      const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+      const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toEqual({ type: "oauth_not_connected", provider: "openai" });
+      }
+    } finally {
+      if (savedKey !== undefined) {
+        process.env.OPENAI_API_KEY = savedKey;
+      }
+    }
+  });
+
+  it("returns api_key_not_found for released gpt-5.3-codex when OAuth and API key are missing", async () => {
+    using muxHome = new DisposableTempDir("codex-api-model-missing-auth");
+
+    await writeProvidersConfig(muxHome.path, {
+      openai: {},
+    });
+
+    const savedKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const service = createService(muxHome.path);
+      const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({ type: "api_key_not_found", provider: "openai" });
       }
     } finally {
       if (savedKey !== undefined) {
@@ -292,7 +560,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     });
 
     const service = createService(muxHome.path);
-    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
     // Should succeed — falls back to API key instead of erroring with oauth_not_connected
     expect(result.success).toBe(true);
@@ -314,7 +582,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     });
 
     const service = createService(muxHome.path);
-    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+    const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
     expect(result.success).toBe(true);
   });
@@ -527,7 +795,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       const responseBody = {
         id: "resp_test",
         created_at: 0,
-        model: "gpt-5.2-codex",
+        model: "gpt-5.3-codex",
         output: [
           {
             type: "message",
@@ -582,7 +850,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
         }),
     } as CodexOauthService);
 
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    const modelResult = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(modelResult.success).toBe(true);
     if (!modelResult.success) return;
 
@@ -676,7 +944,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       const responseBody = {
         id: "resp_test",
         created_at: 0,
-        model: "gpt-5.2-codex",
+        model: "gpt-5.3-codex",
         output: [
           {
             type: "message",
@@ -724,7 +992,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
         }),
     } as CodexOauthService);
 
-    const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    const modelResult = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(modelResult.success).toBe(true);
     if (!modelResult.success) return;
 
@@ -1127,8 +1395,456 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     ]);
 
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
-    expect(openaiOptions.previousResponseId).toBe("resp_before_malformed");
+    expect(openaiOptions.previousResponseId).toBeUndefined();
     expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
+  });
+});
+
+describe("AIService.streamMessage model parameter overrides", () => {
+  const ANTHROPIC_MODEL = "anthropic:claude-sonnet-4-5";
+
+  interface ModelParameterOverridesHarness {
+    service: AIService;
+    config: Config;
+    startStreamCalls: unknown[][];
+  }
+
+  function createWorkspaceMetadata(workspaceId: string, projectPath: string): WorkspaceMetadata {
+    return {
+      id: workspaceId,
+      name: "workspace-model-overrides",
+      projectName: "project-model-overrides",
+      projectPath,
+      runtimeConfig: { type: "local" },
+    };
+  }
+
+  function providerOptionsFromStartStreamCall(startStreamArgs: unknown[]): Record<string, unknown> {
+    const providerOptions = startStreamArgs[11];
+    if (!providerOptions || typeof providerOptions !== "object" || Array.isArray(providerOptions)) {
+      throw new Error("Expected provider options object at startStream arg index 11");
+    }
+
+    return providerOptions as Record<string, unknown>;
+  }
+
+  function callSettingsOverridesFromStartStreamCall(
+    startStreamArgs: unknown[]
+  ): Record<string, unknown> {
+    const callSettingsOverrides = startStreamArgs[21];
+    if (
+      !callSettingsOverrides ||
+      typeof callSettingsOverrides !== "object" ||
+      Array.isArray(callSettingsOverrides)
+    ) {
+      throw new Error("Expected call settings overrides object at startStream arg index 21");
+    }
+
+    return callSettingsOverrides as Record<string, unknown>;
+  }
+
+  function createHarness(
+    muxHomePath: string,
+    metadata: WorkspaceMetadata
+  ): ModelParameterOverridesHarness {
+    const config = new Config(muxHomePath);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const service = new AIService(config, historyService, initStateManager, providerService);
+
+    const startStreamCalls: unknown[][] = [];
+
+    const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
+      success: true,
+      data: {
+        effectiveAgentId: "exec",
+        agentDefinition: {
+          id: "exec",
+          scope: "built-in",
+          frontmatter: { name: "Exec" },
+          body: "Exec agent body",
+        },
+        agentDiscoveryPath: metadata.projectPath,
+        isSubagentWorkspace: false,
+        agentIsPlanLike: false,
+        effectiveMode: "exec",
+        taskSettings: DEFAULT_TASK_SETTINGS,
+        taskDepth: 0,
+        shouldDisableTaskToolsForDepth: false,
+        effectiveToolPolicy: undefined,
+        toolNamesForSentinel: [],
+      },
+    };
+    spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);
+
+    spyOn(streamContextBuilder, "buildPlanInstructions").mockResolvedValue({
+      effectiveAdditionalInstructions: undefined,
+      planFilePath: path.join(metadata.projectPath, "plan.md"),
+      planContentForTransition: undefined,
+    });
+
+    spyOn(streamContextBuilder, "buildStreamSystemContext").mockResolvedValue({
+      agentSystemPrompt: "test-agent-prompt",
+      systemMessage: "test-system-message",
+      systemMessageTokens: 1,
+      agentDefinitions: undefined,
+      availableSkills: undefined,
+    });
+
+    spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
+      const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
+        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
+      >;
+      return Promise.resolve(preparedMessages);
+    });
+
+    spyOn(toolsModule, "getToolsForModel").mockResolvedValue({});
+    spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
+
+    const fakeModel = Object.create(null) as LanguageModel;
+    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in streamMessage test harness");
+    }
+
+    const resolveAndCreateModelResult: Awaited<
+      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
+    > = {
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: ANTHROPIC_MODEL,
+        canonicalModelString: ANTHROPIC_MODEL,
+        canonicalProviderName: "anthropic",
+        canonicalModelId: "claude-sonnet-4-5",
+        routedThroughGateway: false,
+      },
+    };
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
+      resolveAndCreateModelResult
+    );
+
+    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
+      success: true,
+      data: metadata,
+    });
+
+    spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
+
+    spyOn(config, "findWorkspace").mockReturnValue({
+      workspacePath: metadata.projectPath,
+      projectPath: metadata.projectPath,
+    });
+
+    spyOn(historyService, "commitPartial").mockResolvedValue({
+      success: true,
+      data: undefined,
+    });
+
+    spyOn(historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
+      message.metadata = {
+        ...(message.metadata ?? {}),
+        historySequence: 9,
+      };
+
+      return Promise.resolve({ success: true, data: undefined });
+    });
+
+    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
+    const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
+
+    spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
+    spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
+      path.join(metadata.projectPath, ".tmp-stream")
+    );
+    spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
+    spyOn(streamManager, "startStream").mockImplementation((...args: unknown[]) => {
+      startStreamCalls.push(args);
+
+      const startStreamResult: Awaited<ReturnType<StreamManager["startStream"]>> = {
+        success: true,
+        data: streamToken,
+      };
+
+      return Promise.resolve(startStreamResult);
+    });
+
+    return {
+      service,
+      config,
+      startStreamCalls,
+    };
+  }
+
+  async function streamAndGetStartStreamArgs(
+    harness: ModelParameterOverridesHarness,
+    workspaceId: string,
+    modelString = ANTHROPIC_MODEL
+  ): Promise<unknown[]> {
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString,
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const startStreamCall = harness.startStreamCalls[0];
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+
+    return startStreamCall;
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("passes resolved call settings overrides as the final startStream argument", async () => {
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-standard");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-standard";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
+      anthropic: {
+        modelParameters: {
+          "claude-sonnet-4-5": {
+            max_output_tokens: 16384,
+            temperature: 0.7,
+          },
+        },
+      },
+    });
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(harness, workspaceId);
+    expect(callSettingsOverridesFromStartStreamCall(startStreamArgs)).toEqual({
+      maxOutputTokens: 16384,
+      temperature: 0.7,
+    });
+  });
+
+  it("deep-merges provider extras under Mux-built provider options", async () => {
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-provider-extras");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-provider-extras";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
+      anthropic: {
+        modelParameters: {
+          "*": {
+            custom_knob: 40,
+          },
+        },
+      },
+    });
+
+    spyOn(providerOptionsModule, "buildProviderOptions").mockReturnValue({
+      anthropic: {
+        thinking: { type: "enabled" },
+      },
+    });
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(harness, workspaceId);
+    expect(providerOptionsFromStartStreamCall(startStreamArgs)).toEqual({
+      anthropic: {
+        custom_knob: 40,
+        thinking: { type: "enabled" },
+      },
+    });
+  });
+
+  it("passes empty call settings overrides when providers config is empty", async () => {
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-empty");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-empty";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue({});
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(harness, workspaceId);
+    expect(startStreamArgs[21]).toEqual({});
+  });
+
+  it("preserves Mux-built provider options when provider extras conflict", async () => {
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-conflict");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-conflict";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
+      anthropic: {
+        modelParameters: {
+          "*": {
+            thinking: { type: "disabled" },
+            custom_knob: 10,
+          },
+        },
+      },
+    });
+
+    spyOn(providerOptionsModule, "buildProviderOptions").mockReturnValue({
+      anthropic: {
+        thinking: { type: "enabled" },
+        sendReasoning: true,
+      },
+    });
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(harness, workspaceId);
+    expect(providerOptionsFromStartStreamCall(startStreamArgs)).toEqual({
+      anthropic: {
+        custom_knob: 10,
+        thinking: { type: "enabled" },
+        sendReasoning: true,
+      },
+    });
+  });
+
+  it("deep-merges nested provider extras with Mux-built options", async () => {
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-nested");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-nested";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    // Override to OpenRouter provider
+    const providerModelFactory = Reflect.get(
+      harness.service,
+      "providerModelFactory"
+    ) as ProviderModelFactory;
+    const fakeModel = Object.create(null) as LanguageModel;
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: "openrouter:deepseek/deepseek-r1",
+        canonicalModelString: "openrouter:deepseek/deepseek-r1",
+        canonicalProviderName: "openrouter",
+        canonicalModelId: "deepseek/deepseek-r1",
+        routedThroughGateway: false,
+      },
+    });
+
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
+      openrouter: {
+        modelParameters: {
+          "*": {
+            reasoning: { max_tokens: 4096 },
+          },
+        },
+      },
+    });
+
+    spyOn(providerOptionsModule, "buildProviderOptions").mockReturnValue({
+      openrouter: {
+        reasoning: {
+          enabled: true,
+          effort: "high",
+          exclude: false,
+        },
+      },
+    });
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(
+      harness,
+      workspaceId,
+      "openrouter:deepseek/deepseek-r1"
+    );
+    expect(providerOptionsFromStartStreamCall(startStreamArgs)).toEqual({
+      openrouter: {
+        reasoning: {
+          max_tokens: 4096,
+          enabled: true,
+          effort: "high",
+          exclude: false,
+        },
+      },
+    });
+  });
+
+  it("Mux values win on nested leaf conflicts during deep merge", async () => {
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-nested-conflict");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-nested-conflict";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    // Override to OpenRouter provider
+    const providerModelFactory = Reflect.get(
+      harness.service,
+      "providerModelFactory"
+    ) as ProviderModelFactory;
+    const fakeModel = Object.create(null) as LanguageModel;
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: "openrouter:deepseek/deepseek-r1",
+        canonicalModelString: "openrouter:deepseek/deepseek-r1",
+        canonicalProviderName: "openrouter",
+        canonicalModelId: "deepseek/deepseek-r1",
+        routedThroughGateway: false,
+      },
+    });
+
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
+      openrouter: {
+        modelParameters: {
+          "*": {
+            reasoning: { enabled: false, max_tokens: 4096 },
+          },
+        },
+      },
+    });
+
+    spyOn(providerOptionsModule, "buildProviderOptions").mockReturnValue({
+      openrouter: {
+        reasoning: {
+          enabled: true,
+          effort: "high",
+          exclude: false,
+        },
+      },
+    });
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(
+      harness,
+      workspaceId,
+      "openrouter:deepseek/deepseek-r1"
+    );
+    expect(providerOptionsFromStartStreamCall(startStreamArgs)).toEqual({
+      openrouter: {
+        reasoning: {
+          max_tokens: 4096,
+          enabled: true,
+          effort: "high",
+          exclude: false,
+        },
+      },
+    });
   });
 });
 

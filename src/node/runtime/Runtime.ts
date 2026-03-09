@@ -177,6 +177,8 @@ export interface WorkspaceCreationParams {
   initLogger: InitLogger;
   /** Optional abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 /**
@@ -214,6 +216,8 @@ export interface WorkspaceInitParams {
    * NOTE: This skips only hook execution, not runtime provisioning.
    */
   skipInitHook?: boolean;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 /**
@@ -244,6 +248,8 @@ export interface WorkspaceForkParams {
   initLogger: InitLogger;
   /** Signal to abort long-running operations (e.g. cp -R -P or git worktree add) */
   abortSignal?: AbortSignal;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 /**
@@ -535,7 +541,8 @@ export interface Runtime {
     projectPath: string,
     oldName: string,
     newName: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<
     { success: true; oldPath: string; newPath: string } | { success: false; error: string }
   >;
@@ -560,7 +567,8 @@ export interface Runtime {
     projectPath: string,
     workspaceName: string,
     force: boolean,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }>;
 
   /**
@@ -578,10 +586,10 @@ export interface Runtime {
   ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult>;
 
   /**
-   * Fork an existing workspace to create a new one
-   * Creates a new workspace branching from the source workspace's current branch
-   * - LocalRuntime: Detects source branch via git, creates new worktree from that branch
-   * - SSHRuntime: Currently unimplemented (returns static error)
+   * Fork an existing workspace to create a new one.
+   * Creates a new workspace branching from the source workspace's current branch.
+   * Capability and error behavior are runtime-defined; shared orchestration
+   * (see forkOrchestrator.ts) handles policy differences between user and task forks.
    *
    * @param params Fork parameters (source workspace name, new workspace name, etc.)
    * @returns Result with new workspace path and source branch, or error
@@ -604,6 +612,13 @@ export interface Runtime {
    * - DockerRuntime: /var/mux (world-readable, avoids /root permission issues)
    */
   getMuxHome(): string;
+
+  /**
+   * Env vars that should be forwarded into container processes.
+   * Used by ptyService to inject credential env into devcontainer terminal sessions.
+   * Returns empty record for runtimes that don't need env forwarding (local, ssh).
+   */
+  getContainerEnv?(): Record<string, string>;
 }
 
 /**

@@ -54,6 +54,40 @@ async function waitForForegroundToolCallId(
   }
 }
 
+async function getActiveTextarea(container: HTMLElement): Promise<HTMLTextAreaElement> {
+  return waitFor(
+    () => {
+      const textareas = Array.from(
+        container.querySelectorAll('textarea[aria-label="Message Claude"]')
+      ) as HTMLTextAreaElement[];
+      if (textareas.length === 0) {
+        throw new Error("Chat textarea not found");
+      }
+
+      const enabled = [...textareas].reverse().find((textarea) => !textarea.disabled);
+      if (!enabled) {
+        throw new Error("Chat textarea is disabled");
+      }
+
+      return enabled;
+    },
+    { timeout: 10_000 }
+  );
+}
+
+async function setDeterministicForceCompactionThreshold(
+  env: TestEnvironment,
+  workspaceId: string
+): Promise<void> {
+  // Keep force-compaction tests deterministic even if persisted settings enable 1M context
+  // or raise the auto-compaction threshold. 10% threshold + 5% force buffer => trigger at 15%.
+  const result = await env.orpc.workspace.setAutoCompactionThreshold({
+    workspaceId,
+    threshold: 0.1,
+  });
+  expect(result.success).toBe(true);
+}
+
 describe("Compaction UI (mock AI router)", () => {
   beforeAll(async () => {
     await preloadTestModules();
@@ -76,8 +110,9 @@ describe("Compaction UI (mock AI router)", () => {
       // Compaction transcript now renders a single top boundary row.
       await app.chat.expectTranscriptContains("Compaction boundary");
 
-      // Compaction is append-only: pre-compaction transcript remains visible.
-      await app.chat.expectTranscriptContains(seedMessage);
+      // Live compaction now prunes to the latest boundary, so pre-compaction
+      // transcript is no longer visible in the current view.
+      await app.chat.expectTranscriptNotContains(seedMessage);
     } finally {
       await app.dispose();
     }
@@ -106,29 +141,49 @@ describe("Compaction UI (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("force compaction triggers during streaming and resumes with Continue", async () => {
+  test("force compaction triggers during streaming", async () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
 
     try {
+      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
+
       const seedMessage = "Seed conversation for compaction";
       const triggerMessage = "[force] Trigger force compaction";
 
-      await app.chat.send(seedMessage);
+      const seedResult = await app.env.orpc.workspace.sendMessage({
+        workspaceId: app.workspaceId,
+        message: seedMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+      });
+      expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
 
-      await app.chat.send(triggerMessage);
+      const triggerResult = await app.env.orpc.workspace.sendMessage({
+        workspaceId: app.workspaceId,
+        message: triggerMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+      });
+      expect(triggerResult.success).toBe(true);
 
-      await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
-      await app.chat.expectTranscriptContains("Mock response: Continue", 60_000);
+      const compactionAssertionTimeoutMs = 120_000;
+      await app.chat.expectTranscriptContains(
+        "Mock compaction summary:",
+        compactionAssertionTimeoutMs
+      );
+      await app.chat.expectTranscriptContains(
+        "Mock response: Continue",
+        compactionAssertionTimeoutMs
+      );
       // Compaction transcript now renders a single top boundary row.
-      await app.chat.expectTranscriptContains("Compaction boundary", 60_000);
+      await app.chat.expectTranscriptContains("Compaction boundary", compactionAssertionTimeoutMs);
 
-      // Force compaction is append-only: keep the triggering history around the boundary rows.
-      await app.chat.expectTranscriptContains(triggerMessage, 60_000);
+      // Force compaction now prunes to the latest boundary window, so the
+      // pre-compaction triggering turn is no longer shown.
+      await app.chat.expectTranscriptNotContains(triggerMessage, compactionAssertionTimeoutMs);
     } finally {
       await app.dispose();
     }
-  }, 60_000);
+  }, 120_000);
 
   test("/compact command sends any foreground bash to background", async () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
@@ -184,12 +239,64 @@ describe("Compaction UI (mock AI router)", () => {
     }
   }, 60_000);
 
+  test("/compact with Ctrl+Enter (turn-end) does NOT auto-background foreground bash", async () => {
+    const app = await createAppHarness({ branchPrefix: "compaction-ui" });
+
+    let unregister: (() => void) | undefined;
+
+    try {
+      const manager = getBackgroundProcessManager(app.env);
+
+      const toolCallId = "bash-foreground-compact-turn-end";
+      let backgrounded = false;
+
+      const registration = manager.registerForegroundProcess(
+        app.workspaceId,
+        toolCallId,
+        "echo foreground bash for compact turn-end",
+        "foreground bash for compact turn-end",
+        () => {
+          backgrounded = true;
+          unregister?.();
+        }
+      );
+
+      unregister = registration.unregister;
+
+      // Ensure the UI's subscription has observed the foreground bash before sending /compact.
+      await waitForForegroundToolCallId(app.env, app.workspaceId, toolCallId);
+
+      const seedMessage = "Seed conversation for /compact turn-end test";
+
+      const seedResult = await app.env.orpc.workspace.sendMessage({
+        workspaceId: app.workspaceId,
+        message: seedMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
+      });
+      expect(seedResult.success).toBe(true);
+      await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
+
+      await app.chat.typeWithoutSending("/compact -t 500");
+      const textarea = await getActiveTextarea(app.view.container);
+      fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+
+      await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
+
+      expect(backgrounded).toBe(false);
+    } finally {
+      unregister?.();
+      await app.dispose();
+    }
+  }, 60_000);
+
   test("force compaction sends any foreground bash to background", async () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
 
     let unregister: (() => void) | undefined;
 
     try {
+      await setDeterministicForceCompactionThreshold(app.env, app.workspaceId);
+
       const manager = getBackgroundProcessManager(app.env);
 
       const toolCallId = "bash-foreground";
@@ -222,12 +329,9 @@ describe("Compaction UI (mock AI router)", () => {
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
 
-      const triggerResult = await app.env.orpc.workspace.sendMessage({
-        workspaceId: app.workspaceId,
-        message: triggerMessage,
-        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
-      });
-      expect(triggerResult.success).toBe(true);
+      // Send via the UI path so the foreground bash auto-background logic runs exactly
+      // as it does for real user sends, while backend mid-stream compaction handles the rest.
+      await app.chat.send(triggerMessage);
 
       await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
 
@@ -241,7 +345,7 @@ describe("Compaction UI (mock AI router)", () => {
       unregister?.();
       await app.dispose();
     }
-  }, 60_000);
+  }, 120_000);
 });
 
 describe("Compaction notification behavior (mock AI router)", () => {

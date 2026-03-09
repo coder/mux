@@ -34,6 +34,31 @@ async function openProjectCreationView(storyRoot: HTMLElement): Promise<void> {
 
   await userEvent.click(projectRow);
 }
+
+async function openWorkspaceTypeMenu(storyRoot: HTMLElement): Promise<void> {
+  const canvas = within(storyRoot);
+  await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+  const trigger = await canvas.findByLabelText("Workspace type", {}, { timeout: 10000 });
+  await userEvent.click(trigger);
+}
+
+async function selectWorkspaceType(storyRoot: HTMLElement, label: string): Promise<void> {
+  await openWorkspaceTypeMenu(storyRoot);
+  const option = await within(document.body).findByRole(
+    "option",
+    { name: new RegExp(`^${label}`, "i") },
+    { timeout: 10000 }
+  );
+  await userEvent.click(option);
+}
+
+async function findWorkspaceTypeOption(label: string): Promise<HTMLElement> {
+  return within(document.body).findByRole(
+    "option",
+    { name: new RegExp(`^${label}`, "i") },
+    { timeout: 10000 }
+  );
+}
 export default {
   ...appMeta,
   title: "App/Coder",
@@ -154,13 +179,11 @@ export const SSHWithCoderAvailable: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openProjectCreationView(storyRoot);
-    const canvas = within(storyRoot);
 
-    // Wait for the runtime button group to appear
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Coder button should appear when Coder CLI is available
-    await canvas.findByRole("button", { name: /Coder/i });
+    // Coder option should appear when Coder CLI is available.
+    await openWorkspaceTypeMenu(storyRoot);
+    await findWorkspaceTypeOption("Coder");
+    await userEvent.keyboard("{Escape}");
   },
 };
 
@@ -193,12 +216,8 @@ export const CoderNewWorkspace: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.click(coderButton);
+    // Select Coder runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Coder");
 
     // Wait for Coder controls to appear
     await canvas.findByTestId("coder-controls-inner");
@@ -237,12 +256,8 @@ export const CoderExistingWorkspace: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.click(coderButton);
+    // Select Coder runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Coder");
 
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner");
@@ -287,12 +302,8 @@ export const CoderExistingWorkspaceParseError: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.click(coderButton);
+    // Select Coder runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Coder");
 
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner");
@@ -331,12 +342,8 @@ export const CoderTemplatesParseError: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.click(coderButton);
+    // Select Coder runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Coder");
 
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner");
@@ -383,12 +390,8 @@ export const CoderPresetsParseError: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.click(coderButton);
+    // Select Coder runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Coder");
 
     // Wait for Coder controls and template select
     await canvas.findByTestId("coder-controls-inner");
@@ -418,19 +421,19 @@ export const CoderNotAvailable: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openProjectCreationView(storyRoot);
-    const canvas = within(storyRoot);
 
-    // Wait for runtime controls to load
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+    await openWorkspaceTypeMenu(storyRoot);
 
-    // SSH button should be present
-    await canvas.findByRole("button", { name: /SSH/i });
+    // SSH option should be present.
+    await findWorkspaceTypeOption("SSH");
 
-    // Coder button should NOT appear when Coder CLI is unavailable
-    const coderButton = canvas.queryByRole("button", { name: /Coder/i });
-    if (coderButton) {
-      throw new Error("Coder button should not appear when Coder CLI is unavailable");
+    // Coder option should NOT appear when Coder CLI is unavailable.
+    const coderOption = within(document.body).queryByRole("option", { name: /^Coder/i });
+    if (coderOption) {
+      throw new Error("Coder option should not appear when Coder CLI is unavailable");
     }
+
+    await userEvent.keyboard("{Escape}");
   },
 };
 
@@ -454,36 +457,23 @@ export const CoderOutdated: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openProjectCreationView(storyRoot);
-    const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+    await openWorkspaceTypeMenu(storyRoot);
 
-    // Coder button should appear but be disabled.
-    // Re-query inside waitFor to avoid stale DOM refs after React re-renders.
-    await waitFor(() => {
-      const btn = canvas.queryByRole("button", { name: /Coder/i });
-      if (!btn?.hasAttribute("disabled")) {
-        throw new Error("Coder button should be disabled when CLI is outdated");
-      }
-    });
+    // Coder option should appear but be disabled.
+    const coderOption = await findWorkspaceTypeOption("Coder");
+    if (coderOption.getAttribute("aria-disabled") !== "true") {
+      throw new Error("Coder option should be disabled when CLI is outdated");
+    }
 
-    // Hover over Coder button to trigger tooltip with version error.
-    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.hover(coderButton);
+    if (!coderOption.textContent?.includes("2.20.0")) {
+      throw new Error("Coder option should mention the current CLI version");
+    }
+    if (!coderOption.textContent?.includes("2.25.0")) {
+      throw new Error("Coder option should mention the minimum required version");
+    }
 
-    // Wait for tooltip to appear with version info
-    await waitFor(() => {
-      const tooltip = document.querySelector('[role="tooltip"]');
-      if (!tooltip) throw new Error("Tooltip not found");
-      if (!tooltip.textContent?.includes("2.20.0")) {
-        throw new Error("Tooltip should mention the current CLI version");
-      }
-      if (!tooltip.textContent?.includes("2.25.0")) {
-        throw new Error("Tooltip should mention the minimum required version");
-      }
-    });
+    await userEvent.keyboard("{Escape}");
   },
 };
 
@@ -514,12 +504,8 @@ export const CoderNoPresets: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.click(coderButton);
+    // Select Coder runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Coder");
 
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner");
@@ -567,12 +553,8 @@ export const CoderNoRunningWorkspaces: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
-    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
-
-    // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
-    await userEvent.click(coderButton);
+    // Select Coder runtime from Workspace Type dropdown.
+    await selectWorkspaceType(storyRoot, "Coder");
 
     // Click "Existing" button
     const existingButton = await canvas.findByRole("button", { name: "Existing" });

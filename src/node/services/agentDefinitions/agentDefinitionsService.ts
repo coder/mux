@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
+import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 
@@ -52,9 +53,18 @@ export function computeBaseSkipScope(
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
 
-function resolveUiSelectable(
-  ui: { hidden?: boolean; selectable?: boolean; disabled?: boolean } | undefined
-): boolean {
+interface AgentDefinitionUiFlags {
+  hidden?: boolean;
+  selectable?: boolean;
+  disabled?: boolean;
+  routable?: boolean;
+}
+
+// TODO: The visibility/routability resolution logic (hidden → selectable, routable)
+// is duplicated across agentDefinitionsService.ts, agentSession.ts,
+// streamContextBuilder.ts, and orpc/router.ts. Consider extracting a single
+// resolveAgentVisibility(ui) → { selectable, routable, disabled } helper.
+function resolveUiSelectable(ui: AgentDefinitionUiFlags | undefined): boolean {
   if (!ui) {
     return true;
   }
@@ -70,7 +80,25 @@ function resolveUiSelectable(
   return true;
 }
 
-function resolveUiDisabled(ui: { disabled?: boolean } | undefined): boolean {
+/**
+ * Resolve whether an agent can be targeted by switch_agent.
+ *
+ * Defaults to the same value as uiSelectable: visible agents are routable by
+ * default (a human-pickable agent should also be agent-pickable). This differs
+ * from subagentRunnable which defaults to false, because routing via
+ * switch_agent has lower impact than spawning a task sub-agent.
+ *
+ * Hidden agents must explicitly set `ui.routable: true` to be switch targets.
+ */
+function resolveUiRoutable(ui: AgentDefinitionUiFlags | undefined): boolean {
+  if (typeof ui?.routable === "boolean") {
+    return ui.routable;
+  }
+
+  return resolveUiSelectable(ui);
+}
+
+function resolveUiDisabled(ui: AgentDefinitionUiFlags | undefined): boolean {
   return ui?.disabled === true;
 }
 
@@ -101,10 +129,6 @@ export function getDefaultAgentDefinitionsRoots(
     projectRoot: runtime.normalizePath(".mux/agents", workspacePath),
     globalRoot: GLOBAL_AGENTS_ROOT,
   };
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 async function listAgentFilesFromLocalFs(root: string): Promise<string[]> {
@@ -187,7 +211,7 @@ async function readAgentDescriptorFromFileWithDisabled(
   try {
     content = await readFileString(runtime, filePath);
   } catch (err) {
-    log.warn(`Failed to read agent definition ${filePath}: ${formatError(err)}`);
+    log.warn(`Failed to read agent definition ${filePath}: ${getErrorMessage(err)}`);
     return null;
   }
 
@@ -195,6 +219,7 @@ async function readAgentDescriptorFromFileWithDisabled(
     const parsed = parseAgentDefinitionMarkdown({ content, byteSize: stat.size });
 
     const uiSelectable = resolveUiSelectable(parsed.frontmatter.ui);
+    const uiRoutable = resolveUiRoutable(parsed.frontmatter.ui);
     const uiColor = parsed.frontmatter.ui?.color;
     const subagentRunnable = parsed.frontmatter.subagent?.runnable ?? false;
     const disabled = resolveUiDisabled(parsed.frontmatter.ui);
@@ -205,6 +230,7 @@ async function readAgentDescriptorFromFileWithDisabled(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       uiSelectable,
+      uiRoutable,
       uiColor,
       subagentRunnable,
       base: parsed.frontmatter.base,
@@ -220,7 +246,7 @@ async function readAgentDescriptorFromFileWithDisabled(
 
     return { descriptor: validated.data, disabled };
   } catch (err) {
-    const message = err instanceof AgentDefinitionParseError ? err.message : formatError(err);
+    const message = err instanceof AgentDefinitionParseError ? err.message : getErrorMessage(err);
     log.warn(`Skipping invalid agent definition '${agentId}' (${scope}): ${message}`);
     return null;
   }
@@ -242,6 +268,7 @@ export async function discoverAgentDefinitions(
   // Seed built-ins (lowest precedence).
   for (const pkg of getBuiltInAgentDefinitions()) {
     const uiSelectable = resolveUiSelectable(pkg.frontmatter.ui);
+    const uiRoutable = resolveUiRoutable(pkg.frontmatter.ui);
     const uiColor = pkg.frontmatter.ui?.color;
     const subagentRunnable = pkg.frontmatter.subagent?.runnable ?? false;
     const disabled = resolveUiDisabled(pkg.frontmatter.ui);
@@ -253,6 +280,7 @@ export async function discoverAgentDefinitions(
         name: pkg.frontmatter.name,
         description: pkg.frontmatter.description,
         uiSelectable,
+        uiRoutable,
         uiColor,
         subagentRunnable,
         base: pkg.frontmatter.base,
@@ -273,7 +301,7 @@ export async function discoverAgentDefinitions(
     try {
       resolvedRoot = await runtime.resolvePath(scan.root);
     } catch (err) {
-      log.warn(`Failed to resolve agents root ${scan.root}: ${formatError(err)}`);
+      log.warn(`Failed to resolve agents root ${scan.root}: ${getErrorMessage(err)}`);
       continue;
     }
 
@@ -529,6 +557,12 @@ function deepMergeAgentFrontmatter(
   }
 
   const pathKey = path.join(".");
+  if (Array.isArray(base) && Array.isArray(overlay) && pathKey === "tools.require") {
+    // Require semantics are "last layer wins" to avoid inheriting multiple
+    // required-tool patterns that can make policy application ambiguous.
+    return [...(overlay as unknown[])];
+  }
+
   if (
     Array.isArray(base) &&
     Array.isArray(overlay) &&

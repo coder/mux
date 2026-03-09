@@ -48,6 +48,24 @@ export function parseMuxDeepLink(raw: string): MuxDeepLinkPayload | null {
   };
 }
 
+/**
+ * Normalize project paths for cross-source comparison (deep-link payloads, route params, config keys).
+ *
+ * We trim whitespace/trailing separators everywhere and only fold case on Windows.
+ */
+export function normalizeProjectPathForComparison(projectPath: string, platform?: string): string {
+  let normalized = projectPath.trim();
+
+  // Be forgiving: mux:// links may include trailing path separators.
+  normalized = normalized.replace(/[\\/]+$/, "");
+
+  if (platform === "win32") {
+    normalized = normalized.toLowerCase();
+  }
+
+  return normalized;
+}
+
 function getLastPathSegment(projectPath: string): string {
   const normalized = projectPath.trim().replace(/[\\/]+$/, "");
   const segments = normalized.split(/[\\/]/).filter(Boolean);

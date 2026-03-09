@@ -7,7 +7,8 @@
 
 import type { ExecOptions, ExecStream, InitLogger } from "./Runtime";
 import { streamToString, shescape } from "./streamUtils";
-import { execAsync } from "@/node/utils/disposableExec";
+import { execFileAsync } from "@/node/utils/disposableExec";
+import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
@@ -27,7 +28,7 @@ export async function getOriginUrlForBundle(
 ): Promise<OriginUrlResult> {
   try {
     // Use git -C to avoid shell-specific `cd && ...` quoting.
-    using proc = execAsync(`git -C "${projectPath}" remote get-url origin`);
+    using proc = execFileAsync("git", ["-C", projectPath, "remote", "get-url", "origin"]);
     const { stdout } = await proc.result;
     const url = stdout.trim();
 
@@ -87,6 +88,8 @@ export interface GitBundleSyncParams {
 
   /** Step label for cloning (runtime-specific: remote vs container) */
   cloneStep: string;
+  /** Whether the project is trusted — when false, git hooks are disabled */
+  trusted?: boolean;
 }
 
 export async function syncProjectViaGitBundle(params: GitBundleSyncParams): Promise<void> {
@@ -139,7 +142,7 @@ export async function syncProjectViaGitBundle(params: GitBundleSyncParams): Prom
     // Clone from the bundle on the remote runtime.
     initLogger.logStep(cloneStep);
     const cloneStream = await exec(
-      `git clone --quiet ${quoteRemotePath(remoteBundlePath)} ${quoteRemotePath(workspacePath)}`,
+      `${gitNoHooksPrefix(params.trusted)}git clone --quiet ${quoteRemotePath(remoteBundlePath)} ${quoteRemotePath(workspacePath)}`,
       {
         cwd: remoteTmpDir,
         timeout: 300,

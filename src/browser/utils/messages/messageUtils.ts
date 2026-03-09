@@ -118,8 +118,9 @@ export function isStreamingPart(part: unknown): part is { type: "text"; state: "
  * any tool call is still executing (e.g. live bash output).
  *
  * We also bypass when the deferred snapshot appears stale (it still has active
- * streaming/executing rows after the immediate snapshot is idle), since showing
- * stale deferred tool state can cause output/layout flash at stream completion.
+ * streaming/executing rows after the immediate snapshot is idle), or when both
+ * snapshots have diverged in row identity/order. Showing stale deferred rows can
+ * cause hidden-marker placement and tool-state flash at stream completion.
  */
 export function shouldBypassDeferredMessages(
   messages: DisplayedMessage[],
@@ -133,6 +134,21 @@ export function shouldBypassDeferredMessages(
 
   if (messages.length !== deferredMessages.length) {
     return true;
+  }
+
+  for (let i = 0; i < messages.length; i++) {
+    const immediateMessage = messages[i];
+    const deferredMessage = deferredMessages[i];
+    if (!immediateMessage || !deferredMessage) {
+      return true;
+    }
+
+    if (
+      immediateMessage.id !== deferredMessage.id ||
+      immediateMessage.type !== deferredMessage.type
+    ) {
+      return true;
+    }
   }
 
   return hasActiveRows(messages) || hasActiveRows(deferredMessages);

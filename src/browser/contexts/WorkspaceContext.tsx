@@ -3,15 +3,17 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { useLocation } from "react-router-dom";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -23,18 +25,23 @@ import {
   getInputKey,
   getModelKey,
   getPendingScopeId,
+  getRightSidebarLayoutKey,
+  getTerminalTitlesKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getWorkspaceNameStateKey,
   migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
   DEFAULT_MODEL_KEY,
+  DEFAULT_RUNTIME_KEY,
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
   HIDDEN_MODELS_KEY,
-  PREFERRED_COMPACTION_MODEL_KEY,
+  LAUNCH_BEHAVIOR_KEY,
+  RUNTIME_ENABLEMENT_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+  type LaunchBehavior,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
@@ -46,10 +53,14 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { isTerminalTab } from "@/browser/types/rightSidebar";
+import {
+  collectAllTabs,
+  parseRightSidebarLayoutState,
+  removeTabEverywhere,
+} from "@/browser/utils/rightSidebarLayout";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
-import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import { resolveProjectPathFromProjectQuery } from "@/common/utils/deepLink";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { findAdjacentWorkspaceId } from "@/browser/utils/ui/workspaceDomNav";
@@ -57,6 +68,7 @@ import { useRouter } from "@/browser/contexts/RouterContext";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { APIClient } from "@/browser/contexts/API";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * One-time best-effort migration: if the backend doesn't have model preferences yet,
@@ -65,7 +77,7 @@ import type { APIClient } from "@/browser/contexts/API";
  */
 function migrateLocalModelPrefsToBackend(
   api: APIClient,
-  cfg: { defaultModel?: string; hiddenModels?: string[]; preferredCompactionModel?: string }
+  cfg: { defaultModel?: string; hiddenModels?: string[] }
 ): void {
   if (!api.config.updateModelPreferences) return;
 
@@ -75,12 +87,10 @@ function migrateLocalModelPrefsToBackend(
       ? migrateGatewayModel(localDefaultModelRaw).trim()
       : undefined;
   const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
-  const localPreferredCompactionModel = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
 
   const patch: {
     defaultModel?: string;
     hiddenModels?: string[];
-    preferredCompactionModel?: string;
   } = {};
 
   if (
@@ -99,18 +109,48 @@ function migrateLocalModelPrefsToBackend(
     patch.hiddenModels = localHiddenModels;
   }
 
-  if (
-    cfg.preferredCompactionModel === undefined &&
-    typeof localPreferredCompactionModel === "string" &&
-    localPreferredCompactionModel.trim()
-  ) {
-    patch.preferredCompactionModel = localPreferredCompactionModel;
-  }
-
   if (Object.keys(patch).length > 0) {
     api.config.updateModelPreferences(patch).catch(() => {
       // Best-effort only.
     });
+  }
+}
+
+/**
+ * One-time best-effort migration for gateway preferences.
+ * Users upgrading from builds that only stored gateway state in localStorage
+ * (keys: "gateway-enabled", "gateway-models") need their preferences migrated
+ * to config.json so they aren't lost when localStorage is no longer read.
+ */
+function migrateLocalGatewayPrefsToBackend(
+  api: APIClient,
+  cfg: { muxGatewayEnabled?: boolean; muxGatewayModels?: string[] }
+): void {
+  // Only migrate if the backend doesn't have these values yet
+  if (cfg.muxGatewayEnabled !== undefined && cfg.muxGatewayModels !== undefined) return;
+
+  // Read legacy localStorage keys
+  const localEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
+  const localModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
+
+  const shouldMigrateEnabled = cfg.muxGatewayEnabled === undefined && localEnabled === false;
+  const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
+
+  const clearLegacyGatewayPrefs = () => {
+    updatePersistedState<boolean | undefined>(GATEWAY_ENABLED_KEY, undefined);
+    updatePersistedState<string[] | undefined>(GATEWAY_MODELS_KEY, undefined);
+  };
+
+  if (shouldMigrateEnabled || shouldMigrateModels) {
+    api.config
+      .updateMuxGatewayPrefs({
+        muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
+        muxGatewayModels: cfg.muxGatewayModels ?? localModels,
+      })
+      .then(clearLegacyGatewayPrefs)
+      .catch(() => {
+        // Best-effort only.
+      });
   }
 }
 
@@ -182,7 +222,10 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   }
 
   // Seed the active agent into the existing keys to avoid UI flash.
-  const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
+  const activeAgentId = readPersistedState<string>(
+    getAgentIdKey(workspaceId),
+    WORKSPACE_DEFAULTS.agentId
+  );
   const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
   if (!active) {
     return;
@@ -281,20 +324,6 @@ function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByPro
   }
 
   return result;
-}
-
-function normalizeProjectPathForComparison(projectPath: string): string {
-  let normalized = projectPath.trim();
-
-  // Be forgiving: mux:// links may include trailing path separators.
-  normalized = normalized.replace(/[\\/]+$/, "");
-
-  // Paths are case-insensitive on Windows.
-  if (globalThis.window?.api?.platform === "win32") {
-    normalized = normalized.toLowerCase();
-  }
-
-  return normalized;
 }
 
 function createWorkspaceDraftId(): string {
@@ -466,14 +495,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {})
         );
 
-        // Seed Mux Gateway prefs from backend so switching ports doesn't reset the UI.
-        if (cfg.muxGatewayEnabled !== undefined) {
-          updatePersistedState(GATEWAY_ENABLED_KEY, cfg.muxGatewayEnabled);
-        }
-        if (cfg.muxGatewayModels !== undefined) {
-          updatePersistedState(GATEWAY_MODELS_KEY, cfg.muxGatewayModels);
-        }
-
         // Seed global model preferences from backend so switching ports doesn't reset the UI.
         if (cfg.defaultModel !== undefined) {
           updatePersistedState(DEFAULT_MODEL_KEY, cfg.defaultModel);
@@ -481,42 +502,38 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         if (cfg.hiddenModels !== undefined) {
           updatePersistedState(HIDDEN_MODELS_KEY, cfg.hiddenModels);
         }
-        if (cfg.preferredCompactionModel !== undefined) {
-          updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, cfg.preferredCompactionModel);
+
+        // Seed runtime enablement from backend so switching ports doesn't reset the UI.
+        if (cfg.runtimeEnablement !== undefined) {
+          updatePersistedState(RUNTIME_ENABLEMENT_KEY, cfg.runtimeEnablement);
         }
 
-        // One-time best-effort migration: if the backend doesn't have gateway prefs yet,
-        // persist non-default localStorage values so future port changes keep them.
-        if (api.config.updateMuxGatewayPrefs) {
-          const localEnabled = readPersistedState<boolean>(GATEWAY_ENABLED_KEY, true);
-          const localModels = readPersistedState<string[]>(GATEWAY_MODELS_KEY, []);
-
-          const shouldMigrateEnabled =
-            cfg.muxGatewayEnabled === undefined && localEnabled === false;
-          const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
-
-          if (shouldMigrateEnabled || shouldMigrateModels) {
-            api.config
-              .updateMuxGatewayPrefs({
-                muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
-                muxGatewayModels: cfg.muxGatewayModels ?? localModels,
-              })
-              .catch(() => {
-                // Best-effort only.
-              });
-          }
+        // Seed global default runtime so workspace defaults survive port changes.
+        if (cfg.defaultRuntime !== undefined) {
+          updatePersistedState(DEFAULT_RUNTIME_KEY, cfg.defaultRuntime);
         }
 
         // One-time best-effort migration: if the backend doesn't have model prefs yet,
         // persist non-default localStorage values so future port changes keep them.
         migrateLocalModelPrefsToBackend(api, cfg);
+
+        // One-time gateway pref migration: if the backend doesn't have gateway prefs yet,
+        // check if the user had non-default values in the old localStorage keys.
+        // This covers users upgrading from builds that only stored gateway state locally.
+        migrateLocalGatewayPrefsToBackend(api, cfg);
       })
       .catch(() => {
         // Best-effort only.
       });
   }, [api]);
   // Get project refresh function from ProjectContext
-  const { projects, refreshProjects, loading: projectsLoading } = useProjectContext();
+  const {
+    resolveProjectPath,
+    resolveNewChatProjectPath,
+    hasAnyProject,
+    refreshProjects,
+    loading: projectsLoading,
+  } = useProjectContext();
   // Get router navigation functions and current route state
   const {
     navigateToWorkspace,
@@ -526,11 +543,28 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentProjectId,
     currentProjectPathFromState,
     currentSettingsSection,
+    isAnalyticsOpen,
     pendingSectionId,
     pendingDraftId,
   } = useRouter();
+  const location = useLocation();
 
   const workspaceStore = useWorkspaceStoreRaw();
+
+  useLayoutEffect(() => {
+    // When the user navigates to settings, currentWorkspaceId becomes null
+    // (URL is /settings/...). Preserve the active workspace subscription so
+    // chat messages aren't cleared. Only null it out when truly leaving a
+    // workspace context (e.g., navigating to Home).
+    if (currentWorkspaceId) {
+      workspaceStore.setActiveWorkspaceId(currentWorkspaceId);
+    } else if (!currentSettingsSection && !isAnalyticsOpen) {
+      // Only null out the active workspace when truly leaving a workspace
+      // context (e.g., navigating to Home). Settings and analytics pages
+      // should preserve the subscription so chat messages aren't cleared.
+      workspaceStore.setActiveWorkspaceId(null);
+    }
+  }, [workspaceStore, currentWorkspaceId, currentSettingsSection, isAnalyticsOpen]);
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
   >(new Map());
@@ -573,66 +607,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return;
       }
 
-      let resolvedProjectPath: string | null = null;
-
-      const projectPathFromPayload =
-        typeof payload.projectPath === "string" && payload.projectPath.trim().length > 0
-          ? payload.projectPath
-          : null;
-
-      if (projectPathFromPayload) {
-        const target = normalizeProjectPathForComparison(projectPathFromPayload);
-
-        for (const projectPath of projects.keys()) {
-          if (normalizeProjectPathForComparison(projectPath) === target) {
-            resolvedProjectPath = projectPath;
-            break;
-          }
-        }
-      }
-
-      const projectIdFromPayload =
-        resolvedProjectPath === null &&
-        typeof payload.projectId === "string" &&
-        payload.projectId.trim().length > 0
-          ? payload.projectId
-          : null;
-
-      if (projectIdFromPayload) {
-        for (const projectPath of projects.keys()) {
-          if (getProjectRouteId(projectPath) === projectIdFromPayload) {
-            resolvedProjectPath = projectPath;
-            break;
-          }
-        }
-      }
-
-      const projectQueryFromPayload =
-        resolvedProjectPath === null &&
-        typeof payload.project === "string" &&
-        payload.project.trim().length > 0
-          ? payload.project
-          : null;
-
-      // Back-compat/ergonomics: if a deep link passed a projectPath that doesn't match
-      // exactly (e.g., different machine), still try matching by its final path segment.
-      const inferredProjectQueryFromPath =
-        resolvedProjectPath === null && projectQueryFromPayload === null && projectPathFromPayload
-          ? projectPathFromPayload
-          : null;
-
-      const projectQuery = projectQueryFromPayload ?? inferredProjectQueryFromPath;
-      if (resolvedProjectPath === null && projectQuery) {
-        resolvedProjectPath = resolveProjectPathFromProjectQuery(projects.keys(), projectQuery);
-      }
-
-      // If no project is specified (or matching failed), default to the first project in the list.
-      if (resolvedProjectPath === null) {
-        const firstProjectPath = projects.keys().next().value;
-        if (typeof firstProjectPath === "string") {
-          resolvedProjectPath = firstProjectPath;
-        }
-      }
+      const resolvedProjectPath = resolveNewChatProjectPath({
+        projectPath: payload.projectPath,
+        projectId: payload.projectId,
+        project: payload.project,
+      });
 
       if (!resolvedProjectPath) {
         // Startup deep links can arrive before the projects list is populated.
@@ -640,7 +619,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         // NOTE: ProjectContext can set `projectsLoading=false` even when the API isn't
         // connected yet (refreshProjects() returns early but the effect still flips loading).
         // In that window, buffer unresolved links in-memory and retry once projects load.
-        const shouldBuffer = projectsLoading || !api || projects.size === 0;
+        const shouldBuffer = projectsLoading || !api || !hasAnyProject;
         if (shouldBuffer) {
           const queue = pendingDeepLinksRef.current;
           if (queue.length >= 10) {
@@ -689,7 +668,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       navigateToProject(resolvedProjectPath, normalizedSectionId ?? undefined, draftId);
     },
-    [api, navigateToProject, projects, projectsLoading, setWorkspaceDraftsByProjectState]
+    [
+      api,
+      navigateToProject,
+      projectsLoading,
+      resolveNewChatProjectPath,
+      hasAnyProject,
+      setWorkspaceDraftsByProjectState,
+    ]
   );
 
   const deepLinkHandlerRef = useRef(handleDeepLink);
@@ -721,7 +707,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     for (const payload of queued) {
       deepLinkHandlerRef.current(payload);
     }
-  }, [projects, projectsLoading, deepLinkHandlerRef]);
+  }, [projectsLoading, resolveNewChatProjectPath, hasAnyProject, deepLinkHandlerRef]);
 
   // Clean up promotions that point at removed drafts or archived workspaces so
   // promoted entries never hide the real workspace list.
@@ -779,20 +765,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (currentProjectPathFromState) return currentProjectPathFromState;
     if (!currentProjectId) return null;
 
-    // Legacy: older deep links stored the full path under ?path=...
-    if (projects.has(currentProjectId)) {
-      return currentProjectId;
-    }
-
-    // Current: project ids are derived from the configured project path.
-    for (const projectPath of projects.keys()) {
-      if (getProjectRouteId(projectPath) === currentProjectId) {
-        return projectPath;
-      }
-    }
-
-    return null;
-  }, [currentProjectId, currentProjectPathFromState, projects]);
+    return (
+      resolveProjectPath({ type: "path", value: currentProjectId }) ??
+      resolveProjectPath({ type: "routeId", value: currentProjectId })
+    );
+  }, [currentProjectId, currentProjectPathFromState, resolveProjectPath]);
 
   // pendingNewWorkspaceProject is derived from current project in URL/state
   const pendingNewWorkspaceProject = currentProjectPath;
@@ -813,6 +790,27 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // any async creation callbacks decide whether to auto-navigate.
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   selectedWorkspaceRef.current = selectedWorkspace;
+  // Sticky in-memory flag to preserve explicit Home navigation intent.
+  // Prevents server launch-project auto-selection from bouncing users away from /.
+  const hasUserNavigatedHomeRef = useRef(false);
+  const hasProcessedInitialLocationRef = useRef(false);
+
+  const hasAutoCreatedRef = useRef(false);
+  const hasCheckedStaleRouteRef = useRef(false);
+
+  useEffect(() => {
+    // Skip initial mount so cold startup at "/" can still honor launch-project.
+    if (!hasProcessedInitialLocationRef.current) {
+      hasProcessedInitialLocationRef.current = true;
+      return;
+    }
+
+    // Browser history can land on / without going through setSelectedWorkspace(null).
+    // Mark that as explicit Home intent so launch-project doesn't bounce the user away.
+    if (location.pathname === "/") {
+      hasUserNavigatedHomeRef.current = true;
+    }
+  }, [location.pathname]);
 
   // setSelectedWorkspace navigates to the workspace URL (or clears if null)
   const setSelectedWorkspace = useCallback(
@@ -826,10 +824,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       selectedWorkspaceRef.current = newValue;
 
       if (newValue) {
+        hasUserNavigatedHomeRef.current = false;
         navigateToWorkspace(newValue.workspaceId);
         // Persist to localStorage for next session
         updatePersistedState(SELECTED_WORKSPACE_KEY, newValue);
       } else {
+        hasUserNavigatedHomeRef.current = true;
         navigateToHome();
         updatePersistedState(SELECTED_WORKSPACE_KEY, null);
       }
@@ -858,47 +858,23 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadataRef.current = workspaceMetadata;
   }, [workspaceMetadata]);
 
-  const initialWorkspaceResolvedRef = useRef(false);
-
-  useEffect(() => {
-    if (loading) return;
-    if (!currentWorkspaceId) return;
-
-    if (currentWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-      initialWorkspaceResolvedRef.current = true;
-      return;
-    }
-
-    if (workspaceMetadata.has(currentWorkspaceId)) {
-      initialWorkspaceResolvedRef.current = true;
-      return;
-    }
-
-    // Only auto-redirect on initial restore so we don't fight archive/delete navigation.
-    if (initialWorkspaceResolvedRef.current) return;
-
-    const muxChatMetadata = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID);
-    if (!muxChatMetadata) return;
-
-    // If the last-restored workspace no longer exists, recover to mux-chat instead
-    // of leaving the user on a dead-end "Workspace not found" screen.
-    initialWorkspaceResolvedRef.current = true;
-    setSelectedWorkspace(toWorkspaceSelection(muxChatMetadata));
-  }, [currentWorkspaceId, loading, setSelectedWorkspace, workspaceMetadata]);
-
   const loadWorkspaceMetadata = useCallback(async () => {
     if (!api) return false; // Return false to indicate metadata wasn't loaded
+
     try {
       const metadataList = await api.workspace.list();
+
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
         // Skip archived workspaces - they should not be tracked by the app
         if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) continue;
+
         ensureCreatedAt(metadata);
         // Use stable workspace ID as key (not path, which can change)
         seedWorkspaceLocalStorageFromBackend(metadata);
         metadataMap.set(metadata.id, metadata);
       }
+
       setWorkspaceMetadata(metadataMap);
       return true; // Return true to indicate metadata was loaded
     } catch (error) {
@@ -934,11 +910,16 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if we already have a selected workspace (from localStorage or URL hash)
     if (selectedWorkspace) return;
 
-    // Skip if user is on the settings page — navigating to /settings/:section
-    // clears the workspace from the URL, making selectedWorkspace null. Without
-    // this guard the effect would auto-select a workspace and navigate away from
-    // settings immediately.
+    // If the user explicitly went Home, preserve that intent instead of
+    // immediately re-selecting a launch-project workspace.
+    if (hasUserNavigatedHomeRef.current) return;
+
+    // Skip if user is on the settings or analytics page — navigating to
+    // /settings/:section or /analytics clears the workspace from the URL,
+    // making selectedWorkspace null. Without this guard the effect would
+    // auto-select a workspace and navigate away immediately.
     if (currentSettingsSection) return;
+    if (isAnalyticsOpen) return;
 
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
@@ -984,10 +965,33 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     loading,
     selectedWorkspace,
     currentSettingsSection,
+    isAnalyticsOpen,
     pendingNewWorkspaceProject,
     workspaceMetadata,
     setSelectedWorkspace,
   ]);
+
+  // Self-heal: if the initial route targets a workspace that no longer exists
+  // in metadata (e.g., deleted since last session), clear the stale route and
+  // persisted selection so the user isn't stuck in a restore loop.
+  useEffect(() => {
+    if (loading) return;
+    if (hasCheckedStaleRouteRef.current) return;
+    hasCheckedStaleRouteRef.current = true;
+
+    if (!currentWorkspaceId) return;
+    if (workspaceMetadata.has(currentWorkspaceId)) return;
+
+    // mux-chat registers asynchronously after initial load — don't treat it as stale.
+    if (currentWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) return;
+
+    // If metadata is empty, a transient backend failure may have caused
+    // workspace.list to return nothing — don't clear a potentially valid route.
+    if (workspaceMetadata.size === 0) return;
+
+    // Workspace ID from initial route doesn't exist — clear stale state.
+    setSelectedWorkspace(null);
+  }, [loading, currentWorkspaceId, workspaceMetadata, setSelectedWorkspace]);
 
   // Subscribe to metadata updates (for create/rename/delete operations)
   useEffect(() => {
@@ -1052,10 +1056,24 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               updated.set(event.workspaceId, meta);
             }
 
-            // Reload projects when:
-            // 1. New workspace appears (e.g., from fork)
-            // 2. Workspace transitions from initializing to ready (init completed)
-            if (isNewWorkspace || (wasInitializing && isNowReady)) {
+            // Reload projects when archive state changes so that
+            // getProjectWorkspaceCounts (used for removal eligibility) sees
+            // up-to-date archivedAt timestamps in the project config.
+            const wasInActiveMap = prev.has(event.workspaceId);
+            const archiveStateChanged = isNowArchived
+              ? wasInActiveMap // was active, now archived
+              : !wasInActiveMap && meta !== null; // was absent (archived), now active (unarchived)
+
+            // Also reload when:
+            // 1. Workspace is deleted in another session
+            // 2. New workspace appears (e.g., from fork)
+            // 3. Workspace transitions from initializing to ready (init completed)
+            if (
+              meta === null ||
+              isNewWorkspace ||
+              (wasInitializing && isNowReady) ||
+              archiveStateChanged
+            ) {
               void refreshProjects();
             }
 
@@ -1210,7 +1228,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to remove workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1252,7 +1270,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to update workspace title:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1267,6 +1285,26 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       try {
         const result = await api.workspace.archive({ workspaceId });
         if (result.success) {
+          // Terminal PTYs are killed on archive; clear persisted terminal tabs so
+          // unarchive doesn't briefly flash dead terminal tabs.
+          const layoutKey = getRightSidebarLayoutKey(workspaceId);
+          const rawLayout = readPersistedState<unknown>(layoutKey, null);
+
+          if (rawLayout != null) {
+            // Use parseRightSidebarLayoutState to handle legacy migrations
+            // (e.g. "stats" tab stripped) before cleaning terminal tabs.
+            const layout = parseRightSidebarLayoutState(rawLayout, "costs");
+            const terminalTabs = collectAllTabs(layout.root).filter(isTerminalTab);
+            let cleanedLayout = layout;
+            for (const tab of terminalTabs) {
+              cleanedLayout = removeTabEverywhere(cleanedLayout, tab);
+            }
+            updatePersistedState(layoutKey, cleanedLayout);
+          }
+
+          // Also clear persisted terminal titles since those sessions are gone.
+          updatePersistedState(getTerminalTitlesKey(workspaceId), {});
+
           // Workspace list + navigation are driven by the workspace metadata subscription.
           return { success: true };
         }
@@ -1274,7 +1312,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         console.error("Failed to archive workspace:", result.error);
         return { success: false, error: result.error };
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to archive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1295,7 +1333,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           return { success: false, error: result.error };
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = getErrorMessage(error);
         console.error("Failed to unarchive workspace:", errorMessage);
         return { success: false, error: errorMessage };
       }
@@ -1455,6 +1493,64 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     },
     [navigateToProject, setWorkspaceDraftsByProjectState]
   );
+
+  useEffect(() => {
+    if (loading || hasAutoCreatedRef.current) return;
+    if (selectedWorkspace) return;
+
+    // Preserve explicit Home navigation intent.
+    if (hasUserNavigatedHomeRef.current) return;
+
+    // Don't auto-create while the user is on global routes.
+    if (currentSettingsSection || isAnalyticsOpen) return;
+
+    // Skip if user is in the middle of creating a workspace.
+    if (pendingNewWorkspaceProject) return;
+
+    const behavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
+    if (behavior !== "new-chat") return;
+
+    let cancelled = false;
+
+    const autoCreate = async () => {
+      // In server mode with --add-project, defer startup routing to the launch-project effect.
+      try {
+        const launchProject = await api?.server.getLaunchProject(undefined);
+        if (cancelled || launchProject) return;
+      } catch {
+        // Ignore backend capability errors and continue with local auto-create fallback.
+      }
+
+      if (cancelled) return;
+
+      hasAutoCreatedRef.current = true;
+
+      const workspaceRecency = workspaceStore.getWorkspaceRecency();
+      const recentWorkspace = [...workspaceMetadata.values()]
+        .filter((workspace) => workspace.projectPath && workspace.id !== MUX_HELP_CHAT_WORKSPACE_ID)
+        .sort((a, b) => (workspaceRecency[b.id] ?? 0) - (workspaceRecency[a.id] ?? 0))[0];
+
+      if (!recentWorkspace) return;
+
+      createWorkspaceDraft(recentWorkspace.projectPath);
+    };
+
+    void autoCreate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    loading,
+    selectedWorkspace,
+    currentSettingsSection,
+    isAnalyticsOpen,
+    pendingNewWorkspaceProject,
+    workspaceMetadata,
+    workspaceStore,
+    createWorkspaceDraft,
+  ]);
 
   const openWorkspaceDraft = useCallback(
     (projectPath: string, draftId: string, sectionId?: string | null) => {

@@ -20,7 +20,7 @@ import {
   type ContextSwitchWarning,
 } from "@/browser/utils/compaction/contextSwitchCheck";
 import { getHigherContextCompactionSuggestion } from "@/browser/utils/compaction/suggestion";
-import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import {
   consumeWorkspaceModelChange,
   setWorkspaceModelWithOrigin,

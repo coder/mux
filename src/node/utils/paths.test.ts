@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { PlatformPaths } from "./paths.main";
-import { toPosixPath } from "./paths";
+import { toPosixPath, toWindowsPath } from "./paths";
 import * as os from "os";
 import * as path from "path";
 
@@ -234,5 +234,27 @@ describe("toPosixPath", () => {
       // This prevents crashes if Git Bash is misconfigured
       expect(true).toBe(true); // Cannot easily test without mocking execSync
     });
+  });
+});
+
+describe("toWindowsPath", () => {
+  test("converts MSYS drive-letter path to Windows format", () => {
+    expect(toWindowsPath("/c/Users/me/coder.exe")).toBe("C:\\Users\\me\\coder.exe");
+  });
+
+  test("uppercases the drive letter", () => {
+    expect(toWindowsPath("/d/Program Files/Coder/coder.exe")).toBe(
+      "D:\\Program Files\\Coder\\coder.exe"
+    );
+  });
+
+  test("returns non-MSYS paths unchanged", () => {
+    expect(toWindowsPath("/usr/local/bin/coder")).toBe("/usr/local/bin/coder");
+    expect(toWindowsPath("C:\\Users\\me\\coder.exe")).toBe("C:\\Users\\me\\coder.exe");
+    expect(toWindowsPath("coder")).toBe("coder");
+  });
+
+  test("handles root of drive", () => {
+    expect(toWindowsPath("/c/coder.exe")).toBe("C:\\coder.exe");
   });
 });

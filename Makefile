@@ -46,16 +46,24 @@ MAKEFLAGS += -j
 endif
 
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
-ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
+ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --external:@1password/sdk --external:@1password/sdk-core --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
+
+# Common esbuild flags for server runtime Docker bundle.
+# Place runtime bundles under dist/runtime so frontend dist/*.js layers remain stable.
+# External native modules (node-pty, ssh2) and electron remain runtime dependencies.
+ESBUILD_SERVER_FLAGS := --bundle --platform=node --target=node22 --format=cjs --outfile=dist/runtime/server-bundle.js --external:@lydell/node-pty --external:node-pty --external:electron --external:ssh2 --external:@1password/sdk --external:@1password/sdk-core --alias:jsonc-parser=jsonc-parser/lib/esm/main.js --minify
+
+# Common esbuild flags for tokenizer worker bundle used by server-bundle runtime.
+ESBUILD_TOKENIZER_WORKER_FLAGS := --bundle --platform=node --target=node22 --format=cjs --outfile=dist/runtime/tokenizer.worker.js --minify
 
 # Include formatting rules
 include fmt.mk
 
 .PHONY: all build dev start clean help
-.PHONY: build-renderer version build-icons build-static
-.PHONY: lint lint-fix typecheck typecheck-react-native static-check
+.PHONY: build-renderer version build-icons build-static build-docker-runtime verify-docker-runtime-artifacts
+.PHONY: lint lint-fix typecheck typecheck-react-native mobile-web mobile-cors-proxy mobile-sandbox static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
-.PHONY: dist dist-mac dist-win dist-linux install-mac-arm64
+.PHONY: dist dist-mac dist-win dist-linux install-mac-arm64 check-appimage-icons
 .PHONY: vscode-ext vscode-ext-install
 .PHONY: docs-server check-docs-links
 .PHONY: storybook storybook-build test-storybook chromatic
@@ -112,9 +120,10 @@ mobile/node_modules/.installed: mobile/package.json mobile/bun.lock
 ensure-deps: node_modules/.installed
 
 # Rebuild native modules for Electron
-rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty) for Electron
+rebuild-native: node_modules/.installed ## Rebuild native modules (node-pty, DuckDB) for Electron
 	@echo "Rebuilding native modules for Electron..."
 	@npx @electron/rebuild -f -m node_modules/node-pty
+	@npx @electron/rebuild -f -m node_modules/@duckdb/node-bindings
 	@echo "Native modules rebuilt successfully"
 
 # Run compiled CLI with trailing arguments (builds only if missing)
@@ -165,7 +174,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@npm x concurrently -k \
 		"nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)" \
+		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)" \
 		"set MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1)&& set MUX_VITE_PORT=$(or $(VITE_PORT),5173)&& set MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS)&& set MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000)&& vite"
 else
 dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
@@ -174,10 +183,11 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
 	@echo ""
 	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host>"
+	@# Keep tsgo -> tsc-alias sequential to avoid transient unresolved @/ imports in dist during restarts.
 	@bun x concurrently -k \
-		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
+		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec 'node scripts/build-main-watch.js'" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
+		"bun x nodemon --watch dist/.main-build-complete --delay 300ms --exec 'NODE_ENV=development node dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
 		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS) MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000) vite"
 endif
 
@@ -210,6 +220,9 @@ dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/ve
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
+	@# Signal nodemon only after alias rewriting is complete so it never boots from partial dist output.
+	@mkdir -p dist
+	@touch dist/.main-build-complete
 
 # Build API CLI as ESM bundle (trpc-cli requires ESM with top-level await)
 dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
@@ -254,21 +267,54 @@ build-static: ## Copy static assets to dist
 		cp "$$f" "dist/typescript-lib/$$(basename $$f).txt"; \
 	done
 
+build-docker-runtime: build-main build-renderer build-static dist/runtime/server-bundle.js dist/runtime/tokenizer.worker.js dist/static/.copied ## Build Docker runtime artifacts
+
+verify-docker-runtime-artifacts: build-docker-runtime ## Verify required Docker runtime artifacts exist
+	@test -f dist/runtime/server-bundle.js
+	@test -f dist/runtime/tokenizer.worker.js
+	@test -f dist/static/splash.html
+
+# Bundle server runtime for Docker image to reduce runtime dependencies/image size.
+# Depend on build-main explicitly because dist/cli/server.js is emitted as a side effect.
+dist/runtime/server-bundle.js: build-main $(TS_SOURCES)
+	@echo "Bundling server runtime for Docker..."
+	@test -f dist/cli/server.js
+	@mkdir -p dist/runtime
+	@bun x esbuild dist/cli/server.js $(ESBUILD_SERVER_FLAGS)
+
+# Bundle tokenizer worker next to server-bundle.js so workerPool resolves it at runtime.
+# Depend on build-main explicitly because tokenizer worker JS is emitted under dist/node/ as a side effect.
+dist/runtime/tokenizer.worker.js: build-main
+	@echo "Bundling tokenizer worker for Docker..."
+	@test -f dist/node/utils/main/tokenizer.worker.js
+	@mkdir -p dist/runtime
+	@bun x esbuild dist/node/utils/main/tokenizer.worker.js $(ESBUILD_TOKENIZER_WORKER_FLAGS)
+
+# Docker runtime keeps static assets under dist/static/ for compatibility with existing image layout.
+dist/static/.copied: static/splash.html
+	@mkdir -p dist/static
+	@cp -r static/* dist/static/
+	@touch dist/static/.copied
+
 # Always regenerate version file (marked as .PHONY above)
 version: ## Generate version file
 	@./scripts/generate-version.sh
 
 src/version.ts: version
 
+build/icons/512x512.png: docs/img/logo-white.svg scripts/generate-icons.ts
+	@echo "Generating Linux icon set..."
+	@bun scripts/generate-icons.ts linux-icons
+
 # Platform-specific icon targets
 ifeq ($(shell uname), Darwin)
-build-icons: build/icon.icns build/icon.png ## Generate Electron app icons from logo (macOS builds both)
+build-icons: build/icon.icns build/icon.png build/icons/512x512.png ## Generate Electron app icons from logo (macOS builds both)
 
 build/icon.icns: docs/img/logo-white.svg scripts/generate-icons.ts
 	@echo "Generating macOS ICNS icon..."
 	@bun scripts/generate-icons.ts icns
 else
-build-icons: build/icon.png ## Generate Electron app icons from logo (Linux builds PNG only)
+build-icons: build/icon.png build/icons/512x512.png ## Generate Electron app icons from logo (Linux builds PNG only)
 endif
 
 build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
@@ -276,7 +322,7 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck flake-hash-check ## Run all static checks (lint + typecheck + fmt-check)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck lint-hadolint flake-hash-check ## Run all static checks (lint + typecheck + fmt-check)
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -296,10 +342,16 @@ lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
 	@./scripts/zizmor.sh --min-confidence high .
 
 # Shell files to lint (excludes node_modules, build artifacts, .git)
-SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
+SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
 
 lint-shellcheck: ## Run shellcheck on shell scripts
 	shellcheck --external-sources $(SHELL_SRC_FILES)
+
+# Dockerfiles to lint (excludes node_modules, build artifacts, .git)
+DOCKERFILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name 'Dockerfile' 2>/dev/null)
+
+lint-hadolint: ## Run hadolint on Dockerfiles
+	hadolint $(DOCKERFILES)
 
 pin-actions: ## Pin GitHub Actions to SHA hashes (requires GH_TOKEN or gh CLI)
 	./scripts/pin-actions.sh .github/workflows/*.yml .github/actions/*/action.yml
@@ -316,6 +368,45 @@ typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
 endif
+
+mobile-cors-proxy: node_modules/.installed ## Start local mobile CORS proxy (default: :3901 -> backend :3900)
+	@MOBILE_BACKEND_HOST=$(or $(MOBILE_BACKEND_HOST),127.0.0.1) \
+		MOBILE_BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900)) \
+		MOBILE_CORS_PROXY_HOST=$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1) \
+		MOBILE_CORS_PROXY_PORT=$(or $(MOBILE_CORS_PROXY_PORT),3901) \
+		bun scripts/mobile-cors-proxy.ts
+
+ifeq ($(OS),Windows_NT)
+mobile-sandbox: node_modules/.installed mobile/node_modules/.installed ## Start backend sandbox + CORS proxy + Expo web in one command
+	@echo "Starting mobile sandbox..."
+	@echo "  Backend: http://$(or $(MOBILE_BACKEND_HOST),127.0.0.1):$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))"
+	@echo "  Proxy:   http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901)"
+	@echo "  Mobile:  http://localhost:8081"
+	@echo "  Base URL in Settings should match the proxy URL above."
+	@# User rationale: mobile web and backend run on different origins; backend keeps strict origin checks.
+	@# This starts a local CORS bridge so mobile UI work is deterministic in one command.
+	@# On Windows, use npm run because bun x doesn't correctly pass arguments to concurrently.
+	@npm x -- concurrently -k \
+		"set BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))&& set VITE_PORT=$(or $(MOBILE_VITE_PORT),$(or $(VITE_PORT),5174))&& set KEEP_SANDBOX=$(or $(KEEP_SANDBOX),1)&& $(MAKE) --no-print-directory dev-server-sandbox" \
+		"set MOBILE_BACKEND_HOST=$(or $(MOBILE_BACKEND_HOST),127.0.0.1)&& set MOBILE_BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))&& set MOBILE_CORS_PROXY_HOST=$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1)&& set MOBILE_CORS_PROXY_PORT=$(or $(MOBILE_CORS_PROXY_PORT),3901)&& $(MAKE) --no-print-directory mobile-cors-proxy" \
+		"set EXPO_PUBLIC_BACKEND_URL=http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901)&& $(MAKE) --no-print-directory mobile-web"
+else
+mobile-sandbox: node_modules/.installed mobile/node_modules/.installed ## Start backend sandbox + CORS proxy + Expo web in one command
+	@echo "Starting mobile sandbox..."
+	@echo "  Backend: http://$(or $(MOBILE_BACKEND_HOST),127.0.0.1):$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900))"
+	@echo "  Proxy:   http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901)"
+	@echo "  Mobile:  http://localhost:8081"
+	@echo "  Base URL in Settings should match the proxy URL above."
+	@# User rationale: mobile web and backend run on different origins; backend keeps strict origin checks.
+	@# This starts a local CORS bridge so mobile UI work is deterministic in one command.
+	@bun x concurrently -k \
+		"BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900)) VITE_PORT=$(or $(MOBILE_VITE_PORT),$(or $(VITE_PORT),5174)) KEEP_SANDBOX=$(or $(KEEP_SANDBOX),1) $(MAKE) --no-print-directory dev-server-sandbox" \
+		"MOBILE_BACKEND_HOST=$(or $(MOBILE_BACKEND_HOST),127.0.0.1) MOBILE_BACKEND_PORT=$(or $(MOBILE_BACKEND_PORT),$(or $(BACKEND_PORT),3900)) MOBILE_CORS_PROXY_HOST=$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1) MOBILE_CORS_PROXY_PORT=$(or $(MOBILE_CORS_PROXY_PORT),3901) $(MAKE) --no-print-directory mobile-cors-proxy" \
+		"EXPO_PUBLIC_BACKEND_URL=http://$(or $(MOBILE_CORS_PROXY_HOST),127.0.0.1):$(or $(MOBILE_CORS_PROXY_PORT),3901) $(MAKE) --no-print-directory mobile-web"
+endif
+
+mobile-web: mobile/node_modules/.installed ## Start mobile app web dev server
+	cd mobile && bun run web
 
 typecheck-react-native: mobile/node_modules/.installed ## Run TypeScript type checking for React Native app
 	@echo "Type checking React Native app..."
@@ -341,6 +432,9 @@ test-unit: node_modules/.installed build-main ## Run unit tests
 	@bun test src
 
 test: test-unit ## Alias for test-unit
+
+test-mobile: mobile/node_modules/.installed ## Run mobile app tests
+	@cd mobile && bun test
 
 test-watch: ## Run tests in watch mode
 	@./scripts/test.sh --watch
@@ -408,6 +502,12 @@ dist-win: build ## Build Windows distributable
 dist-linux: build ## Build Linux distributable
 	@bun x electron-builder --linux --publish never
 
+dist-linux-arm64: build ## Build Linux arm64 distributable
+	@bun x electron-builder --linux --arm64 --publish never
+
+check-appimage-icons: ## Validate AppImage icon structure (requires prior dist-linux build)
+	@./scripts/check-appimage-icons.sh
+
 ## VS Code Extension (delegates to vscode/Makefile)
 
 vscode-ext: ## Build VS Code extension (.vsix)
@@ -422,7 +522,9 @@ docs-server: node_modules/.installed ## Serve documentation locally (Mintlify de
 
 check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
-	@cd docs && bun x mintlify broken-links
+	# Workaround: katex@0.16.34 ships broken ESM with unreplaced __VERSION__ placeholder.
+	# Remove this NODE_OPTIONS prefix once katex publishes a fixed build.
+	@cd docs && NODE_OPTIONS="$${NODE_OPTIONS:+$$NODE_OPTIONS }--import data:text/javascript,globalThis.__VERSION__=%220.16.34%22" bun x mintlify broken-links
 
 check-code-docs-links: ## Validate code references to docs paths
 	@./scripts/check-code-docs-links.sh
@@ -436,9 +538,14 @@ storybook-build: node_modules/.installed src/version.ts ## Build static Storyboo
 	$(check_node_version)
 	@bun x storybook build
 
+capture-readme-screenshots: node_modules/.installed src/version.ts ## Capture README screenshots from running Storybook
+	@echo "Capturing README screenshots from Storybook (must be running on port 6006)..."
+	@bun run scripts/capture-readme-screenshots.ts
+
 test-storybook: node_modules/.installed ## Run Storybook interaction tests (requires Storybook to be running or built)
 	$(check_node_version)
-	@bun x test-storybook
+	@# Storybook story transitions can exceed Jest's default 15s timeout on loaded CI runners.
+	@bun x test-storybook --testTimeout 30000
 
 chromatic: node_modules/.installed ## Run Chromatic for visual regression testing
 	$(check_node_version)

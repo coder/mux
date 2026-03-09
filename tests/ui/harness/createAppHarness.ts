@@ -5,8 +5,14 @@ import {
   cleanupTestEnvironment,
   type TestEnvironment,
 } from "../../ipc/setup";
-import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../../ipc/helpers";
+import {
+  cleanupTempGitRepo,
+  createTempGitRepo,
+  generateBranchName,
+  trustProject,
+} from "../../ipc/helpers";
 import { detectDefaultTrunkBranch } from "@/node/git";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 import { installDom } from "../dom";
@@ -39,6 +45,7 @@ export interface AppHarness {
 export async function createAppHarness(options?: {
   branchPrefix?: string;
   aiMode?: "mock-router" | "none";
+  runtimeConfig?: RuntimeConfig;
   /**
    * Optional hook to set up DOM-dependent globals (e.g. localStorage) before
    * the App is rendered.
@@ -61,10 +68,14 @@ export async function createAppHarness(options?: {
     const trunkBranch = await detectDefaultTrunkBranch(repoPath);
     const branchName = generateBranchName(options?.branchPrefix ?? "ui");
 
+    // Trust test repos so workspace creation can run hooks/scripts behind the trust gate.
+    await trustProject(env, repoPath);
+
     const createResult = await env.orpc.workspace.create({
       projectPath: repoPath,
       branchName,
       trunkBranch,
+      runtimeConfig: options?.runtimeConfig,
     });
 
     if (!createResult.success) {

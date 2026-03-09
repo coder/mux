@@ -9,10 +9,13 @@ import {
 } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import {
+  LAUNCH_BEHAVIOR_KEY,
+  SELECTED_WORKSPACE_KEY,
+  type LaunchBehavior,
+} from "@/common/constants/storage";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
@@ -20,6 +23,8 @@ export interface RouterContext {
   navigateToHome: () => void;
   navigateToSettings: (section?: string) => void;
   navigateFromSettings: () => void;
+  navigateToAnalytics: () => void;
+  navigateFromAnalytics: () => void;
   currentWorkspaceId: string | null;
 
   /** Settings section from URL (null when not on settings page). */
@@ -36,6 +41,9 @@ export interface RouterContext {
 
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   pendingDraftId: string | null;
+
+  /** True when the analytics dashboard route is active. */
+  isAnalyticsOpen: boolean;
 }
 
 const RouterContext = createContext<RouterContext | undefined>(undefined);
@@ -48,10 +56,12 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
-/** Get initial route from browser URL or localStorage. */
+/** Get initial route from browser URL or default to home. */
 function getInitialRoute(): string {
-  // In browser mode, read route directly from URL (enables refresh restoration)
-  if (window.location.protocol !== "file:" && !window.location.pathname.endsWith("iframe.html")) {
+  const isStorybook = window.location.pathname.endsWith("iframe.html");
+
+  // In browser mode (not Storybook), read route directly from URL (enables refresh restoration)
+  if (window.location.protocol !== "file:" && !isStorybook) {
     const url = window.location.pathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)
     if (url.startsWith("/") && url !== "/") {
@@ -59,15 +69,31 @@ function getInitialRoute(): string {
     }
   }
 
-  // In Electron (file://), fallback to localStorage for workspace restoration
-  const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
-    SELECTED_WORKSPACE_KEY,
-    null
-  );
-  if (savedWorkspace?.workspaceId) {
-    return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
+  // In Storybook, stories seed localStorage via selectWorkspace() during setup.
+  // Read that selection so stories start at the correct workspace view.
+  if (isStorybook) {
+    const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
+      SELECTED_WORKSPACE_KEY,
+      null
+    );
+    if (savedWorkspace?.workspaceId) {
+      return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
+    }
   }
-  return `/workspace/${encodeURIComponent(MUX_HELP_CHAT_WORKSPACE_ID)}`;
+
+  const launchBehavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
+  if (launchBehavior === "last-workspace") {
+    const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
+      SELECTED_WORKSPACE_KEY,
+      null
+    );
+    if (savedWorkspace?.workspaceId) {
+      return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
+    }
+  }
+
+  // "dashboard" and "new-chat" both start at /
+  return "/";
 }
 
 /** Sync router state to browser URL (dev server only, not Electron/Storybook). */
@@ -114,6 +140,7 @@ function RouterContextInner(props: { children: ReactNode }) {
     location.pathname === "/project" ? getProjectPathFromLocationState(location.state) : null;
   const settingsMatch = /^\/settings\/([^/]+)$/.exec(location.pathname);
   const currentSettingsSection = settingsMatch ? decodeURIComponent(settingsMatch[1]) : null;
+  const isAnalyticsOpen = location.pathname === "/analytics";
 
   interface NonSettingsLocationSnapshot {
     url: string;
@@ -123,16 +150,27 @@ function RouterContextInner(props: { children: ReactNode }) {
   // When leaving settings, we need to restore the *full* previous location including
   // any in-memory navigation state (e.g. /project relies on { projectPath } state, and
   // the legacy ?path= deep link rewrite stores that path in location.state).
+  // Include /analytics so Settings opened from Analytics can close back to Analytics.
   const lastNonSettingsLocationRef = useRef<NonSettingsLocationSnapshot>({
+    url: getInitialRoute(),
+    state: null,
+  });
+  // Keep a separate "close analytics" snapshot that intentionally excludes /analytics so
+  // closing analytics still returns to the last non-analytics route.
+  const lastNonAnalyticsLocationRef = useRef<NonSettingsLocationSnapshot>({
     url: getInitialRoute(),
     state: null,
   });
   useEffect(() => {
     if (!location.pathname.startsWith("/settings")) {
-      lastNonSettingsLocationRef.current = {
+      const locationSnapshot: NonSettingsLocationSnapshot = {
         url: location.pathname + location.search,
         state: location.state,
       };
+      lastNonSettingsLocationRef.current = locationSnapshot;
+      if (location.pathname !== "/analytics") {
+        lastNonAnalyticsLocationRef.current = locationSnapshot;
+      }
     }
   }, [location.pathname, location.search, location.state]);
 
@@ -201,6 +239,23 @@ function RouterContextInner(props: { children: ReactNode }) {
     void navigateRef.current(lastLocation.url, { state: lastLocation.state });
   }, []);
 
+  const navigateToAnalytics = useCallback(() => {
+    void navigateRef.current("/analytics");
+  }, []);
+
+  const navigateFromAnalytics = useCallback(() => {
+    const lastLocation = lastNonAnalyticsLocationRef.current;
+    if (
+      !lastLocation.url ||
+      lastLocation.url.startsWith("/settings") ||
+      lastLocation.url === "/analytics"
+    ) {
+      void navigateRef.current("/");
+      return;
+    }
+    void navigateRef.current(lastLocation.url, { state: lastLocation.state });
+  }, []);
+
   const value = useMemo<RouterContext>(
     () => ({
       navigateToWorkspace,
@@ -208,18 +263,23 @@ function RouterContextInner(props: { children: ReactNode }) {
       navigateToHome,
       navigateToSettings,
       navigateFromSettings,
+      navigateToAnalytics,
+      navigateFromAnalytics,
       currentWorkspaceId,
       currentSettingsSection,
       currentProjectId,
       currentProjectPathFromState,
       pendingSectionId,
       pendingDraftId,
+      isAnalyticsOpen,
     }),
     [
       navigateToHome,
       navigateToProject,
       navigateToSettings,
       navigateFromSettings,
+      navigateToAnalytics,
+      navigateFromAnalytics,
       navigateToWorkspace,
       currentWorkspaceId,
       currentSettingsSection,
@@ -227,6 +287,7 @@ function RouterContextInner(props: { children: ReactNode }) {
       currentProjectPathFromState,
       pendingSectionId,
       pendingDraftId,
+      isAnalyticsOpen,
     ]
   );
 

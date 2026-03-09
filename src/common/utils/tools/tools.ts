@@ -1,5 +1,4 @@
 import { type Tool } from "ai";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -14,6 +13,8 @@ import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { createNotifyTool } from "@/node/services/tools/notify";
+import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
@@ -21,9 +22,17 @@ import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
 import { createTaskListTool } from "@/node/services/tools/task_list";
 import { createAgentSkillReadTool } from "@/node/services/tools/agent_skill_read";
 import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_read_file";
+import { createAgentSkillListTool } from "@/node/services/tools/agent_skill_list";
+import { createAgentSkillWriteTool } from "@/node/services/tools/agent_skill_write";
+import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_delete";
+import { createSkillsCatalogSearchTool } from "@/node/services/tools/skills_catalog_search";
+import { createSkillsCatalogReadTool } from "@/node/services/tools/skills_catalog_read";
 import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
 import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
+import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
+import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
+import { createSwitchAgentTool } from "@/node/services/tools/switch_agent";
 import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
@@ -32,6 +41,7 @@ import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalT
 import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
 import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
+import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -57,6 +67,8 @@ export interface ToolConfiguration {
   muxEnv?: Record<string, string>;
   /** Temporary directory for tool outputs in runtime's context (local or remote) */
   runtimeTempDir: string;
+  /** OpenAI wire format — webSearch requires "responses" */
+  openaiWireFormat?: "responses" | "chatCompletions";
   /** Overflow policy for bash tool output (optional, not exposed to AI) */
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */
@@ -76,6 +88,8 @@ export interface ToolConfiguration {
   workspaceId?: string;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => void;
+  /** Callback to notify that provider/config was written (triggers hot-reload). */
+  onConfigChanged?: () => void;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
   /** Enable agent_report tool (only valid for child task workspaces) */
@@ -90,6 +104,12 @@ export interface ToolConfiguration {
   availableSubagents?: AgentDefinitionDescriptor[];
   /** Available skills for the agent_skill_read tool description (dynamic context) */
   availableSkills?: AgentSkillDescriptor[];
+  /** Whether the project is trusted for hook/script execution */
+  trusted?: boolean;
+  /** Analytics service for raw SQL queries against DuckDB analytics data */
+  analyticsService?: {
+    executeRawQuery(sql: string): Promise<unknown>;
+  };
 }
 
 /**
@@ -207,6 +227,11 @@ function wrapToolsWithHooks(
   tools: Record<string, Tool>,
   config: ToolConfiguration
 ): Record<string, Tool> {
+  // Skip hooks for untrusted projects — repo-controlled scripts must not run
+  if (config.trusted !== true) {
+    return tools;
+  }
+
   // Hooks require workspaceId, cwd, and runtime
   if (!config.workspaceId || !config.cwd || !config.runtime) {
     return tools;
@@ -245,6 +270,24 @@ function wrapToolsWithHooks(
  * @param toolInstructions Optional map of tool names to additional instructions from "Tool: <name>" sections
  * @returns Promise resolving to record of tools available for the model
  */
+/**
+ * Returns true when an Anthropic model supports webFetch_20250910 (Claude 4.6+).
+ *
+ * Generation-based IDs: claude-{variant}-{major}-{minor} (e.g. claude-sonnet-4-6)
+ * Pinned generation IDs: claude-{variant}-{major}-{minor}-{date} (e.g. claude-opus-4-6-20260201)
+ * Date-based pre-4.6 IDs: claude-{variant}-{major}-{date} (e.g. claude-sonnet-4-20250514)
+ *
+ * The \d{1,2} constraint on the minor segment accepts 1-2 digit version numbers (1–99) while
+ * rejecting 8-digit date suffixes. The (?:-|$) lookahead allows an optional pinned date to follow.
+ */
+function supportsAnthropicNativeWebFetch(modelId: string): boolean {
+  const match = /^claude-\w+-(\d+)-(\d{1,2})(?:-|$)/.exec(modelId);
+  if (!match) return false;
+  const major = parseInt(match[1], 10);
+  const minor = parseInt(match[2], 10);
+  return major > 4 || (major === 4 && minor >= 6);
+}
+
 export async function getToolsForModel(
   modelString: string,
   config: ToolConfiguration,
@@ -299,14 +342,31 @@ export async function getToolsForModel(
   const nonRuntimeTools: Record<string, Tool> = {
     mux_global_agents_read: createMuxGlobalAgentsReadTool(config),
     mux_global_agents_write: createMuxGlobalAgentsWriteTool(config),
+    agent_skill_list: createAgentSkillListTool(config),
+    agent_skill_write: createAgentSkillWriteTool(config),
+    agent_skill_delete: createAgentSkillDeleteTool(config),
+    mux_config_read: createMuxConfigReadTool(config),
+    mux_config_write: createMuxConfigWriteTool(config),
+    skills_catalog_search: createSkillsCatalogSearchTool(config),
+    skills_catalog_read: createSkillsCatalogReadTool(config),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
+    // propose_name is intentionally NOT registered here — it's only used by
+    // the internal workspace-naming path (workspaceTitleGenerator.ts) which
+    // creates the tool inline. Exposing it in the default toolset would let
+    // exec-derived agents see its "call me immediately" description.
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    switch_agent: createSwitchAgentTool(config),
     system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
     status_set: createStatusSetTool(config),
     notify: createNotifyTool(config),
+    ...(workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
+      ? {
+          analytics_query: createAnalyticsQueryTool(config),
+        }
+      : {}),
   };
 
   // Base tools available for all models
@@ -322,12 +382,33 @@ export async function getToolsForModel(
     switch (provider) {
       case "anthropic": {
         const { anthropic } = await import("@ai-sdk/anthropic");
-        allTools = {
-          ...baseTools,
-          ...(mcpTools ?? {}),
-          // Provider-specific tool types are compatible with Tool at runtime
-          web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
-        };
+
+        // webFetch_20250910 was introduced with the Claude 4.6 generation.
+        // Sending it to an older model (e.g. claude-sonnet-4-5) causes an API error,
+        // so only override web_fetch when the model is >= 4.6.
+        //
+        // Known limitations when the native override is active:
+        // - Cannot reach private/localhost URLs (Anthropic's servers can't see workspace network).
+        // - mux.md share links rely on client-side decryption via URL fragment (#key);
+        //   Anthropic drops the fragment when making HTTP requests, so decryption silently fails.
+        // - Not bridgeable in the PTC sandbox (no execute()); see BridgeableToolName comment.
+        // - Tool hooks (.mux/tool_pre/.mux/tool_post) are skipped because withHooks() returns
+        //   early when execute() is absent — same limitation as web_search (provider-native).
+        if (supportsAnthropicNativeWebFetch(modelId)) {
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            // Provider-specific tool types are compatible with Tool at runtime
+            web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
+            web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 1000 }) as Tool,
+          };
+        } else {
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
+          };
+        }
         break;
       }
 
@@ -338,8 +419,10 @@ export async function getToolsForModel(
         // accepted by OpenAI's Structured Outputs implementation.
         const sanitizedMcpTools = mcpTools ? sanitizeMCPToolsForOpenAI(mcpTools) : {};
 
+        const useResponsesTools = config.openaiWireFormat !== "chatCompletions";
+
         // Only add web search for models that support it
-        if (modelId.includes("gpt-5") || modelId.includes("gpt-4")) {
+        if (useResponsesTools && (modelId.includes("gpt-5") || modelId.includes("gpt-4"))) {
           const { openai } = await import("@ai-sdk/openai");
           allTools = {
             ...baseTools,
@@ -371,10 +454,11 @@ export async function getToolsForModel(
 
   // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
   // Include MCP tools even if they're not in getAvailableTools().
+  const catalogOptions = getToolAvailabilityOptions({ workspaceId });
   const allowlistedToolNames = new Set(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
-      enableMuxGlobalAgentsTools: workspaceId === MUX_HELP_CHAT_WORKSPACE_ID,
+      enableSkillsCatalogTools: catalogOptions.enableSkillsCatalogTools,
     })
   );
   for (const toolName of Object.keys(mcpTools ?? {})) {

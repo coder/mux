@@ -146,7 +146,7 @@ function toPresetTab(
   }
 
   // Base tabs are already compatible.
-  if (tab === "costs" || tab === "review" || tab === "explorer" || tab === "stats") {
+  if (tab === "costs" || tab === "review" || tab === "explorer") {
     return tab;
   }
 
@@ -338,6 +338,9 @@ function resolvePresetTab(
   tab: RightSidebarPresetTabType,
   mapping: Map<RightSidebarPresetTabType, string>
 ): TabType | null {
+  // Migrate legacy "stats" preset tab → "costs" (absorbed as sub-tabs)
+  if (tab === "stats") return "costs";
+
   if (isTerminalPlaceholderTab(tab)) {
     const sessionId = mapping.get(tab);
     return sessionId ? (`terminal:${sessionId}` as const) : null;
@@ -351,9 +354,13 @@ function resolvePresetNodeToLayout(
   mapping: Map<RightSidebarPresetTabType, string>
 ): RightSidebarLayoutNode | null {
   if (node.type === "tabset") {
-    const tabs = node.tabs
-      .map((t) => resolvePresetTab(t, mapping))
-      .filter((t): t is TabType => !!t && isTabType(t));
+    const tabs = [
+      ...new Set(
+        node.tabs
+          .map((t) => resolvePresetTab(t, mapping))
+          .filter((t): t is TabType => !!t && isTabType(t))
+      ),
+    ];
 
     if (tabs.length === 0) {
       return null;

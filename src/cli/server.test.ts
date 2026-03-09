@@ -79,18 +79,20 @@ async function createTestServer(): Promise<TestServerHandle> {
     workspaceMcpOverridesService: services.workspaceMcpOverridesService,
     mcpConfigService: services.mcpConfigService,
     mcpOauthService: services.mcpOauthService,
-    featureFlagService: services.featureFlagService,
     sessionTimingService: services.sessionTimingService,
     mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,
     experimentsService: services.experimentsService,
     voiceService: services.voiceService,
+    devToolsService: services.devToolsService,
     telemetryService: services.telemetryService,
     policyService: services.policyService,
     sessionUsageService: services.sessionUsageService,
     signingService: services.signingService,
     coderService: services.coderService,
     serverAuthService: services.serverAuthService,
+    sshPromptService: services.sshPromptService,
+    analyticsService: services.analyticsService,
   };
 
   // Use the actual createOrpcServer function

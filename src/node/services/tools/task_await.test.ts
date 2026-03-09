@@ -5,8 +5,9 @@ import type { ToolExecutionOptions } from "ai";
 
 import { createTaskAwaitTool } from "./task_await";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { getSubagentGitPatchArtifactsFilePath } from "@/node/services/subagentGitPatchArtifacts";
-import type { TaskService } from "@/node/services/taskService";
+import { ForegroundWaitBackgroundedError, type TaskService } from "@/node/services/taskService";
 
 const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
@@ -74,12 +75,13 @@ describe("task_await tool", () => {
     using tempDir = new TestTempDir("test-task-await-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
+    const waitForAgentReport = mock((taskId: string) =>
+      Promise.resolve({ reportMarkdown: `report:${taskId}`, title: `title:${taskId}` })
+    );
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
       isDescendantAgentTask: mock(() => Promise.resolve(true)),
-      waitForAgentReport: mock((taskId: string) =>
-        Promise.resolve({ reportMarkdown: `report:${taskId}`, title: `title:${taskId}` })
-      ),
+      waitForAgentReport,
     } as unknown as TaskService;
 
     const tool = createTaskAwaitTool({ ...baseConfig, taskService });
@@ -94,6 +96,96 @@ describe("task_await tool", () => {
         { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
       ],
     });
+    expect(waitForAgentReport).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        backgroundOnMessageQueued: true,
+      })
+    );
+    expect(waitForAgentReport).toHaveBeenCalledWith(
+      "t2",
+      expect.objectContaining({
+        backgroundOnMessageQueued: true,
+      })
+    );
+  });
+
+  it("does not list background bash tasks when explicit agent task IDs are valid", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-explicit-valid-agent-with-bash-manager");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ok" }));
+    const listBackgroundProcesses = mock(() => {
+      throw new Error(
+        "background task discovery should be skipped for valid explicit agent awaits"
+      );
+    });
+    const backgroundProcessManager = {
+      list: listBackgroundProcesses,
+    } as unknown as BackgroundProcessManager;
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      backgroundProcessManager,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "completed", taskId: "t1", reportMarkdown: "ok", title: undefined }],
+    });
+    expect(waitForAgentReport).toHaveBeenCalledTimes(1);
+    expect(listBackgroundProcesses).toHaveBeenCalledTimes(0);
+  });
+
+  it("falls back to not_found when bash suggestion discovery fails", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-suggestion-fallback-on-list-error");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => {
+      throw new Error("waitForAgentReport should not be called for hallucinated task IDs");
+    });
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["hallucinated"]);
+      return new Map([["hallucinated", { exists: false, taskStatus: null }]]);
+    });
+    const listBackgroundProcesses = mock(() =>
+      Promise.reject(new Error("background refresh failed"))
+    );
+    const backgroundProcessManager = {
+      list: listBackgroundProcesses,
+    } as unknown as BackgroundProcessManager;
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      backgroundProcessManager,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["hallucinated"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "not_found", taskId: "hallucinated" }],
+    });
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
+    expect(waitForAgentReport).toHaveBeenCalledTimes(0);
+    expect(listBackgroundProcesses).toHaveBeenCalledTimes(1);
   });
 
   it("supports filterDescendantAgentTaskIds without losing this binding", async () => {
@@ -128,36 +220,194 @@ describe("task_await tool", () => {
     expect(waitForAgentReport).toHaveBeenCalledTimes(1);
   });
 
-  it("marks invalid_scope without calling waitForAgentReport", async () => {
-    using tempDir = new TestTempDir("test-task-await-tool-invalid-scope");
+  it("returns an error with descendant task suggestions for hallucinated IDs", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-hallucinated-descendant-suggestions");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
-    const isDescendantAgentTask = mock((ancestorId: string, taskId: string) => {
-      expect(ancestorId).toBe("parent-workspace");
-      return taskId !== "other";
+    const waitForAgentReport = mock(() => {
+      throw new Error("waitForAgentReport should not be called for hallucinated task IDs");
     });
-    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ok" }));
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["hallucinated"]);
+      return new Map([["hallucinated", { exists: false, taskStatus: null }]]);
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["real-child"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["hallucinated"] }, mockToolCallOptions)
+    )) as { results: Array<{ status: string; taskId: string; error?: string }> };
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({
+      status: "error",
+      taskId: "hallucinated",
+    });
+    const descendantSuggestionError = result.results[0]?.error;
+    expect(typeof descendantSuggestionError).toBe("string");
+    if (typeof descendantSuggestionError !== "string") {
+      throw new Error("Expected hallucinated descendant result to include an error message");
+    }
+    expect(descendantSuggestionError).toContain("same parallel tool-call batch");
+    expect(descendantSuggestionError).toContain("real-child");
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
+    expect(waitForAgentReport).toHaveBeenCalledTimes(0);
+  });
+
+  it("returns an error with bash task suggestions for out-of-scope IDs", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-hallucinated-bash-suggestions");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => {
+      throw new Error("waitForAgentReport should not be called for out-of-scope task IDs");
+    });
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["other-workspace"]);
+      return new Map([["other-workspace", { exists: true, taskStatus: "running" as const }]]);
+    });
+
+    const backgroundProcessManager = {
+      list: mock(() => [
+        {
+          id: "proc-1",
+          workspaceId: "parent-workspace",
+          status: "running" as const,
+          displayName: "Build",
+        },
+      ]),
+    } as unknown as BackgroundProcessManager;
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
-      isDescendantAgentTask,
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      backgroundProcessManager,
+      taskService,
+    });
+
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["other-workspace"] }, mockToolCallOptions)
+    )) as { results: Array<{ status: string; taskId: string; error?: string }> };
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({
+      status: "error",
+      taskId: "other-workspace",
+    });
+    const bashSuggestionError = result.results[0]?.error;
+    expect(typeof bashSuggestionError).toBe("string");
+    if (typeof bashSuggestionError !== "string") {
+      throw new Error("Expected out-of-scope bash suggestion result to include an error message");
+    }
+    expect(bashSuggestionError).toContain("same parallel tool-call batch");
+    expect(bashSuggestionError).toContain("bash:proc-1");
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
+    expect(waitForAgentReport).toHaveBeenCalledTimes(0);
+  });
+
+  it("preserves mixed results when one requested ID is real and one is hallucinated", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-mixed-results");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ok" }));
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["hallucinated"]);
+      return new Map([["hallucinated", { exists: false, taskStatus: null }]]);
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["real-child"]),
+      isDescendantAgentTask: mock((ancestorWorkspaceId: string, taskId: string) => {
+        expect(ancestorWorkspaceId).toBe("parent-workspace");
+        return Promise.resolve(taskId === "real-child");
+      }),
+      getAgentTaskStatuses,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["real-child", "hallucinated"] }, mockToolCallOptions)
+    )) as {
+      results: Array<{
+        status: string;
+        taskId: string;
+        error?: string;
+        reportMarkdown?: string;
+        title?: string;
+      }>;
+    };
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0]).toEqual({
+      status: "completed",
+      taskId: "real-child",
+      reportMarkdown: "ok",
+      title: undefined,
+    });
+    expect(result.results[1]).toMatchObject({
+      status: "error",
+      taskId: "hallucinated",
+    });
+    const mixedResultError = result.results[1]?.error;
+    expect(typeof mixedResultError).toBe("string");
+    if (typeof mixedResultError !== "string") {
+      throw new Error("Expected mixed-result hallucinated task to include an error message");
+    }
+    expect(mixedResultError).toContain("real-child");
+    expect(waitForAgentReport).toHaveBeenCalledTimes(1);
+    expect(waitForAgentReport).toHaveBeenCalledWith("real-child", expect.any(Object));
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps not_found when no replacement task IDs are available", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-hallucinated-not-found-no-suggestions");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => {
+      throw new Error("waitForAgentReport should not be called for hallucinated task IDs");
+    });
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["hallucinated"]);
+      return new Map([["hallucinated", { exists: false, taskStatus: null }]]);
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses,
       waitForAgentReport,
     } as unknown as TaskService;
 
     const tool = createTaskAwaitTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
-      tool.execute!({ task_ids: ["child", "other"] }, mockToolCallOptions)
+      tool.execute!({ task_ids: ["hallucinated"] }, mockToolCallOptions)
     );
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "child", reportMarkdown: "ok", title: undefined },
-        { status: "invalid_scope", taskId: "other" },
+        {
+          status: "not_found",
+          taskId: "hallucinated",
+        },
       ],
     });
-    expect(waitForAgentReport).toHaveBeenCalledTimes(1);
-    expect(waitForAgentReport).toHaveBeenCalledWith("child", expect.any(Object));
+    expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
+    expect(waitForAgentReport).toHaveBeenCalledTimes(0);
   });
 
   it("defaults to waiting on all active descendant tasks when task_ids is omitted", async () => {
@@ -181,6 +431,37 @@ describe("task_await tool", () => {
     expect(listActiveDescendantAgentTaskIds).toHaveBeenCalledWith("parent-workspace");
     expect(result).toEqual({
       results: [{ status: "completed", taskId: "t1", reportMarkdown: "ok", title: undefined }],
+    });
+  });
+
+  it("returns running status when foreground wait is backgrounded", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-backgrounded");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => Promise.reject(new ForegroundWaitBackgroundedError()));
+    const getAgentTaskStatus = mock(() => "running" as const);
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport,
+      getAgentTaskStatus,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "running",
+          taskId: "t1",
+          note: "Task sent to background because a new message was queued. Use task_await to monitor progress.",
+        },
+      ],
     });
   });
 
@@ -281,5 +562,11 @@ describe("task_await tool", () => {
     });
     expect(getAgentTaskStatus).toHaveBeenCalledWith("t1");
     expect(waitForAgentReport).toHaveBeenCalledTimes(1);
+    expect(waitForAgentReport).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        backgroundOnMessageQueued: true,
+      })
+    );
   });
 });

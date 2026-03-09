@@ -4,6 +4,7 @@ import * as fs from "fs/promises";
 import createIPCMock from "electron-mock-ipc";
 import type { BrowserWindow, IpcMain as ElectronIpcMain, WebContents } from "electron";
 import { Config } from "@/node/config";
+import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 
 type MockedElectron = ReturnType<typeof createIPCMock>;
@@ -105,6 +106,8 @@ export async function createHeadlessEnvironment(
   const mockIpcRendererModule = mockedElectron.ipcRenderer;
 
   const services = new ServiceContainer(config);
+  // Headless bench environment has no interactive host-key dialog
+  setOpenSSHHostKeyPolicyMode("headless-fallback");
   await services.initialize();
   services.windowService.setMainWindow(mockWindow);
 

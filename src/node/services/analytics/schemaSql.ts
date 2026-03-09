@@ -1,0 +1,5 @@
+export {
+  CREATE_DELEGATION_ROLLUPS_TABLE_SQL,
+  CREATE_EVENTS_TABLE_SQL,
+  CREATE_WATERMARK_TABLE_SQL,
+} from "@/common/analytics/schemaSql";

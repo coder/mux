@@ -14,7 +14,13 @@ import {
   createTestEnvironment,
   cleanupTestEnvironment,
 } from "../setup";
-import { sendMessage, sendMessageWithModel, modelString, generateBranchName } from "../helpers";
+import {
+  sendMessage,
+  sendMessageWithModel,
+  modelString,
+  generateBranchName,
+  trustProject,
+} from "../helpers";
 import {
   createSharedRepo,
   cleanupSharedRepo,
@@ -154,6 +160,7 @@ describeIntegration("sendMessage error handling tests", () => {
       const projectPath = getSharedRepoPath();
       const branchName = generateBranchName("test-no-api-key");
       const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+      await trustProject(env, projectPath);
 
       const createResult = await env.orpc.workspace.create({
         projectPath,

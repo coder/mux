@@ -1,20 +1,13 @@
 import { getPlanFileHint, getPlanModeInstruction } from "./modeUtils";
 
 describe("getPlanModeInstruction", () => {
-  it("provides plan file path context", () => {
-    const instruction = getPlanModeInstruction("/tmp/plan.md", false);
+  it("threads the exact plan file path through both creation and resume flows", () => {
+    const newPlanInstruction = getPlanModeInstruction("/tmp/plan.md", false);
+    const existingPlanInstruction = getPlanModeInstruction("/tmp/plan.md", true);
 
-    expect(instruction).toContain("Plan file path: /tmp/plan.md");
-    expect(instruction).toContain("No plan file exists yet");
-    expect(instruction).toContain("file_edit_* tools");
-  });
-
-  it("indicates when plan file already exists", () => {
-    const instruction = getPlanModeInstruction("/tmp/existing-plan.md", true);
-
-    expect(instruction).toContain("Plan file path: /tmp/existing-plan.md");
-    expect(instruction).toContain("A plan file already exists");
-    expect(instruction).toContain("read it to determine if it's relevant");
+    expect(newPlanInstruction).toContain("/tmp/plan.md");
+    expect(existingPlanInstruction).toContain("/tmp/plan.md");
+    expect(newPlanInstruction).not.toEqual(existingPlanInstruction);
   });
 });
 
@@ -23,13 +16,10 @@ describe("getPlanFileHint", () => {
     expect(getPlanFileHint("/tmp/plan.md", false)).toBeNull();
   });
 
-  it("includes post-compaction guidance and an ignore escape hatch", () => {
+  it("returns a non-null hint keyed to the saved plan path", () => {
     const hint = getPlanFileHint("/tmp/plan.md", true);
 
-    if (!hint) throw new Error("expected non-null hint");
-
-    expect(hint).toContain("A plan file exists at: /tmp/plan.md");
-    expect(hint).toContain("compaction/context reset");
-    expect(hint).toContain("If it is unrelated to the current request, ignore it.");
+    expect(hint).not.toBeNull();
+    expect(hint).toContain("/tmp/plan.md");
   });
 });

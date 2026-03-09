@@ -23,12 +23,20 @@ import { shescape, streamToString } from "./streamUtils";
 import {
   readHostGitconfig,
   resolveGhToken,
+  resolveHostCredentialEnv,
+  resolveCoderAgentMount,
+  resolveGitdirMount,
   resolveSshAgentForwarding,
+  type BindMount,
 } from "./credentialForwarding";
 import { devcontainerUp, devcontainerDown } from "./devcontainerCli";
-import { checkInitHookExists, getMuxEnv } from "./initHook";
-import { runInitHookOnRuntime } from "./initHook";
-import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
+import {
+  checkInitHookExists,
+  getMuxEnv,
+  runInitHookOnRuntime,
+  shouldSkipInitHook,
+} from "./initHook";
+import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -61,6 +69,10 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   private lastCredentialEnv?: Record<string, string>;
   private readonly shareCredentials: boolean;
 
+  // Cached container requirements (mounts + env), computed by computeContainerRequirements()
+  private containerMounts: BindMount[] = [];
+  private containerEnv: Record<string, string> = {};
+
   // Cached from devcontainer up output
   private remoteHomeDir?: string;
   private remoteWorkspaceFolder?: string;
@@ -73,31 +85,77 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     deferredRuntimeAccess: true,
   };
 
-  private buildCredentialForwarding(env?: Record<string, string>): {
-    additionalMounts: string[];
-    remoteEnv: Record<string, string>;
-  } {
-    const additionalMounts: string[] = [];
-    const remoteEnv: Record<string, string> = {};
+  /**
+   * Compute all mounts and env vars the container needs.
+   * Called once during postCreateSetup() and ensureReady(); results cached
+   * on this.containerMounts / this.containerEnv for use by exec() and getContainerEnv().
+   *
+   * Gitdir mount is always resolved (worktree correctness).
+   * Credential env/mounts are gated behind shareCredentials.
+   */
+  private computeContainerRequirements(
+    workspacePath: string,
+    runtimeEnv?: Record<string, string>
+  ): void {
+    const mounts: BindMount[] = [];
+    const env: Record<string, string> = {};
 
-    if (!this.shareCredentials) {
-      return { additionalMounts, remoteEnv };
+    // Always: bind-mount parent .git dir for worktree support.
+    // Without this, git inside the container can't resolve the gitdir reference.
+    const gitdirMount = resolveGitdirMount(workspacePath);
+    if (gitdirMount) mounts.push(gitdirMount);
+
+    if (this.shareCredentials) {
+      // Forward host credential env (GIT_ASKPASS, GIT_SSH_COMMAND, CODER_*, git identity)
+      Object.assign(env, resolveHostCredentialEnv());
+
+      // Mount /.coder-agent/ so GIT_ASKPASS=/.coder-agent/coder resolves
+      const coderMount = resolveCoderAgentMount();
+      if (coderMount) mounts.push(coderMount);
+
+      // SSH agent socket
+      const ssh = resolveSshAgentForwarding("/tmp/ssh-agent.sock");
+      if (ssh) {
+        mounts.push({ source: ssh.hostSocketPath, target: ssh.targetSocketPath });
+        env.SSH_AUTH_SOCK = ssh.targetSocketPath;
+      }
+
+      // GH_TOKEN
+      const ghToken = resolveGhToken(runtimeEnv);
+      if (ghToken) env.GH_TOKEN = ghToken;
     }
 
-    const sshForwarding = resolveSshAgentForwarding("/tmp/ssh-agent.sock");
-    if (sshForwarding) {
-      additionalMounts.push(
-        `type=bind,source=${sshForwarding.hostSocketPath},target=${sshForwarding.targetSocketPath}`
-      );
-      remoteEnv.SSH_AUTH_SOCK = sshForwarding.targetSocketPath;
+    this.containerMounts = mounts;
+    this.containerEnv = env;
+  }
+
+  /**
+   * Refresh cached container requirements from current runtime state.
+   * Called at every entry boundary that may precede PTY/exec usage,
+   * so credential env is always available regardless of lifecycle ordering.
+   */
+  private refreshContainerRequirements(
+    runtimeEnv: Record<string, string> | undefined = this.lastCredentialEnv
+  ): void {
+    if (!this.currentWorkspacePath) {
+      this.containerMounts = [];
+      this.containerEnv = {};
+      return;
     }
 
-    const ghToken = resolveGhToken(env);
-    if (ghToken) {
-      remoteEnv.GH_TOKEN = ghToken;
+    this.computeContainerRequirements(this.currentWorkspacePath, runtimeEnv);
+  }
+
+  /**
+   * Env vars that should be forwarded into devcontainer processes.
+   * Consumed by ptyService for terminal sessions.
+   */
+  getContainerEnv(): Record<string, string> {
+    if (this.currentWorkspacePath && Object.keys(this.containerEnv).length === 0) {
+      this.refreshContainerRequirements();
     }
 
-    return { additionalMounts, remoteEnv };
+    return this.containerEnv;
   }
 
   private mapContainerPathToHost(containerPath: string): string | null {
@@ -254,7 +312,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
           } else {
             controller.error(
               new RuntimeError(
-                `Failed to read file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+                `Failed to read file ${filePath}: ${getErrorMessage(err)}`,
                 "file_io",
                 err instanceof Error ? err : undefined
               )
@@ -424,6 +482,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       branchName: params.branchName,
       trunkBranch: params.trunkBranch,
       initLogger: params.initLogger,
+      trusted: params.trusted,
     });
   }
 
@@ -437,7 +496,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     initLogger.logStep("Building devcontainer...");
 
     this.lastCredentialEnv = env;
-    const { additionalMounts, remoteEnv } = this.buildCredentialForwarding(env);
+    this.currentWorkspacePath = workspacePath;
+    this.refreshContainerRequirements(env);
 
     try {
       const result = await devcontainerUp({
@@ -445,8 +505,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         configPath: this.configPath,
         initLogger,
         abortSignal,
-        additionalMounts: additionalMounts.length > 0 ? additionalMounts : undefined,
-        remoteEnv: Object.keys(remoteEnv).length > 0 ? remoteEnv : undefined,
+        additionalMounts: this.containerMounts.length > 0 ? this.containerMounts : undefined,
+        remoteEnv: Object.keys(this.containerEnv).length > 0 ? this.containerEnv : undefined,
       });
 
       // Cache container info
@@ -470,6 +530,11 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     const { projectPath, branchName, workspacePath, initLogger, env } = params;
 
     try {
+      if (shouldSkipInitHook(params, initLogger)) {
+        initLogger.logComplete(0);
+        return { success: true };
+      }
+
       // Check if init hook exists (on host - worktree is bind-mounted)
       const hookExists = await checkInitHookExists(workspacePath);
       if (hookExists) {
@@ -518,8 +583,9 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       args.push("--config", this.configPath);
     }
 
-    // Add environment variables
-    const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
+    // Merge cached container credential env + caller env + non-interactive vars.
+    // Spread order: container env (lowest) < caller env < NON_INTERACTIVE (highest).
+    const envVars = { ...this.containerEnv, ...options.env, ...NON_INTERACTIVE_ENV_VARS };
     for (const [key, value] of Object.entries(envVars)) {
       args.push("--remote-env", `${key}=${value}`);
     }
@@ -539,6 +605,13 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     });
 
     const disposable = new DisposableProcess(childProcess);
+
+    // Register cleanup to kill process tree and force-close stdio on timeout/abort.
+    disposable.addCleanup(() => {
+      if (childProcess.pid === undefined) return;
+      killProcessTree(childProcess.pid);
+      forceCloseStdio(childProcess);
+    });
 
     // Convert Node.js streams to Web Streams (casts required for ExecStream compatibility)
     /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
@@ -735,16 +808,14 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         },
       };
 
-      const { additionalMounts, remoteEnv } = this.buildCredentialForwarding(
-        this.lastCredentialEnv
-      );
+      this.refreshContainerRequirements();
       const result = await devcontainerUp({
         workspaceFolder: this.currentWorkspacePath,
         configPath: this.configPath,
         initLogger: silentLogger,
         abortSignal: options?.signal,
-        additionalMounts: additionalMounts.length > 0 ? additionalMounts : undefined,
-        remoteEnv: Object.keys(remoteEnv).length > 0 ? remoteEnv : undefined,
+        additionalMounts: this.containerMounts.length > 0 ? this.containerMounts : undefined,
+        remoteEnv: Object.keys(this.containerEnv).length > 0 ? this.containerEnv : undefined,
       });
 
       // Update cached info (container may have been rebuilt)
@@ -772,7 +843,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     projectPath: string,
     oldName: string,
     newName: string,
-    _abortSignal?: AbortSignal
+    _abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<
     { success: true; oldPath: string; newPath: string } | { success: false; error: string }
   > {
@@ -781,7 +853,12 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     await devcontainerDown(oldPath, this.configPath);
 
     // Rename worktree on host
-    const result = await this.worktreeManager.renameWorkspace(projectPath, oldName, newName);
+    const result = await this.worktreeManager.renameWorkspace(
+      projectPath,
+      oldName,
+      newName,
+      trusted
+    );
 
     if (result.success) {
       // Update current workspace path if this was the active workspace
@@ -797,7 +874,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     projectPath: string,
     workspaceName: string,
     force: boolean,
-    _abortSignal?: AbortSignal
+    _abortSignal?: AbortSignal,
+    trusted?: boolean
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
     const workspacePath = this.getWorkspacePath(projectPath, workspaceName);
 
@@ -809,7 +887,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     }
 
     // Delete worktree on host
-    return this.worktreeManager.deleteWorkspace(projectPath, workspaceName, force);
+    return this.worktreeManager.deleteWorkspace(projectPath, workspaceName, force, trusted);
   }
 
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
@@ -823,6 +901,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
    */
   setCurrentWorkspacePath(workspacePath: string): void {
     this.currentWorkspacePath = workspacePath;
+    this.refreshContainerRequirements();
   }
 
   /**

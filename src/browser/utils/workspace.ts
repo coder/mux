@@ -18,6 +18,7 @@ export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string 
     initKey,
     removingKey,
     meta.parentWorkspaceId ?? "", // Nested sidebar indentation/order
+    meta.taskStatus ?? "", // Task lifecycle label/state for sub-agent rows
     meta.agentType ?? "", // Agent preset badge/label (future)
     meta.sectionId ?? "", // Section grouping for sidebar organization
   ].join("|");

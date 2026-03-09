@@ -71,6 +71,46 @@ describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
   });
 });
 
+describe("TOGGLE_AUTO_AGENT keybind (Ctrl/Cmd+Shift+.)", () => {
+  it("matches shifted period via KeyboardEvent.code on macOS", () => {
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: ">", code: "Period", metaKey: true, shiftKey: true });
+    expect(matchesKeybind(event, KEYBINDS.TOGGLE_AUTO_AGENT)).toBe(true);
+  });
+
+  it("does not match when the physical key code is different", () => {
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: ">", code: "Slash", metaKey: true, shiftKey: true });
+    expect(matchesKeybind(event, KEYBINDS.TOGGLE_AUTO_AGENT)).toBe(false);
+  });
+});
+
+describe("SEND_MESSAGE_AFTER_TURN keybind (Ctrl/Cmd+Enter)", () => {
+  it("matches Ctrl+Enter", () => {
+    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "Enter", ctrlKey: true, metaKey: false });
+    expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE_AFTER_TURN)).toBe(true);
+  });
+
+  it("matches Cmd+Enter on macOS", () => {
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "Enter", metaKey: true, ctrlKey: false });
+    expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE_AFTER_TURN)).toBe(true);
+  });
+
+  it("does not match plain Enter", () => {
+    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "Enter" });
+    expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE_AFTER_TURN)).toBe(false);
+  });
+
+  it("SEND_MESSAGE does not match Ctrl+Enter", () => {
+    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "Enter", ctrlKey: true });
+    expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE)).toBe(false);
+  });
+});
+
 describe("matchesKeybind", () => {
   describe("FOCUS_REVIEW_SEARCH_QUICK keybind (/)", () => {
     it("matches Shift+/ when event.key is /", () => {
@@ -165,10 +205,16 @@ describe("matchesKeybind", () => {
     expect(matchesKeybind(event, keybind)).toBe(true);
   });
 
-  it("should match F2 for OPEN_COMMAND_PALETTE_ALT", () => {
-    const event = createEvent({ key: "F2" });
+  it("should match Ctrl/Cmd+Shift+P for OPEN_COMMAND_PALETTE", () => {
+    const event = createEvent({ key: "P", ctrlKey: true, shiftKey: true });
 
-    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE_ALT)).toBe(true);
+    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE)).toBe(true);
+  });
+
+  it("should match F4 for OPEN_COMMAND_PALETTE_ACTIONS", () => {
+    const event = createEvent({ key: "F4" });
+
+    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE_ACTIONS)).toBe(true);
   });
 
   it("should match complex multi-modifier combination", () => {

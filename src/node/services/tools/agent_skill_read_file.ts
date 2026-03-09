@@ -1,20 +1,16 @@
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { getBuiltInSkillByName } from "@/node/services/agentSkills/builtInSkillDefinitions";
-
 import { tool } from "ai";
 
 import type { AgentSkillReadFileToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
-import {
-  readAgentSkill,
-  resolveAgentSkillFilePath,
-} from "@/node/services/agentSkills/agentSkillsService";
+import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
+import { resolveContainedSkillFilePathOnRuntime } from "./runtimeSkillPathUtils";
 
 function readContentWithFileReadLimits(input: {
   fullContent: string;
@@ -91,9 +87,6 @@ function readContentWithFileReadLimits(input: {
     content: numberedLines.join("\n"),
   };
 }
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Agent Skill read_file tool factory.
@@ -129,28 +122,6 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           };
         }
 
-        // Chat with Mux intentionally has no generic filesystem access. Restrict skill file reads
-        // to built-in skills (bundled in the app) so users can access help like `mux-docs` without
-        // granting access to project/global skills on disk.
-        if (config.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
-          const builtInSkill = getBuiltInSkillByName(parsedName.data);
-          if (!builtInSkill) {
-            return {
-              success: false,
-              error: `Only built-in skills are available in Chat with Mux (requested: ${parsedName.data}).`,
-            };
-          }
-
-          const builtIn = readBuiltInSkillFile(parsedName.data, filePath);
-          return readContentWithFileReadLimits({
-            fullContent: builtIn.content,
-            fileSize: Buffer.byteLength(builtIn.content, "utf-8"),
-            modifiedTime: new Date(0).toISOString(),
-            offset,
-            limit,
-          });
-        }
-
         const resolvedSkill = await readAgentSkill(config.runtime, workspacePath, parsedName.data);
 
         // Built-in skills are embedded in the app bundle (no filesystem access).
@@ -165,11 +136,35 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           });
         }
 
-        const targetPath = resolveAgentSkillFilePath(
-          config.runtime,
-          resolvedSkill.skillDir,
-          filePath
-        );
+        let targetPath: string;
+        try {
+          ({ resolvedPath: targetPath } = await resolveContainedSkillFilePathOnRuntime(
+            config.runtime,
+            resolvedSkill.skillDir,
+            filePath
+          ));
+        } catch (error) {
+          const message = getErrorMessage(error);
+
+          if (/escape|outside/i.test(message)) {
+            return {
+              success: false,
+              error: `Resolved file path points outside the skill directory: ${filePath}`,
+            };
+          }
+
+          if (/symbolic link/i.test(message)) {
+            return {
+              success: false,
+              error: message,
+            };
+          }
+
+          return {
+            success: false,
+            error: message,
+          };
+        }
 
         let stat;
         try {
@@ -222,7 +217,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
       } catch (error) {
         return {
           success: false,
-          error: `Failed to read file: ${formatError(error)}`,
+          error: `Failed to read file: ${getErrorMessage(error)}`,
         };
       }
     },

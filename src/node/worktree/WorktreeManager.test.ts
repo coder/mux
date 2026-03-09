@@ -1,8 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as os from "os";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import { execSync } from "node:child_process";
+import * as disposableExec from "@/node/utils/disposableExec";
 import type { InitLogger } from "@/node/runtime/Runtime";
 import { WorktreeManager } from "./WorktreeManager";
 
@@ -103,6 +104,78 @@ describe("WorktreeManager.deleteWorkspace", () => {
         .trim();
       expect(after).toBe("");
     } finally {
+      await fsPromises.rm(rootDir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("force-delete fallback does not execute shell payloads embedded in branch names", async () => {
+    const rootDir = await fsPromises.realpath(
+      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
+    );
+    const sentinelPath = path.join(
+      os.tmpdir(),
+      `mux_injection_test_${Date.now()}_${Math.random().toString(16).slice(2)}`
+    );
+    const branchName = `feature/inject-$(touch\${IFS}${sentinelPath})`;
+
+    let execFileAsyncSpy: { mockRestore: () => void } | null = null;
+
+    try {
+      const projectPath = path.join(rootDir, "repo");
+      await fsPromises.mkdir(projectPath, { recursive: true });
+      initGitRepo(projectPath);
+
+      const srcBaseDir = path.join(rootDir, "src");
+      await fsPromises.mkdir(srcBaseDir, { recursive: true });
+
+      const manager = new WorktreeManager(srcBaseDir);
+      const initLogger = createNullInitLogger();
+
+      const createResult = await manager.createWorkspace({
+        projectPath,
+        branchName,
+        trunkBranch: "main",
+        initLogger,
+      });
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) return;
+      if (!createResult.workspacePath) {
+        throw new Error("Expected workspacePath from createWorkspace");
+      }
+      const workspacePath = createResult.workspacePath;
+
+      const originalExecFileAsync = disposableExec.execFileAsync;
+      execFileAsyncSpy = spyOn(disposableExec, "execFileAsync").mockImplementation(
+        (file, args, options) => {
+          if (file === "git" && args[2] === "worktree" && args[3] === "remove") {
+            return originalExecFileAsync("git", ["definitely-invalid-command"]);
+          }
+
+          return originalExecFileAsync(file, args, options);
+        }
+      );
+
+      const deleteResult = await manager.deleteWorkspace(projectPath, branchName, true);
+      expect(deleteResult.success).toBe(true);
+
+      let workspaceExists = true;
+      try {
+        await fsPromises.access(workspacePath);
+      } catch {
+        workspaceExists = false;
+      }
+      expect(workspaceExists).toBe(false);
+
+      let sentinelExists = true;
+      try {
+        await fsPromises.access(sentinelPath);
+      } catch {
+        sentinelExists = false;
+      }
+      expect(sentinelExists).toBe(false);
+    } finally {
+      execFileAsyncSpy?.mockRestore();
+      await fsPromises.rm(sentinelPath, { force: true });
       await fsPromises.rm(rootDir, { recursive: true, force: true });
     }
   }, 20_000);

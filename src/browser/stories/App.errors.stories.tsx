@@ -15,7 +15,6 @@ import {
   createFileEditTool,
   createStaticChatHandler,
 } from "./mockFactory";
-import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import {
   collapseRightSidebar,
   createOnChatAdapter,
@@ -178,9 +177,6 @@ export const ContextExceededSuggestion: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-context-exceeded";
-        // Disable auto-retry to keep this story deterministic (no countdown timer)
-        disableAutoRetryPreference(workspaceId);
-
         return setupCustomChatStory({
           workspaceId,
           providersConfig: {
@@ -231,7 +227,6 @@ export const DebugLlmRequestModal: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-debug-request";
-        disableAutoRetryPreference(workspaceId);
 
         const workspaces = [
           createWorkspace({ id: workspaceId, name: "debug", projectName: "my-app" }),
@@ -306,8 +301,6 @@ export const StreamError: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-error";
-        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
-        disableAutoRetryPreference(workspaceId);
 
         return setupCustomChatStory({
           workspaceId,
@@ -343,8 +336,6 @@ export const AnthropicOverloaded: AppStory = {
     <AppWithMocks
       setup={() => {
         const workspaceId = "ws-anthropic-overloaded";
-        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
-        disableAutoRetryPreference(workspaceId);
 
         return setupCustomChatStory({
           workspaceId,
@@ -492,12 +483,12 @@ export const LargeDiff: AppStory = {
 };
 
 /**
- * Project removal error popover.
+ * Project removal with workspace confirmation.
  *
- * Shows the error popup when attempting to remove a project that has active workspaces.
- * The play function hovers the project and clicks the remove button to trigger the error.
+ * Verifies that clicking the "Remove project" button when workspaces exist
+ * opens the type-to-confirm deletion modal instead of deleting immediately.
  */
-export const ProjectRemovalError: AppStory = {
+export const ProjectRemovalDisabled: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -505,46 +496,77 @@ export const ProjectRemovalError: AppStory = {
           createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" }),
           createWorkspace({ id: "ws-2", name: "feature/auth", projectName: "my-app" }),
         ];
-
-        // Expand the project so workspaces are visible
-        expandProjects(["/mock/my-app"]);
-
+        expandProjects(["/home/user/projects/my-app"]);
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
-          onProjectRemove: () => ({
-            success: false,
-            error:
-              "Cannot remove project with active workspaces. Please remove all 2 workspace(s) first.",
-          }),
         });
       }}
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    // Wait for the remove button to exist in DOM
-    await waitFor(() => {
-      const removeButton = canvasElement.querySelector(
+    const removeButton = await waitFor(() => {
+      const button = canvasElement.querySelector<HTMLButtonElement>(
         'button[aria-label="Remove project my-app"]'
       );
-      if (!removeButton) throw new Error("Remove button not found");
+      if (!button) throw new Error("Remove button not found");
+      return button;
     });
 
-    // Get the project row container and hover to reveal the button
-    const removeButton = canvasElement.querySelector('button[aria-label="Remove project my-app"]')!;
-    const projectRow = removeButton.closest("[data-project-path]")!;
+    // Hover the project row so action icons become visible.
+    const projectRow =
+      removeButton.closest<HTMLElement>("[aria-controls]") ??
+      canvasElement.querySelector<HTMLElement>(
+        '[role="button"][aria-label="Create workspace in my-app"]'
+      );
+    if (!projectRow) throw new Error("Project row not found");
+
+    // Make project action affordances deterministic in this story capture.
+    const secretsButton = canvasElement.querySelector<HTMLButtonElement>(
+      'button[aria-label="Manage secrets for my-app"]'
+    );
+    if (secretsButton) {
+      secretsButton.style.opacity = "1";
+    }
+    removeButton.style.opacity = "1";
+
     await userEvent.hover(projectRow);
 
-    // Small delay for hover state to apply
-    await new Promise((r) => setTimeout(r, 100));
+    // Hover the remove trigger so tooltip appears.
+    await userEvent.hover(removeButton);
 
-    // Click the remove button
+    // Tooltip should always say "Remove project" now (no blocker text).
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+        if (!tooltip.textContent?.includes("Remove project")) {
+          throw new Error("Expected 'Remove project' tooltip text");
+        }
+      },
+      { interval: 50 }
+    );
+
+    // Button should NOT be aria-disabled — it's always enabled now.
+    await waitFor(() => {
+      if (removeButton.getAttribute("aria-disabled") === "true") {
+        throw new Error("Remove button should not be aria-disabled");
+      }
+    });
+
+    // Click the remove button — should open the confirmation modal.
     await userEvent.click(removeButton);
 
-    // Wait for the error popover to appear
-    await waitFor(() => {
-      const errorPopover = document.querySelector('[role="alert"]');
-      if (!errorPopover) throw new Error("Error popover not found");
-    });
+    // Verify the confirmation modal appears.
+    await waitFor(
+      () => {
+        const dialog = document.querySelector('[role="dialog"]');
+        if (!dialog) throw new Error("Confirmation modal not found");
+        if (!dialog.textContent?.includes("my-app")) {
+          throw new Error("Modal should reference the project name");
+        }
+      },
+      { timeout: 2000 }
+    );
   },
 };

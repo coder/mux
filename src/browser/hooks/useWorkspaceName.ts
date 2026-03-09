@@ -6,6 +6,7 @@ import { getWorkspaceNameStateKey } from "@/common/constants/storage";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { NameGenerationError } from "@/common/types/errors";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Discriminated error type for workspace name operations */
 export type WorkspaceNameUIError =
@@ -93,7 +94,7 @@ const DEFAULT_PERSISTED_STATE: WorkspaceNamePersistedState = {
 
 /**
  * Extract the display title from persisted workspace name state.
- * Used by DraftWorkspaceListItem to show the title in the sidebar without
+ * Used by DraftAgentListItem to show the title in the sidebar without
  * duplicating knowledge of the persisted state structure.
  *
  * For auto-generated identities, prefers title (human-readable) over name (git-safe branch name).
@@ -250,7 +251,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         if (requestId !== requestIdRef.current) {
           return null;
         }
-        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorMsg = getErrorMessage(err);
         setError({ kind: "transport", message: errorMsg });
         safeResolve(null);
         return null;

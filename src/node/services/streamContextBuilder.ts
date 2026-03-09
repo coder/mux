@@ -17,6 +17,7 @@ import assert from "@/common/utils/assert";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectsConfig } from "@/common/types/project";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { TaskSettings } from "@/common/types/tasks";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
@@ -36,7 +37,9 @@ import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/r
 import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
 import { buildSystemMessage } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "./log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // Plan & Instructions Assembly
@@ -185,7 +188,7 @@ export async function buildPlanInstructions(
         } catch (error) {
           workspaceLog.warn("Failed to resolve last agent definition for plan handoff", {
             lastAgentId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }
@@ -220,6 +223,7 @@ export interface BuildStreamSystemContextOptions {
   effectiveAdditionalInstructions: string | undefined;
   modelString: string;
   cfg: ProjectsConfig;
+  providersConfig?: ProvidersConfigMap | null;
   mcpServers: Parameters<typeof buildSystemMessage>[5];
 }
 
@@ -262,6 +266,7 @@ export async function buildStreamSystemContext(
     effectiveAdditionalInstructions,
     modelString,
     cfg,
+    providersConfig,
     mcpServers,
   } = opts;
 
@@ -283,7 +288,7 @@ export async function buildStreamSystemContext(
     } catch (error: unknown) {
       workspaceLog.debug("Failed to resolve agent frontmatter for subagent append_prompt", {
         agentId: agentDefinition.id,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }
@@ -326,7 +331,8 @@ export async function buildStreamSystemContext(
   );
 
   // Count system message tokens for cost tracking
-  const tokenizer = await getTokenizerForModel(modelString);
+  const metadataModel = resolveModelForMetadata(modelString, providersConfig ?? null);
+  const tokenizer = await getTokenizerForModel(modelString, metadataModel);
   const systemMessageTokens = await tokenizer.countTokens(systemMessage);
 
   return {
@@ -397,6 +403,14 @@ export async function discoverAvailableSubagentsForToolContext(args: {
           // Important: descriptor.subagentRunnable comes from the agent's own frontmatter only.
           // Re-resolve with inheritance so derived agents inherit runnable: true from their base.
           subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
+          uiRoutable:
+            typeof resolvedFrontmatter.ui?.routable === "boolean"
+              ? resolvedFrontmatter.ui.routable
+              : typeof resolvedFrontmatter.ui?.hidden === "boolean"
+                ? !resolvedFrontmatter.ui.hidden
+                : typeof resolvedFrontmatter.ui?.selectable === "boolean"
+                  ? resolvedFrontmatter.ui.selectable
+                  : true,
         };
       } catch {
         // Best-effort: keep the descriptor if enablement or inheritance can't be resolved.

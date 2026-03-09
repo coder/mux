@@ -8,6 +8,7 @@ export { ResultSchema } from "./schemas/result";
 export {
   RuntimeConfigSchema,
   RuntimeModeSchema,
+  RuntimeEnablementIdSchema,
   RuntimeAvailabilitySchema,
   RuntimeAvailabilityStatusSchema,
   DevcontainerConfigInfoSchema,
@@ -35,6 +36,28 @@ export {
   TimingAnomalySchema,
   WorkspaceStatsSnapshotSchema,
 } from "./schemas/workspaceStats";
+
+// Analytics schemas
+export {
+  AgentCostRowSchema,
+  EventRowSchema,
+  HistogramBucketSchema,
+  SpendByModelRowSchema,
+  SpendByProjectRowSchema,
+  SpendOverTimeRowSchema,
+  SummaryRowSchema,
+  TimingPercentilesRowSchema,
+} from "./schemas/analytics";
+export type {
+  AgentCostRow,
+  EventRow,
+  HistogramBucket,
+  SpendByModelRow,
+  SpendByProjectRow,
+  SpendOverTimeRow,
+  SummaryRow,
+  TimingPercentilesRow,
+} from "./schemas/analytics";
 
 // Chat stats schemas
 export {
@@ -99,6 +122,9 @@ export {
   MCPTestResultSchema,
 } from "./schemas/mcp";
 
+// 1Password schemas
+export { onePassword } from "./schemas/onePassword";
+
 // UI Layouts schemas
 export {
   KeybindSchema,
@@ -135,6 +161,11 @@ export type { FilePart, MuxFilePart } from "./schemas/message";
 
 // Stream event schemas
 export {
+  AutoCompactionCompletedEventSchema,
+  AutoCompactionTriggeredEventSchema,
+  AutoRetryAbandonedEventSchema,
+  AutoRetryScheduledEventSchema,
+  AutoRetryStartingEventSchema,
   CaughtUpMessageSchema,
   ChatMuxMessageSchema,
   CompletedMessagePartSchema,
@@ -168,6 +199,7 @@ export {
 export {
   ApiServerStatusSchema,
   AWSCredentialStatusSchema,
+  analytics,
   coder,
   CoderInfoSchema,
   CoderPresetSchema,
@@ -176,9 +208,9 @@ export {
   CoderWorkspaceSchema,
   CoderWorkspaceStatusSchema,
   config,
+  devtools,
   uiLayouts,
   debug,
-  features,
   general,
   menu,
   agentSkills,
@@ -210,6 +242,7 @@ export {
   signing,
   type SigningCapabilities,
   type SignatureEnvelope,
+  ssh,
   terminal,
   tokenizer,
   update,

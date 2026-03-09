@@ -6,6 +6,7 @@ import type { ProjectContext } from "./ProjectContext";
 import { ProjectProvider, useProjectContext } from "./ProjectContext";
 import type { RecursivePartial } from "@/browser/testUtils";
 
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import type { APIClient } from "@/browser/contexts/API";
 
 // Mock API
@@ -49,7 +50,7 @@ describe("ProjectContext", () => {
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().projects.size).toBe(2));
+    await waitFor(() => expect(ctx().userProjects.size).toBe(2));
     expect(projectsApi.list).toHaveBeenCalled();
 
     await act(async () => {
@@ -60,13 +61,50 @@ describe("ProjectContext", () => {
     act(() => {
       ctx().addProject("/gamma", { workspaces: [] });
     });
-    expect(ctx().projects.has("/gamma")).toBe(true);
+    expect(ctx().userProjects.has("/gamma")).toBe(true);
 
     await act(async () => {
       await ctx().removeProject("/alpha");
     });
     expect(projectsApi.remove).toHaveBeenCalledWith({ projectPath: "/alpha" });
-    expect(ctx().projects.has("/alpha")).toBe(false);
+    expect(ctx().userProjects.has("/alpha")).toBe(false);
+  });
+
+  test("exposes intent-based project resolvers for user/system project lookups", async () => {
+    const systemProjectPath = "/path/to/system-project";
+    createMockAPI({
+      list: () =>
+        Promise.resolve([
+          ["/path/to/user-project", { workspaces: [] }],
+          [systemProjectPath, { workspaces: [], projectKind: "system" }],
+        ]),
+      remove: () => Promise.resolve({ success: true as const, data: undefined }),
+      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      secrets: {
+        get: () => Promise.resolve([]),
+        update: () => Promise.resolve({ success: true as const, data: undefined }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => {
+      expect(ctx().userProjects.size).toBe(1);
+      expect(ctx().systemProjectPath).toBe(systemProjectPath);
+    });
+
+    expect(ctx().userProjects.has("/path/to/user-project")).toBe(true);
+    expect(ctx().userProjects.has(systemProjectPath)).toBe(false);
+    expect(ctx().getProjectConfig(systemProjectPath)?.projectKind).toBe("system");
+    expect(ctx().resolveProjectPath({ type: "path", value: `${systemProjectPath}/` })).toBe(
+      systemProjectPath
+    );
+    expect(
+      ctx().resolveProjectPath({ type: "routeId", value: getProjectRouteId(systemProjectPath) })
+    ).toBe(systemProjectPath);
+    expect(ctx().resolveProjectPath({ type: "fuzzy", value: "system-project" })).toBe(
+      systemProjectPath
+    );
   });
 
   test("tracks modal and pending workspace creation state", async () => {
@@ -214,7 +252,7 @@ describe("ProjectContext", () => {
 
     // Should have empty projects after failed load
     await waitFor(() => {
-      expect(ctx().projects.size).toBe(0);
+      expect(ctx().userProjects.size).toBe(0);
     });
   });
 
@@ -264,7 +302,7 @@ describe("ProjectContext", () => {
     });
 
     await waitFor(() => {
-      expect(ctx().projects.has("/new")).toBe(true);
+      expect(ctx().userProjects.has("/new")).toBe(true);
     });
 
     // Now resolve the stale mount refresh; it should be ignored.
@@ -273,9 +311,9 @@ describe("ProjectContext", () => {
     });
 
     await waitFor(() => {
-      expect(ctx().projects.has("/new")).toBe(true);
+      expect(ctx().userProjects.has("/new")).toBe(true);
     });
-    expect(ctx().projects.has("/stale")).toBe(false);
+    expect(ctx().userProjects.has("/stale")).toBe(false);
   });
 
   test("refreshProjects applies older success if a newer overlapping refresh fails", async () => {
@@ -329,7 +367,7 @@ describe("ProjectContext", () => {
     });
 
     await waitFor(() => {
-      expect(ctx().projects.has("/older")).toBe(true);
+      expect(ctx().userProjects.has("/older")).toBe(true);
     });
   });
 
@@ -445,6 +483,67 @@ describe("ProjectContext", () => {
     expect(state.projectPath).toBe("/project-b");
     expect(state.branches).toEqual(["main-b"]);
     expect(state.defaultTrunkBranch).toBe("main-b");
+  });
+  test("resolveNewChatProjectPath prefers user project when both exist", async () => {
+    createMockAPI({
+      list: () =>
+        Promise.resolve([
+          ["/user-proj", { workspaces: [] }],
+          ["/system-proj", { workspaces: [], projectKind: "system" }],
+        ]),
+    });
+
+    const ctx = await setup();
+    await waitFor(() => expect(ctx().userProjects.size).toBe(1));
+
+    // Unscoped selector should prefer user project
+    const result = ctx().resolveNewChatProjectPath({});
+    expect(result).toBe("/user-proj");
+  });
+
+  test("resolveNewChatProjectPath falls back to system project when no user projects", async () => {
+    createMockAPI({
+      list: () => Promise.resolve([["/system-only", { workspaces: [], projectKind: "system" }]]),
+    });
+
+    const ctx = await setup();
+    await waitFor(() => expect(ctx().hasAnyProject).toBe(true));
+
+    const result = ctx().resolveNewChatProjectPath({});
+    expect(result).toBe("/system-only");
+  });
+
+  test("resolveNewChatProjectPath returns null when no projects exist", async () => {
+    createMockAPI({
+      list: () => Promise.resolve([]),
+    });
+
+    const ctx = await setup();
+    // Wait for loading to complete
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    const result = ctx().resolveNewChatProjectPath({});
+    expect(result).toBeNull();
+  });
+  test("resolveNewChatProjectPath treats blank project selector as absent and falls back to projectPath fuzzy match", async () => {
+    createMockAPI({
+      list: () =>
+        Promise.resolve([
+          ["/Users/me/repos/default-first", { workspaces: [] }],
+          ["/Users/me/repos/mux", { workspaces: [] }],
+        ]),
+    });
+
+    const ctx = await setup();
+    await waitFor(() => expect(ctx().userProjects.size).toBe(2));
+
+    // Blank project should be treated as absent, falling back to projectPath fuzzy match
+    const result = ctx().resolveNewChatProjectPath({
+      project: "   ",
+      projectPath: "/tmp/other-machine/mux",
+    });
+
+    expect(result).toBe("/Users/me/repos/mux");
   });
 });
 

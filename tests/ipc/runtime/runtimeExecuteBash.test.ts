@@ -20,8 +20,9 @@ import {
   generateBranchName,
   createWorkspaceWithInit,
   sendMessageAndWait,
-  extractTextFromEvents,
   HAIKU_MODEL,
+  STREAM_TIMEOUT_LOCAL_MS,
+  STREAM_TIMEOUT_SSH_MS,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
   getTestRunner,
@@ -148,6 +149,8 @@ describeIntegration("Runtime Bash Execution", () => {
         return undefined; // undefined = defaults to local
       };
 
+      const streamTimeoutMs = type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
+
       // SSH tests run serially to avoid Docker container overload
       const runTest = getTestRunner(type);
 
@@ -184,20 +187,16 @@ describeIntegration("Runtime Bash Execution", () => {
                 workspaceId,
                 'Use the bash tool with args: { script: "echo Hello World", timeout_secs: 30, run_in_background: false, display_name: "echo-hello" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                BASH_ONLY
+                BASH_ONLY,
+                streamTimeoutMs
               );
-
-              // Extract response text
-              const responseText = extractTextFromEvents(events);
 
               // Verify the command output appears in the bash tool result.
               const bashOutput = collectToolOutputs(events, "bash");
               expect(bashOutput.toLowerCase()).toContain("hello world");
 
-              // responseText might be empty if the model doesn't comment on the output.
-              if (responseText) {
-                expect(responseText.toLowerCase()).toContain("hello world");
-              }
+              // Do not assert on free-form assistant narration here. Some runs only emit
+              // a preamble sentence while still executing the tool correctly.
 
               // Verify bash was called
               const toolCallStarts = events.filter(
@@ -253,20 +252,16 @@ describeIntegration("Runtime Bash Execution", () => {
                 workspaceId,
                 'Use the bash tool with args: { script: "export TEST_VAR=test123 && echo Value:$TEST_VAR", timeout_secs: 30, run_in_background: false, display_name: "env-var" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                BASH_ONLY
+                BASH_ONLY,
+                streamTimeoutMs
               );
-
-              // Extract response text
-              const responseText = extractTextFromEvents(events);
 
               // Verify the env var value appears in the bash tool output.
               const bashOutput = collectToolOutputs(events, "bash");
               expect(bashOutput).toContain("test123");
 
-              // responseText might be empty if the model doesn't comment on the output.
-              if (responseText) {
-                expect(responseText).toContain("test123");
-              }
+              // Do not assert on free-form assistant narration here. Some runs only emit
+              // a preamble sentence while still executing the tool correctly.
 
               // Verify bash was called
               const toolCallStarts = events.filter(
@@ -331,25 +326,19 @@ describeIntegration("Runtime Bash Execution", () => {
                 'Use the bash tool with args: { script: "echo testdata > /tmp/test.txt && cat /tmp/test.txt | grep test", timeout_secs: 30, run_in_background: false, display_name: "stdin-grep" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
                 BASH_ONLY,
-                30000 // Relaxed timeout for CI stability (was 10s)
+                streamTimeoutMs
               );
 
               // Calculate actual tool execution duration
               const toolDuration = getToolDuration(events, "bash");
-
-              // Extract response text
-              const responseText = extractTextFromEvents(events);
 
               // Verify command completed successfully (not timeout)
               // We primarily check bashOutput to ensure the tool executed and didn't hang
               const bashOutput = collectToolOutputs(events, "bash");
               expect(bashOutput).toContain("testdata");
 
-              // responseText might be empty if the model decides not to comment on the output
-              // so we make this check optional or less strict if the tool output is correct
-              if (responseText) {
-                expect(responseText).toContain("test");
-              }
+              // Do not assert on free-form assistant narration here. Some runs only emit
+              // a preamble sentence while still executing the tool correctly.
 
               // Verify command completed quickly (not hanging until timeout)
               expect(toolDuration).toBeGreaterThan(0);
@@ -410,7 +399,7 @@ describeIntegration("Runtime Bash Execution", () => {
                 'Use the bash tool with args: { script: "for i in {1..1000}; do echo \"terminal bench line $i\" >> testfile.txt; done && grep -n \"terminal bench\" testfile.txt | head -n 200", timeout_secs: 60, run_in_background: false, display_name: "grep-head" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
                 BASH_ONLY,
-                30000 // Relaxed timeout for CI stability (was 15s)
+                streamTimeoutMs
               );
 
               // Calculate actual tool execution duration

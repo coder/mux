@@ -3,12 +3,14 @@
  */
 
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
 import { describe, test, expect, mock } from "bun:test";
 import {
   buildProviderOptions,
   buildRequestHeaders,
   ANTHROPIC_1M_CONTEXT_HEADER,
+  MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
 
 // Mock the log module to avoid console noise
@@ -20,6 +22,30 @@ void mock.module("@/node/services/log", () => ({
     error: (): void => undefined,
   },
 }));
+
+function createMockProvidersConfig(mappings: Record<string, string>): ProvidersConfigMap {
+  const config: ProvidersConfigMap = {};
+
+  for (const [customModelId, baseModelId] of Object.entries(mappings)) {
+    const [provider, modelId] = customModelId.split(":", 2);
+    if (!provider || !modelId) {
+      continue;
+    }
+
+    const existingProviderConfig = config[provider];
+    config[provider] = {
+      apiKeySet: existingProviderConfig?.apiKeySet ?? false,
+      isEnabled: existingProviderConfig?.isEnabled ?? true,
+      isConfigured: existingProviderConfig?.isConfigured ?? true,
+      models: [
+        ...(existingProviderConfig?.models ?? []),
+        { id: modelId, mappedToModel: baseModelId },
+      ],
+    };
+  }
+
+  return config;
+}
 
 describe("buildProviderOptions - Anthropic", () => {
   describe("Opus 4.5 (effort parameter)", () => {
@@ -90,6 +116,34 @@ describe("buildProviderOptions - Anthropic", () => {
 
     test("should use disabled thinking when off for Opus 4.6", () => {
       const result = buildProviderOptions("anthropic:claude-opus-4-6", "off");
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.thinking).toEqual({ type: "disabled" });
+      expect(anthropic.effort).toBe("low");
+    });
+  });
+
+  describe("Sonnet 4.6 (adaptive thinking + effort)", () => {
+    test("should use adaptive thinking and effort for claude-sonnet-4-6", () => {
+      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "medium");
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.disableParallelToolUse).toBe(false);
+      expect(anthropic.sendReasoning).toBe(true);
+      expect(anthropic.thinking).toEqual({ type: "adaptive" });
+      expect(anthropic.effort).toBe("medium");
+    });
+
+    test("should map xhigh to max effort for Sonnet 4.6", () => {
+      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "xhigh");
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.thinking).toEqual({ type: "adaptive" });
+      expect(anthropic.effort).toBe("max");
+    });
+
+    test("should use disabled thinking when off for Sonnet 4.6", () => {
+      const result = buildProviderOptions("anthropic:claude-sonnet-4-6", "off");
       const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
 
       expect(anthropic.thinking).toEqual({ type: "disabled" });
@@ -206,6 +260,120 @@ describe("buildProviderOptions - Anthropic", () => {
       });
     });
   });
+
+  describe("disableBetaFeatures", () => {
+    test("should omit cacheControl when disableBetaFeatures is true even with cacheTtl set", () => {
+      const result = buildProviderOptions(
+        "anthropic:claude-sonnet-4-5",
+        "medium",
+        undefined,
+        undefined,
+        {
+          anthropic: { cacheTtl: "1h", disableBetaFeatures: true },
+        }
+      );
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.cacheControl).toBeUndefined();
+      expect(anthropic.sendReasoning).toBe(true);
+    });
+
+    test("should include cacheControl normally when disableBetaFeatures is false", () => {
+      const result = buildProviderOptions(
+        "anthropic:claude-sonnet-4-5",
+        "medium",
+        undefined,
+        undefined,
+        {
+          anthropic: { cacheTtl: "1h", disableBetaFeatures: false },
+        }
+      );
+      const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+      expect(anthropic.cacheControl).toEqual({ type: "ephemeral", ttl: "1h" });
+    });
+  });
+});
+
+describe("buildProviderOptions - mappedToModel resolution", () => {
+  test("resolves custom alias to claude-sonnet-4-5 for thinking budget", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/sonnet": "anthropic:claude-sonnet-4-5-20250514",
+    });
+
+    const result = buildProviderOptions(
+      "anthropic:claude/sonnet",
+      "medium",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      providersConfig
+    );
+
+    expect(result).toEqual({
+      anthropic: {
+        disableParallelToolUse: false,
+        sendReasoning: true,
+        thinking: {
+          type: "enabled",
+          budgetTokens: 10000,
+        },
+      },
+    });
+  });
+
+  test("resolves custom alias to claude-opus-4-6 for adaptive thinking", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/opus": "anthropic:claude-opus-4-6-20260219",
+    });
+
+    const result = buildProviderOptions(
+      "anthropic:claude/opus",
+      "high",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      providersConfig
+    );
+    const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
+
+    expect(anthropic.thinking).toEqual({ type: "adaptive" });
+    expect(anthropic.effort).toBe("high");
+  });
+
+  test("works without providersConfig (backward compat)", () => {
+    const result = buildProviderOptions("anthropic:claude-sonnet-4-5-20250514", "medium");
+
+    expect(result).toEqual({
+      anthropic: {
+        disableParallelToolUse: false,
+        sendReasoning: true,
+        thinking: {
+          type: "enabled",
+          budgetTokens: 10000,
+        },
+      },
+    });
+  });
+
+  test("buildRequestHeaders resolves alias for 1M context header", () => {
+    const providersConfig = createMockProvidersConfig({
+      "anthropic:claude/sonnet": "anthropic:claude-sonnet-4-6-20251022",
+    });
+
+    const result = buildRequestHeaders(
+      "anthropic:claude/sonnet",
+      { anthropic: { use1MContext: true } },
+      undefined,
+      providersConfig
+    );
+
+    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+  });
 });
 
 describe("buildProviderOptions - OpenAI", () => {
@@ -218,6 +386,32 @@ describe("buildProviderOptions - OpenAI", () => {
     }
     return undefined;
   };
+
+  describe("store option", () => {
+    test("should include store: false when muxProviderOptions sets store to false", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: { store: false },
+      });
+      const openai = (result as Record<string, unknown>).openai as Record<string, unknown>;
+      expect(openai.store).toBe(false);
+    });
+
+    test("should not include store key when muxProviderOptions.openai.store is undefined", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: {},
+      });
+      const openai = (result as Record<string, unknown>).openai as Record<string, unknown>;
+      expect("store" in openai).toBe(false);
+    });
+
+    test("should include store: true when explicitly set", () => {
+      const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {
+        openai: { store: true },
+      });
+      const openai = (result as Record<string, unknown>).openai as Record<string, unknown>;
+      expect(openai.store).toBe(true);
+    });
+  });
 
   describe("promptCacheKey derivation", () => {
     test("should derive promptCacheKey from workspaceId when provided", () => {
@@ -268,19 +462,122 @@ describe("buildProviderOptions - OpenAI", () => {
     });
   });
 
-  describe("previousResponseId reuse", () => {
-    test("should reuse previousResponseId for gateway OpenAI history", () => {
-      const messages = [
-        createMuxMessage("assistant-1", "assistant", "", {
-          model: "mux-gateway:openai/gpt-5.2",
-          providerMetadata: { openai: { responseId: "resp_123" } },
-        }),
-      ];
-      const result = buildProviderOptions("mux-gateway:openai/gpt-5.2", "medium", messages);
+  describe("reasoning summary compatibility", () => {
+    test("should include reasoningSummary for supported OpenAI reasoning models", () => {
+      const result = buildProviderOptions("openai:gpt-5.2", "medium");
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();
-      expect(openai!.previousResponseId).toBe("resp_123");
+      expect(openai!.reasoningEffort).toBe("medium");
+      expect(openai!.reasoningSummary).toBe("detailed");
+      expect(openai!.include).toEqual(["reasoning.encrypted_content"]);
+    });
+
+    test("should omit reasoningSummary for gpt-5.3-codex-spark", () => {
+      const result = buildProviderOptions("openai:gpt-5.3-codex-spark", "medium");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("medium");
+      expect(openai!.reasoningSummary).toBeUndefined();
+      expect(openai!.include).toEqual(["reasoning.encrypted_content"]);
+    });
+  });
+
+  describe("OpenAI conversation state management", () => {
+    test("does not reuse previousResponseId when Mux already sends explicit GPT-5.4 history", () => {
+      const messages = [
+        createMuxMessage("assistant-1", "assistant", "", {
+          model: "mux-gateway:openai/gpt-5.4",
+          providerMetadata: { openai: { responseId: "resp_123" } },
+        }),
+      ];
+      const result = buildProviderOptions("mux-gateway:openai/gpt-5.4", "medium", messages);
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.previousResponseId).toBeUndefined();
+    });
+  });
+  describe("wireFormat gating", () => {
+    test("includes Responses-only fields by default when wireFormat is unset", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        "workspace-default"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.truncation).toBe("disabled");
+      expect(openai!.promptCacheKey).toBe("mux-v1-workspace-default");
+    });
+
+    test("includes Responses-only fields when wireFormat is responses", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        {
+          openai: { wireFormat: "responses" },
+        },
+        "workspace-responses"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.truncation).toBe("disabled");
+      expect(openai!.promptCacheKey).toBe("mux-v1-workspace-responses");
+    });
+
+    test("omits Responses-only truncation and promptCacheKey when wireFormat is chatCompletions", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        {
+          openai: { wireFormat: "chatCompletions" },
+        },
+        "workspace-chat"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.truncation).toBeUndefined();
+      expect(openai!.promptCacheKey).toBeUndefined();
+    });
+
+    test("omits previousResponseId when wireFormat is chatCompletions", () => {
+      const messages = [
+        createMuxMessage("assistant-1", "assistant", "", {
+          model: "openai:gpt-5.2",
+          providerMetadata: { openai: { responseId: "resp_chat_123" } },
+        }),
+      ];
+      const result = buildProviderOptions("openai:gpt-5.2", "medium", messages, undefined, {
+        openai: { wireFormat: "chatCompletions" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.previousResponseId).toBeUndefined();
+    });
+
+    test("omits Responses-only reasoning fields but keeps reasoningEffort when wireFormat is chatCompletions", () => {
+      const result = buildProviderOptions("openai:gpt-5.2", "medium", undefined, undefined, {
+        openai: { wireFormat: "chatCompletions" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("medium");
+      expect(openai!.reasoningSummary).toBeUndefined();
+      expect(openai!.include).toBeUndefined();
     });
   });
 });
@@ -300,6 +597,20 @@ describe("buildRequestHeaders", () => {
     expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
   });
 
+  test("should return undefined when disableBetaFeatures is true even with use1MContext", () => {
+    const result = buildRequestHeaders("anthropic:claude-opus-4-6", {
+      anthropic: { use1MContext: true, disableBetaFeatures: true },
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("should still return header when disableBetaFeatures is false", () => {
+    const result = buildRequestHeaders("anthropic:claude-opus-4-6", {
+      anthropic: { use1MContext: true, disableBetaFeatures: false },
+    });
+    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+  });
+
   test("should return undefined for non-Anthropic model", () => {
     const result = buildRequestHeaders("openai:gpt-5.2", {
       anthropic: { use1MContext: true },
@@ -311,6 +622,46 @@ describe("buildRequestHeaders", () => {
     const result = buildRequestHeaders("anthropic:claude-opus-4-6", {
       anthropic: { use1MContext: false },
     });
+    expect(result).toBeUndefined();
+  });
+
+  test("should include X-Mux-Workspace-Id for non-Anthropic provider when workspaceId provided", () => {
+    const result = buildRequestHeaders("openai:gpt-5.2", undefined, "a1b2c3d4e5");
+    expect(result).toEqual({ [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" });
+  });
+
+  test("should encode non-header-safe workspace IDs before attaching request header", () => {
+    const workspaceId = "workspace-😀";
+    const result = buildRequestHeaders("openai:gpt-5.2", undefined, workspaceId);
+
+    expect(result).toEqual({
+      [MUX_WORKSPACE_ID_HEADER]: `b64:${Buffer.from(workspaceId, "utf8").toString("base64url")}`,
+    });
+  });
+
+  test("should include both X-Mux-Workspace-Id and anthropic-beta when both apply", () => {
+    const result = buildRequestHeaders(
+      "anthropic:claude-opus-4-6",
+      { anthropic: { use1MContext: true } },
+      "a1b2c3d4e5"
+    );
+    expect(result).toEqual({
+      [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5",
+      "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER,
+    });
+  });
+
+  test("should include X-Mux-Workspace-Id but not anthropic-beta for Anthropic without 1M context", () => {
+    const result = buildRequestHeaders(
+      "anthropic:claude-sonnet-4-20250514",
+      undefined,
+      "deadbeef00"
+    );
+    expect(result).toEqual({ [MUX_WORKSPACE_ID_HEADER]: "deadbeef00" });
+  });
+
+  test("should return undefined when no workspaceId and no provider-specific headers apply", () => {
+    const result = buildRequestHeaders("openai:gpt-5.2");
     expect(result).toBeUndefined();
   });
 

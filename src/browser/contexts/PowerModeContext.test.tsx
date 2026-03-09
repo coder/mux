@@ -6,7 +6,7 @@ import { GlobalWindow } from "happy-dom";
 import { POWER_MODE_ENABLED_KEY } from "@/common/constants/storage";
 import { PowerModeEngine } from "@/browser/utils/powerMode/PowerModeEngine";
 
-void mock.module("@/browser/components/PowerMode/PowerModeOverlay", () => ({
+void mock.module("@/browser/features/PowerMode/PowerModeOverlay", () => ({
   // Overlay rendering is unrelated to caret alignment; keep tests focused on context behavior.
   PowerModeOverlay: () => null,
 }));

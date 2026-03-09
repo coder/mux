@@ -3,7 +3,12 @@ import { log } from "@/node/services/log";
 
 import { spawnPtyProcess } from "../ptySpawn";
 import { expandTildeForSSH } from "../tildeExpansion";
-import { getControlPath, sshConnectionPool, type SSHConnectionConfig } from "../sshConnectionPool";
+import {
+  appendOpenSSHHostKeyPolicyArgs,
+  getControlPath,
+  sshConnectionPool,
+  type SSHConnectionConfig,
+} from "../sshConnectionPool";
 import type { SpawnResult } from "../RemoteRuntime";
 import type {
   SSHTransport,
@@ -41,11 +46,13 @@ export class OpenSSHTransport implements SSHTransport {
   async acquireConnection(options?: {
     abortSignal?: AbortSignal;
     timeoutMs?: number;
+    maxWaitMs?: number;
     onWait?: (waitMs: number) => void;
   }): Promise<void> {
     await sshConnectionPool.acquireConnection(this.config, {
       abortSignal: options?.abortSignal,
       timeoutMs: options?.timeoutMs,
+      maxWaitMs: options?.maxWaitMs,
       onWait: options?.onWait,
     });
   }
@@ -63,6 +70,11 @@ export class OpenSSHTransport implements SSHTransport {
     sshArgs.push("-o", `ConnectTimeout=${connectTimeout}`);
     sshArgs.push("-o", "ServerAliveInterval=5");
     sshArgs.push("-o", "ServerAliveCountMax=2");
+    // Non-interactive execs must never hang on host-key or password prompts.
+    // Host-key trust policy is capability-scoped (verification service wired),
+    // while responder liveness only affects whether prompts can be shown.
+    sshArgs.push("-o", "BatchMode=yes");
+    appendOpenSSHHostKeyPolicyArgs(sshArgs);
 
     sshArgs.push(this.config.host, fullCommand);
 
@@ -110,8 +122,6 @@ export class OpenSSHTransport implements SSHTransport {
 
     if (this.config.identityFile) {
       args.push("-i", this.config.identityFile);
-      args.push("-o", "StrictHostKeyChecking=no");
-      args.push("-o", "UserKnownHostsFile=/dev/null");
     }
 
     args.push("-o", "LogLevel=FATAL");

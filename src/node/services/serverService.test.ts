@@ -182,6 +182,48 @@ describe("ServerService.startServer", () => {
   });
 });
 
+test("supports non-CLI allow-http-origin opt-in via MUX_SERVER_ALLOW_HTTP_ORIGIN", async () => {
+  const service = new ServerService();
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-server-env-test-"));
+  const config = new Config(tempDir);
+  const stubContext = { config } as unknown as ORPCContext;
+
+  const previousAllowHttpOriginEnv = process.env.MUX_SERVER_ALLOW_HTTP_ORIGIN;
+  process.env.MUX_SERVER_ALLOW_HTTP_ORIGIN = "1";
+
+  try {
+    const info = await service.startServer({
+      muxHome: tempDir,
+      context: stubContext,
+      authToken: "",
+      port: 0,
+    });
+
+    const response = await fetch(`${info.baseUrl}/api/spec.json`, {
+      headers: {
+        Origin: "https://mux-public.example.com",
+        "X-Forwarded-Host": "mux-public.example.com",
+        "X-Forwarded-Proto": "http",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://mux-public.example.com"
+    );
+  } finally {
+    await service.stopServer();
+
+    if (previousAllowHttpOriginEnv === undefined) {
+      delete process.env.MUX_SERVER_ALLOW_HTTP_ORIGIN;
+    } else {
+      process.env.MUX_SERVER_ALLOW_HTTP_ORIGIN = previousAllowHttpOriginEnv;
+    }
+
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 describe("computeNetworkBaseUrls", () => {
   test("returns empty for loopback binds", () => {
     expect(computeNetworkBaseUrls({ bindHost: "127.0.0.1", port: 3000 })).toEqual([]);

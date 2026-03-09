@@ -6,8 +6,15 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "./navigation";
+import {
+  findNextHunkId,
+  findNextHunkIdAfterFileRemoval,
+  flattenFileTreeLeaves,
+  getAdjacentFilePath,
+  getFileHunks,
+} from "./navigation";
 import type { DiffHunk } from "@/common/types/review";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 
 // Helper to create minimal DiffHunk for testing
 function makeHunk(id: string, filePath: string): DiffHunk {
@@ -126,5 +133,212 @@ describe("findNextHunkIdAfterFileRemoval", () => {
 
     // When removing b.ts from B1, should go back to A2 (backward, different file)
     expect(findNextHunkIdAfterFileRemoval(hunks, "B1", "b.ts")).toBe("A2");
+  });
+});
+
+describe("flattenFileTreeLeaves", () => {
+  test("returns empty array for null input", () => {
+    expect(flattenFileTreeLeaves(null)).toEqual([]);
+  });
+
+  test("returns single file for a flat tree", () => {
+    const root: FileTreeNode = {
+      name: "",
+      path: "",
+      isDirectory: true,
+      children: [
+        {
+          name: "index.ts",
+          path: "index.ts",
+          isDirectory: false,
+          children: [],
+        },
+      ],
+    };
+
+    expect(flattenFileTreeLeaves(root)).toEqual(["index.ts"]);
+  });
+
+  test("returns multiple files in depth-first order for a nested tree", () => {
+    const root: FileTreeNode = {
+      name: "",
+      path: "",
+      isDirectory: true,
+      children: [
+        {
+          name: "src",
+          path: "src",
+          isDirectory: true,
+          children: [
+            {
+              name: "components",
+              path: "src/components",
+              isDirectory: true,
+              children: [
+                {
+                  name: "Button.tsx",
+                  path: "src/components/Button.tsx",
+                  isDirectory: false,
+                  children: [],
+                },
+                {
+                  name: "Card.tsx",
+                  path: "src/components/Card.tsx",
+                  isDirectory: false,
+                  children: [],
+                },
+              ],
+            },
+            {
+              name: "index.ts",
+              path: "src/index.ts",
+              isDirectory: false,
+              children: [],
+            },
+          ],
+        },
+        {
+          name: "README.md",
+          path: "README.md",
+          isDirectory: false,
+          children: [],
+        },
+      ],
+    };
+
+    expect(flattenFileTreeLeaves(root)).toEqual([
+      "src/components/Button.tsx",
+      "src/components/Card.tsx",
+      "src/index.ts",
+      "README.md",
+    ]);
+  });
+
+  test("normalizes rename syntax to renamed leaf paths", () => {
+    const root: FileTreeNode = {
+      name: "",
+      path: "",
+      isDirectory: true,
+      children: [
+        {
+          name: "src",
+          path: "src",
+          isDirectory: true,
+          children: [
+            {
+              name: "{oldName.ts => newName.ts}",
+              path: "src/{oldName.ts => newName.ts}",
+              isDirectory: false,
+              children: [],
+            },
+          ],
+        },
+        {
+          name: "README.old.md => README.md",
+          path: "README.old.md => README.md",
+          isDirectory: false,
+          children: [],
+        },
+      ],
+    };
+
+    expect(flattenFileTreeLeaves(root)).toEqual(["src/newName.ts", "README.md"]);
+  });
+
+  test("skips directory nodes and only returns leaf file paths", () => {
+    const root: FileTreeNode = {
+      name: "",
+      path: "",
+      isDirectory: true,
+      children: [
+        {
+          name: "packages",
+          path: "packages",
+          isDirectory: true,
+          children: [
+            {
+              name: "core",
+              path: "packages/core",
+              isDirectory: true,
+              children: [
+                {
+                  name: "index.ts",
+                  path: "packages/core/index.ts",
+                  isDirectory: false,
+                  children: [],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = flattenFileTreeLeaves(root);
+
+    expect(result).toEqual(["packages/core/index.ts"]);
+    expect(result).not.toContain("packages");
+    expect(result).not.toContain("packages/core");
+  });
+});
+
+describe("getAdjacentFilePath", () => {
+  test("returns null for empty file list", () => {
+    expect(getAdjacentFilePath([], "src/a.ts", 1)).toBeNull();
+  });
+
+  test("returns first file if current is not in list", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+
+    expect(getAdjacentFilePath(files, "src/missing.ts", 1)).toBe("src/a.ts");
+  });
+
+  test("returns next file for direction 1", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+
+    expect(getAdjacentFilePath(files, "src/b.ts", 1)).toBe("src/c.ts");
+  });
+
+  test("returns previous file for direction -1", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+
+    expect(getAdjacentFilePath(files, "src/b.ts", -1)).toBe("src/a.ts");
+  });
+
+  test("wraps around from last to first for direction 1", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+
+    expect(getAdjacentFilePath(files, "src/c.ts", 1)).toBe("src/a.ts");
+  });
+
+  test("wraps around from first to last for direction -1", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+
+    expect(getAdjacentFilePath(files, "src/a.ts", -1)).toBe("src/c.ts");
+  });
+});
+
+describe("getFileHunks", () => {
+  test("returns empty array if no hunks match", () => {
+    const hunks = [makeHunk("a", "src/a.ts"), makeHunk("b", "src/b.ts")];
+
+    expect(getFileHunks(hunks, "src/c.ts")).toEqual([]);
+  });
+
+  test("returns only hunks matching the file path", () => {
+    const hunkA = makeHunk("a", "src/a.ts");
+    const hunkB = makeHunk("b", "src/b.ts");
+    const hunks = [hunkA, hunkB];
+
+    expect(getFileHunks(hunks, "src/b.ts")).toEqual([hunkB]);
+  });
+
+  test("returns multiple hunks for the same file", () => {
+    const hunkA1 = makeHunk("a1", "src/a.ts");
+    const hunkB = makeHunk("b", "src/b.ts");
+    const hunkA2 = makeHunk("a2", "src/a.ts");
+    const hunks = [hunkA1, hunkB, hunkA2];
+
+    expect(getFileHunks(hunks, "src/a.ts")).toEqual([hunkA1, hunkA2]);
   });
 });

@@ -247,9 +247,86 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
   };
 }
 /**
+ * Normalize a plan file path for cross-platform matching.
+ *
+ * Converts Windows separators and strips absolute mux-home prefixes so callers can
+ * compare only the stable ".mux/plans/..." suffix.
+ *
+ * Accepts any absolute path containing `/.mux/plans/`, `/.mux-<suffix>/plans/`,
+ * or `/var/mux/plans/`. Also accepts tilde-prefixed paths like
+ * `~/.mux/plans/...` and
+ * `~/.mux-<suffix>/plans/...` from legacy transcripts.
+ */
+export function normalizePlanFilePath(filePath: string): string | null {
+  if (!filePath) return null;
+
+  const normalized = filePath.replace(/\\/g, "/");
+
+  const tildeMatch = /^~\/\.mux(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
+  if (tildeMatch?.[1]) {
+    return `.mux/plans/${tildeMatch[1]}`;
+  }
+
+  // Already-normalized relative path from a previous normalizePlanFilePath call.
+  // This ensures round-trip stability: normalize(normalize(path)) === normalize(path).
+  if (normalized.startsWith(".mux/plans/")) {
+    return normalized;
+  }
+
+  // Only match absolute paths to avoid false positives from relative paths like
+  // "project/.mux/plans/foo.md".
+  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
+  if (!isAbsolute) return null;
+
+  const muxHomeMatch = /\/\.mux(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
+  if (muxHomeMatch?.[1]) {
+    return `.mux/plans/${muxHomeMatch[1]}`;
+  }
+
+  const dockerMatch = /\/var\/mux\/plans\/(.+)/.exec(normalized);
+  if (dockerMatch?.[1]) {
+    return `.mux/plans/${dockerMatch[1]}`;
+  }
+
+  return null;
+}
+
+/**
+ * Returns true when a review note references plan content under .mux/plans.
+ */
+export function isPlanFilePath(filePath: string): boolean {
+  return normalizePlanFilePath(filePath) !== null;
+}
+
+function formatPlanLineRange(lineRange: string): string {
+  const trimmedLineRange = lineRange.trim();
+
+  const newRangeMatch = /\+(\d+(?:-\d+)?)/.exec(trimmedLineRange);
+  if (newRangeMatch?.[1]) {
+    return `L${newRangeMatch[1]}`;
+  }
+
+  const oldRangeMatch = /(?:^|\s)-(\d+(?:-\d+)?)(?=\s|$)/.exec(trimmedLineRange);
+  if (oldRangeMatch?.[1]) {
+    return `L${oldRangeMatch[1]}`;
+  }
+
+  const bareRangeMatch = /^(\d+(?:-\d+)?)$/.exec(trimmedLineRange);
+  if (bareRangeMatch?.[1]) {
+    return `L${bareRangeMatch[1]}`;
+  }
+
+  return lineRange;
+}
+
+/**
  * Format a ReviewNoteData into the message format for the model.
  * Used when preparing reviews for sending to chat.
  */
 export function formatReviewForModel(data: ReviewNoteData): string {
-  return `<review>\nRe ${data.filePath}:${data.lineRange}\n\`\`\`\n${data.selectedCode}\n\`\`\`\n> ${data.userNote.trim()}\n</review>`;
+  const location = isPlanFilePath(data.filePath)
+    ? `Plan:${formatPlanLineRange(data.lineRange)}`
+    : `${data.filePath}:${data.lineRange}`;
+
+  return `<review>\nRe ${location}\n\`\`\`\n${data.selectedCode}\n\`\`\`\n> ${data.userNote.trim()}\n</review>`;
 }

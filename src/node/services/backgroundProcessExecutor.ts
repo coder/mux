@@ -27,6 +27,7 @@ import {
 import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { toPosixPath } from "@/node/utils/paths";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Quote a path for shell commands.
@@ -47,17 +48,17 @@ const FALLBACK_CWD = process.platform === "win32" ? (process.env.TEMP ?? "C:\\")
 
 /** Helper to extract error message for logging */
 function errorMsg(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }
 
 /** Subdirectory under temp for background process output */
-export const BG_OUTPUT_SUBDIR = "mux-bashes";
+const BG_OUTPUT_SUBDIR = "mux-bashes";
 
 /** Output filename for combined stdout/stderr */
-export const OUTPUT_FILENAME = "output.log";
+const OUTPUT_FILENAME = "output.log";
 
 /** Exit code filename */
-export const EXIT_CODE_FILENAME = "exit_code";
+const EXIT_CODE_FILENAME = "exit_code";
 
 /**
  * Compute paths for a background process output directory.
@@ -65,7 +66,7 @@ export const EXIT_CODE_FILENAME = "exit_code";
  * @param workspaceId Workspace identifier
  * @param processId Process identifier
  */
-export function computeOutputPaths(
+function computeOutputPaths(
   bgOutputDir: string,
   workspaceId: string,
   processId: string

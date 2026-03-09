@@ -1,0 +1,245 @@
+import { randomUUID } from "node:crypto";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { log } from "@/node/services/log";
+import { CHAT_FILE_NAME } from "./etl";
+import {
+  discoverAllWorkspaces,
+  listArchivedSubagentWorkspaceIds,
+  listSessionWorkspaceIdsWithHistory,
+} from "./workspaceDiscovery";
+
+const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
+const tempDirsToClean: string[] = [];
+
+async function createTempSessionsDir(): Promise<string> {
+  const sessionsDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "mux-analytics-workspace-discovery-")
+  );
+  tempDirsToClean.push(sessionsDir);
+  return sessionsDir;
+}
+
+async function writeChatJsonl(sessionDir: string): Promise<void> {
+  await fs.writeFile(path.join(sessionDir, CHAT_FILE_NAME), "{}\n");
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirsToClean.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true }))
+  );
+});
+
+describe("listSessionWorkspaceIdsWithHistory", () => {
+  test("returns only top-level workspace directories with chat.jsonl", async () => {
+    const sessionsDir = await createTempSessionsDir();
+    const workspaceWithHistory = "workspace-a";
+
+    const workspaceWithHistoryDir = path.join(sessionsDir, workspaceWithHistory);
+    await fs.mkdir(workspaceWithHistoryDir, { recursive: true });
+    await writeChatJsonl(workspaceWithHistoryDir);
+
+    await fs.mkdir(path.join(sessionsDir, "workspace-without-history"), { recursive: true });
+    await fs.writeFile(path.join(sessionsDir, "README.txt"), "not a workspace directory");
+
+    expect(await listSessionWorkspaceIdsWithHistory(sessionsDir)).toEqual([workspaceWithHistory]);
+  });
+
+  test("returns an empty list when sessionsDir does not exist", async () => {
+    const missingSessionsDir = path.join(
+      os.tmpdir(),
+      `mux-analytics-workspace-discovery-missing-${process.pid}-${randomUUID()}`
+    );
+
+    expect(await listSessionWorkspaceIdsWithHistory(missingSessionsDir)).toEqual([]);
+  });
+});
+
+describe("listArchivedSubagentWorkspaceIds", () => {
+  test("discovers archived child workspace IDs under each parent workspace", async () => {
+    const sessionsDir = await createTempSessionsDir();
+    const parentWorkspaceId = "parent-a";
+    const childWorkspaceId = "child-a";
+
+    const parentSessionDir = path.join(sessionsDir, parentWorkspaceId);
+    await fs.mkdir(parentSessionDir, { recursive: true });
+    await writeChatJsonl(parentSessionDir);
+
+    const archivedChildDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      childWorkspaceId
+    );
+    await fs.mkdir(archivedChildDir, { recursive: true });
+    await writeChatJsonl(archivedChildDir);
+
+    const sessionWorkspaceIds = await listSessionWorkspaceIdsWithHistory(sessionsDir);
+    expect(sessionWorkspaceIds).toEqual([parentWorkspaceId]);
+
+    const archivedWorkspaceIds = await listArchivedSubagentWorkspaceIds(
+      sessionsDir,
+      sessionWorkspaceIds
+    );
+    expect(archivedWorkspaceIds).toEqual([childWorkspaceId]);
+
+    // This mirrors the startup backfill check: archived child workspace IDs must
+    // count as known so their watermark rows do not trigger rebuildAll loops.
+    const knownWorkspaceIdSet = new Set([...sessionWorkspaceIds, ...archivedWorkspaceIds]);
+    expect(knownWorkspaceIdSet.has(childWorkspaceId)).toBe(true);
+  });
+
+  test("skips unreadable archived transcript directories instead of throwing", async () => {
+    const sessionsDir = await createTempSessionsDir();
+    const parentWorkspaceId = "parent-a";
+
+    const parentSessionDir = path.join(sessionsDir, parentWorkspaceId);
+    await fs.mkdir(parentSessionDir, { recursive: true });
+    await writeChatJsonl(parentSessionDir);
+
+    const transcriptsDir = path.join(parentSessionDir, SUBAGENT_TRANSCRIPTS_DIR_NAME);
+    await fs.mkdir(transcriptsDir, { recursive: true });
+
+    const originalReaddir = fs.readdir;
+    const readdirSpy = spyOn(fs, "readdir").mockImplementation(((...args: unknown[]) => {
+      const [targetPath] = args;
+      if (String(targetPath) === transcriptsDir) {
+        const permissionError = Object.assign(new Error("permission denied"), {
+          code: "EACCES",
+        });
+        return Promise.reject(permissionError);
+      }
+
+      return (originalReaddir as (...readdirArgs: unknown[]) => Promise<unknown>)(...args);
+    }) as unknown as typeof fs.readdir);
+    const warnSpy = spyOn(log, "warn").mockImplementation(() => undefined);
+
+    try {
+      const archivedWorkspaceIds = await listArchivedSubagentWorkspaceIds(sessionsDir, [
+        parentWorkspaceId,
+      ]);
+      expect(archivedWorkspaceIds).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      warnSpy.mockRestore();
+      readdirSpy.mockRestore();
+    }
+  });
+
+  test("ignores archived sub-agent directories without chat.jsonl", async () => {
+    const sessionsDir = await createTempSessionsDir();
+    const parentWorkspaceId = "parent-a";
+
+    const parentSessionDir = path.join(sessionsDir, parentWorkspaceId);
+    await fs.mkdir(parentSessionDir, { recursive: true });
+    await writeChatJsonl(parentSessionDir);
+
+    const archivedWithoutHistoryDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      "child-without-history"
+    );
+    await fs.mkdir(archivedWithoutHistoryDir, { recursive: true });
+
+    expect(await listArchivedSubagentWorkspaceIds(sessionsDir, [parentWorkspaceId])).toEqual([]);
+  });
+});
+
+describe("discoverAllWorkspaces", () => {
+  test("returns top-level workspaces with correct sessionDir", async () => {
+    const sessionsDir = await createTempSessionsDir();
+    const workspaceId = "ws-a";
+
+    const workspaceSessionDir = path.join(sessionsDir, workspaceId);
+    await fs.mkdir(workspaceSessionDir, { recursive: true });
+    await writeChatJsonl(workspaceSessionDir);
+
+    const discovered = await discoverAllWorkspaces(sessionsDir);
+
+    expect(discovered.size).toBe(1);
+    expect(discovered.get(workspaceId)).toEqual({
+      workspaceId,
+      sessionDir: workspaceSessionDir,
+      parentWorkspaceId: undefined,
+    });
+  });
+
+  test("includes archived subagents with correct sessionDir under parent", async () => {
+    const sessionsDir = await createTempSessionsDir();
+    const parentWorkspaceId = "parent-a";
+    const childWorkspaceId = "child-a";
+
+    const parentSessionDir = path.join(sessionsDir, parentWorkspaceId);
+    await fs.mkdir(parentSessionDir, { recursive: true });
+    await writeChatJsonl(parentSessionDir);
+
+    const childSessionDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      childWorkspaceId
+    );
+    await fs.mkdir(childSessionDir, { recursive: true });
+    await writeChatJsonl(childSessionDir);
+
+    const discovered = await discoverAllWorkspaces(sessionsDir);
+
+    expect(discovered.get(parentWorkspaceId)).toEqual({
+      workspaceId: parentWorkspaceId,
+      sessionDir: parentSessionDir,
+      parentWorkspaceId: undefined,
+    });
+    expect(discovered.get(childWorkspaceId)).toEqual({
+      workspaceId: childWorkspaceId,
+      sessionDir: childSessionDir,
+      parentWorkspaceId,
+    });
+  });
+
+  test("deduplicates workspace IDs, preferring newer mtime", async () => {
+    const sessionsDir = await createTempSessionsDir();
+    const parentWorkspaceId = "parent-a";
+    const duplicateWorkspaceId = "shared-workspace";
+
+    const parentSessionDir = path.join(sessionsDir, parentWorkspaceId);
+    await fs.mkdir(parentSessionDir, { recursive: true });
+    await writeChatJsonl(parentSessionDir);
+
+    const topLevelDuplicateSessionDir = path.join(sessionsDir, duplicateWorkspaceId);
+    await fs.mkdir(topLevelDuplicateSessionDir, { recursive: true });
+    await writeChatJsonl(topLevelDuplicateSessionDir);
+
+    const archivedDuplicateSessionDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      duplicateWorkspaceId
+    );
+    await fs.mkdir(archivedDuplicateSessionDir, { recursive: true });
+    await writeChatJsonl(archivedDuplicateSessionDir);
+
+    const topLevelDuplicateChatPath = path.join(topLevelDuplicateSessionDir, CHAT_FILE_NAME);
+    const archivedDuplicateChatPath = path.join(archivedDuplicateSessionDir, CHAT_FILE_NAME);
+    const topLevelDuplicateStat = await fs.stat(topLevelDuplicateChatPath);
+    const newerAtime = new Date(topLevelDuplicateStat.atimeMs + 5_000);
+    const newerMtime = new Date(topLevelDuplicateStat.mtimeMs + 5_000);
+    await fs.utimes(archivedDuplicateChatPath, newerAtime, newerMtime);
+
+    const discovered = await discoverAllWorkspaces(sessionsDir);
+
+    expect(discovered.get(duplicateWorkspaceId)).toEqual({
+      workspaceId: duplicateWorkspaceId,
+      sessionDir: archivedDuplicateSessionDir,
+      parentWorkspaceId,
+    });
+  });
+
+  test("returns empty map for missing sessionsDir", async () => {
+    const missingSessionsDir = path.join(
+      os.tmpdir(),
+      `mux-analytics-workspace-discovery-missing-${process.pid}-${randomUUID()}`
+    );
+
+    const discovered = await discoverAllWorkspaces(missingSessionsDir);
+    expect(discovered.size).toBe(0);
+  });
+});

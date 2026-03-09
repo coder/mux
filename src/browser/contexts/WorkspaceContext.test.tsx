@@ -10,9 +10,14 @@ import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/W
 import {
   SELECTED_WORKSPACE_KEY,
   getModelKey,
+  getRightSidebarLayoutKey,
+  getTerminalTitlesKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
 import type { APIClient } from "@/browser/contexts/API";
 
@@ -74,6 +79,13 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+
+    // Activate the workspace so onChat subscription starts (required after the
+    // refactor that scoped onChat to the active workspace only).
+    act(() => {
+      getWorkspaceStoreRaw().setActiveWorkspaceId("ws-sync-load");
+    });
+
     await waitFor(() =>
       expect(
         workspaceApi.onChat.mock.calls.some(
@@ -142,14 +154,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId: childId,
-          projectPath: "/alpha",
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-agent",
-        }),
-      },
+      locationPath: `/workspace/${childId}`,
     });
 
     const ctx = await setup();
@@ -203,14 +208,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId,
-          projectPath,
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-main",
-        }),
-      },
+      locationPath: `/workspace/${workspaceId}`,
     });
 
     const ctx = await setup();
@@ -282,14 +280,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId: archivedId,
-          projectPath: "/alpha",
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-main",
-        }),
-      },
+      locationPath: `/workspace/${archivedId}`,
     });
 
     const ctx = await setup();
@@ -375,14 +366,7 @@ describe("WorkspaceContext", () => {
         list: () => Promise.resolve([]),
       },
       // Parent is selected, not the child
-      localStorage: {
-        [SELECTED_WORKSPACE_KEY]: JSON.stringify({
-          workspaceId: parentId,
-          projectPath: "/alpha",
-          projectName: "alpha",
-          namedWorkspacePath: "/alpha-main",
-        }),
-      },
+      locationPath: `/workspace/${parentId}`,
     });
 
     const ctx = await setup();
@@ -401,6 +385,59 @@ describe("WorkspaceContext", () => {
     expect(ctx().workspaceMetadata.has(childId)).toBe(false);
     // Parent should still be selected
     expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId);
+  });
+
+  test("refreshes projects when metadata delete event is received", async () => {
+    const workspaceId = "ws-delete-refresh";
+
+    const workspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: workspaceId,
+        projectPath: "/alpha",
+        projectName: "alpha",
+        name: "main",
+        namedWorkspacePath: "/alpha-main",
+      }),
+    ];
+
+    let emitDelete:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    const { projects: projectsApi } = createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(workspaces),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitDelete = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+    });
+
+    await setup();
+
+    await waitFor(() => expect(emitDelete).toBeTruthy());
+    await waitFor(() => expect(projectsApi.list).toHaveBeenCalled());
+    const callsBeforeDelete = projectsApi.list.mock.calls.length;
+
+    act(() => {
+      emitDelete?.({ workspaceId, metadata: null });
+    });
+
+    await waitFor(() => {
+      expect(projectsApi.list.mock.calls.length).toBeGreaterThan(callsBeforeDelete);
+    });
   });
 
   test("seeds model + thinking localStorage from backend metadata", async () => {
@@ -539,14 +576,7 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(initialWorkspaces),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-remove",
-          projectPath: "/remove",
-          projectName: "remove",
-          namedWorkspacePath: "/remove-main",
-        }),
-      },
+      locationPath: "/workspace/ws-remove",
     });
 
     const ctx = await setup();
@@ -572,6 +602,75 @@ describe("WorkspaceContext", () => {
     const result = await ctx().removeWorkspace("ws-1");
     expect(result.success).toBe(false);
     expect(result.error).toBe("Failed");
+  });
+
+  describe("archiveWorkspace", () => {
+    test("succeeds even when persisted layout is invalid JSON shape", async () => {
+      const workspaceId = "ws-archive-invalid-layout";
+      const layoutKey = getRightSidebarLayoutKey(workspaceId);
+
+      const { workspace: workspaceApi } = createMockAPI({
+        localStorage: {
+          [layoutKey]: JSON.stringify({ broken: true }),
+        },
+      });
+
+      const ctx = await setup();
+
+      let result: Awaited<ReturnType<WorkspaceContext["archiveWorkspace"]>> | undefined;
+      await act(async () => {
+        result = await ctx().archiveWorkspace(workspaceId);
+      });
+
+      expect(workspaceApi.archive).toHaveBeenCalledWith({ workspaceId });
+      expect(result).toEqual({ success: true });
+    });
+
+    test("strips terminal tabs from valid persisted layout on successful archive", async () => {
+      const workspaceId = "ws-archive-clean-layout";
+      const layoutKey = getRightSidebarLayoutKey(workspaceId);
+      const terminalTitlesKey = getTerminalTitlesKey(workspaceId);
+      const persistedLayout: RightSidebarLayoutState = {
+        version: 1,
+        nextId: 2,
+        focusedTabsetId: "tabset-1",
+        root: {
+          type: "tabset",
+          id: "tabset-1",
+          tabs: ["costs", "explorer", "terminal:t1"],
+          activeTab: "terminal:t1",
+        },
+      };
+
+      const { workspace: workspaceApi } = createMockAPI({
+        localStorage: {
+          [layoutKey]: JSON.stringify(persistedLayout),
+          [terminalTitlesKey]: JSON.stringify({ t1: "stale-title" }),
+        },
+      });
+
+      const ctx = await setup();
+
+      await act(async () => {
+        await ctx().archiveWorkspace(workspaceId);
+      });
+
+      expect(workspaceApi.archive).toHaveBeenCalledWith({ workspaceId });
+
+      const cleanedLayout = readPersistedState<RightSidebarLayoutState | null>(layoutKey, null);
+      expect(cleanedLayout).not.toBeNull();
+      if (cleanedLayout?.root.type !== "tabset") {
+        throw new Error("Expected cleaned right sidebar layout to be a tabset");
+      }
+
+      // "explorer" becomes active because removeTabEverywhere picks the adjacent
+      // tab after the removed terminal tab.
+      expect(cleanedLayout.root.tabs).toEqual(["costs", "explorer"]);
+      expect(cleanedLayout.root.activeTab).toBe("explorer");
+      expect(
+        readPersistedState<Record<string, string>>(terminalTitlesKey, { stale: "title" })
+      ).toEqual({});
+    });
   });
 
   test("updateWorkspaceTitle updates workspace title via updateTitle API", async () => {
@@ -659,14 +758,7 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
-        }),
-      },
+      locationPath: "/workspace/ws-existing",
     });
 
     const ctx = await setup();
@@ -712,7 +804,7 @@ describe("WorkspaceContext", () => {
     );
   });
 
-  test("selectedWorkspace restores from localStorage on mount", async () => {
+  test("selectedWorkspace starts null on landing page (no localStorage restore)", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -726,6 +818,7 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
+      // Seed localStorage — should be ignored since app starts at landing page
       localStorage: {
         selectedWorkspace: JSON.stringify({
           workspaceId: "ws-restore",
@@ -738,7 +831,27 @@ describe("WorkspaceContext", () => {
 
     const ctx = await setup();
 
-    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-restore"));
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    // With the new landing page default, localStorage is not used to restore selection
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("resolves system project route IDs for pending workspace creation", async () => {
+    const systemProjectPath = "/system/chat-with-mux";
+    const systemProjectId = getProjectRouteId(systemProjectPath);
+
+    createMockAPI({
+      locationPath: `/project?project=${encodeURIComponent(systemProjectId)}`,
+      projects: {
+        list: () =>
+          Promise.resolve([[systemProjectPath, { workspaces: [], projectKind: "system" }]]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().pendingNewWorkspaceProject).toBe(systemProjectPath);
   });
 
   test("launch project auto-selects workspace when no URL hash", async () => {
@@ -800,14 +913,7 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
-      localStorage: {
-        selectedWorkspace: JSON.stringify({
-          workspaceId: "ws-existing",
-          projectPath: "/existing",
-          projectName: "existing",
-          namedWorkspacePath: "/existing-main",
-        }),
-      },
+      locationPath: "/workspace/ws-existing",
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
@@ -925,6 +1031,22 @@ describe("WorkspaceContext", () => {
     const metadata = ctx().workspaceMetadata.get("ws-1");
     expect(metadata?.createdAt).toBe("2025-01-01T00:00:00.000Z");
   });
+  test("unscoped new_chat deep link resolves to system project when no user projects exist", async () => {
+    const systemPath = "/system/chat-with-mux";
+    createMockAPI({
+      projects: {
+        list: () => Promise.resolve([[systemPath, { workspaces: [], projectKind: "system" }]]),
+      },
+      pendingDeepLinks: [{ type: "new_chat" }],
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => {
+      const state = ctx();
+      expect(state.pendingNewWorkspaceProject).toBe(systemPath);
+    });
+  });
 });
 
 async function setup() {
@@ -958,6 +1080,8 @@ interface MockAPIOptions {
   server?: RecursivePartial<APIClient["server"]>;
   localStorage?: Record<string, string>;
   locationHash?: string;
+  locationPath?: string;
+  pendingDeepLinks?: Array<{ type: string; [key: string]: unknown }>;
 }
 
 function createMockAPI(options: MockAPIOptions = {}) {
@@ -973,10 +1097,22 @@ function createMockAPI(options: MockAPIOptions = {}) {
     }
   }
 
+  if (options.locationPath) {
+    happyWindow.location.href = `http://localhost${options.locationPath}`;
+  }
+
   // Set up location hash if provided
   if (options.locationHash) {
     happyWindow.location.hash = options.locationHash;
   }
+
+  // Set up deep link API on the window object for pending deep-link tests
+  (happyWindow as unknown as { api?: Record<string, unknown> }).api = {
+    ...(happyWindow as unknown as { api?: Record<string, unknown> }).api,
+    consumePendingDeepLinks: mock(() => options.pendingDeepLinks ?? []),
+    onDeepLink: mock(() => () => undefined),
+    platform: "darwin",
+  };
 
   // Create mocks
   const workspace = {
@@ -990,6 +1126,14 @@ function createMockAPI(options: MockAPIOptions = {}) {
     ),
     list: mock(options.workspace?.list ?? (() => Promise.resolve([]))),
     remove: mock(options.workspace?.remove ?? (() => Promise.resolve({ success: true as const }))),
+    archive: mock(
+      options.workspace?.archive ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
+    ),
+    unarchive: mock(
+      options.workspace?.unarchive ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
+    ),
     rename: mock(
       options.workspace?.rename ??
         (() => Promise.resolve({ success: true as const, data: { newWorkspaceId: "ws-1" } }))
