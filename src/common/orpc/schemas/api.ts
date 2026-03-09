@@ -1663,6 +1663,7 @@ export const config = {
       llmDebugLogs: z.boolean(),
       eventSoundSettings: EventSoundSettingsSchema,
       onePasswordAccountName: z.string().nullish(),
+      eventSoundSettings: EventSoundSettingsSchema,
     }),
   },
   saveConfig: {

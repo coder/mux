@@ -997,10 +997,7 @@ function AppInner() {
         void api.config
           .getConfig()
           .then((config) => {
-            playEventSound(
-              (config as { eventSoundSettings?: EventSoundSettings }).eventSoundSettings,
-              "agent_review_ready"
-            );
+            playEventSound(config.eventSoundSettings, "agent_review_ready");
           })
           .catch((error) => {
             console.debug("Failed to load event sound settings", { error: String(error) });
