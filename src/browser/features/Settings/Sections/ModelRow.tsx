@@ -1,6 +1,5 @@
 import { Check, Eye, Info, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton/GatewayToggleButton";
 import { SearchableModelSelect } from "@/browser/features/Settings/Components/SearchableModelSelect";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { Button } from "@/browser/components/Button/Button";
@@ -409,13 +408,6 @@ export function ModelRow(props: ModelRowProps) {
                 <span className="bg-muted-light absolute inset-0 m-auto h-px w-4 rotate-45" />
               )}
             </button>
-          )}
-          {/* Gateway toggle button */}
-          {props.onToggleGateway && (
-            <GatewayToggleButton
-              active={props.isGatewayEnabled ?? false}
-              onToggle={() => props.onToggleGateway?.()}
-            />
           )}
           {/* Favorite/default button */}
           <Tooltip>

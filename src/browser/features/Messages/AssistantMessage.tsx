@@ -158,6 +158,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
           <ModelDisplay
             modelString={modelName}
             routedThroughGateway={message.routedThroughGateway}
+            routeProvider={message.routeProvider}
           />
         )}
         {isCompacted && (

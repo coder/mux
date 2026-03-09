@@ -3,6 +3,7 @@ import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "../SettingsButton/SettingsButton";
 import { GatewayIcon } from "../icons/GatewayIcon/GatewayIcon";
+import { ProviderIcon } from "../ProviderIcon/ProviderIcon";
 import { Button } from "../Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
@@ -21,7 +22,8 @@ import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { useRouting } from "@/browser/hooks/useRouting";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import {
   formatMuxGatewayBalance,
@@ -32,6 +34,10 @@ import {
   getTitlebarLeftInset,
   DESKTOP_TITLEBAR_HEIGHT_CLASS,
 } from "@/browser/hooks/useDesktopTitlebar";
+
+import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // Update check interval
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
@@ -69,8 +75,27 @@ export function TitleBar(props: TitleBarProps) {
   const policyState = usePolicy();
   const policyEnforced = policyState.status.state === "enforced";
   const { open: openSettings } = useSettings();
-  const { isAnalyticsOpen, navigateToAnalytics, navigateFromAnalytics } = useRouter();
-  const gateway = useGateway();
+  const { isAnalyticsOpen, navigateToAnalytics, navigateFromAnalytics, currentWorkspaceId } =
+    useRouter();
+  const routing = useRouting();
+  const [defaultModel] = usePersistedState<string>(DEFAULT_MODEL_KEY, WORKSPACE_DEFAULTS.model, {
+    listener: true,
+  });
+  const workspaceModelKey = getModelKey(currentWorkspaceId ?? "__titlebar__");
+  const [workspaceModelOverride] = usePersistedState<string | null>(workspaceModelKey, null, {
+    listener: true,
+  });
+  const activeModel = normalizeToCanonical(
+    currentWorkspaceId &&
+      typeof workspaceModelOverride === "string" &&
+      workspaceModelOverride.trim().length > 0
+      ? workspaceModelOverride.trim()
+      : defaultModel
+  );
+  const activeRoute = routing.resolveRoute(activeModel);
+  const activeRouteProvider = activeRoute.route;
+  const isNonDirectRoute = activeRouteProvider !== "direct";
+  const isMuxGatewayRoute = activeRouteProvider === "mux-gateway";
   const {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
@@ -196,42 +221,62 @@ export function TitleBar(props: TitleBarProps) {
         </Tooltip>
       </div>
       <div className={cn("flex shrink-0 items-center gap-1.5", isDesktop && "titlebar-no-drag")}>
-        {gateway.isActive && (
+        {isNonDirectRoute && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={() => openSettings("providers", { expandProvider: "mux-gateway" })}
+                onClick={() => openSettings("providers", { expandProvider: activeRouteProvider })}
                 onMouseEnter={() => {
-                  void refreshMuxGatewayAccountStatus();
+                  if (isMuxGatewayRoute) {
+                    void refreshMuxGatewayAccountStatus();
+                  }
                 }}
                 className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition-opacity hover:opacity-70"
-                aria-label="Mux Gateway"
+                aria-label={`${activeRoute.displayName} routing`}
               >
-                <GatewayIcon className="h-3.5 w-3.5" aria-hidden />
+                {isMuxGatewayRoute ? (
+                  <GatewayIcon className="h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <ProviderIcon provider={activeRouteProvider} className="h-3.5 w-3.5" />
+                )}
               </button>
             </TooltipTrigger>
-            <TooltipContent align="end" className="w-56">
-              <div className="text-foreground text-[11px] font-medium">Mux Gateway</div>
-              <div className="mt-1.5 space-y-0.5 text-[11px]">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted">Balance</span>
-                  <span className="text-foreground font-mono">
-                    {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted">Concurrent requests</span>
-                  <span className="text-foreground font-mono">
-                    {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
-                  </span>
-                </div>
+            <TooltipContent align="end" className={cn(isMuxGatewayRoute ? "w-56" : "w-64")}>
+              <div className="text-foreground text-[11px] font-medium">
+                {activeRoute.displayName}
               </div>
-              {muxGatewayAccountError && (
-                <div className="text-destructive mt-1.5 text-[10px]">{muxGatewayAccountError}</div>
+              {isMuxGatewayRoute ? (
+                <>
+                  <div className="mt-1.5 space-y-0.5 text-[11px]">
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-muted">Balance</span>
+                      <span className="text-foreground font-mono">
+                        {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-muted">Concurrent requests</span>
+                      <span className="text-foreground font-mono">
+                        {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
+                      </span>
+                    </div>
+                  </div>
+                  {muxGatewayAccountError && (
+                    <div className="text-destructive mt-1.5 text-[10px]">
+                      {muxGatewayAccountError}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-muted mt-1.5 text-[11px]">
+                  Requests for this model route via {activeRoute.displayName}.
+                </div>
               )}
               <div className="text-muted border-separator-light mt-2 border-t pt-1.5 text-[10px]">
-                Click to open gateway settings
+                {isMuxGatewayRoute
+                  ? "Click to open gateway settings"
+                  : "Click to open provider settings"}
               </div>
             </TooltipContent>
           </Tooltip>

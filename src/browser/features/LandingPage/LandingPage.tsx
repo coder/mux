@@ -12,7 +12,7 @@ import {
   useWorkspaceContext,
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import {
   useMuxGatewayAccountStatus,
   formatMuxGatewayBalance,
@@ -127,17 +127,21 @@ function LandingTitlebar(props: {
 
 // ─── Gateway credits card ────────────────────────────────────────────────
 function GatewayCreditsCard() {
-  const gateway = useGateway();
+  const { config: providersConfig } = useProvidersConfig();
   const { data, isLoading, refresh } = useMuxGatewayAccountStatus();
+
+  const muxGatewayConfigured =
+    providersConfig?.["mux-gateway"]?.isConfigured === true &&
+    providersConfig?.["mux-gateway"]?.isEnabled !== false;
 
   // Data-fetching on mount — acceptable per react-effects skill guidance.
   useEffect(() => {
-    if (gateway.isConfigured) {
+    if (muxGatewayConfigured) {
       void refresh();
     }
-  }, [gateway.isConfigured, refresh]);
+  }, [muxGatewayConfigured, refresh]);
 
-  if (!gateway.isConfigured) return null;
+  if (!muxGatewayConfigured) return null;
 
   return (
     <div className="bg-background-secondary border-border-medium shrink-0 rounded-lg border p-4">
