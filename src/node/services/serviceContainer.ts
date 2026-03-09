@@ -539,6 +539,10 @@ export class ServiceContainer {
     this.projectService.setDirectoryPicker(picker);
   }
 
+  setProjectAudioFilePicker(picker: () => Promise<string | null>): void {
+    this.projectService.setAudioFilePicker(picker);
+  }
+
   setTerminalWindowManager(manager: TerminalWindowManager): void {
     this.terminalService.setTerminalWindowManager(manager);
   }

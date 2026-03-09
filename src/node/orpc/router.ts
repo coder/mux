@@ -2144,6 +2144,13 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.projectService.pickDirectory();
         }),
+      pickAudioFile: t
+        .input(schemas.projects.pickAudioFile.input)
+        .output(schemas.projects.pickAudioFile.output)
+        .handler(async ({ context }) => {
+          const filePath = await context.projectService.pickAudioFile();
+          return { filePath };
+        }),
       getFileCompletions: t
         .input(schemas.projects.getFileCompletions.input)
         .output(schemas.projects.getFileCompletions.output)

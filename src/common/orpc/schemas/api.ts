@@ -537,6 +537,10 @@ export const projects = {
     input: z.void(),
     output: z.string().nullable(),
   },
+  pickAudioFile: {
+    input: z.object({}),
+    output: z.object({ filePath: z.string().nullable() }),
+  },
   remove: {
     input: z.object({ projectPath: z.string(), force: z.boolean().nullish() }).passthrough(),
     output: ResultSchema(z.void(), ProjectRemoveErrorSchema),
