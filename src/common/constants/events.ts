@@ -47,6 +47,12 @@ export const CUSTOM_EVENTS = {
   AGENTS_REFRESH_REQUESTED: "mux:agentsRefreshRequested",
 
   /**
+   * Event to request a refresh of the skills definition list (SkillsContext).
+   * No detail.
+   */
+  SKILLS_REFRESH_REQUESTED: "mux:skillsRefreshRequested",
+
+  /**
    * Event emitted when the mux gateway session expires.
    * No detail
    */
@@ -130,6 +136,7 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED]: never; // No payload
+  [CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED]: never; // No payload
   [CUSTOM_EVENTS.OPEN_MODEL_SELECTOR]: never; // No payload
   [CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED]: never; // No payload
   [CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH]: {
