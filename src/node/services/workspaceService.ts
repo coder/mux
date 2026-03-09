@@ -5315,6 +5315,17 @@ export class WorkspaceService extends EventEmitter {
         );
       }
 
+      // Multi-project script mode still runs from the container root so sibling repos remain addressable,
+      // but bare git command mode needs a real repository cwd for existing status/branch callers.
+      const cwdForExecution =
+        isMultiProject(metadata) && command === "git" ? metadata.projectPath : workspacePath;
+      if (isMultiProject(metadata) && command === "git") {
+        assert(
+          metadata.projectPath.length > 0,
+          "Multi-project git command mode requires a repo cwd"
+        );
+      }
+
       // Load project secrets
       const projectSecrets = this.config.getEffectiveSecrets(metadata.projectPath);
 
@@ -5323,7 +5334,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Create bash tool
       const bashTool = createBashTool({
-        cwd: workspacePath,
+        cwd: cwdForExecution,
         runtime,
         secrets: await secretsToRecord(projectSecrets, this.opResolver),
         runtimeTempDir: tempDir.path,
