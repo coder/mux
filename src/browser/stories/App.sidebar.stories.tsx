@@ -217,26 +217,77 @@ export const ManyWorkspaces: AppStory = {
 /**
  * Regression test: when all workspaces are older than 1 day, they should still
  * appear under the "Older than 1 day" tier instead of being forced into recent.
+ * Also verifies expanded parent rows can reveal both active and completed sub-agents.
  */
 export const SingleOldWorkspaceInOlderTier: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
         const projectPath = "/home/user/projects/age-tier-demo";
+        const oldCreatedAt = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
         const oldWorkspace = createWorkspace({
           id: "ws-old-only",
           name: "old-workspace",
           title: "Old workspace",
           projectName: "age-tier-demo",
           projectPath,
-          createdAt: new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString(),
+          createdAt: oldCreatedAt,
         });
+        const activeSubAgent = {
+          ...createWorkspace({
+            id: "ws-old-active-subagent",
+            name: "active-subagent",
+            title: "Active sub-agent",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: oldCreatedAt,
+          }),
+          parentWorkspaceId: oldWorkspace.id,
+          taskStatus: "running" as const,
+        };
+        const completedSubAgentOne = {
+          ...createWorkspace({
+            id: "ws-old-completed-subagent-1",
+            name: "completed-subagent-1",
+            title: "Completed sub-agent 1",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: oldCreatedAt,
+          }),
+          parentWorkspaceId: oldWorkspace.id,
+          taskStatus: "reported" as const,
+          reportedAt: oldCreatedAt,
+        };
+        const completedSubAgentTwo = {
+          ...createWorkspace({
+            id: "ws-old-completed-subagent-2",
+            name: "completed-subagent-2",
+            title: "Completed sub-agent 2",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: oldCreatedAt,
+          }),
+          parentWorkspaceId: oldWorkspace.id,
+          taskStatus: "reported" as const,
+          reportedAt: oldCreatedAt,
+        };
+        const workspaces = [
+          oldWorkspace,
+          activeSubAgent,
+          completedSubAgentOne,
+          completedSubAgentTwo,
+        ];
 
         expandProjects([projectPath]);
+        // Pre-expand completed children so this regression also covers nested reported rows.
+        localStorage.setItem(
+          "expandedCompletedSubAgents",
+          JSON.stringify({ [oldWorkspace.id]: true })
+        );
 
         return createMockORPCClient({
-          projects: groupWorkspacesByProject([oldWorkspace]),
-          workspaces: [oldWorkspace],
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
         });
       }}
     />
@@ -246,13 +297,20 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
       const tierToggle = within(canvasElement).getByRole("button", {
         name: /expand workspaces older than 1 day/i,
       });
-      if (!tierToggle.textContent?.includes("(1)")) {
-        throw new Error("Expected older-than-1-day tier count to be 1");
+      if (!tierToggle.textContent?.includes("(4)")) {
+        throw new Error("Expected older-than-1-day tier count to be 4");
       }
     });
 
-    if (canvasElement.querySelector('[data-workspace-id="ws-old-only"]')) {
-      throw new Error("Old workspace rendered in recent section before expanding old tier");
+    for (const workspaceId of [
+      "ws-old-only",
+      "ws-old-active-subagent",
+      "ws-old-completed-subagent-1",
+      "ws-old-completed-subagent-2",
+    ]) {
+      if (canvasElement.querySelector(`[data-workspace-id="${workspaceId}"]`)) {
+        throw new Error(`Workspace ${workspaceId} rendered before expanding old tier`);
+      }
     }
 
     const tierToggle = within(canvasElement).getByRole("button", {
@@ -261,9 +319,18 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
     await userEvent.click(tierToggle);
 
     await waitFor(() => {
-      const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-old-only"]');
-      if (!row) {
-        throw new Error("Old workspace row did not appear after expanding older-than-1-day tier");
+      for (const workspaceId of [
+        "ws-old-only",
+        "ws-old-active-subagent",
+        "ws-old-completed-subagent-1",
+        "ws-old-completed-subagent-2",
+      ]) {
+        const row = canvasElement.querySelector<HTMLElement>(
+          `[data-workspace-id="${workspaceId}"]`
+        );
+        if (!row) {
+          throw new Error(`Workspace ${workspaceId} did not appear after expanding old tier`);
+        }
       }
     });
   },
