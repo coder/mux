@@ -2183,30 +2183,39 @@ input[type="checkbox"] {
 /* Animated dashed connector for active sub-agents */
 @keyframes connector-dash-scroll {
   from {
-    background-position-y: 0;
+    transform: translateY(-6px);
   }
   to {
-    background-position-y: 6px;
+    transform: translateY(0);
   }
 }
 
 .subagent-connector-active {
-  /* Replace solid bg with animated dashed pattern */
+  /* Remove solid background; dashes rendered by ::before pseudo-element */
   background: none !important;
-  background-image: linear-gradient(
+  overflow: hidden !important;
+}
+
+.subagent-connector-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  /* Extra height of one dash cycle (6px) so translateY animation has no gaps */
+  height: calc(100% + 6px);
+  background: repeating-linear-gradient(
     to bottom,
     var(--color-border) 0px,
     var(--color-border) 3px,
     transparent 3px,
     transparent 6px
-  ) !important;
-  background-size: 1px 6px !important;
-  background-repeat: repeat !important;
+  );
   animation: connector-dash-scroll 0.4s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .subagent-connector-active {
+  .subagent-connector-active::before {
     animation: none;
   }
 }
