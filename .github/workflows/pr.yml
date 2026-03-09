@@ -69,6 +69,7 @@ jobs:
               - 'package.json'
               - 'bun.lock'
               - 'flake.nix'
+              - 'flake.lock'
 
   static-check:
     name: Static Checks
