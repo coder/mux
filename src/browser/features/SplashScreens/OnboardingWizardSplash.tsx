@@ -783,6 +783,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       !discoveredKeysLoading
     ) {
       const importedCount = Object.values(importResults).filter((r) => r === "success").length;
+      // Check whether all *selected* entries have been imported.
+      const allSelectedImported =
+        selectedKeys.size > 0 && [...selectedKeys].every((id) => importResults[id] === "success");
 
       nextSteps.push({
         key: "key-discovery",
@@ -861,21 +864,17 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
                 onClick={() => {
                   void handleImportKeys();
                 }}
-                disabled={
-                  importingKeys ||
-                  selectedKeys.size === 0 ||
-                  importedCount === discoveredKeys.length
-                }
+                disabled={importingKeys || selectedKeys.size === 0 || allSelectedImported}
               >
                 {importingKeys
                   ? "Importing..."
-                  : importedCount > 0
-                    ? `Import selected (${importedCount}/${discoveredKeys.length} done)`
+                  : allSelectedImported
+                    ? "All selected keys imported"
                     : `Import ${selectedKeys.size} key${selectedKeys.size === 1 ? "" : "s"}`}
               </Button>
 
-              {importedCount > 0 && importedCount === discoveredKeys.length && (
-                <span className="text-xs text-green-500">All keys imported!</span>
+              {allSelectedImported && (
+                <span className="text-xs text-green-500">All selected keys imported!</span>
               )}
             </div>
           </>

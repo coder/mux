@@ -205,22 +205,27 @@ async function scanAiderConf(home: string): Promise<DiscoveredKeyInternal[]> {
   ];
 
   for (const mapping of keyMappings) {
-    const pattern = new RegExp(`^${mapping.yamlKey}\\s*:\\s*(.+)$`, "m");
-    const match = pattern.exec(content);
-    if (match) {
+    // Use global flag to find the *last* assignment (key rotation).
+    const pattern = new RegExp(`^${mapping.yamlKey}\\s*:\\s*(.+)$`, "gm");
+    let lastKey: string | null = null;
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(content)) !== null) {
       // Strip surrounding quotes, then inline YAML comments (# ...)
-      const key = match[1]
+      const candidate = m[1]
         .trim()
         .replace(/^["']|["']$/g, "")
         .replace(/\s+#.*$/, "");
-      if (key) {
-        results.push({
-          provider: mapping.provider,
-          source: `aider (~/.aider.conf.yml)`,
-          keyPreview: maskKey(key),
-          fullKey: key,
-        });
+      if (candidate) {
+        lastKey = candidate;
       }
+    }
+    if (lastKey) {
+      results.push({
+        provider: mapping.provider,
+        source: `aider (~/.aider.conf.yml)`,
+        keyPreview: maskKey(lastKey),
+        fullKey: lastKey,
+      });
     }
   }
 

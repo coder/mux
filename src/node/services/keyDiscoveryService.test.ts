@@ -191,6 +191,19 @@ describe("keyDiscoveryService", () => {
       expect(keys).toHaveLength(1);
       expect(keys[0].fullKey).toBe("sk-aider-real");
     });
+
+    it("uses last assignment when key is rotated", async () => {
+      await writeFile(
+        home,
+        ".aider.conf.yml",
+        "openai-api-key: sk-old-aider\nopenai-api-key: sk-rotated-aider\n"
+      );
+
+      const keys = await discoverApiKeysInternal(home);
+      const aiderKeys = keys.filter((k) => k.source.includes("aider"));
+      expect(aiderKeys).toHaveLength(1);
+      expect(aiderKeys[0].fullKey).toBe("sk-rotated-aider");
+    });
   });
 
   describe("scanContinueDev", () => {
