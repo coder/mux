@@ -246,6 +246,62 @@ describe("Config", () => {
       expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
     });
   });
+  describe("route priority and overrides persistence", () => {
+    it("round-trips routePriority through disk", async () => {
+      const expectedPriority = ["openai:gpt-4o", "anthropic:claude-3-5-sonnet"];
+
+      await config.editConfig((cfg) => {
+        cfg.routePriority = expectedPriority;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      const loaded = restartedConfig.loadConfigOrDefault();
+      expect(loaded.routePriority).toEqual(expectedPriority);
+    });
+
+    it("round-trips routeOverrides through disk", async () => {
+      const expectedOverrides = {
+        "openai:gpt-4o": "direct",
+        "anthropic:claude-3-5-sonnet": "auto",
+      };
+
+      await config.editConfig((cfg) => {
+        cfg.routeOverrides = expectedOverrides;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      const loaded = restartedConfig.loadConfigOrDefault();
+      expect(loaded.routeOverrides).toEqual(expectedOverrides);
+    });
+
+    it("keeps routePriority and routeOverrides across unrelated editConfig saves", async () => {
+      const expectedPriority = ["openai:gpt-4o"];
+      const expectedOverrides = {
+        "openai:gpt-4o": "direct",
+      };
+
+      await config.editConfig((cfg) => {
+        cfg.routePriority = expectedPriority;
+        cfg.routeOverrides = expectedOverrides;
+        return cfg;
+      });
+
+      await config.editConfig((cfg) => {
+        cfg.apiServerPort = 4000;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      const loaded = restartedConfig.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(expectedPriority);
+      expect(loaded.routeOverrides).toEqual(expectedOverrides);
+      expect(loaded.apiServerPort).toBe(4000);
+    });
+  });
+
   describe("generateStableId", () => {
     it("should generate a 10-character hex string", () => {
       const id = config.generateStableId();

@@ -590,6 +590,16 @@ export class Config {
         data.hiddenModels = hiddenModels;
       }
 
+      const routePriority = parseOptionalStringArray(config.routePriority);
+      if (routePriority !== undefined) {
+        data.routePriority = routePriority;
+      }
+
+      const routeOverrides = parseOptionalStringRecord(config.routeOverrides);
+      if (routeOverrides !== undefined) {
+        data.routeOverrides = routeOverrides;
+      }
+
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
       if (apiServerBindHost) {
         data.apiServerBindHost = apiServerBindHost;
