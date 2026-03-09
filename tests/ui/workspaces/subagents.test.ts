@@ -454,40 +454,23 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         projectPath: repoPath,
         trunkBranch,
         title: "Connector Parent",
-        branchPrefix: "subagent-connector-parent-reported",
+        branchPrefix: "subagent-connector-parent-queued",
       });
       workspaceIdsToRemove.push(parentWorkspace.id);
 
-      const runningChild = await createWorkspaceWithTitle({
+      const queuedChild = await createWorkspaceWithTitle({
         env,
         projectPath: repoPath,
         trunkBranch,
-        title: "Running Child",
-        branchPrefix: "subagent-connector-running-active",
+        title: "Queued Child",
+        branchPrefix: "subagent-connector-queued",
       });
-      workspaceIdsToRemove.push(runningChild.id);
-
-      const reportedChild = await createWorkspaceWithTitle({
-        env,
-        projectPath: repoPath,
-        trunkBranch,
-        title: "Reported Child",
-        branchPrefix: "subagent-connector-reported",
-      });
-      workspaceIdsToRemove.push(reportedChild.id);
+      workspaceIdsToRemove.push(queuedChild.id);
 
       await env.config.addWorkspace(repoPath, {
-        ...runningChild,
+        ...queuedChild,
         parentWorkspaceId: parentWorkspace.id,
-        taskStatus: "running",
-      });
-
-      const reportedAt = new Date().toISOString();
-      await env.config.addWorkspace(repoPath, {
-        ...reportedChild,
-        parentWorkspaceId: parentWorkspace.id,
-        taskStatus: "reported",
-        reportedAt,
+        taskStatus: "queued",
       });
 
       cleanupDom = installDom();
@@ -499,54 +482,23 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       }
       const renderedView = view;
 
+      // Wait for the queued child row to appear in the sidebar.
       await waitFor(
         () => {
-          const childRow = getWorkspaceRow(renderedView.container, runningChild.id);
+          const childRow = getWorkspaceRow(renderedView.container, queuedChild.id);
           if (!childRow) {
-            throw new Error("Expected running child row to be visible");
+            throw new Error("Expected queued child row to be visible");
           }
         },
         { timeout: 10_000 }
       );
 
-      // Count active connector segments before expanding completed children.
-      // Only the running child contributes active segments at this point.
-      const activeCountBeforeExpand = renderedView.container.querySelectorAll(
+      // A queued sub-agent should NOT have active connector segments
+      // (only "running" status triggers the active animation).
+      const activeSegments = renderedView.container.querySelectorAll(
         "span.subagent-connector-active"
-      ).length;
-
-      const parentDisplayTitle = parentWorkspace.title ?? parentWorkspace.name;
-      const expandCompletedChildrenButton = await waitFor(
-        () => {
-          const button = renderedView.container.querySelector(
-            `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
-          ) as HTMLElement | null;
-          if (!button) {
-            throw new Error("Expand completed sub-agents button not found");
-          }
-          return button;
-        },
-        { timeout: 10_000 }
       );
-      fireEvent.click(expandCompletedChildrenButton);
-
-      await waitFor(
-        () => {
-          const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
-          if (!reportedRow) {
-            throw new Error("Expected reported child row to be visible");
-          }
-        },
-        { timeout: 10_000 }
-      );
-
-      // After expanding, the reported child's connector should NOT add any active
-      // segments. The total count of active segments should remain the same.
-      const activeCountAfterExpand = renderedView.container.querySelectorAll(
-        "span.subagent-connector-active"
-      ).length;
-
-      expect(activeCountAfterExpand).toBe(activeCountBeforeExpand);
+      expect(activeSegments.length).toBe(0);
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);
