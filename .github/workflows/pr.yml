@@ -114,6 +114,10 @@ jobs:
             -o "$HOME/.local/bin/hadolint"
           chmod +x "$HOME/.local/bin/hadolint"
           hadolint --version
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
       - run: |
           set -euo pipefail
           curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf https://astral.sh/uv/install.sh | sh
