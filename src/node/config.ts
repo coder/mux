@@ -314,6 +314,26 @@ export class Config {
     this.emitter.emit("configChanged");
   }
 
+  /**
+   * Derive routePriority from currently-configured gateway providers.
+   * Returns a priority array when at least one gateway is configured,
+   * undefined otherwise — letting callers fall back to their own defaults.
+   */
+  private seedRoutePriorityFromProviders(): string[] | undefined {
+    const providersConfig = this.loadProvidersConfig() ?? {};
+    const priority: string[] = [];
+
+    for (const gw of GATEWAY_PROVIDERS) {
+      const creds = resolveProviderCredentials(gw, providersConfig[gw] ?? {});
+      if (creds.isConfigured) {
+        priority.push(gw);
+      }
+    }
+    priority.push("direct");
+
+    return priority.length > 1 ? priority : undefined;
+  }
+
   loadConfigOrDefault(): ProjectsConfig {
     try {
       if (fs.existsSync(this.configFile)) {
@@ -368,21 +388,9 @@ export class Config {
         // route priority system was introduced (migration only handles the case
         // where muxGatewayEnabled/muxGatewayModels fields existed in config).
         if (!Array.isArray(parsed.routePriority)) {
-          // routePriority was never set — build it from currently-configured providers.
-          const providersConfig = this.loadProvidersConfig() ?? {};
-          const priority: string[] = [];
-
-          for (const gw of GATEWAY_PROVIDERS) {
-            const creds = resolveProviderCredentials(gw, providersConfig[gw] ?? {});
-            if (creds.isConfigured) {
-              priority.push(gw);
-            }
-          }
-          priority.push("direct");
-
-          if (priority.length > 1) {
-            // At least one gateway is configured — set the priority.
-            parsed.routePriority = priority;
+          const seeded = this.seedRoutePriorityFromProviders();
+          if (seeded) {
+            parsed.routePriority = seeded;
             configModified = true;
           }
         } else {
@@ -573,6 +581,7 @@ export class Config {
       taskSettings: DEFAULT_TASK_SETTINGS,
       agentAiDefaults: {},
       subagentAiDefaults: {},
+      routePriority: this.seedRoutePriorityFromProviders(),
     };
   }
 

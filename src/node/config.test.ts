@@ -356,6 +356,79 @@ describe("Config", () => {
     });
   });
 
+  describe("routePriority seeding from providers", () => {
+    const gatewayEnvKeys = [
+      "OPENROUTER_API_KEY",
+      "GITHUB_COPILOT_TOKEN",
+      "AWS_REGION",
+      "AWS_DEFAULT_REGION",
+    ] as const;
+    let originalGatewayEnv: Partial<Record<(typeof gatewayEnvKeys)[number], string | undefined>>;
+
+    const writeProvidersConfig = (providersConfig: Record<string, unknown>) => {
+      fs.writeFileSync(
+        path.join(tempDir, "providers.jsonc"),
+        JSON.stringify(providersConfig, null, 2)
+      );
+    };
+
+    beforeEach(() => {
+      originalGatewayEnv = Object.fromEntries(
+        gatewayEnvKeys.map((key) => [key, process.env[key]])
+      ) as Partial<Record<(typeof gatewayEnvKeys)[number], string | undefined>>;
+
+      for (const key of gatewayEnvKeys) {
+        delete process.env[key];
+      }
+    });
+
+    afterEach(() => {
+      for (const key of gatewayEnvKeys) {
+        const value = originalGatewayEnv[key];
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    });
+
+    it("seeds routePriority on fresh installs when a gateway is configured", () => {
+      writeProvidersConfig({
+        // mux-gateway is configured by couponCode/voucher rather than apiKey.
+        "mux-gateway": { couponCode: "test-coupon" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      const muxGatewayIndex = loaded.routePriority?.indexOf("mux-gateway") ?? -1;
+      const directIndex = loaded.routePriority?.indexOf("direct") ?? -1;
+
+      expect(muxGatewayIndex).toBeGreaterThanOrEqual(0);
+      expect(directIndex).toBeGreaterThan(muxGatewayIndex);
+    });
+
+    it("leaves routePriority undefined on fresh installs without configured gateways", () => {
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toBeUndefined();
+    });
+
+    it("backfills routePriority for existing configs when a gateway is configured", () => {
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify({}));
+      writeProvidersConfig({
+        // mux-gateway is configured by couponCode/voucher rather than apiKey.
+        "mux-gateway": { couponCode: "test-coupon" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      const muxGatewayIndex = loaded.routePriority?.indexOf("mux-gateway") ?? -1;
+      const directIndex = loaded.routePriority?.indexOf("direct") ?? -1;
+
+      expect(muxGatewayIndex).toBeGreaterThanOrEqual(0);
+      expect(directIndex).toBeGreaterThan(muxGatewayIndex);
+    });
+  });
+
   describe("config change notifications", () => {
     it("emits for editConfig saves and stops after unsubscribe", async () => {
       let notifications = 0;
