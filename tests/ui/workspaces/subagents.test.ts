@@ -338,4 +338,189 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       await cleanupTempGitRepo(repoPath);
     }
   }, 90_000);
+
+  test("renders active connector classes for running sub-agents", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const parentWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Connector Parent",
+        branchPrefix: "subagent-connector-parent",
+      });
+      workspaceIdsToRemove.push(parentWorkspace.id);
+
+      const runningChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Running Child",
+        branchPrefix: "subagent-connector-running",
+      });
+      workspaceIdsToRemove.push(runningChild.id);
+
+      await env.config.addWorkspace(repoPath, {
+        ...runningChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "running",
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: parentWorkspace });
+      await setupWorkspaceView(view, parentWorkspace, parentWorkspace.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      await waitFor(
+        () => {
+          const childRow = getWorkspaceRow(renderedView.container, runningChild.id);
+          if (!childRow) {
+            throw new Error("Expected running child row to be visible");
+          }
+
+          const connector = childRow.querySelector('[data-testid="subagent-connector"]');
+          if (!connector) {
+            throw new Error("Expected running child connector to be rendered");
+          }
+
+          const activeSegments = connector.querySelectorAll("span.subagent-connector-active");
+          if (activeSegments.length === 0) {
+            throw new Error("Expected active connector segments for running child");
+          }
+        },
+        { timeout: 10_000 }
+      );
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("does not render active connector classes for non-running sub-agents", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const parentWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Connector Parent",
+        branchPrefix: "subagent-connector-parent-reported",
+      });
+      workspaceIdsToRemove.push(parentWorkspace.id);
+
+      const reportedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Reported Child",
+        branchPrefix: "subagent-connector-reported",
+      });
+      workspaceIdsToRemove.push(reportedChild.id);
+
+      const reportedAt = new Date().toISOString();
+      await env.config.addWorkspace(repoPath, {
+        ...reportedChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "reported",
+        reportedAt,
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: parentWorkspace });
+      await setupWorkspaceView(view, parentWorkspace, parentWorkspace.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      const parentDisplayTitle = parentWorkspace.title ?? parentWorkspace.name;
+      const expandCompletedChildrenButton = await waitFor(
+        () => {
+          const button = renderedView.container.querySelector(
+            `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
+          ) as HTMLElement | null;
+          if (!button) {
+            throw new Error("Expand completed sub-agents button not found");
+          }
+          return button;
+        },
+        { timeout: 10_000 }
+      );
+      fireEvent.click(expandCompletedChildrenButton);
+
+      await waitFor(
+        () => {
+          const childRow = getWorkspaceRow(renderedView.container, reportedChild.id);
+          if (!childRow) {
+            throw new Error("Expected reported child row to be visible");
+          }
+
+          const connector = childRow.querySelector('[data-testid="subagent-connector"]');
+          if (!connector) {
+            throw new Error("Expected reported child connector to be rendered");
+          }
+
+          const activeSegments = connector.querySelectorAll("span.subagent-connector-active");
+          if (activeSegments.length !== 0) {
+            throw new Error("Did not expect active connector segments for reported child");
+          }
+        },
+        { timeout: 10_000 }
+      );
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
 });

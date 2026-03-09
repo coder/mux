@@ -5,6 +5,7 @@ interface SubAgentListItemProps {
   connectorPosition: "single" | "middle" | "last";
   indentLeft: number;
   isSelected: boolean;
+  isActive: boolean;
   children: React.ReactNode;
 }
 
@@ -28,6 +29,7 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
     <div className="relative">
       <div
         aria-hidden
+        data-testid="subagent-connector"
         // Keep connectors above the row background so lines remain visible for
         // both selected and unselected sub-agent variants.
         className="pointer-events-none absolute inset-y-0 z-10"
@@ -39,14 +41,19 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
               connectorFillClass,
               // Extend upward by half a row so the branch meets the parent row's
               // status-dot center, then stop before the rounded elbow begins.
-              "absolute -top-1/2 left-[6px] w-px"
+              "absolute -top-1/2 left-[6px] w-px",
+              props.isActive && "subagent-connector-active"
             )}
             style={{ bottom: `calc(50% + ${connectorTurnSizePx}px)` }}
           />
         )}
         {showPassThroughSegment && (
           <span
-            className={cn(connectorFillClass, "absolute bottom-0 left-[6px] w-px")}
+            className={cn(
+              connectorFillClass,
+              "absolute bottom-0 left-[6px] w-px",
+              props.isActive && "subagent-connector-active"
+            )}
             style={{ top: `calc(50% - ${connectorTurnSizePx}px)` }}
           />
         )}
@@ -55,7 +62,8 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
             connectorBorderClass,
             // Draw a rounded elbow instead of a hard 90-degree corner where the
             // vertical connector turns into the sub-agent branch.
-            "absolute top-1/2 left-[6px] h-[6px] w-[10px] -translate-y-full rounded-bl-[6px] border-l border-b"
+            "absolute top-1/2 left-[6px] h-[6px] w-[10px] -translate-y-full rounded-bl-[6px] border-l border-b",
+            props.isActive && "border-dashed"
           )}
         />
       </div>

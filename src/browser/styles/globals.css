@@ -2180,6 +2180,36 @@ input[type="checkbox"] {
   }
 }
 
+/* Animated dashed connector for active sub-agents */
+@keyframes connector-dash-scroll {
+  from {
+    background-position-y: 0;
+  }
+  to {
+    background-position-y: 8px;
+  }
+}
+
+.subagent-connector-active {
+  /* Replace solid bg with animated dashed pattern */
+  background: none !important;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--color-border) 0px,
+    var(--color-border) 3px,
+    transparent 3px,
+    transparent 5px
+  ) !important;
+  background-size: 1px 8px !important;
+  animation: connector-dash-scroll 0.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-connector-active {
+    animation: none;
+  }
+}
+
 /* Section color picker - react-colorful sizing */
 .section-color-picker .react-colorful {
   width: 150px;
