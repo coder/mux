@@ -6,7 +6,7 @@ import type { CountTokensInput } from "./tokenizer.worker";
 import { models, type ModelName } from "ai-tokenizer";
 import { run } from "./workerPool";
 import { TOKENIZER_MODEL_OVERRIDES, DEFAULT_WARM_MODELS } from "@/common/constants/knownModels";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { log } from "@/node/services/log";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 
@@ -76,7 +76,7 @@ function normalizeModelKey(modelName: string): ModelName | null {
  * Optionally logs a warning when falling back.
  */
 function resolveModelName(modelString: string): ModelName {
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   let modelName = normalizeModelKey(normalized);
 
   if (!modelName) {

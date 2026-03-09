@@ -29,7 +29,7 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
@@ -1587,7 +1587,7 @@ export class ProviderModelFactory {
     >
   > {
     const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
-    const canonicalModelString = normalizeGatewayModel(modelString);
+    const canonicalModelString = normalizeToCanonical(modelString);
     let effectiveModelString = canonicalModelString;
     const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
 
@@ -1626,8 +1626,8 @@ export class ProviderModelFactory {
     explicitlyRequestedGateway = false
   ): string {
     // Backend-authoritative routing avoids frontend localStorage races (issue #1769).
-    const canonicalModelString = normalizeGatewayModel(modelString);
-    const normalizedModelKey = modelKey ? normalizeGatewayModel(modelKey) : canonicalModelString;
+    const canonicalModelString = normalizeToCanonical(modelString);
+    const normalizedModelKey = modelKey ? normalizeToCanonical(modelKey) : canonicalModelString;
     const [providerName, modelId] = parseModelString(canonicalModelString);
 
     if (!providerName || !modelId) {

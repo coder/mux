@@ -9,7 +9,7 @@ import {
 } from "@/common/types/runtime";
 import {
   isValidModelFormat,
-  normalizeGatewayModel,
+  normalizeToCanonical,
   resolveModelAlias,
 } from "@/common/utils/ai/models";
 import minimist from "minimist";
@@ -500,7 +500,7 @@ function normalizeModelForCommand(modelInput: string): string | null {
   }
 
   const resolved = resolveModelAlias(trimmed);
-  const normalized = normalizeGatewayModel(resolved).trim();
+  const normalized = normalizeToCanonical(resolved).trim();
 
   return isValidModelFormat(normalized) ? normalized : null;
 }

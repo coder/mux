@@ -41,7 +41,7 @@ import {
   createCompactionSummaryMessageId,
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
-import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
@@ -541,7 +541,7 @@ export class TaskService {
       return "exec";
     }
 
-    const modelString = normalizeGatewayModel(
+    const modelString = normalizeToCanonical(
       coerceNonEmptyString(args.entry.workspace.taskModelString) ?? defaultModel
     );
     assert(
@@ -845,7 +845,7 @@ export class TaskService {
     const configuredModel = globalDefault?.modelString?.trim();
     const taskModelString =
       configuredModel && configuredModel.length > 0 ? configuredModel : parentActiveModel;
-    const canonicalModel = normalizeGatewayModel(taskModelString).trim();
+    const canonicalModel = normalizeToCanonical(taskModelString).trim();
     assert(canonicalModel.length > 0, "Task.create: resolved model must be non-empty");
 
     const requestedThinkingLevel: ThinkingLevel =
@@ -2908,7 +2908,7 @@ export class TaskService {
       const configuredModel = globalDefault?.modelString?.trim();
       const preferredModel =
         configuredModel && configuredModel.length > 0 ? configuredModel : parentActiveModel;
-      const resolvedModel = normalizeGatewayModel(
+      const resolvedModel = normalizeToCanonical(
         preferredModel.length > 0 ? preferredModel : defaultModel
       );
       assert(

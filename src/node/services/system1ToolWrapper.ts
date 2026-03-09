@@ -24,7 +24,7 @@ import {
 import type { BashOutputEvent } from "@/common/types/stream";
 import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS, SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
@@ -188,7 +188,7 @@ interface System1ModelContext {
 function buildSystem1ModelContext(opts: System1WrapOptions): System1ModelContext {
   const raw = typeof opts.system1Model === "string" ? opts.system1Model.trim() : "";
   // Canonical form (gateway prefix stripped) for provider checks like thinking level.
-  const canonical = raw ? normalizeGatewayModel(raw) : "";
+  const canonical = raw ? normalizeToCanonical(raw) : "";
   const effectiveModelForThinking = canonical || opts.modelString;
   const thinkingLevel = enforceThinkingPolicy(
     effectiveModelForThinking,
@@ -400,7 +400,7 @@ async function maybeFilterBashOutput(
         // same cost bucket as direct calls. Pass providerMetadata so cache
         // tokens and costsIncluded are honored.
         if (keepRangesResult.usage && opts.sessionUsageService) {
-          const normalizedModel = normalizeGatewayModel(system1.modelString);
+          const normalizedModel = normalizeToCanonical(system1.modelString);
           const displayUsage = createDisplayUsage(
             keepRangesResult.usage,
             normalizedModel,

@@ -1,31 +1,31 @@
 import { describe, it, expect } from "bun:test";
 import {
-  normalizeGatewayModel,
+  normalizeToCanonical,
   getModelName,
   supports1MContext,
   isValidModelFormat,
 } from "./models";
 
-describe("normalizeGatewayModel", () => {
+describe("normalizeToCanonical", () => {
   it("should convert mux-gateway:provider/model to provider:model", () => {
-    expect(normalizeGatewayModel("mux-gateway:anthropic/claude-opus-4-5")).toBe(
+    expect(normalizeToCanonical("mux-gateway:anthropic/claude-opus-4-5")).toBe(
       "anthropic:claude-opus-4-5"
     );
-    expect(normalizeGatewayModel("mux-gateway:openai/gpt-4o")).toBe("openai:gpt-4o");
-    expect(normalizeGatewayModel("mux-gateway:google/gemini-2.5-pro")).toBe(
+    expect(normalizeToCanonical("mux-gateway:openai/gpt-4o")).toBe("openai:gpt-4o");
+    expect(normalizeToCanonical("mux-gateway:google/gemini-2.5-pro")).toBe(
       "google:gemini-2.5-pro"
     );
   });
 
   it("should return non-gateway strings unchanged", () => {
-    expect(normalizeGatewayModel("anthropic:claude-opus-4-5")).toBe("anthropic:claude-opus-4-5");
-    expect(normalizeGatewayModel("openai:gpt-4o")).toBe("openai:gpt-4o");
-    expect(normalizeGatewayModel("claude-opus-4-5")).toBe("claude-opus-4-5");
+    expect(normalizeToCanonical("anthropic:claude-opus-4-5")).toBe("anthropic:claude-opus-4-5");
+    expect(normalizeToCanonical("openai:gpt-4o")).toBe("openai:gpt-4o");
+    expect(normalizeToCanonical("claude-opus-4-5")).toBe("claude-opus-4-5");
   });
 
   it("should return malformed gateway strings unchanged", () => {
     // No slash in the inner part
-    expect(normalizeGatewayModel("mux-gateway:no-slash-here")).toBe("mux-gateway:no-slash-here");
+    expect(normalizeToCanonical("mux-gateway:no-slash-here")).toBe("mux-gateway:no-slash-here");
   });
 });
 

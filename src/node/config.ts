@@ -35,7 +35,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
-import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { isValidModelFormat, normalizeToCanonical } from "@/common/utils/ai/models";
 import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
@@ -107,7 +107,7 @@ function normalizeOptionalModelString(value: unknown): string | undefined {
     return undefined;
   }
 
-  const normalized = normalizeGatewayModel(trimmed);
+  const normalized = normalizeToCanonical(trimmed);
   if (!isValidModelFormat(normalized)) {
     return undefined;
   }

@@ -11,7 +11,7 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import {
   checkContextSwitch,
@@ -258,7 +258,7 @@ export function useContextSwitchWarning(
 
   const handleModelChange = useCallback(
     (newModel: string) => {
-      if (normalizeGatewayModel(newModel).trim() === normalizeGatewayModel(pendingModel).trim()) {
+      if (normalizeToCanonical(newModel).trim() === normalizeToCanonical(pendingModel).trim()) {
         return;
       }
 

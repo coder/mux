@@ -11,7 +11,7 @@ import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { log } from "./log";
 
 export interface SessionUsageTokenStatsCacheV1 {
@@ -129,7 +129,7 @@ export class SessionUsageService {
   /**
    * Record usage from a completed stream. Accumulates with existing usage
    * AND updates lastRequest in a single atomic write.
-   * Model should already be normalized via normalizeGatewayModel().
+   * Model should already be normalized via normalizeToCanonical().
    */
   async recordUsage(workspaceId: string, model: string, usage: ChatUsageDisplay): Promise<void> {
     return this.fileLocks.withLock(workspaceId, async () => {
@@ -406,7 +406,7 @@ export class SessionUsageService {
         // Extract current message's usage
         if (msg.metadata?.usage) {
           const rawModel = msg.metadata.model ?? "unknown";
-          const model = normalizeGatewayModel(rawModel);
+          const model = normalizeToCanonical(rawModel);
           const usage = createDisplayUsage(
             msg.metadata.usage,
             rawModel,

@@ -93,7 +93,7 @@ import { buildCompactionMessageText } from "@/common/utils/compaction/compaction
 import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
 import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilities";
 import {
-  normalizeGatewayModel,
+  normalizeToCanonical,
   isValidModelFormat,
   supports1MContext,
 } from "@/common/utils/ai/models";
@@ -823,7 +823,7 @@ export class AgentSession {
       return undefined;
     }
 
-    const normalized = normalizeGatewayModel(trimmed);
+    const normalized = normalizeToCanonical(trimmed);
     if (!isValidModelFormat(normalized)) {
       return undefined;
     }
@@ -2341,7 +2341,7 @@ export class AgentSession {
   }
 
   private is1MContextEnabledForModel(modelString: string, options?: SendMessageOptions): boolean {
-    const normalizedModel = normalizeGatewayModel(modelString);
+    const normalizedModel = normalizeToCanonical(modelString);
     if (!supports1MContext(normalizedModel)) {
       return false;
     }
@@ -2492,7 +2492,7 @@ export class AgentSession {
         return null;
       }
 
-      const normalized = normalizeGatewayModel(compactModelString.trim());
+      const normalized = normalizeToCanonical(compactModelString.trim());
       if (!isValidModelFormat(normalized)) {
         return null;
       }
@@ -2650,10 +2650,10 @@ export class AgentSession {
 
   private normalizeGatewaySendOptions(options: SendMessageOptions): SendMessageOptions {
     // Keep persisted model IDs canonical; gateway routing is now backend-authoritative (issue #1769).
-    const normalizedModel = normalizeGatewayModel(options.model.trim());
+    const normalizedModel = normalizeToCanonical(options.model.trim());
     const system1Model = options.system1Model?.trim();
     const normalizedSystem1Model =
-      system1Model && system1Model.length > 0 ? normalizeGatewayModel(system1Model) : undefined;
+      system1Model && system1Model.length > 0 ? normalizeToCanonical(system1Model) : undefined;
 
     return {
       ...options,
@@ -2932,7 +2932,7 @@ export class AgentSession {
   }
 
   private supports1MContextRetry(modelString: string): boolean {
-    const normalized = normalizeGatewayModel(modelString);
+    const normalized = normalizeToCanonical(modelString);
     const [provider, modelName] = normalized.split(":", 2);
     const lower = modelName?.toLowerCase() ?? "";
     return (
@@ -2977,7 +2977,7 @@ export class AgentSession {
   }
 
   private isGptClassModel(modelString: string): boolean {
-    const normalized = normalizeGatewayModel(modelString);
+    const normalized = normalizeToCanonical(modelString);
     const [provider, modelName] = normalized.split(":", 2);
     return provider === "openai" && modelName?.toLowerCase().startsWith("gpt-");
   }

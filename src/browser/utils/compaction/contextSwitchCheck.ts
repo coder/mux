@@ -9,7 +9,7 @@
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { getPreferredCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import { getExplicitCompactionSuggestion } from "./suggestion";
 
@@ -95,7 +95,7 @@ export function checkContextSwitch(
   if (
     !opts?.allowSameModel &&
     previousModel &&
-    normalizeGatewayModel(targetModel) === normalizeGatewayModel(previousModel)
+    normalizeToCanonical(targetModel) === normalizeToCanonical(previousModel)
   ) {
     return null;
   }

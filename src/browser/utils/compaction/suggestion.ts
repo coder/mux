@@ -8,7 +8,7 @@ import { isGatewayFormat, toGatewayModel } from "@/browser/hooks/useGatewayModel
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 
@@ -37,7 +37,7 @@ export function getExplicitCompactionSuggestion(options: {
     return null;
   }
 
-  const normalized = normalizeGatewayModel(modelId);
+  const normalized = normalizeToCanonical(modelId);
   const colonIndex = normalized.indexOf(":");
   const provider = colonIndex === -1 ? null : normalized.slice(0, colonIndex);
   const isProviderConfigured = provider

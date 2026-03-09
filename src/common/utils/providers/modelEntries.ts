@@ -1,5 +1,5 @@
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 
 interface ParsedProviderModelId {
   provider: string;
@@ -59,7 +59,7 @@ export function getModelContextWindowOverride(
   fullModelId: string,
   providersConfig: ProvidersConfigMap | null
 ): number | null {
-  const normalizedModelId = normalizeGatewayModel(fullModelId);
+  const normalizedModelId = normalizeToCanonical(fullModelId);
   const parsed = parseProviderModelId(normalizedModelId);
   if (!parsed) {
     return null;
@@ -77,7 +77,7 @@ export function resolveModelForMetadata(
   fullModelId: string,
   providersConfig: ProvidersConfigMap | null
 ): string {
-  const normalized = normalizeGatewayModel(fullModelId);
+  const normalized = normalizeToCanonical(fullModelId);
   const parsed = parseProviderModelId(normalized);
   if (!parsed) {
     return fullModelId;

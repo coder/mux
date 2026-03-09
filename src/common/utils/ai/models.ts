@@ -34,7 +34,7 @@ const MUX_GATEWAY_PREFIX = "mux-gateway:";
  * Converts "mux-gateway:provider/model" to "provider:model".
  * Returns non-gateway strings unchanged.
  */
-export function normalizeGatewayModel(modelString: string): string {
+export function normalizeToCanonical(modelString: string): string {
   if (!modelString.startsWith(MUX_GATEWAY_PREFIX)) {
     return modelString;
   }
@@ -53,7 +53,7 @@ export function normalizeGatewayModel(modelString: string): string {
  * @returns The model name part (after the colon), or the full string if no colon is found
  */
 export function getModelName(modelString: string): string {
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   const colonIndex = normalized.indexOf(":");
   if (colonIndex === -1) {
     return normalized;
@@ -67,7 +67,7 @@ export function getModelName(modelString: string): string {
  * @returns The provider part (before the colon), or empty string if no colon is found
  */
 export function getModelProvider(modelString: string): string {
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   const colonIndex = normalized.indexOf(":");
   if (colonIndex === -1) {
     return "";
@@ -82,7 +82,7 @@ export function getModelProvider(modelString: string): string {
  * @returns True if the model supports 1M context window
  */
 export function supports1MContext(modelString: string): boolean {
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   const [provider, modelName] = normalized.split(":");
   if (provider !== "anthropic") {
     return false;

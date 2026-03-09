@@ -53,7 +53,7 @@ import {
 import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats, getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import type { ResolvedCallSettingsOverrides } from "@/common/config/schemas/modelParameters";
@@ -466,7 +466,7 @@ export class StreamManager extends EventEmitter {
     // Start new write and track the promise
     streamInfo.partialWritePromise = (async () => {
       try {
-        const canonicalModel = normalizeGatewayModel(streamInfo.model);
+        const canonicalModel = normalizeToCanonical(streamInfo.model);
         const routedThroughGateway =
           streamInfo.initialMetadata?.routedThroughGateway ??
           streamInfo.model.startsWith("mux-gateway:");
@@ -1043,7 +1043,7 @@ export class StreamManager extends EventEmitter {
     try {
       await this.sessionUsageService.recordUsage(
         workspaceId as string,
-        normalizeGatewayModel(model),
+        normalizeToCanonical(model),
         messageUsage
       );
     } catch (error) {
@@ -1127,7 +1127,7 @@ export class StreamManager extends EventEmitter {
     // Anthropic Extended Thinking is incompatible with forced tool choice.
     // If a tool is forced, disable thinking for this request to avoid API errors.
     if (toolChoice) {
-      const [provider] = normalizeGatewayModel(modelString).split(":", 2);
+      const [provider] = normalizeToCanonical(modelString).split(":", 2);
       if (
         provider === "anthropic" &&
         providerOptions &&
@@ -1567,7 +1567,7 @@ export class StreamManager extends EventEmitter {
   ): void {
     const streamStartAgentId = streamInfo.initialMetadata?.agentId;
     const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
-    const canonicalModel = normalizeGatewayModel(streamInfo.model);
+    const canonicalModel = normalizeToCanonical(streamInfo.model);
     const routedThroughGateway =
       streamInfo.initialMetadata?.routedThroughGateway ??
       streamInfo.model.startsWith("mux-gateway:");
@@ -2010,7 +2010,7 @@ export class StreamManager extends EventEmitter {
               await this.getAggregatedProviderMetadata(streamInfo),
               streamInfo.initialMetadata?.costsIncluded
             );
-            const canonicalModel = normalizeGatewayModel(streamInfo.model);
+            const canonicalModel = normalizeToCanonical(streamInfo.model);
             const routedThroughGateway =
               streamInfo.initialMetadata?.routedThroughGateway ??
               streamInfo.model.startsWith("mux-gateway:");
@@ -2204,7 +2204,7 @@ export class StreamManager extends EventEmitter {
     // Normalize Anthropic overload errors (HTTP 529 / overloaded_error) into a stable,
     // user-friendly message. Keep errorType = server_error so the frontend's auto-retry
     // behavior remains unchanged.
-    const canonicalModel = normalizeGatewayModel(streamInfo.model);
+    const canonicalModel = normalizeToCanonical(streamInfo.model);
     const isAnthropic = canonicalModel.startsWith("anthropic:");
 
     const hasErrorProperty = (data: unknown): data is { error: { type?: string } } => {
@@ -2267,7 +2267,7 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     payload: StreamErrorPayload & { errorType: StreamErrorType }
   ): Promise<void> {
-    const canonicalModel = normalizeGatewayModel(streamInfo.model);
+    const canonicalModel = normalizeToCanonical(streamInfo.model);
     const routedThroughGateway =
       streamInfo.initialMetadata?.routedThroughGateway ??
       streamInfo.model.startsWith("mux-gateway:");

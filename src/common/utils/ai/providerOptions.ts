@@ -23,7 +23,7 @@ import {
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
-import { normalizeGatewayModel, supports1MContext } from "./models";
+import { normalizeToCanonical, supports1MContext } from "./models";
 
 /**
  * OpenRouter reasoning options
@@ -91,7 +91,7 @@ export function buildProviderOptions(
   // agentSession.ts is the canonical enforcement point.
   const effectiveThinking = thinkingLevel;
   // Parse provider from normalized model string
-  const normalizedModel = normalizeGatewayModel(modelString);
+  const normalizedModel = normalizeToCanonical(modelString);
   const [provider, modelName] = normalizedModel.split(":", 2);
 
   // Resolve aliases to their base model for capability detection while keeping
@@ -197,7 +197,7 @@ export function buildProviderOptions(
     let previousResponseId: string | undefined;
     if (messages && messages.length > 0 && reasoningEffort) {
       // Parse current model name (without provider prefix), normalize gateway format if needed
-      const currentModelName = normalizeGatewayModel(modelString).split(":")[1];
+      const currentModelName = normalizeToCanonical(modelString).split(":")[1];
 
       // Find last assistant message from the same model
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -205,7 +205,7 @@ export function buildProviderOptions(
         if (msg.role === "assistant") {
           // Check if this message is from the same model
           const msgModel = msg.metadata?.model;
-          const msgModelName = msgModel ? normalizeGatewayModel(msgModel).split(":")[1] : undefined;
+          const msgModelName = msgModel ? normalizeToCanonical(msgModel).split(":")[1] : undefined;
 
           if (msgModelName === currentModelName) {
             const metadata = msg.metadata?.providerMetadata;
@@ -436,7 +436,7 @@ export function buildRequestHeaders(
     headers[MUX_WORKSPACE_ID_HEADER] = toWorkspaceHeaderValue(workspaceId);
   }
 
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   // Route provider-specific headers by the runtime provider from the original model
   // string. Capability resolution is only for model-level feature checks below.
   const [provider] = normalized.split(":", 2);

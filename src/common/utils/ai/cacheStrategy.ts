@@ -1,7 +1,7 @@
 import { tool as createTool, type ModelMessage, type Tool } from "ai";
 import assert from "@/common/utils/assert";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
-import { normalizeGatewayModel } from "./models";
+import { normalizeToCanonical } from "./models";
 
 /**
  * Anthropic prompt cache TTL value.
@@ -19,7 +19,7 @@ export type AnthropicCacheTtl = "5m" | "1h";
  * - OpenRouter Anthropic models: "openrouter:anthropic/claude-3.5-sonnet"
  */
 export function supportsAnthropicCache(modelString: string): boolean {
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   // Direct Anthropic provider (or normalized gateway model)
   if (normalized.startsWith("anthropic:")) {
     return true;

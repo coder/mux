@@ -5,7 +5,7 @@ import { EventEmitter } from "events";
 import writeFileAtomic from "write-file-atomic";
 import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import type { AgentMode } from "@/common/types/mode";
 import {
   ActiveStreamStatsSchema,
@@ -702,7 +702,7 @@ export class SessionTimingService {
     assert(typeof data.workspaceId === "string" && data.workspaceId.length > 0);
     assert(typeof data.messageId === "string" && data.messageId.length > 0);
 
-    const model = normalizeGatewayModel(data.model);
+    const model = normalizeToCanonical(data.model);
 
     // Validate mode: stats schema only accepts "plan" | "exec" for now.
     // Custom modes will need schema updates when supported.

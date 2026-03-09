@@ -2,7 +2,7 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import modelsData from "../tokens/models.json";
 import { modelsExtra } from "../tokens/models-extra";
-import { normalizeGatewayModel } from "./models";
+import { normalizeToCanonical } from "./models";
 
 interface RawModelCapabilitiesData {
   supports_pdf_input?: boolean;
@@ -76,7 +76,7 @@ function extractModelCapabilities(data: RawModelCapabilitiesData): ModelCapabili
 }
 
 export function getModelCapabilities(modelString: string): ModelCapabilities | null {
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   const lookupKeys = generateLookupKeys(normalized);
 
   const modelsExtraRecord = modelsExtra as unknown as Record<string, RawModelCapabilitiesData>;

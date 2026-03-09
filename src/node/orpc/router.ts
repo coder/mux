@@ -44,7 +44,7 @@ import {
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { isValidModelFormat, normalizeToCanonical } from "@/common/utils/ai/models";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -651,7 +651,7 @@ export const router = (authToken?: string) => {
               return undefined;
             }
 
-            const normalized = normalizeGatewayModel(trimmed);
+            const normalized = normalizeToCanonical(trimmed);
             if (!isValidModelFormat(normalized)) {
               return undefined;
             }

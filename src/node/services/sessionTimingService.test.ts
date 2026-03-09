@@ -6,7 +6,7 @@ import * as path from "path";
 import { Config } from "@/node/config";
 import { SessionTimingService } from "./sessionTimingService";
 import type { TelemetryService } from "./telemetryService";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 
 function createMockTelemetryService(): Pick<TelemetryService, "capture" | "getFeatureFlag"> {
   return {
@@ -304,7 +304,7 @@ describe("SessionTimingService", () => {
       expect(after.session?.totalOutputTokens).toBe(15);
       expect(after.session?.totalReasoningTokens).toBe(2);
 
-      const normalizedModel = normalizeGatewayModel(model);
+      const normalizedModel = normalizeToCanonical(model);
       const key = `${normalizedModel}:exec`;
       expect(after.session?.byModel[key]?.responseCount).toBe(2);
     });
@@ -475,7 +475,7 @@ describe("SessionTimingService", () => {
     expect(file.session?.totalOutputTokens).toBe(10);
     expect(file.session?.totalReasoningTokens).toBe(2);
 
-    const normalizedModel = normalizeGatewayModel(model);
+    const normalizedModel = normalizeToCanonical(model);
     const key = `${normalizedModel}:exec`;
     expect(file.session?.byModel[key]).toBeDefined();
     expect(file.session?.byModel[key]?.responseCount).toBe(1);
@@ -530,7 +530,7 @@ describe("SessionTimingService", () => {
 
     const snapshot = await service.getSnapshot(workspaceId);
 
-    const normalizedModel = normalizeGatewayModel(model);
+    const normalizedModel = normalizeToCanonical(model);
     const key = `${normalizedModel}:explore`;
 
     expect(snapshot.session?.byModel[key]).toBeDefined();

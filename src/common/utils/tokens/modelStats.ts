@@ -2,7 +2,7 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import modelsData from "./models.json";
 import { modelsExtra } from "./models-extra";
-import { normalizeGatewayModel } from "../ai/models";
+import { normalizeToCanonical } from "../ai/models";
 
 export interface ModelStats {
   max_input_tokens: number;
@@ -107,7 +107,7 @@ function generateLookupKeys(modelString: string): string[] {
  * @returns ModelStats or null if model not found
  */
 export function getModelStats(modelString: string): ModelStats | null {
-  const normalized = normalizeGatewayModel(modelString);
+  const normalized = normalizeToCanonical(modelString);
   const lookupKeys = generateLookupKeys(normalized);
 
   // Check models-extra.ts first (overrides for models with incorrect upstream data)

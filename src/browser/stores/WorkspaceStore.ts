@@ -47,7 +47,7 @@ import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -589,7 +589,7 @@ export class WorkspaceStore {
           this.resolveMetadataModel(model)
         );
         if (usage) {
-          const normalizedModel = normalizeGatewayModel(model);
+          const normalizedModel = normalizeToCanonical(model);
           const current = this.sessionUsage.get(workspaceId) ?? {
             byModel: {},
             version: 1 as const,

@@ -91,7 +91,7 @@ export const SessionTimingStatsSchema = z.object({
   /**
    * Per-model breakdown.
    *
-   * Key is a stable identifier like normalizeGatewayModel(model) or model:agentId (fallback: model:mode).
+   * Key is a stable identifier like normalizeToCanonical(model) or model:agentId (fallback: model:mode).
    */
   byModel: z.record(z.string(), ModelTimingStatsSchema),
 });
