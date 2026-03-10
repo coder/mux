@@ -56,12 +56,43 @@ export function useRouter(): RouterContext {
   return ctx;
 }
 
+const STANDALONE_PWA_SESSION_KEY = "muxStandaloneSessionInitialized";
+
+function isStandalonePwa(): boolean {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(display-mode: standalone)").matches
+  );
+}
+
+function hasStandalonePwaSessionInitialized(): boolean {
+  try {
+    return window.sessionStorage.getItem(STANDALONE_PWA_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markStandalonePwaSessionInitialized(): void {
+  try {
+    window.sessionStorage.setItem(STANDALONE_PWA_SESSION_KEY, "1");
+  } catch {
+    // If sessionStorage is unavailable, fall back to treating each load as a fresh launch.
+  }
+}
+
 /** Get initial route from browser URL or default to home. */
 function getInitialRoute(): string {
   const isStorybook = window.location.pathname.endsWith("iframe.html");
+  const isStandalone = isStandalonePwa();
+  const hasStandaloneSession = hasStandalonePwaSessionInitialized();
+  const shouldIgnoreStandaloneWorkspaceUrl =
+    isStandalone && !hasStandaloneSession && window.location.pathname.startsWith("/workspace/");
 
-  // In browser mode (not Storybook), read route directly from URL (enables refresh restoration)
-  if (window.location.protocol !== "file:" && !isStorybook) {
+  // In browser mode (not Storybook), read route directly from URL (enables refresh restoration).
+  // Standalone PWAs intentionally ignore stale workspace URLs on cold launch so opening the app
+  // lands on the dashboard, while preserving explicit deep links like /settings or /project.
+  if (window.location.protocol !== "file:" && !isStorybook && !shouldIgnoreStandaloneWorkspaceUrl) {
     const url = window.location.pathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)
     if (url.startsWith("/") && url !== "/") {
@@ -81,14 +112,16 @@ function getInitialRoute(): string {
     }
   }
 
-  const launchBehavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
-  if (launchBehavior === "last-workspace") {
-    const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
-      SELECTED_WORKSPACE_KEY,
-      null
-    );
-    if (savedWorkspace?.workspaceId) {
-      return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
+  if (!isStandalone) {
+    const launchBehavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
+    if (launchBehavior === "last-workspace") {
+      const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
+        SELECTED_WORKSPACE_KEY,
+        null
+      );
+      if (savedWorkspace?.workspaceId) {
+        return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
+      }
     }
   }
 
@@ -300,6 +333,13 @@ function RouterContextInner(props: { children: ReactNode }) {
 // causing a flash of stale UI between normal-priority updates (e.g.
 // setIsSending(false)) and the deferred route change.
 export function RouterProvider(props: { children: ReactNode }) {
+  useEffect(() => {
+    if (!isStandalonePwa()) return;
+    // Mark the standalone session after commit so StrictMode's throwaway renders cannot
+    // flip a cold launch into the reload path before the first real paint.
+    markStandalonePwaSessionInitialized();
+  }, []);
+
   return (
     <MemoryRouter initialEntries={[getInitialRoute()]} unstable_useTransitions={false}>
       <RouterContextInner>{props.children}</RouterContextInner>
