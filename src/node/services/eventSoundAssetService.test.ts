@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -67,6 +67,23 @@ describe("EventSoundAssetService", () => {
       service.importFromLocalPath(sourcePath),
       "Audio file exceeds maximum allowed size"
     );
+  });
+
+  it("checks file size metadata before reading oversized local imports", async () => {
+    const sourcePath = path.join(tempMuxHome, "oversize-by-metadata.wav");
+    await fsPromises.writeFile(sourcePath, "");
+    await fsPromises.truncate(sourcePath, MAX_AUDIO_FILE_SIZE_BYTES + 1);
+
+    const readFileSpy = spyOn(fsPromises, "readFile");
+    try {
+      await expectRejects(
+        service.importFromLocalPath(sourcePath),
+        "Audio file exceeds maximum allowed size"
+      );
+      expect(readFileSpy).not.toHaveBeenCalled();
+    } finally {
+      readFileSpy.mockRestore();
+    }
   });
 
   it("rejects local imports with unsupported extensions", async () => {

@@ -321,7 +321,11 @@ export class EventSoundAssetService {
         throw new Error("Unsupported audio file extension");
       }
 
+      const stat = await fsPromises.stat(localPath);
+      this.validateSize(stat.size);
+
       const bytes = await fsPromises.readFile(localPath);
+      // Re-validate after reading in case the file grew between stat + read.
       this.validateSize(bytes.byteLength);
 
       return this.storeAsset({
