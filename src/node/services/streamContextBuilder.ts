@@ -17,8 +17,9 @@ import * as path from "node:path";
 
 import assert from "@/common/utils/assert";
 import type { MuxMessage } from "@/common/types/message";
-import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectsConfig } from "@/common/types/project";
+import type { MuxToolScope } from "@/common/types/toolScope";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { TaskSettings } from "@/common/types/tasks";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -37,6 +38,7 @@ import {
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { buildSystemMessage } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
@@ -227,6 +229,7 @@ export interface BuildStreamSystemContextOptions {
   cfg: ProjectsConfig;
   providersConfig?: ProvidersConfigMap | null;
   mcpServers: Parameters<typeof buildSystemMessage>[5];
+  muxScope?: MuxToolScope;
 }
 
 /** Result of system context assembly. */
@@ -397,6 +400,7 @@ export async function buildStreamSystemContext(
     cfg,
     providersConfig,
     mcpServers,
+    muxScope,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -441,9 +445,18 @@ export async function buildStreamSystemContext(
   }
 
   // Discover available skills for tool description context
+  const skillCtx = resolveSkillStorageContext({
+    runtime,
+    workspacePath,
+    muxScope,
+  });
+
   let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
   try {
-    availableSkills = await discoverAgentSkills(runtime, workspacePath);
+    availableSkills = await discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
+      roots: skillCtx.roots,
+      containment: skillCtx.containment,
+    });
   } catch (error) {
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
   }

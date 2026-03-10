@@ -32,22 +32,33 @@ This skill is not advertised.
 `;
 
 describe("skills_catalog_read", () => {
-  it("rejects read outside Chat with Mux workspace", async () => {
-    using tempDir = new TestTempDir("test-skills-catalog-read-reject");
+  it("allows read from non-mux-chat workspace", async () => {
+    using tempDir = new TestTempDir("test-skills-catalog-read-non-mux-chat-workspace");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: "regular-workspace",
+      workspaceId: "my-project",
+    });
+
+    const fetchContentSpy = spyOn(catalogFetch, "fetchSkillContent").mockResolvedValue({
+      content: VALID_SKILL_MD,
+      path: "skills/test-skill/SKILL.md",
+      branch: "main",
     });
 
     const tool = createSkillsCatalogReadTool(config);
     const result = (await tool.execute!(
-      { owner: "test", repo: "test", skillId: "test" },
+      { owner: "test-owner", repo: "test-repo", skillId: "test-skill" },
       mockToolCallOptions
     )) as SkillsCatalogReadToolResult;
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toMatch(/only available/i);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.frontmatter.name).toBe("test-skill");
+      expect(result.frontmatter.description).toContain("test skill");
+      expect(result.body).toContain("Test Skill");
+      expect(result.url).toContain("test-owner/test-repo");
     }
+
+    fetchContentSpy.mockRestore();
   });
 
   it("returns parsed skill content on success", async () => {

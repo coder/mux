@@ -5,8 +5,11 @@ import { describe, it, expect } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import type { MuxToolScope } from "@/common/types/toolScope";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
-import type { AgentSkillWriteToolResult } from "@/common/types/tools";
+import type { AgentSkillReadToolResult, AgentSkillWriteToolResult } from "@/common/types/tools";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { createAgentSkillReadTool } from "./agent_skill_read";
 import { createAgentSkillWriteTool } from "./agent_skill_write";
 import { SKILL_FILENAME } from "./skillFileUtils";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
@@ -31,6 +34,98 @@ function restoreMuxRoot(previousMuxRoot: string | undefined): void {
   process.env.MUX_ROOT = previousMuxRoot;
 }
 
+class RemotePathMappedRuntime extends LocalRuntime {
+  private readonly localBase: string;
+  private readonly remoteBase: string;
+
+  constructor(localBase: string, remoteBase: string) {
+    super(localBase);
+    this.localBase = path.resolve(localBase);
+    this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
+  }
+
+  protected toLocalPath(runtimePath: string): string {
+    const normalizedRuntimePath = runtimePath.replaceAll("\\", "/");
+
+    if (normalizedRuntimePath === this.remoteBase) {
+      return this.localBase;
+    }
+
+    if (normalizedRuntimePath.startsWith(`${this.remoteBase}/`)) {
+      const suffix = normalizedRuntimePath.slice(this.remoteBase.length + 1);
+      return path.join(this.localBase, ...suffix.split("/"));
+    }
+
+    return runtimePath;
+  }
+
+  private toRemotePath(localPath: string): string {
+    const resolvedLocalPath = path.resolve(localPath);
+
+    if (resolvedLocalPath === this.localBase) {
+      return this.remoteBase;
+    }
+
+    const localPrefix = `${this.localBase}${path.sep}`;
+    if (resolvedLocalPath.startsWith(localPrefix)) {
+      const suffix = resolvedLocalPath.slice(localPrefix.length).split(path.sep).join("/");
+      return `${this.remoteBase}/${suffix}`;
+    }
+
+    return localPath.replaceAll("\\", "/");
+  }
+
+  override getWorkspacePath(projectPath: string, workspaceName: string): string {
+    return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
+  }
+
+  override normalizePath(targetPath: string, basePath: string): string {
+    const normalizedBasePath = this.toRemotePath(basePath);
+    return path.posix.resolve(normalizedBasePath, targetPath.replaceAll("\\", "/"));
+  }
+
+  override async resolvePath(filePath: string): Promise<string> {
+    const resolvedLocalPath = await super.resolvePath(this.toLocalPath(filePath));
+    return this.toRemotePath(resolvedLocalPath);
+  }
+
+  override exec(
+    command: string,
+    options: Parameters<LocalRuntime["exec"]>[1]
+  ): ReturnType<LocalRuntime["exec"]> {
+    const translatedCommand = command
+      .split(this.remoteBase)
+      .join(this.localBase.replaceAll("\\", "/"));
+
+    return super.exec(translatedCommand, {
+      ...options,
+      cwd: this.toLocalPath(options.cwd),
+    });
+  }
+
+  override stat(filePath: string, abortSignal?: AbortSignal): ReturnType<LocalRuntime["stat"]> {
+    return super.stat(this.toLocalPath(filePath), abortSignal);
+  }
+
+  override readFile(
+    filePath: string,
+    abortSignal?: AbortSignal
+  ): ReturnType<LocalRuntime["readFile"]> {
+    return super.readFile(this.toLocalPath(filePath), abortSignal);
+  }
+
+  override writeFile(
+    filePath: string,
+    abortSignal?: AbortSignal
+  ): ReturnType<LocalRuntime["writeFile"]> {
+    return super.writeFile(this.toLocalPath(filePath), abortSignal);
+  }
+
+  override ensureDir(dirPath: string): ReturnType<LocalRuntime["ensureDir"]> {
+    return super.ensureDir(this.toLocalPath(dirPath));
+  }
+}
+
 function skillMarkdown(
   name: string,
   options?: { description?: string; advertise?: boolean; body?: string }
@@ -51,11 +146,16 @@ function skillMarkdown(
     .join("\n");
 }
 
-async function createWriteTool(muxHome: string, workspaceId: string = MUX_HELP_CHAT_WORKSPACE_ID) {
+async function createWriteTool(
+  muxHome: string,
+  workspaceId: string = MUX_HELP_CHAT_WORKSPACE_ID,
+  muxScope?: MuxToolScope
+) {
   const workspaceSessionDir = await createWorkspaceSessionDir(muxHome, workspaceId);
   const config = createTestToolConfig(muxHome, {
     workspaceId,
     sessionsDir: workspaceSessionDir,
+    muxScope,
   });
 
   return createAgentSkillWriteTool(config);
@@ -80,6 +180,271 @@ describe("agent_skill_write", () => {
       "utf-8"
     );
     expect(stored).toBe(content);
+  });
+
+  it("recreates deleted global mux home before validating skill writes", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-recreate-mux-home");
+
+    const tool = await createWriteTool(tempDir.path);
+    const content = skillMarkdown("demo-skill", { body: "Recovered body" });
+
+    await fs.rm(tempDir.path, { recursive: true, force: true });
+
+    const result = (await tool.execute!(
+      { name: "demo-skill", content },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+
+    const stored = await fs.readFile(
+      path.join(tempDir.path, "skills", "demo-skill", SKILL_FILENAME),
+      "utf-8"
+    );
+    expect(stored).toBe(content);
+  });
+
+  it("operates on project skills root when scope is project", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-project-scope");
+
+    const projectRoot = path.join(tempDir.path, "my-project");
+    await fs.mkdir(path.join(projectRoot, ".mux", "skills"), { recursive: true });
+
+    const projectScope: MuxToolScope = {
+      type: "project",
+      muxHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    };
+
+    const tool = await createWriteTool(tempDir.path, MUX_HELP_CHAT_WORKSPACE_ID, projectScope);
+    const content = skillMarkdown("demo-skill", { body: "Project scoped" });
+
+    const result = (await tool.execute!(
+      { name: "demo-skill", content },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+
+    const projectSkillPath = path.join(projectRoot, ".mux", "skills", "demo-skill", "SKILL.md");
+    const stored = await fs.readFile(projectSkillPath, "utf-8");
+    expect(stored).toBe(content);
+  });
+  describe("split-root (project-runtime)", () => {
+    it("writes project skill via runtime APIs in split-root context", async () => {
+      using tempDir = new TestTempDir("test-agent-skill-write-split-root-project-runtime");
+      const skillName = "split-root-runtime-write-skill";
+      const remoteWorkspaceRoot = "/remote/workspace";
+      const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
+
+      const projectScope: MuxToolScope = {
+        type: "project",
+        muxHome: tempDir.path,
+        projectRoot: "/host/project",
+        projectStorageAuthority: "runtime",
+      };
+
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: "regular-workspace",
+        runtime: remoteRuntime,
+        muxScope: projectScope,
+      });
+      const config = {
+        ...baseConfig,
+        cwd: remoteWorkspaceRoot,
+      };
+
+      const writeTool = createAgentSkillWriteTool(config);
+      const content = skillMarkdown(skillName, { body: "Body from split-root runtime" });
+
+      const writeResult = (await writeTool.execute!(
+        { name: skillName, content },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+      expect(writeResult.success).toBe(true);
+
+      const localSkillFile = path.join(tempDir.path, ".mux", "skills", skillName, "SKILL.md");
+      const stored = await fs.readFile(localSkillFile, "utf-8");
+      expect(stored).toBe(content);
+
+      const readTool = createAgentSkillReadTool(config);
+      const readResult = (await readTool.execute!(
+        { name: skillName },
+        mockToolCallOptions
+      )) as AgentSkillReadToolResult;
+
+      expect(readResult.success).toBe(true);
+      if (readResult.success) {
+        expect(readResult.skill.body).toContain("Body from split-root runtime");
+      }
+    });
+
+    it("rejects write when .mux is symlinked outside workspace in split-root runtime context", async () => {
+      using tempDir = new TestTempDir("test-agent-skill-write-split-root-runtime-symlink-escape");
+      using externalDir = new TestTempDir(
+        "test-agent-skill-write-split-root-runtime-symlink-target"
+      );
+      const skillName = "split-root-runtime-write-skill";
+      const remoteWorkspaceRoot = "/remote/workspace";
+
+      const externalMuxDir = externalDir.path;
+      await fs.mkdir(path.join(externalMuxDir, "skills"), { recursive: true });
+      await fs.symlink(
+        externalMuxDir,
+        path.join(tempDir.path, ".mux"),
+        process.platform === "win32" ? "junction" : "dir"
+      );
+
+      const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
+      const projectScope: MuxToolScope = {
+        type: "project",
+        muxHome: tempDir.path,
+        projectRoot: "/host/project",
+        projectStorageAuthority: "runtime",
+      };
+
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: "regular-workspace",
+        runtime: remoteRuntime,
+        muxScope: projectScope,
+      });
+      const config = {
+        ...baseConfig,
+        cwd: remoteWorkspaceRoot,
+      };
+
+      const writeTool = createAgentSkillWriteTool(config);
+      const content = skillMarkdown(skillName, { body: "Body from split-root runtime" });
+
+      const writeResult = (await writeTool.execute!(
+        { name: skillName, content },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+
+      expect(writeResult.success).toBe(false);
+      if (!writeResult.success) {
+        expect(writeResult.error).toMatch(/outside workspace root|escape|symlink/i);
+      }
+
+      const externalSkillFile = path.join(externalMuxDir, "skills", skillName, "SKILL.md");
+      const externalSkillExists = await fs
+        .stat(externalSkillFile)
+        .then(() => true)
+        .catch(() => false);
+      expect(externalSkillExists).toBe(false);
+
+      const externalSkillEntries = await fs.readdir(path.join(externalMuxDir, "skills"));
+      expect(externalSkillEntries).toEqual([]);
+    });
+
+    it("rejects write via casing-variant filePath when canonical SKILL.md is a symlink", async () => {
+      using tempDir = new TestTempDir(
+        "test-agent-skill-write-split-root-runtime-case-variant-symlink"
+      );
+      const skillName = "split-root-runtime-case-variant-symlink";
+      const remoteWorkspaceRoot = "/remote/workspace";
+      const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
+
+      const projectScope: MuxToolScope = {
+        type: "project",
+        muxHome: tempDir.path,
+        projectRoot: "/host/project",
+        projectStorageAuthority: "runtime",
+      };
+
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: "regular-workspace",
+        runtime: remoteRuntime,
+        muxScope: projectScope,
+      });
+      const config = {
+        ...baseConfig,
+        cwd: remoteWorkspaceRoot,
+      };
+
+      const localSkillDir = path.join(tempDir.path, ".mux", "skills", skillName);
+      await fs.mkdir(localSkillDir, { recursive: true });
+
+      const symlinkTargetPath = path.join(tempDir.path, "outside-skill-target.md");
+      const symlinkTargetContent = "outside target should remain unchanged\n";
+      await fs.writeFile(symlinkTargetPath, symlinkTargetContent, "utf-8");
+      await fs.symlink(
+        symlinkTargetPath,
+        path.join(localSkillDir, SKILL_FILENAME),
+        process.platform === "win32" ? "file" : undefined
+      );
+
+      const writeTool = createAgentSkillWriteTool(config);
+      const content = skillMarkdown(skillName, { body: "Attempted overwrite" });
+
+      const writeResult = (await writeTool.execute!(
+        {
+          name: skillName,
+          filePath: "skill.md",
+          content,
+        },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+
+      expect(writeResult.success).toBe(false);
+      if (!writeResult.success) {
+        expect(writeResult.error).toMatch(/symbolic link|symlink/i);
+      }
+
+      const storedTarget = await fs.readFile(symlinkTargetPath, "utf-8");
+      expect(storedTarget).toBe(symlinkTargetContent);
+    });
+
+    it("writes correctly via casing-variant filePath when SKILL.md does not exist", async () => {
+      using tempDir = new TestTempDir(
+        "test-agent-skill-write-split-root-runtime-case-variant-create"
+      );
+      const skillName = "split-root-runtime-case-variant-create";
+      const remoteWorkspaceRoot = "/remote/workspace";
+      const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
+
+      const projectScope: MuxToolScope = {
+        type: "project",
+        muxHome: tempDir.path,
+        projectRoot: "/host/project",
+        projectStorageAuthority: "runtime",
+      };
+
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: "regular-workspace",
+        runtime: remoteRuntime,
+        muxScope: projectScope,
+      });
+      const config = {
+        ...baseConfig,
+        cwd: remoteWorkspaceRoot,
+      };
+
+      const writeTool = createAgentSkillWriteTool(config);
+      const content = skillMarkdown(skillName, { body: "Created through lowercase path" });
+
+      const writeResult = (await writeTool.execute!(
+        {
+          name: skillName,
+          filePath: "skill.md",
+          content,
+        },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+
+      expect(writeResult.success).toBe(true);
+
+      const canonicalSkillPath = path.join(
+        tempDir.path,
+        ".mux",
+        "skills",
+        skillName,
+        SKILL_FILENAME
+      );
+      const stored = await fs.readFile(canonicalSkillPath, "utf-8");
+      expect(stored).toBe(content);
+    });
   });
 
   it("updates SKILL.md and returns ui_only diff payload", async () => {
@@ -354,7 +719,8 @@ describe("agent_skill_write", () => {
 
     try {
       const externalDir = path.join(tempDir.path, "external-skills-tree");
-      await fs.mkdir(externalDir, { recursive: true });
+      const externalSkillDir = path.join(externalDir, "evil-skill");
+      await fs.mkdir(externalSkillDir, { recursive: true });
 
       const muxDir = path.join(tempDir.path, ".mux");
       await fs.mkdir(muxDir, { recursive: true });
@@ -367,6 +733,10 @@ describe("agent_skill_write", () => {
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
         sessionsDir: path.join(muxDir, "sessions", MUX_HELP_CHAT_WORKSPACE_ID),
+        muxScope: {
+          type: "global",
+          muxHome: muxDir,
+        },
       });
 
       const tool = createAgentSkillWriteTool(baseConfig);
@@ -380,11 +750,11 @@ describe("agent_skill_write", () => {
 
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toMatch(/symbolic link/i);
+        expect(result.error).toMatch(/symbolic link|outside containment root/i);
       }
 
       const externalEntries = await fs.readdir(externalDir);
-      expect(externalEntries).toEqual([]);
+      expect(externalEntries).toEqual(["evil-skill"]);
     } finally {
       restoreMuxRoot(previousMuxRoot);
     }
@@ -500,5 +870,41 @@ describe("agent_skill_write", () => {
 
     const stored = await fs.readFile(skillPath, "utf-8");
     expect(stored).toBe(originalContent);
+  });
+
+  it("rejects project writes when .mux is a symlink to external directory", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-project-mux-symlink");
+
+    const projectRoot = path.join(tempDir.path, "project");
+    await fs.mkdir(projectRoot, { recursive: true });
+
+    // Create external directory and symlink .mux to it
+    const externalDir = path.join(tempDir.path, "external");
+    await fs.mkdir(externalDir, { recursive: true });
+    await fs.symlink(externalDir, path.join(projectRoot, ".mux"));
+
+    const projectScope: MuxToolScope = {
+      type: "project",
+      muxHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    };
+
+    const tool = await createWriteTool(tempDir.path, MUX_HELP_CHAT_WORKSPACE_ID, projectScope);
+    const content = skillMarkdown("demo-skill", { body: "Should not land outside project" });
+
+    const result = (await tool.execute!(
+      { name: "demo-skill", content },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/outside containment root|symbolic link/i);
+    }
+
+    // Verify no directories were created in external target
+    const externalEntries = await fs.readdir(externalDir);
+    expect(externalEntries).toEqual([]);
   });
 });

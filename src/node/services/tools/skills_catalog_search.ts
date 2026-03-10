@@ -1,6 +1,5 @@
 import { tool } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { SkillsCatalogSearchToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
@@ -12,7 +11,7 @@ interface SkillsCatalogSearchToolArgs {
   limit?: number | null;
 }
 
-export const createSkillsCatalogSearchTool: ToolFactory = (config: ToolConfiguration) => {
+export const createSkillsCatalogSearchTool: ToolFactory = (_config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.skills_catalog_search.description,
     inputSchema: TOOL_DEFINITIONS.skills_catalog_search.schema,
@@ -20,13 +19,6 @@ export const createSkillsCatalogSearchTool: ToolFactory = (config: ToolConfigura
       query,
       limit,
     }: SkillsCatalogSearchToolArgs): Promise<SkillsCatalogSearchToolResult> => {
-      if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-        return {
-          success: false,
-          error: "skills_catalog_search is only available in the Chat with Mux system workspace",
-        };
-      }
-
       try {
         const response = await searchSkillsCatalog(query, limit ?? 10);
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import type { MuxToolScope } from "@/common/types/toolScope";
 import { REDACTED_SECRET_VALUE } from "@/node/services/tools/shared/configRedaction";
 
 import { createMuxConfigReadTool } from "./mux_config_read";
@@ -28,13 +29,18 @@ interface MuxConfigReadError {
 
 type MuxConfigReadResult = MuxConfigReadSuccess | MuxConfigReadError;
 
-async function createReadTool(muxHomeDir: string, workspaceId: string) {
+async function createReadTool(
+  muxHomeDir: string,
+  workspaceId: string,
+  muxScope: MuxToolScope = { type: "global", muxHome: muxHomeDir }
+) {
   const workspaceSessionDir = path.join(muxHomeDir, "sessions", workspaceId);
   await fs.mkdir(workspaceSessionDir, { recursive: true });
 
   const config = createTestToolConfig(muxHomeDir, {
     workspaceId,
     sessionsDir: workspaceSessionDir,
+    muxScope,
   });
 
   return createMuxConfigReadTool(config);

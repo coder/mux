@@ -10,25 +10,17 @@ import type { ToolPolicySchema } from "@/common/orpc/schemas/stream";
 export type ToolPolicy = z.infer<typeof ToolPolicySchema>;
 
 /**
- * Apply tool policy to filter available tools
- * @param tools All available tools
- * @param policy Optional policy to apply (default: allow all)
- * @returns Filtered tools based on policy
+ * Apply tool policy to filter available tool names.
  *
  * Algorithm:
  * - Filters are applied in order, with default behavior "allow all".
  * - "require" acts like "enable" for filtering purposes.
  * - The last matching filter wins for each tool.
  */
-export function applyToolPolicy(
-  tools: Record<string, Tool>,
-  policy?: ToolPolicy
-): Record<string, Tool> {
+export function applyToolPolicyToNames(toolNames: string[], policy?: ToolPolicy): string[] {
   if (!policy || policy.length === 0) {
-    return tools;
+    return toolNames;
   }
-
-  const toolNames = Object.keys(tools);
 
   // Build a map of tool name -> enabled status.
   // "require" acts as "enable" for filtering purposes — enforcement
@@ -49,12 +41,22 @@ export function applyToolPolicy(
     }
   }
 
-  const filteredTools: Record<string, Tool> = {};
-  for (const [toolName, tool] of Object.entries(tools)) {
-    if (toolStatus.get(toolName) === true) {
-      filteredTools[toolName] = tool;
-    }
-  }
+  return toolNames.filter((toolName) => toolStatus.get(toolName) === true);
+}
 
-  return filteredTools;
+/**
+ * Apply tool policy to filter available tools
+ * @param tools All available tools
+ * @param policy Optional policy to apply (default: allow all)
+ * @returns Filtered tools based on policy
+ */
+export function applyToolPolicy(
+  tools: Record<string, Tool>,
+  policy?: ToolPolicy
+): Record<string, Tool> {
+  const enabledToolNames = new Set(applyToolPolicyToNames(Object.keys(tools), policy));
+
+  return Object.fromEntries(
+    Object.entries(tools).filter(([toolName]) => enabledToolNames.has(toolName))
+  );
 }

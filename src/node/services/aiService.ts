@@ -24,9 +24,10 @@ import { getToolsForModel } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { MuxToolScope } from "@/common/types/toolScope";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
@@ -168,6 +169,20 @@ function isToolExecutionContext(value: unknown): value is ToolExecutionContext {
   const validAbortSignal = abortSignal == null || abortSignal instanceof AbortSignal;
 
   return validToolCallId && validAbortSignal;
+}
+
+/**
+ * Derive the host-local project root for mux managed-file tools (fs/promises).
+ * Remote runtimes (ssh, docker) have a workspacePath that is a remote/container
+ * path — unusable by host fs. Fall back to metadata.projectPath which is always
+ * host-local.
+ */
+export function resolveMuxProjectRootForHostFs(
+  metadata: WorkspaceMetadata,
+  workspacePath: string
+): string {
+  const runtimeType = metadata.runtimeConfig.type;
+  return runtimeType === "ssh" || runtimeType === "docker" ? metadata.projectPath : workspacePath;
 }
 
 export class AIService extends EventEmitter {
@@ -690,9 +705,6 @@ export class AIService extends EventEmitter {
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
 
-      // toolNamesForSentinel is set after agent resolution below, used in message pipeline.
-      let toolNamesForSentinel: string[] = [];
-
       // Filter out assistant messages with only reasoning (no text/tools)
       // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
       // to comply with Extended Thinking API requirements
@@ -817,11 +829,9 @@ export class AIService extends EventEmitter {
         workspacePath,
         requestedAgentId: agentId,
         disableWorkspaceAgents: disableWorkspaceAgents ?? false,
-        modelString,
         callerToolPolicy: toolPolicy,
         cfg,
         emitError: (event) => this.emit("error", event),
-        initStateManager: this.initStateManager,
       });
       if (!agentResult.success) {
         return agentResult;
@@ -838,7 +848,10 @@ export class AIService extends EventEmitter {
         shouldDisableTaskToolsForDepth,
         effectiveToolPolicy,
       } = agentResult.data;
-      toolNamesForSentinel = agentResult.data.toolNamesForSentinel;
+      // Only the built-in mux help agent suppresses project secrets and MCP. User-defined
+      // agents can override the same ID and must keep normal workspace capabilities.
+      const isBuiltInMuxHelpAgent =
+        effectiveAgentId === MUX_HELP_CHAT_AGENT_ID && agentDefinition.scope === "built-in";
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
@@ -857,7 +870,7 @@ export class AIService extends EventEmitter {
       // Fetch MCP server config for system prompt (before building message)
       // Pass overrides to filter out disabled servers
       const mcpServers =
-        this.mcpServerManager && workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID
+        this.mcpServerManager && !isBuiltInMuxHelpAgent
           ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides)
           : undefined;
 
@@ -881,25 +894,17 @@ export class AIService extends EventEmitter {
           requestPayloadMessages: providerRequestMessages,
         });
 
-      // Run the full message preparation pipeline (inject context, transform, validate).
-      // This is a purely functional pipeline with no service dependencies.
-      const finalMessages = await prepareMessagesForProvider({
-        messagesWithSentinel,
-        effectiveAgentId,
-        toolNamesForSentinel,
-        planContentForTransition,
-        planFilePath,
-        changedFileAttachments,
-        postCompactionAttachments,
-        runtime,
-        workspacePath,
-        abortSignal: combinedAbortSignal,
-        providerForMessages: canonicalProviderName,
-        effectiveThinkingLevel,
-        modelString,
-        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
-        workspaceId,
-      });
+      const runtimeType = metadata.runtimeConfig.type;
+      const muxScope: MuxToolScope =
+        workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
+          ? { type: "global", muxHome: this.config.rootDir }
+          : {
+              type: "project",
+              muxHome: this.config.rootDir,
+              projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
+              projectStorageAuthority:
+                runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
+            };
 
       // Build agent system prompt, system message, and discover agents/skills.
       const streamSystemContext = await buildStreamSystemContext({
@@ -915,16 +920,16 @@ export class AIService extends EventEmitter {
         cfg,
         providersConfig: this.providerService.getConfig(),
         mcpServers,
+        muxScope,
       });
       const { agentSystemPrompt, agentDefinitions, availableSkills } = streamSystemContext;
       let systemMessageTokens = streamSystemContext.systemMessageTokens;
       let systemMessage = streamSystemContext.systemMessage;
 
       // Load project secrets (system workspace never gets secrets injected)
-      const projectSecrets =
-        workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
-          ? []
-          : this.config.getEffectiveSecrets(metadata.projectPath);
+      const projectSecrets = isBuiltInMuxHelpAgent
+        ? []
+        : this.config.getEffectiveSecrets(metadata.projectPath);
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
@@ -933,7 +938,7 @@ export class AIService extends EventEmitter {
       let mcpStats: MCPWorkspaceStats | undefined;
       let mcpSetupDurationMs = 0;
 
-      if (this.mcpServerManager && workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
+      if (this.mcpServerManager && !isBuiltInMuxHelpAgent) {
         const start = Date.now();
         try {
           const result = await this.mcpServerManager.getToolsForWorkspace({
@@ -1023,6 +1028,7 @@ export class AIService extends EventEmitter {
           workspaceSessionDir: this.config.getSessionDir(workspaceId),
           planFilePath,
           workspaceId,
+          muxScope,
           // Only child workspaces (tasks) can report to a parent.
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback
@@ -1069,6 +1075,28 @@ export class AIService extends EventEmitter {
             this.streamManager.emitNestedToolEvent(workspaceId, assistantMessageId, event);
           }
         },
+      });
+
+      const toolNamesForSentinel = Object.keys(tools).sort();
+
+      // Run the full message preparation pipeline (inject context, transform, validate).
+      // This is a purely functional pipeline with no service dependencies.
+      const finalMessages = await prepareMessagesForProvider({
+        messagesWithSentinel,
+        effectiveAgentId,
+        toolNamesForSentinel,
+        planContentForTransition,
+        planFilePath,
+        changedFileAttachments,
+        postCompactionAttachments,
+        runtime,
+        workspacePath,
+        abortSignal: combinedAbortSignal,
+        providerForMessages: canonicalProviderName,
+        effectiveThinkingLevel,
+        modelString,
+        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+        workspaceId,
       });
 
       captureMcpToolTelemetry({

@@ -7,7 +7,6 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { applyMutations } from "@/node/services/tools/shared/configMutationEngine";
 import { REDACTED_SECRET_VALUE } from "@/node/services/tools/shared/configRedaction";
-import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/shared/configToolUtils";
 import {
   readConfigDocumentUnvalidated,
   writeConfigDocument,
@@ -49,7 +48,7 @@ export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration)
           };
         }
 
-        const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "mux_config_write");
+        const muxHome = config.muxScope!.muxHome;
         const currentDocument = await readConfigDocumentUnvalidated(muxHome, args.file);
         const registryEntry = CONFIG_FILE_REGISTRY[args.file];
         const mutationResult = applyMutations(

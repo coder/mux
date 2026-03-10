@@ -75,6 +75,37 @@ export async function lstatIfExists(targetPath: string): Promise<Stats | null> {
   }
 }
 
+export function isPathInsideRoot(rootPath: string, targetPath: string): boolean {
+  if (rootPath === targetPath) {
+    return true;
+  }
+
+  const rootPrefix = rootPath.endsWith(path.sep) ? rootPath : `${rootPath}${path.sep}`;
+  return targetPath.startsWith(rootPrefix);
+}
+
+/**
+ * Canonicalize `candidatePath` (resolving symlinks where possible) and verify it
+ * stays under `containmentRoot`. Returns the canonical path on success; throws on
+ * escape.
+ */
+export async function ensurePathContained(
+  containmentRoot: string,
+  candidatePath: string,
+  options?: { allowMissing?: boolean }
+): Promise<string> {
+  const containmentRootReal = await fsPromises.realpath(containmentRoot);
+  const candidateReal = options?.allowMissing
+    ? await resolveRealPathAllowMissing(candidatePath)
+    : await fsPromises.realpath(candidatePath);
+
+  if (!isPathInsideRoot(containmentRootReal, candidateReal)) {
+    throw new Error("Path resolves outside containment root after symlink resolution.");
+  }
+
+  return candidateReal;
+}
+
 async function resolveRealPathAllowMissing(targetPath: string): Promise<string> {
   const missingSegments: string[] = [];
   let currentPath = targetPath;
@@ -136,23 +167,23 @@ export async function resolveContainedSkillFilePath(
  * Unified directory-scope validation for local skill operations (write / delete).
  *
  * Checks (in order):
- * 1. Skills root (muxHomeReal/skills) is not a symlink.
+ * 1. Skills root is not a symlink.
  * 2. Skill directory is not a symlink.
- * 3. If skill directory exists, its realpath stays under muxHomeReal.
+ * 3. Skill directory realpath stays under containmentRoot (even if it doesn't exist yet).
  *
  * Returns the lstat result of skillDir (null when it doesn't exist yet).
  * Throws a descriptive error string on any violation.
  */
 export async function validateLocalSkillDirectory(
-  skillDir: string,
-  muxHomeReal: string
+  containmentRoot: string,
+  skillDir: string
 ): Promise<{ skillDirStat: Stats | null }> {
-  // 1) Reject symlinked ~/.mux/skills
+  // 1) Reject symlinked skills root
   const skillsRoot = path.dirname(skillDir);
   const skillsRootStat = await lstatIfExists(skillsRoot);
   if (skillsRootStat?.isSymbolicLink()) {
     throw new Error(
-      "Skills root directory (~/.mux/skills) is a symbolic link and cannot be used for skill operations."
+      "Skills root directory is a symbolic link and cannot be used for skill operations."
     );
   }
 
@@ -162,23 +193,8 @@ export async function validateLocalSkillDirectory(
     throw new Error("Skill directory is a symlink (symbolic link) and cannot be modified.");
   }
 
-  // 3) If exists, verify realpath stays under muxHomeReal
-  if (skillDirStat != null) {
-    const muxHomePrefix = muxHomeReal.endsWith(path.sep)
-      ? muxHomeReal
-      : `${muxHomeReal}${path.sep}`;
-    try {
-      const skillDirReal = await fsPromises.realpath(skillDir);
-      if (!skillDirReal.startsWith(muxHomePrefix)) {
-        throw new Error("Skill directory resolves outside mux home after symlink resolution.");
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("resolves outside")) {
-        throw error;
-      }
-      // realpath failure for other reasons is non-fatal; symlink check above is primary guard
-    }
-  }
+  // 3) Verify realpath stays under containmentRoot (even for missing dirs via allow-missing resolution)
+  await ensurePathContained(containmentRoot, skillDir, { allowMissing: true });
 
   return { skillDirStat };
 }
