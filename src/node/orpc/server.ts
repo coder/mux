@@ -714,11 +714,13 @@ export async function createOrpcServer({
     }
 
     // Media elements (like <audio>) cannot attach Authorization headers,
-    // so accept token query params for authenticated asset playback.
-    const queryTokenValue = req.query.token;
-    const queryToken = Array.isArray(queryTokenValue) ? queryTokenValue[0] : queryTokenValue;
-    if (typeof queryToken === "string" && safeEq(queryToken.trim(), expectedToken)) {
-      return true;
+    // so accept token query params for authenticated event-sound asset playback only.
+    if (req.path.startsWith("/assets/event-sounds/")) {
+      const queryTokenValue = req.query.token;
+      const queryToken = Array.isArray(queryTokenValue) ? queryTokenValue[0] : queryTokenValue;
+      if (typeof queryToken === "string" && safeEq(queryToken.trim(), expectedToken)) {
+        return true;
+      }
     }
 
     const sessionTokens = extractCookieValues(req.headers.cookie, SERVER_AUTH_SESSION_COOKIE_NAME);

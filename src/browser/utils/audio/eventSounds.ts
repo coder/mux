@@ -13,7 +13,7 @@ function toManagedPlaybackPath(assetId: string): string {
   // so resolve against the backend base URL instead of assuming "/".
   const backendBaseUrl = getBrowserBackendBaseUrl();
   const playbackUrl = new URL(
-    `/assets/event-sounds/${encodeURIComponent(assetId)}`,
+    `assets/event-sounds/${encodeURIComponent(assetId)}`,
     `${backendBaseUrl}/`
   );
 
