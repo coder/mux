@@ -64,7 +64,10 @@ export function resolveRoute(
   // 1. Check per-model override
   const override = routeOverrides[canonicalModel];
   if (override === "direct" || override === origin) {
-    return direct();
+    if (isConfigured(origin)) {
+      return direct();
+    }
+    // Direct override not viable — fall through to priority list
   }
 
   if (override) {

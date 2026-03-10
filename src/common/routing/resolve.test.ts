@@ -53,7 +53,7 @@ describe("resolveRoute", () => {
     expect(resolved.routeModelId).toBe("anthropic/claude-opus-4-6");
   });
 
-  test("supports per-model override to direct", () => {
+  test("direct override still resolves directly when origin is configured", () => {
     const resolved = resolveRoute(
       MODEL,
       ["mux-gateway", "openrouter"],
@@ -63,6 +63,30 @@ describe("resolveRoute", () => {
 
     expect(resolved.routeProvider).toBe("anthropic");
     expect(resolved.routeModelId).toBe("claude-opus-4-6");
+  });
+
+  test("direct override falls through when origin is not configured", () => {
+    const resolved = resolveRoute(
+      MODEL,
+      ["mux-gateway", "openrouter", "direct"],
+      { [MODEL]: "direct" },
+      createIsConfigured(["mux-gateway", "openrouter"])
+    );
+
+    expect(resolved.routeProvider).toBe("mux-gateway");
+    expect(resolved.routeModelId).toBe("anthropic/claude-opus-4-6");
+  });
+
+  test("origin-name override falls through when origin is not configured", () => {
+    const resolved = resolveRoute(
+      MODEL,
+      ["openrouter", "direct"],
+      { [MODEL]: "anthropic" },
+      createIsConfigured(["openrouter"])
+    );
+
+    expect(resolved.routeProvider).toBe("openrouter");
+    expect(resolved.routeModelId).toBe("anthropic/claude-opus-4-6");
   });
 
   test("falls through priority list when override gateway is unconfigured", () => {
