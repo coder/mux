@@ -190,7 +190,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
     }
   });
 
-  test("lets multi-project script mode opt into the primary repo checkout explicitly", async () => {
+  test("lets multi-project script mode target a secondary repo checkout explicitly", async () => {
     const workspaceId = "ws-multi-bash-repo-root";
     const workspaceName = "feature-multi-bash-repo-root";
     const srcDir = "/tmp/src";
@@ -277,6 +277,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
     try {
       const result = await workspaceService.executeBash(workspaceId, "git status --short", {
         cwdMode: "repo-root",
+        repoRootProjectPath: projectBPath,
       });
 
       expect(result.success).toBe(true);
@@ -284,7 +285,7 @@ describe("WorkspaceService executeBash runtime selection", () => {
       expect(createRuntimeSpy).toHaveBeenCalledTimes(2);
       assert(capturedToolConfig);
       expect(capturedToolConfig.runtime).toBeInstanceOf(MultiProjectRuntime);
-      expect(capturedToolConfig.cwd).toBe(`/tmp/workspaces/project-a/${workspaceName}`);
+      expect(capturedToolConfig.cwd).toBe(`/tmp/workspaces/project-b/${workspaceName}`);
       expect(capturedToolConfig.trusted).toBe(true);
       expect(ensureReadyAMock).toHaveBeenCalledTimes(1);
       expect(ensureReadyBMock).toHaveBeenCalledTimes(1);

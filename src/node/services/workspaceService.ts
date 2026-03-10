@@ -5224,9 +5224,10 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     script: string,
     options?: {
-      timeout_secs?: number;
+      timeout_secs?: number | null;
       cwdMode?: "default" | "repo-root" | null;
-    },
+      repoRootProjectPath?: string | null;
+    } | null,
     command?: string,
     args?: string[]
   ): Promise<Result<BashToolResult>> {
@@ -5334,22 +5335,31 @@ export class WorkspaceService extends EventEmitter {
 
       // Multi-project script mode must stay at the shared container root so sibling repos remain
       // addressable even when task/child workspaces persist their primary-project checkout path.
-      // Repo-context UI can opt scripts back into the primary repo checkout, and bare git command
-      // mode continues to force repo-root execution so git always runs inside a repo.
+      // Repo-context UI can opt scripts back into a repo checkout, and path-targeted callers can
+      // point repo-root execution at the project that owns the referenced workspace-relative path.
+      // Bare git command mode still defaults to the primary repo checkout so git always runs inside
+      // a repo even when no caller hint is provided.
       let cwdForExecution = multiProjectContainerPath ?? workspacePath;
       assert(cwdForExecution?.length, "executeBash requires a resolved execution cwd");
       const requiresRepoRootCwd = command === "git" || options?.cwdMode === "repo-root";
+      const requestedRepoRootProjectPath = options?.repoRootProjectPath?.trim();
       if (multiProjectRuntimes && requiresRepoRootCwd) {
-        const primaryProjectRuntime =
-          multiProjectRuntimes.find(
-            (runtimeEntry) => runtimeEntry.projectPath === metadata.projectPath
-          ) ?? multiProjectRuntimes[0];
-        assert(
-          primaryProjectRuntime,
-          "Multi-project repo-root execution requires a primary project runtime"
-        );
-        cwdForExecution = primaryProjectRuntime.runtime.getWorkspacePath(
-          primaryProjectRuntime.projectPath,
+        const repoRootRuntime = requestedRepoRootProjectPath
+          ? multiProjectRuntimes.find(
+              (runtimeEntry) => runtimeEntry.projectPath === requestedRepoRootProjectPath
+            )
+          : (multiProjectRuntimes.find(
+              (runtimeEntry) => runtimeEntry.projectPath === metadata.projectPath
+            ) ?? multiProjectRuntimes[0]);
+        if (!repoRootRuntime) {
+          return Err(
+            requestedRepoRootProjectPath
+              ? `Unknown repo-root project for workspace ${workspaceId}: ${requestedRepoRootProjectPath}`
+              : `Missing primary project runtime for workspace ${workspaceId}`
+          );
+        }
+        cwdForExecution = repoRootRuntime.runtime.getWorkspacePath(
+          repoRootRuntime.projectPath,
           metadata.name
         );
         assert(cwdForExecution.length > 0, "Multi-project repo-root execution requires a repo cwd");

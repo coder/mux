@@ -1136,12 +1136,14 @@ export const workspace = {
       args: z.array(z.string()).nullish(),
       options: z
         .object({
-          timeout_secs: z.number().optional(),
+          timeout_secs: z.number().nullish(),
           // Multi-project script mode defaults to the shared container root; repo-context UI
-          // callers opt into the primary repo checkout explicitly when they need git/file paths.
+          // callers opt into repo-root execution and can point it at the project that owns a
+          // referenced workspace-relative path when they need git/file-path context.
           cwdMode: z.enum(["default", "repo-root"]).nullish(),
+          repoRootProjectPath: z.string().nullish(),
         })
-        .optional(),
+        .nullish(),
     }),
     output: ResultSchema(BashToolResultSchema, z.string()),
   },

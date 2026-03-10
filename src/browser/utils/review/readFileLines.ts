@@ -19,7 +19,8 @@ export async function readFileLines(
   filePath: string,
   startLine: number,
   endLine: number,
-  gitRef: string
+  gitRef: string,
+  repoRootProjectPath?: string | null
 ): Promise<string[] | null> {
   if (!api || startLine < 1 || endLine < startLine) return null;
 
@@ -28,11 +29,12 @@ export async function readFileLines(
     : `sed -n '${startLine},${endLine}p' "${filePath.replace(/"/g, '\\"')}"`;
 
   // Plain reads must stay on the shared container root for sibling-project paths, while
-  // git-ref lookups still need explicit primary-repo context for `git show`.
+  // git-ref lookups still need repo-root git context for `git show`. Path-targeted callers pass
+  // the owning project explicitly so multi-project repo-root execution lands in the right checkout.
   const result = await api.workspace.executeBash({
     workspaceId,
     script,
-    options: gitRef ? repoRootBashOptions(3) : { timeout_secs: 3 },
+    options: gitRef ? repoRootBashOptions(3, repoRootProjectPath) : { timeout_secs: 3 },
   });
 
   if (!result?.success) return null;

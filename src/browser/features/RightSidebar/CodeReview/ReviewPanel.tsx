@@ -33,7 +33,7 @@ import { ImmersiveReviewView } from "./ImmersiveReviewView";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";
 import { shellQuote } from "@/common/utils/shell";
-import { repoRootBashOptions } from "@/browser/utils/executeBash";
+import { repoRootBashOptions, resolveRepoRootProjectPath } from "@/browser/utils/executeBash";
 import { readPersistedString, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
@@ -245,11 +245,17 @@ async function ensureOriginFetched(params: {
   diffBase: string;
   refreshToken: number;
   originFetchRef: React.MutableRefObject<OriginFetchState | null>;
+  repoRootProjectPath?: string | null;
 }): Promise<void> {
   const originBranch = getOriginBranchForFetch(params.diffBase);
   if (!originBranch) return;
 
-  const key = [params.workspaceId, params.diffBase, String(params.refreshToken)].join("\u0000");
+  const key = [
+    params.workspaceId,
+    params.diffBase,
+    params.repoRootProjectPath ?? "",
+    String(params.refreshToken),
+  ].join("\u0000");
   const existing = params.originFetchRef.current;
   if (existing?.key === key) {
     await existing.promise;
@@ -257,11 +263,13 @@ async function ensureOriginFetched(params: {
   }
 
   // Ensure manual refresh doesn't hang on credential prompts.
+  // When a selected-file diff targets a secondary project, fetch in that repo instead of always
+  // defaulting repo-root execution back to the primary checkout.
   const promise = params.api.workspace
     .executeBash({
       workspaceId: params.workspaceId,
       script: `GIT_TERMINAL_PROMPT=0 git fetch origin ${shellQuote(originBranch)} --quiet || true`,
-      options: repoRootBashOptions(30),
+      options: repoRootBashOptions(30, params.repoRootProjectPath),
     })
     .then(() => undefined)
     .catch(() => undefined);
@@ -273,9 +281,16 @@ function makeReviewPanelCacheKey(params: {
   workspaceId: string;
   workspacePath: string;
   gitCommand: string;
+  repoRootProjectPath?: string | null;
 }): string {
-  // Key off the actual git command to avoid forgetting to include new inputs.
-  return [params.workspaceId, params.workspacePath, params.gitCommand].join("\u0000");
+  // Key off the actual git command plus repo-root target so multi-project selected-file diffs do
+  // not reuse cache entries from a different project checkout that happened to run the same command.
+  return [
+    params.workspaceId,
+    params.workspacePath,
+    params.repoRootProjectPath ?? "",
+    params.gitCommand,
+  ].join("\u0000");
 }
 
 type ExecuteBashResult = Awaited<ReturnType<APIClient["workspace"]["executeBash"]>>;
@@ -287,12 +302,13 @@ async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(par
   script: string;
   cacheKey: string;
   timeoutSecs: number;
+  repoRootProjectPath?: string | null;
   parse: (result: ExecuteBashSuccess) => T;
 }): Promise<T> {
   const result = await params.api.workspace.executeBash({
     workspaceId: params.workspaceId,
     script: params.script,
-    options: repoRootBashOptions(params.timeoutSecs),
+    options: repoRootBashOptions(params.timeoutSecs, params.repoRootProjectPath),
   });
 
   if (!result.success) {
@@ -371,6 +387,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const [selectedFilePath, setSelectedFilePath] = usePersistedState<string | null>(
     `review-file-filter:${workspaceId}`,
     null
+  );
+
+  const selectedRepoRootProjectPath = resolveRepoRootProjectPath(
+    workspaceMetadata.get(workspaceId),
+    selectedFilePath
   );
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
@@ -898,6 +919,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
     const pathFilter =
       selectedFilePath && !isImmersive ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
+    const diffRepoRootProjectPath = !isImmersive ? selectedRepoRootProjectPath : undefined;
 
     const diffCommand = buildGitDiffCommand(
       filters.diffBase,
@@ -910,6 +932,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       workspaceId,
       workspacePath,
       gitCommand: diffCommand,
+      repoRootProjectPath: diffRepoRootProjectPath,
     });
 
     // Fast path: use cached diff when switching workspaces (unless user explicitly refreshed
@@ -959,6 +982,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           diffBase: filters.diffBase,
           refreshToken: refreshTrigger,
           originFetchRef,
+          repoRootProjectPath: diffRepoRootProjectPath,
         });
         if (cancelled) return;
 
@@ -973,6 +997,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           script: diffCommand,
           cacheKey,
           timeoutSecs: 30,
+          repoRootProjectPath: diffRepoRootProjectPath,
           parse: (result) => {
             const diffOutput = result.data.output ?? "";
             const truncationInfo = "truncated" in result.data ? result.data.truncated : undefined;
@@ -1035,6 +1060,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     filters.diffBase,
     filters.includeUncommitted,
     selectedFilePath,
+    selectedRepoRootProjectPath,
     refreshTrigger,
     isCreating,
     isImmersive,

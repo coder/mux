@@ -8,6 +8,7 @@ interface ExecuteBashInput {
   options?: {
     timeout_secs?: number;
     cwdMode?: "repo-root";
+    repoRootProjectPath?: string;
   };
 }
 
@@ -38,6 +39,23 @@ void mock.module("@/browser/contexts/API", () => ({
     error: mockApi ? null : "API unavailable",
     authenticate: () => undefined,
     retry: () => undefined,
+  }),
+}));
+
+void mock.module("@/browser/contexts/WorkspaceContext", () => ({
+  useWorkspaceMetadata: () => ({
+    workspaceMetadata: new Map([
+      [
+        "workspace-1",
+        {
+          projects: [
+            { projectName: "project-a", projectPath: "/tmp/project-a" },
+            { projectName: "project-b", projectPath: "/tmp/project-b" },
+          ],
+        },
+      ],
+    ]),
+    loading: false,
   }),
 }));
 
@@ -126,7 +144,7 @@ describe("FileViewerTab", () => {
     expect(executeBash).toHaveBeenNthCalledWith(2, {
       workspaceId: "workspace-1",
       script: "DIFF project-b/src/example.ts",
-      options: { cwdMode: "repo-root" },
+      options: { cwdMode: "repo-root", repoRootProjectPath: "/tmp/project-b" },
     });
 
     await waitFor(() => {

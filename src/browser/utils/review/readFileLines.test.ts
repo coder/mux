@@ -47,13 +47,25 @@ describe("readFileLines", () => {
       },
     } as unknown as APIClient;
 
-    const lines = await readFileLines(api, "workspace-1", "project-a/src/example.ts", 1, 2, "HEAD");
+    const lines = await readFileLines(
+      api,
+      "workspace-1",
+      "project-a/src/example.ts",
+      1,
+      2,
+      "HEAD",
+      "/tmp/project-a"
+    );
 
     expect(lines).toEqual(["first", "second"]);
     expect(executeBash).toHaveBeenNthCalledWith(1, {
       workspaceId: "workspace-1",
       script: "git show \"HEAD:project-a/src/example.ts\" 2>/dev/null | sed -n '1,2p'",
-      options: { timeout_secs: 3, cwdMode: "repo-root" },
+      options: {
+        timeout_secs: 3,
+        cwdMode: "repo-root",
+        repoRootProjectPath: "/tmp/project-a",
+      },
     });
   });
 });
