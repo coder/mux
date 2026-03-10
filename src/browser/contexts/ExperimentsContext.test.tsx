@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { ExperimentsProvider, useExperiment, useExperimentValue } from "./ExperimentsContext";
@@ -94,6 +94,29 @@ describe("ExperimentsProvider", () => {
       },
     };
 
+    let scheduledPoll: (() => void) | null = null;
+    const expectedInitialPollDelayMs = 100;
+    const scheduledPollHandle = Symbol("scheduled-poll") as ReturnType<typeof setTimeout>;
+
+    // Capture the provider's first poll callback so this assertion does not depend on whichever
+    // timer implementation earlier suites left behind.
+    globalThis.setTimeout = ((callback: TimerHandler, delay?: number) => {
+      if (delay === expectedInitialPollDelayMs && typeof callback === "function") {
+        scheduledPoll = callback;
+        return scheduledPollHandle;
+      }
+
+      return originalSetTimeout(callback, delay);
+    }) as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = ((timeout: ReturnType<typeof setTimeout>) => {
+      if (timeout === scheduledPollHandle) {
+        scheduledPoll = null;
+        return;
+      }
+
+      originalClearTimeout(timeout);
+    }) as typeof globalThis.clearTimeout;
+
     function Observer() {
       const enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
       return <div data-testid="enabled">{String(enabled)}</div>;
@@ -108,6 +131,17 @@ describe("ExperimentsProvider", () => {
     );
 
     expect(getByTestId("enabled").textContent).toBe("false");
+
+    await waitFor(() => {
+      expect(scheduledPoll).not.toBeNull();
+    });
+
+    const pollRemoteExperiments = scheduledPoll;
+    expect(pollRemoteExperiments).not.toBeNull();
+
+    await act(async () => {
+      pollRemoteExperiments?.();
+    });
 
     await waitFor(() => {
       expect(getByTestId("enabled").textContent).toBe("true");
