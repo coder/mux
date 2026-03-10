@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { GlobalWindow } from "happy-dom";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import * as APIModule from "@/browser/contexts/API";
+import type { APIClient } from "@/browser/contexts/API";
 import * as PersistedStateModule from "@/browser/hooks/usePersistedState";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as TooltipModule from "@/browser/components/Tooltip/Tooltip";
@@ -40,13 +41,25 @@ interface MockApiClient {
 let mockApi: MockApiClient | null = null;
 
 function installExplorerTabTestDoubles() {
-  spyOn(APIModule, "useAPI").mockImplementation(() => ({
-    api: mockApi,
-    status: mockApi ? ("connected" as const) : ("error" as const),
-    error: mockApi ? null : "API unavailable",
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }));
+  spyOn(APIModule, "useAPI").mockImplementation(() => {
+    if (mockApi) {
+      return {
+        api: mockApi as unknown as APIClient,
+        status: "connected" as const,
+        error: null,
+        authenticate: () => undefined,
+        retry: () => undefined,
+      };
+    }
+
+    return {
+      api: null,
+      status: "error" as const,
+      error: "API unavailable",
+      authenticate: () => undefined,
+      retry: () => undefined,
+    };
+  });
 
   spyOn(PersistedStateModule, "readPersistedState").mockImplementation(
     (<T,>(_key: string, defaultValue: T) =>
