@@ -162,6 +162,7 @@ function StatusDot(props: {
     "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center";
 
   if (props.completedChildrenChevronState) {
+    const chevronLabel = props.completedChildrenChevronLabel ?? "workspace";
     return (
       <button
         type="button"
@@ -178,8 +179,8 @@ function StatusDot(props: {
         onKeyDown={stopKeyboardPropagation}
         aria-label={
           props.completedChildrenChevronState === "expanded"
-            ? `Collapse completed sub-agents for ${props.completedChildrenChevronLabel}`
-            : `Expand completed sub-agents for ${props.completedChildrenChevronLabel}`
+            ? `Collapse completed sub-agents for ${chevronLabel}`
+            : `Expand completed sub-agents for ${chevronLabel}`
         }
         aria-expanded={props.completedChildrenChevronState === "expanded"}
         disabled={props.isDisabled}
