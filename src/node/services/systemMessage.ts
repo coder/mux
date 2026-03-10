@@ -1,7 +1,10 @@
+import path from "node:path";
+
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { MCPServerMap } from "@/common/types/mcp";
 import type { RuntimeMode } from "@/common/types/runtime";
 import { RUNTIME_MODE } from "@/common/types/runtime";
+import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
   readInstructionSet,
   readInstructionSetFromRuntime,
@@ -16,6 +19,7 @@ import { getMuxHome } from "@/common/constants/paths";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import { assertNever } from "@/common/utils/assertNever";
+import assert from "@/common/utils/assert";
 
 // NOTE: keep this in sync with the docs/models.md file
 
@@ -276,9 +280,48 @@ export async function readToolInstructions(
   });
 }
 
+async function readMultiProjectContextInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspacePath: string
+): Promise<string | null> {
+  const contextSegments: string[] = [];
+  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
+  if (workspaceInstructions) {
+    contextSegments.push(workspaceInstructions);
+  }
+
+  const seenProjectNames = new Set<string>();
+  for (const project of getProjects(metadata)) {
+    assert(
+      project.projectName.length > 0,
+      "Project instruction roots require non-empty project names"
+    );
+    assert(
+      !seenProjectNames.has(project.projectName),
+      `Duplicate project name in multi-project instruction context: ${project.projectName}`
+    );
+    seenProjectNames.add(project.projectName);
+
+    const workspaceProjectPath = path.join(workspacePath, project.projectName);
+    const projectInstructions =
+      (await readInstructionSetFromRuntime(runtime, workspaceProjectPath)) ??
+      (await readInstructionSet(project.projectPath));
+    if (projectInstructions) {
+      contextSegments.push(projectInstructions);
+    }
+  }
+
+  return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
+}
+
 /**
  * Read instruction sets from global and context sources.
  * Internal helper for buildSystemMessage and extractToolInstructions.
+ *
+ * Single-project workspaces keep the historical lookup order of workspace root → project root.
+ * Multi-project workspaces layer the shared container instructions with every per-project repo
+ * mounted under <workspace>/<projectName> so secondary repos can contribute scoped instructions.
  *
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
@@ -291,9 +334,10 @@ async function readInstructionSources(
   workspacePath: string
 ): Promise<[string | null, string | null]> {
   const globalInstructions = await readInstructionSet(getSystemDirectory());
-  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
-  const contextInstructions =
-    workspaceInstructions ?? (await readInstructionSet(metadata.projectPath));
+  const contextInstructions = isMultiProject(metadata)
+    ? await readMultiProjectContextInstructions(metadata, runtime, workspacePath)
+    : ((await readInstructionSetFromRuntime(runtime, workspacePath)) ??
+      (await readInstructionSet(metadata.projectPath)));
 
   return [globalInstructions, contextInstructions];
 }
@@ -303,7 +347,8 @@ async function readInstructionSources(
  *
  * Instruction layers:
  * 1. Global: ~/.mux/AGENTS.md (always included)
- * 2. Context: workspace/AGENTS.md OR project/AGENTS.md (workspace takes precedence)
+ * 2. Context: workspace/AGENTS.md plus project repo instructions for multi-project workspaces,
+ *    or workspace/AGENTS.md OR project/AGENTS.md for single-project workspaces
  * 3. Model: Extracts "Model: <regex>" section from context then global (if modelString provided)
  *
  * File search order: AGENTS.md → AGENT.md → CLAUDE.md
