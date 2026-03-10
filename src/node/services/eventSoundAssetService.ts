@@ -266,6 +266,20 @@ export class EventSoundAssetService {
     }
   }
 
+  private resolveIndexedAssetFilePath(fileName: string): string | null {
+    if (!EVENT_SOUND_ASSET_ID_PATTERN.test(fileName)) {
+      return null;
+    }
+
+    const filePath = path.resolve(this.assetsDirPath, fileName);
+    const relative = path.relative(this.assetsDirPath, filePath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      return null;
+    }
+
+    return filePath;
+  }
+
   private async storeAsset(params: {
     bytes: Buffer;
     originalName: string;
@@ -356,8 +370,15 @@ export class EventSoundAssetService {
         return;
       }
 
-      const filePath = path.join(this.assetsDirPath, entry.fileName);
-      await fsPromises.rm(filePath, { force: true });
+      const filePath = this.resolveIndexedAssetFilePath(entry.fileName);
+      if (filePath) {
+        await fsPromises.rm(filePath, { force: true });
+      } else {
+        log.warn("Skipping event sound asset file deletion for invalid indexed filename", {
+          assetId,
+          fileName: entry.fileName,
+        });
+      }
 
       delete assets[assetId];
       await this.writeIndex(assets);
@@ -387,9 +408,8 @@ export class EventSoundAssetService {
       return null;
     }
 
-    const filePath = path.resolve(this.assetsDirPath, entry.fileName);
-    const relative = path.relative(this.assetsDirPath, filePath);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    const filePath = this.resolveIndexedAssetFilePath(entry.fileName);
+    if (!filePath) {
       return null;
     }
 

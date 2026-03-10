@@ -127,6 +127,43 @@ describe("EventSoundAssetService", () => {
     expect(await service.listAssets()).toEqual([]);
   });
 
+  it("removes tampered index entries without deleting files outside the asset directory", async () => {
+    const tamperedAssetId = "11111111-1111-1111-1111-111111111111.wav";
+    const outsidePath = path.join(tempMuxHome, "outside.txt");
+    await fsPromises.writeFile(outsidePath, "must-survive");
+
+    const assetsDirPath = path.join(tempMuxHome, "assets", "event-sounds");
+    const indexPath = path.join(assetsDirPath, "index.json");
+    await fsPromises.mkdir(assetsDirPath, { recursive: true });
+
+    await fsPromises.writeFile(
+      indexPath,
+      JSON.stringify(
+        {
+          version: 1,
+          assets: {
+            [tamperedAssetId]: {
+              assetId: tamperedAssetId,
+              fileName: "../../outside.txt",
+              originalName: "tampered.wav",
+              mimeType: "audio/wav",
+              sizeBytes: 1,
+              createdAt: new Date().toISOString(),
+            },
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    await service.deleteAsset(tamperedAssetId);
+
+    expect(await fsPromises.readFile(outsidePath, "utf-8")).toBe("must-survive");
+    expect(await service.listAssets()).toEqual([]);
+  });
+
   it("treats deleteAsset for unknown ids as a no-op", async () => {
     await service.deleteAsset(KNOWN_MISSING_ASSET_ID);
   });
