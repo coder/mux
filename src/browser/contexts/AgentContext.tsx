@@ -149,6 +149,8 @@ function AgentProviderWithState(props: {
   const [refreshing, setRefreshing] = useState(false);
   const pendingSelectedAgentSyncRef = useRef<string | null>(null);
 
+  const queuedSelectedAgentSyncRef = useRef<{ workspaceId: string; agentId: string } | null>(null);
+
   const fetchParamsRef = useRef({
     projectPath: props.projectPath,
     workspaceId: props.workspaceId,
@@ -247,12 +249,42 @@ function AgentProviderWithState(props: {
       : coerceAgentId(isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId);
   const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
 
+  const flushSelectedAgentSync = useCallback(
+    async (
+      updateSelectedAgent: (input: {
+        workspaceId: string;
+        agentId: string;
+      }) => Promise<{ success: boolean; data?: void; error?: string }>
+    ) => {
+      if (pendingSelectedAgentSyncRef.current != null) {
+        return;
+      }
+
+      while (queuedSelectedAgentSyncRef.current && isMountedRef.current) {
+        const nextRequest = queuedSelectedAgentSyncRef.current;
+        queuedSelectedAgentSyncRef.current = null;
+        const syncKey = `${nextRequest.workspaceId}:${nextRequest.agentId}`;
+        pendingSelectedAgentSyncRef.current = syncKey;
+
+        try {
+          await updateSelectedAgent(nextRequest);
+        } finally {
+          if (pendingSelectedAgentSyncRef.current === syncKey) {
+            pendingSelectedAgentSyncRef.current = null;
+          }
+        }
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     if (!api || !props.workspaceId || !currentMeta || isCurrentAgentLocked) {
       return;
     }
 
     if (currentMeta.agentId === normalizedAgentId) {
+      queuedSelectedAgentSyncRef.current = null;
       pendingSelectedAgentSyncRef.current = null;
       return;
     }
@@ -262,32 +294,22 @@ function AgentProviderWithState(props: {
       return;
     }
 
-    const syncKey = `${props.workspaceId}:${normalizedAgentId}`;
-    if (pendingSelectedAgentSyncRef.current === syncKey) {
-      return;
-    }
-
-    pendingSelectedAgentSyncRef.current = syncKey;
-    let cancelled = false;
+    queuedSelectedAgentSyncRef.current = {
+      workspaceId: props.workspaceId,
+      agentId: normalizedAgentId,
+    };
 
     // Flow Prompting and other backend-owned follow-up sends read workspace metadata,
-    // so keep the selected agent in sync with the visible picker state.
-    void updateSelectedAgent({ workspaceId: props.workspaceId, agentId: normalizedAgentId })
-      .then((result) => {
-        if (!result.success && !cancelled && pendingSelectedAgentSyncRef.current === syncKey) {
-          pendingSelectedAgentSyncRef.current = null;
-        }
-      })
-      .catch(() => {
-        if (!cancelled && pendingSelectedAgentSyncRef.current === syncKey) {
-          pendingSelectedAgentSyncRef.current = null;
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [api, currentMeta, isCurrentAgentLocked, normalizedAgentId, props.workspaceId]);
+    // so serialize selected-agent writes until the backend catches up with the visible picker.
+    void flushSelectedAgentSync(updateSelectedAgent);
+  }, [
+    api,
+    currentMeta,
+    flushSelectedAgentSync,
+    isCurrentAgentLocked,
+    normalizedAgentId,
+    props.workspaceId,
+  ]);
 
   const selectableAgents = useMemo(
     () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),

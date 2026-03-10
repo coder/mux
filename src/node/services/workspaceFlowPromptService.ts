@@ -242,6 +242,7 @@ export declare interface WorkspaceFlowPromptService {
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class WorkspaceFlowPromptService extends EventEmitter {
+  private readonly workspaceContextCache = new Map<string, FlowPromptWorkspaceContext>();
   private readonly monitors = new Map<string, FlowPromptMonitor>();
   private readonly activityRecencyByWorkspaceId = new Map<string, number | null>();
   private readonly rememberedUpdates = new Map<string, Map<string, string>>();
@@ -440,6 +441,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       }
     }
 
+    this.workspaceContextCache.delete(workspaceId);
     await this.refreshMonitor(workspaceId, true);
   }
 
@@ -495,6 +497,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     }
     this.monitors.delete(workspaceId);
     this.rememberedUpdates.delete(workspaceId);
+    this.workspaceContextCache.delete(workspaceId);
   }
 
   markPendingUpdate(workspaceId: string, nextContent: string): void {
@@ -837,13 +840,20 @@ export class WorkspaceFlowPromptService extends EventEmitter {
   private async getWorkspaceContext(
     workspaceId: string
   ): Promise<FlowPromptWorkspaceContext | null> {
+    const cachedContext = this.workspaceContextCache.get(workspaceId);
+    if (cachedContext) {
+      return cachedContext;
+    }
+
     const metadata = await this.getWorkspaceMetadata(workspaceId);
     if (!metadata) {
       return null;
     }
 
     try {
-      return this.getWorkspaceContextFromMetadata(metadata);
+      const context = this.getWorkspaceContextFromMetadata(metadata);
+      this.workspaceContextCache.set(workspaceId, context);
+      return context;
     } catch (error) {
       if (error instanceof TypeError) {
         return null;

@@ -22,25 +22,6 @@ import type * as RouterContextModule from "./RouterContext";
 import type * as WorkspaceContextModule from "./WorkspaceContext";
 
 let mockAgentDefinitions: AgentDefinitionDescriptor[] = [];
-<<<<<<< HEAD
-||||||| parent of 4c2bf9b4a (🤖 fix: sync workspace agent selection for flow prompts)
-const apiClient = {
-  agents: {
-    list: () => Promise.resolve(mockAgentDefinitions),
-  },
-};
-
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: apiClient,
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
-
-=======
 const updateSelectedAgentMock = mock(() =>
   Promise.resolve({ success: true as const, data: undefined })
 );
@@ -63,7 +44,6 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
->>>>>>> 4c2bf9b4a (🤖 fix: sync workspace agent selection for flow prompts)
 let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string; agentId?: string }>();
 
 let APIProvider!: typeof APIModule.APIProvider;

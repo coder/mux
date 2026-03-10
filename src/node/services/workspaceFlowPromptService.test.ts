@@ -413,6 +413,62 @@ describe("WorkspaceFlowPromptService runtime error handling", () => {
   });
 });
 
+describe("WorkspaceFlowPromptService workspace context caching", () => {
+  function createMetadata(params: {
+    projectPath: string;
+    name: string;
+    srcBaseDir: string;
+    projectName?: string;
+  }): WorkspaceMetadata {
+    return {
+      id: "workspace-1",
+      name: params.name,
+      projectName: params.projectName ?? path.basename(params.projectPath),
+      projectPath: params.projectPath,
+      runtimeConfig: {
+        type: "worktree",
+        srcBaseDir: params.srcBaseDir,
+      },
+    };
+  }
+
+  test("reuses cached workspace context instead of rescanning all metadata on every refresh", async () => {
+    const metadata = createMetadata({
+      projectPath: "/tmp/projects/repo",
+      name: "feature-branch",
+      srcBaseDir: "/tmp/src",
+    });
+    const getAllWorkspaceMetadata = mock(() => Promise.resolve([metadata]));
+    const service = new WorkspaceFlowPromptService({
+      getAllWorkspaceMetadata,
+      getSessionDir: () => "/tmp/flow-prompt-session",
+    } as unknown as Config);
+
+    const runtime = {
+      getWorkspacePath: () => "/tmp/src/repo/feature-branch",
+      stat: (): Promise<FileStat> =>
+        Promise.resolve({
+          size: 64,
+          modifiedTime: new Date("2026-03-08T00:00:00.000Z"),
+          isDirectory: false,
+        }),
+      readFile: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("Persist this flow prompt"));
+            controller.close();
+          },
+        }),
+    } as unknown as Runtime;
+    spyOn(runtimeHelpers, "createRuntimeForWorkspace").mockReturnValue(runtime);
+
+    await service.getState(metadata.id);
+    await service.getState(metadata.id);
+
+    expect(getAllWorkspaceMetadata).toHaveBeenCalledTimes(1);
+  });
+});
+
 test("rememberUpdate prunes superseded queued revisions from memory", () => {
   const service = new WorkspaceFlowPromptService({
     getSessionDir: () => "/tmp/flow-prompt-session",
