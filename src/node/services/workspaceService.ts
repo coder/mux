@@ -1122,29 +1122,13 @@ export class WorkspaceService extends EventEmitter {
 
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
-        const generation = this.streamingGenerations.get(data.workspaceId) ?? 0;
-        void this.updateStreamingStatus(
-          data.workspaceId,
-          false,
-          undefined,
-          undefined,
-          undefined,
-          generation
-        );
+        void this.stopStreamingStatus(data.workspaceId);
       }
     });
 
     this.aiService.on("error", (data: unknown) => {
       if (isErrorEvent(data)) {
-        const generation = this.streamingGenerations.get(data.workspaceId) ?? 0;
-        void this.updateStreamingStatus(
-          data.workspaceId,
-          false,
-          undefined,
-          undefined,
-          undefined,
-          generation
-        );
+        void this.stopStreamingStatus(data.workspaceId);
       }
     });
 
@@ -1276,6 +1260,24 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Snapshot the current streaming generation and fire a streaming=false metadata update.
+   * Accepts an optional pre-captured generation for callers that need to snapshot before
+   * async work (e.g., handleStreamCompletion captures before updateRecencyTimestamp so a
+   * concurrent stream-start won't cause the stop to silently overwrite the newer stream).
+   */
+  private stopStreamingStatus(workspaceId: string, capturedGeneration?: number): Promise<void> {
+    const generation = capturedGeneration ?? this.streamingGenerations.get(workspaceId) ?? 0;
+    return this.updateStreamingStatus(
+      workspaceId,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      generation
+    );
+  }
+
   private async handleStreamCompletion(workspaceId: string): Promise<void> {
     // Always use Date.now() for stream-completion recency.
     // extractTimestamp() returns the message-creation timestamp from stream
@@ -1285,14 +1287,7 @@ export class WorkspaceService extends EventEmitter {
     // completion recency is strictly after any earlier lastRead write.
     const generation = this.streamingGenerations.get(workspaceId) ?? 0;
     await this.updateRecencyTimestamp(workspaceId, Date.now());
-    await this.updateStreamingStatus(
-      workspaceId,
-      false,
-      undefined,
-      undefined,
-      undefined,
-      generation
-    );
+    await this.stopStreamingStatus(workspaceId, generation);
   }
 
   private createInitLogger(workspaceId: string) {
