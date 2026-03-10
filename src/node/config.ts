@@ -378,8 +378,6 @@ export class Config {
           return isValidModelFormat(canonicalModel) ? canonicalModel : undefined;
         };
 
-        let synthesizedLegacyRoutingState = false;
-
         // Migrate legacy gateway settings to the new route-based system.
         // Legacy keys are intentionally preserved on disk for downgrade compatibility —
         // older versions still read muxGatewayEnabled / muxGatewayModels directly.
@@ -388,7 +386,6 @@ export class Config {
           !Array.isArray(parsed.routePriority)
         ) {
           parsed.routePriority = ["direct"];
-          synthesizedLegacyRoutingState = true;
           configModified = true;
 
           if (parsed.muxGatewayEnabled !== false) {
@@ -415,36 +412,17 @@ export class Config {
           }
         }
 
-        // Ensure configured gateways appear in routePriority.
-        // This catches users who were already logged into a gateway before the
-        // route priority system was introduced (migration only handles the case
-        // where muxGatewayEnabled/muxGatewayModels fields existed in config).
+        // Seed routePriority only when the field does not exist yet.
+        // Once routePriority is an array, it becomes user-owned state, so
+        // read-time backfill is intentionally skipped here. Credential-driven
+        // gateway additions/removals are handled at write time by
+        // providerService.syncGatewayLifecycle().
         if (!Array.isArray(parsed.routePriority)) {
           const seeded = this.seedRoutePriorityFromProviders();
           if (seeded) {
             parsed.routePriority = seeded;
             configModified = true;
           }
-        } else if (!synthesizedLegacyRoutingState) {
-          // Legacy allowlists intentionally keep direct as the global default.
-          const providersConfig = this.loadProvidersConfig() ?? {};
-          let modified = false;
-
-          for (const gw of GATEWAY_PROVIDERS) {
-            if (parsed.routePriority.includes(gw)) continue;
-            const creds = resolveProviderCredentials(gw, providersConfig[gw] ?? {});
-            if (creds.isConfigured) {
-              // Insert before "direct" if possible, otherwise at end.
-              const directIdx = parsed.routePriority.indexOf("direct");
-              if (directIdx >= 0) {
-                parsed.routePriority.splice(directIdx, 0, gw);
-              } else {
-                parsed.routePriority.unshift(gw);
-              }
-              modified = true;
-            }
-          }
-          if (modified) configModified = true;
         }
 
         // Normalize gateway-prefixed model strings so persisted config uses canonical ids.

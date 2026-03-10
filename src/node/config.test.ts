@@ -558,19 +558,19 @@ describe("Config", () => {
       expect(loaded.routePriority).toBeUndefined();
     });
 
-    it("backfills routePriority for existing configs when a gateway is configured", () => {
-      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify({}));
+    it("preserves existing routePriority when a gateway is configured", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({ routePriority: ["direct"] })
+      );
       writeProvidersConfig({
         // mux-gateway is configured by couponCode/voucher rather than apiKey.
         "mux-gateway": { couponCode: "test-coupon" },
       });
 
       const loaded = config.loadConfigOrDefault();
-      const muxGatewayIndex = loaded.routePriority?.indexOf("mux-gateway") ?? -1;
-      const directIndex = loaded.routePriority?.indexOf("direct") ?? -1;
 
-      expect(muxGatewayIndex).toBeGreaterThanOrEqual(0);
-      expect(directIndex).toBeGreaterThan(muxGatewayIndex);
+      expect(loaded.routePriority).toEqual(["direct"]);
     });
   });
 
