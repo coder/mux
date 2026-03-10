@@ -72,10 +72,12 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * One-time best-effort migration: if the backend doesn't have model preferences yet,
- * persist non-default localStorage values so future port/origin changes keep them.
+ * persist explicit localStorage values so future port/origin changes keep them.
  * Called once on startup after backend config is fetched.
+ *
+ * Exported for focused migration tests.
  */
-function migrateLocalModelPrefsToBackend(
+export function migrateLocalModelPrefsToBackend(
   api: APIClient,
   cfg: { defaultModel?: string; hiddenModels?: string[] }
 ): void {
@@ -93,11 +95,10 @@ function migrateLocalModelPrefsToBackend(
     hiddenModels?: string[];
   } = {};
 
-  if (
-    cfg.defaultModel === undefined &&
-    localDefaultModel &&
-    localDefaultModel !== WORKSPACE_DEFAULTS.model
-  ) {
+  // localStorage presence implies explicit user choice (usePersistedState never
+  // writes fallback defaults). Always migrate to backend so the preference
+  // survives future changes to the built-in default constant.
+  if (cfg.defaultModel === undefined && localDefaultModel) {
     patch.defaultModel = localDefaultModel;
   }
 
@@ -514,7 +515,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         }
 
         // One-time best-effort migration: if the backend doesn't have model prefs yet,
-        // persist non-default localStorage values so future port changes keep them.
+        // persist explicit localStorage values so future port changes keep them.
         migrateLocalModelPrefsToBackend(api, cfg);
 
         // One-time gateway pref migration: if the backend doesn't have gateway prefs yet,

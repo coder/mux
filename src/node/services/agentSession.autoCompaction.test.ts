@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "events";
 
-import type { ProvidersConfigMap, WorkspaceChatMessage } from "@/common/orpc/types";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import type {
+  ProvidersConfigMap,
+  SendMessageOptions,
+  WorkspaceChatMessage,
+} from "@/common/orpc/types";
+import {
+  createMuxMessage,
+  type CompactionFollowUpRequest,
+  type MuxMessage,
+} from "@/common/types/message";
 import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
@@ -288,6 +296,352 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     );
 
     expect(compactionRequestMessage?.metadata?.muxMetadata?.requestedModel).toBe(compactionModel);
+
+    session.dispose();
+  });
+
+  test("does not trigger compaction at 200K threshold when 1M context is preserved after agent routing", async () => {
+    const workspaceId = "ws-auto-compaction-preserved-1m-routing";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const appendSeedUsage = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-1m-routing-usage", "assistant", "existing context", {
+        timestamp: Date.now() - 1_000,
+        model: "anthropic:claude-sonnet-4-6",
+        contextUsage: {
+          inputTokens: 150_000,
+          outputTokens: 0,
+          totalTokens: 150_000,
+        },
+      })
+    );
+    expect(appendSeedUsage.success).toBe(true);
+
+    const aiEmitter = new EventEmitter();
+    const streamRequests: unknown[] = [];
+    const streamMessage = mock((request: unknown) => {
+      streamRequests.push(request);
+      return Promise.resolve(Ok(undefined));
+    });
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const result = await session.sendMessage("hello", {
+      model: "anthropic:claude-sonnet-4-6",
+      agentId: "exec",
+      providerOptions: {
+        anthropic: {
+          // Keep the routed follow-up's 1M intent visible to the compaction check so
+          // it uses the 1M limit instead of the default 200K Anthropic limit.
+          use1MContext: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(streamMessage).toHaveBeenCalledTimes(1);
+
+    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
+    const hasCompactionRequest = requestMessages.some(
+      (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+    );
+    expect(hasCompactionRequest).toBe(false);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(`failed to load history: ${String(historyResult.error)}`);
+    }
+
+    const persistedCompactionRequest = historyResult.data.some(
+      (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+    );
+    expect(persistedCompactionRequest).toBe(false);
+
+    session.dispose();
+  });
+
+  test("does trigger compaction at the default Anthropic threshold when beta features disable 1M", async () => {
+    const workspaceId = "ws-auto-compaction-disabled-beta-1m";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const appendSeedUsage = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-disabled-beta-usage", "assistant", "existing context", {
+        timestamp: Date.now() - 1_000,
+        model: "anthropic:claude-sonnet-4-6",
+        contextUsage: {
+          inputTokens: 150_000,
+          outputTokens: 0,
+          totalTokens: 150_000,
+        },
+      })
+    );
+    expect(appendSeedUsage.success).toBe(true);
+
+    const aiEmitter = new EventEmitter();
+    const streamRequests: unknown[] = [];
+    const streamMessage = mock((request: unknown) => {
+      streamRequests.push(request);
+      return Promise.resolve(Ok(undefined));
+    });
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const result = await session.sendMessage("hello", {
+      model: "anthropic:claude-sonnet-4-6",
+      agentId: "exec",
+      providerOptions: {
+        anthropic: {
+          use1MContext: true,
+          disableBetaFeatures: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(streamMessage).toHaveBeenCalledTimes(1);
+
+    const firstRequest = streamRequests[0] as { messages?: MuxMessage[] } | undefined;
+    const requestMessages = Array.isArray(firstRequest?.messages) ? firstRequest.messages : [];
+    const hasCompactionRequest = requestMessages.some(
+      (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+    );
+    expect(hasCompactionRequest).toBe(true);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(`failed to load history: ${String(historyResult.error)}`);
+    }
+
+    const persistedCompactionRequest = historyResult.data.some(
+      (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+    );
+    expect(persistedCompactionRequest).toBe(true);
+
+    session.dispose();
+  });
+
+  test("compaction model inherit uses caller-provided baseOptions.model when no preferred model configured", async () => {
+    const workspaceId = "ws-auto-compaction-inherit-base-options-model";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_request: unknown) => Promise.resolve(Ok(undefined)));
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const inheritedModel = "anthropic:claude-sonnet-4-6";
+    const baseOptions: SendMessageOptions = {
+      model: inheritedModel,
+      agentId: "exec",
+    };
+    const followUpContent: CompactionFollowUpRequest = {
+      text: "Continue",
+      model: inheritedModel,
+      agentId: "exec",
+    };
+
+    const internals = session as unknown as {
+      buildAutoCompactionRequest: (params: {
+        followUpContent: CompactionFollowUpRequest;
+        baseOptions: SendMessageOptions;
+        reason: "on-send" | "mid-stream";
+      }) => {
+        sendOptions: SendMessageOptions;
+        metadata: {
+          requestedModel?: string;
+          parsed?: {
+            model?: string;
+          };
+        };
+      };
+    };
+
+    const compactionRequest = internals.buildAutoCompactionRequest({
+      followUpContent,
+      baseOptions,
+      reason: "mid-stream",
+    });
+
+    expect(compactionRequest.sendOptions.model).toBe(inheritedModel);
+    expect(compactionRequest.metadata.requestedModel).toBe(inheritedModel);
+    expect(compactionRequest.metadata.parsed?.model).toBe(inheritedModel);
+
+    session.dispose();
+  });
+
+  test("compaction model explicit override takes priority over baseOptions.model", async () => {
+    const workspaceId = "ws-auto-compaction-explicit-model-overrides-base-model";
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_request: unknown) => Promise.resolve(Ok(undefined)));
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const compactionModel = "openai:gpt-5.4";
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+      loadConfigOrDefault: () => ({
+        agentAiDefaults: { compact: { modelString: compactionModel } },
+      }),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const baseOptions: SendMessageOptions = {
+      model: "anthropic:claude-opus-4-6",
+      agentId: "exec",
+    };
+    const followUpContent: CompactionFollowUpRequest = {
+      text: "Continue",
+      model: "anthropic:claude-sonnet-4-6",
+      agentId: "exec",
+    };
+
+    const internals = session as unknown as {
+      buildAutoCompactionRequest: (params: {
+        followUpContent: CompactionFollowUpRequest;
+        baseOptions: SendMessageOptions;
+        reason: "on-send" | "mid-stream";
+      }) => {
+        sendOptions: SendMessageOptions;
+        metadata: {
+          requestedModel?: string;
+          parsed?: {
+            model?: string;
+          };
+        };
+      };
+    };
+
+    const compactionRequest = internals.buildAutoCompactionRequest({
+      followUpContent,
+      baseOptions,
+      reason: "mid-stream",
+    });
+
+    expect(compactionRequest.sendOptions.model).toBe(compactionModel);
+    expect(compactionRequest.metadata.requestedModel).toBe(compactionModel);
+    expect(compactionRequest.metadata.parsed?.model).toBe(compactionModel);
 
     session.dispose();
   });

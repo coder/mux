@@ -59,6 +59,105 @@ function supportsOpenAIReasoningSummary(modelName: string): boolean {
   return !OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS.has(modelName);
 }
 
+function resolveAnthropic1MCapabilityModel(
+  modelString: string,
+  providersConfig?: ProvidersConfigMap | null
+): {
+  normalizedModel: string;
+  capabilityModel: string;
+} {
+  const normalizedModel = normalizeToCanonical(modelString);
+  return {
+    normalizedModel,
+    capabilityModel: resolveModelForMetadata(normalizedModel, providersConfig ?? null),
+  };
+}
+
+function hasAnthropic1MIntentForModel(
+  modelString: string,
+  capabilityModel: string,
+  muxProviderOptions?: MuxProviderOptions
+): boolean {
+  const anthropicOptions = muxProviderOptions?.anthropic;
+  if (!anthropicOptions) {
+    return false;
+  }
+
+  if (anthropicOptions.use1MContext === true) {
+    return true;
+  }
+
+  const enabledModels = anthropicOptions.use1MContextModels;
+  if (!enabledModels || enabledModels.length === 0) {
+    return false;
+  }
+
+  const normalizedModel = normalizeToCanonical(modelString);
+  const candidateModels = new Set([modelString, normalizedModel, capabilityModel]);
+  return enabledModels.some((enabledModel) => candidateModels.has(enabledModel));
+}
+
+/**
+ * Shared Anthropic 1M eligibility check used by request headers, retries, and compaction.
+ *
+ * 1M is effectively enabled only when the model supports it, the request expressed
+ * Anthropic 1M intent, and beta features have not been disabled.
+ */
+export function isAnthropic1MEffectivelyEnabled(
+  modelString: string,
+  muxProviderOptions?: MuxProviderOptions,
+  providersConfig?: ProvidersConfigMap | null
+): boolean {
+  const anthropicOptions = muxProviderOptions?.anthropic;
+  if (!anthropicOptions || anthropicOptions.disableBetaFeatures === true) {
+    return false;
+  }
+
+  const { capabilityModel } = resolveAnthropic1MCapabilityModel(modelString, providersConfig);
+  if (!supports1MContext(capabilityModel)) {
+    return false;
+  }
+
+  return hasAnthropic1MIntentForModel(modelString, capabilityModel, muxProviderOptions);
+}
+
+/**
+ * Preserve Anthropic 1M intent across routed follow-ups only when the source request
+ * had effective 1M enabled and the target model is also eligible.
+ */
+export function preserveAnthropic1MContextForFollowUp(
+  sourceModelString: string,
+  targetModelString: string,
+  muxProviderOptions?: MuxProviderOptions,
+  providersConfig?: ProvidersConfigMap | null
+): MuxProviderOptions | undefined {
+  if (!muxProviderOptions) {
+    return undefined;
+  }
+
+  if (!isAnthropic1MEffectivelyEnabled(sourceModelString, muxProviderOptions, providersConfig)) {
+    return muxProviderOptions;
+  }
+
+  const anthropicOptions = muxProviderOptions.anthropic;
+  if (!anthropicOptions) {
+    return muxProviderOptions;
+  }
+
+  const { capabilityModel } = resolveAnthropic1MCapabilityModel(targetModelString, providersConfig);
+  if (!supports1MContext(capabilityModel)) {
+    return muxProviderOptions;
+  }
+
+  return {
+    ...muxProviderOptions,
+    anthropic: {
+      ...anthropicOptions,
+      use1MContext: true,
+    },
+  };
+}
+
 /**
  * Build provider-specific options for AI SDK based on thinking level
  *
@@ -406,7 +505,6 @@ export function buildRequestHeaders(
 
   const normalized = normalizeToCanonical(modelString);
   const [origin] = normalized.split(":", 2);
-  const capabilityModel = resolveModelForMetadata(normalized, providersConfig ?? null);
 
   // 1M context header — only when origin supports it AND route is passthrough (or direct)
   const gwDef = routeProvider ? PROVIDER_DEFINITIONS[routeProvider] : undefined;
@@ -415,20 +513,12 @@ export function buildRequestHeaders(
     routeProvider === origin ||
     (gwDef != null && "passthrough" in gwDef && gwDef.passthrough === true);
 
-  if (origin === "anthropic" && routePassesHeaders) {
-    // ZDR: skip all Anthropic beta headers when beta features are disabled.
-    if (!muxProviderOptions?.anthropic?.disableBetaFeatures) {
-      const explicitlyEnabled1MModel =
-        (muxProviderOptions?.anthropic?.use1MContextModels?.includes(normalized) ?? false) ||
-        (muxProviderOptions?.anthropic?.use1MContextModels?.includes(capabilityModel) ?? false);
-      const is1MEnabled =
-        (explicitlyEnabled1MModel || muxProviderOptions?.anthropic?.use1MContext === true) &&
-        supports1MContext(capabilityModel);
-
-      if (is1MEnabled) {
-        headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
-      }
-    }
+  if (
+    origin === "anthropic" &&
+    routePassesHeaders &&
+    isAnthropic1MEffectivelyEnabled(modelString, muxProviderOptions, providersConfig)
+  ) {
+    headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;

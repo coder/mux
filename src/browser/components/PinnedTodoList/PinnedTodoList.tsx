@@ -1,16 +1,23 @@
-import React, { useSyncExternalStore } from "react";
+import React, { useEffect, useRef, useSyncExternalStore } from "react";
 import { TodoList } from "../TodoList/TodoList";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { cn } from "@/common/lib/utils";
+import assert from "@/common/utils/assert";
 
 interface PinnedTodoListProps {
   workspaceId: string;
 }
 
+function getPinnedTodoExpandedKey(workspaceId: string): string {
+  assert(workspaceId.length > 0, "Pinned todo expansion state requires a workspace ID");
+  return `pinnedTodoExpanded:${workspaceId}`;
+}
+
 /**
  * Pinned TODO list displayed at bottom of chat (before StreamingBarrier).
- * Shows current TODOs — persists across streams until updated by todo_write.
+ * Shows current TODOs — the todo data persists across streams until updated by todo_write,
+ * while the pinned panel can auto-collapse after a stream ends for this workspace.
  * Reuses TodoList component for consistent styling.
  *
  * Relies on natural reference stability from MapStore + Aggregator architecture:
@@ -20,13 +27,31 @@ interface PinnedTodoListProps {
  * - Todos persist until updated by a new todo_write call
  */
 export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) => {
-  const [expanded, setExpanded] = usePersistedState("pinnedTodoExpanded", true);
+  const [expanded, setExpanded] = usePersistedState(getPinnedTodoExpandedKey(workspaceId), true);
 
   const workspaceStore = useWorkspaceStoreRaw();
+  const subscribeToWorkspace = (callback: () => void) =>
+    workspaceStore.subscribeKey(workspaceId, callback);
   const todos = useSyncExternalStore(
-    (callback) => workspaceStore.subscribeKey(workspaceId, callback),
+    subscribeToWorkspace,
     () => workspaceStore.getWorkspaceState(workspaceId).todos
   );
+  const canInterrupt = useSyncExternalStore(
+    subscribeToWorkspace,
+    () => workspaceStore.getWorkspaceState(workspaceId).canInterrupt
+  );
+  const previousCanInterruptRef = useRef(canInterrupt);
+
+  useEffect(() => {
+    const previousCanInterrupt = previousCanInterruptRef.current;
+
+    // Only persist an auto-collapse when this workspace actually has a visible pinned TODO panel.
+    if (previousCanInterrupt && !canInterrupt && todos.length > 0) {
+      setExpanded(false);
+    }
+
+    previousCanInterruptRef.current = canInterrupt;
+  }, [canInterrupt, setExpanded, todos.length]);
 
   // No todos have been written yet in this session
   if (todos.length === 0) {

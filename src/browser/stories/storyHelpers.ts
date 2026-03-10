@@ -206,38 +206,33 @@ export interface GitDiffFixture {
 }
 
 // Default mock file tree for explorer stories
-// Mock ls output - order doesn't matter, parseLsOutput sorts the result
-const DEFAULT_LS_OUTPUT = `total 40
-drwxr-xr-x  5 user group  160 Jan 15 10:00 .
-drwxr-xr-x  3 user group   96 Jan 15 10:00 ..
-drwxr-xr-x 10 user group  320 Jan 15 10:00 node_modules
-drwxr-xr-x  3 user group   96 Jan 15 10:00 src
-drwxr-xr-x  2 user group   64 Jan 15 10:00 tests
--rw-r--r--  1 user group  128 Jan 15 10:00 README.md
--rw-r--r--  1 user group 1024 Jan 15 10:00 package.json
--rw-r--r--  1 user group  256 Jan 15 10:00 tsconfig.json`;
+// Machine-readable explorer listing output - order doesn't matter, parseLsOutput sorts the result.
+const DEFAULT_LS_OUTPUT = [
+  "d\tnode_modules",
+  "d\tsrc",
+  "d\ttests",
+  "f\tREADME.md",
+  "f\tpackage.json",
+  "f\ttsconfig.json",
+].join("\n");
 
-const DEFAULT_SRC_LS_OUTPUT = `total 24
-drwxr-xr-x  3 user group   96 Jan 15 10:00 .
-drwxr-xr-x  5 user group  160 Jan 15 10:00 ..
-drwxr-xr-x  2 user group   64 Jan 15 10:00 components
--rw-r--r--  1 user group  256 Jan 15 10:00 App.tsx
--rw-r--r--  1 user group  512 Jan 15 10:00 index.ts`;
+const DEFAULT_SRC_LS_OUTPUT = ["d\tcomponents", "f\tApp.tsx", "f\tindex.ts"].join("\n");
 
 /**
  * Creates an executeBash function that returns git status and diff output for workspaces.
  * Handles: git status, git diff, git diff --numstat, git show (for read-more),
- * git ls-files --others (for untracked files), ls -la (for file explorer), git check-ignore
+ * git ls-files --others (for untracked files), the Explorer's machine-readable directory listing script, git check-ignore
  */
 export function createGitStatusExecutor(
   gitStatus?: Map<string, GitStatusFixture>,
   gitDiff?: Map<string, GitDiffFixture>
 ) {
   return (workspaceId: string, script: string) => {
-    // Handle ls -la for file explorer
-    if (script.startsWith("ls -la")) {
-      // Check if it's the root or a subdirectory
-      const isRoot = script === "ls -la ." || script === "ls -la";
+    // Handle file explorer directory listings.
+    if (script.includes("shopt -s nullglob dotglob") && script.includes('for entry in "$dir"/*')) {
+      const dirMatch = /^dir=(.+)$/m.exec(script);
+      const rawDir = dirMatch?.[1]?.replaceAll("'", "") ?? ".";
+      const isRoot = rawDir === ".";
       const output = isRoot ? DEFAULT_LS_OUTPUT : DEFAULT_SRC_LS_OUTPUT;
       return Promise.resolve({ success: true as const, output, exitCode: 0, wall_duration_ms: 50 });
     }

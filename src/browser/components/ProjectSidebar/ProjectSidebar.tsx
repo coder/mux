@@ -123,8 +123,10 @@ const MuxChatHelpButton: React.FC<{
 };
 
 // Keep the project header visible while scrolling through long workspace lists.
+// Project rows are also drag handles, so disable text selection to avoid
+// highlighting the whole sidebar before a reorder gesture locks in.
 const PROJECT_ITEM_BASE_CLASS =
-  "sticky top-0 z-10 py-2 pl-2 pr-3 flex items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+  "sticky top-0 z-10 py-2 pl-2 pr-3 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
 function getProjectItemClassName(opts: {
   isDragging: boolean;
@@ -1027,7 +1029,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         <SectionDragLayer />
         <div
           className={cn(
-            "font-primary bg-surface-primary border-border-light flex flex-1 flex-col overflow-hidden border-r",
+            // The sidebar doubles as a drag surface, so keep copy selection disabled
+            // unless a child input explicitly opts back into text selection.
+            "font-primary bg-surface-primary border-border-light flex flex-1 select-none flex-col overflow-hidden border-r",
             // In desktop mode when collapsed, hide border (LeftSidebar handles the partial border)
             isDesktopMode() && collapsed && "border-r-0"
           )}
@@ -1157,7 +1161,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`Manage secrets for ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500 [@media(hover:none)_and_(pointer:coarse)]:hidden"
+                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500 [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:hidden [@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100"
                               >
                                 <KeyRound size={12} />
                               </button>
@@ -1191,7 +1195,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 data-project-path={projectPath}
                                 className={cn(
                                   "text-muted-dark mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200",
-                                  "[@media(hover:none)_and_(pointer:coarse)]:hidden",
+                                  "[@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:hidden",
+                                  "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100",
                                   "cursor-pointer hover:bg-danger-light/10 hover:text-danger-light"
                                 )}
                               >

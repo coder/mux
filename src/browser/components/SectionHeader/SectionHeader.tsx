@@ -72,7 +72,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
 
   return (
     <div
-      className="group relative flex items-center gap-1 border-t border-white/5 px-2 py-1.5"
+      className="group relative flex items-center gap-1 border-t border-white/5 px-2 py-1.5 select-none"
       style={{
         backgroundColor: `${sectionColor}10`,
         borderLeftWidth: 3,
@@ -110,7 +110,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
             }
           }}
           data-testid="section-rename-input"
-          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none"
+          className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none select-text"
         />
       ) : (
         <button
@@ -123,8 +123,9 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
         </button>
       )}
 
-      {/* Action Buttons — color/rename/delete are hover-only (hidden + non-interactive on touch) */}
-      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none">
+      {/* Action buttons stay hover-only on desktop, hide on the narrow touch sidebar,
+          and stay visible on wider touch screens so they never become invisible tap targets. */}
+      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:pointer-events-none [@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100">
         {/* Color Picker */}
         <div className="relative" ref={colorPickerRef}>
           <Tooltip>
@@ -181,7 +182,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
                       onChangeColor(value);
                     }
                   }}
-                  className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none"
+                  className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"
                 />
               </div>
             </div>
