@@ -935,10 +935,13 @@ export class AIService extends EventEmitter {
         mcpOverrides = undefined;
       }
 
-      // Fetch MCP server config for system prompt (before building message)
-      // Pass overrides to filter out disabled servers
+      // Fetch MCP server config for system prompt (before building message).
+      // The built-in mux help agent must not see project MCP inventory, even outside the
+      // dedicated mux-help workspace; project-scoped overrides of the same ID keep normal access.
       const mcpServers =
-        this.mcpServerManager && workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID
+        this.mcpServerManager &&
+        workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID &&
+        !isBuiltInMuxHelpAgent
           ? await this.mcpServerManager.listServers(
               metadata.projectPath,
               mcpOverrides,
