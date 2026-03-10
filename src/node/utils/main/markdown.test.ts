@@ -79,7 +79,7 @@ Plan instructions
       expect(extractToolSection(markdown, "propose_plan")).toBe("Plan instructions");
     });
 
-    it("should return only first matching section", () => {
+    it("should return all matching sections in order", () => {
       const markdown = `
 # Tool: bash
 First bash section
@@ -88,12 +88,26 @@ First bash section
 Other content
 
 # Tool: bash
-Second bash section (should be ignored)
+Second bash section
 `.trim();
 
       const result = extractToolSection(markdown, "bash");
-      expect(result).toBe("First bash section");
-      expect(result).not.toContain("Second bash section");
+      expect(result).toBe("First bash section\n\nSecond bash section");
+    });
+
+    it("should skip empty matching sections while keeping later content", () => {
+      const markdown = `
+# Tool: bash
+
+# Other Section
+Other content
+
+# Tool: bash
+Second bash section
+`.trim();
+
+      const result = extractToolSection(markdown, "bash");
+      expect(result).toBe("Second bash section");
     });
   });
 

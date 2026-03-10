@@ -59,6 +59,28 @@ From agent: Read files carefully.
     expect(result.bash).not.toContain("From global");
   });
 
+  test("keeps every matching context tool section before falling back to global", () => {
+    const globalInstructions = `## Tool: bash
+From global: Use rg for searching.
+`;
+    const contextInstructions = `## Tool: bash
+From primary repo: Prefer git status --short.
+
+## Tool: bash
+From secondary repo: Prefer rg --files before find.
+`;
+
+    const result = extractToolInstructions(globalInstructions, contextInstructions, modelString);
+
+    expect(result.bash).toBe(
+      [
+        "From primary repo: Prefer git status --short.",
+        "From secondary repo: Prefer rg --files before find.",
+      ].join("\n\n")
+    );
+    expect(result.bash).not.toContain("From global");
+  });
+
   test("falls back to global when neither agentInstructions nor context has tool section", () => {
     const globalInstructions = `## Tool: bash
 From global: Use rg for searching.
@@ -234,9 +256,24 @@ Include the secondary project context too.
     expect(customInstructions).toContain("Include the secondary project context too.");
   });
 
-  test("loads tool instructions from a secondary project repo in a multi-project workspace", async () => {
-    const { metadata, secondaryWorkspaceRepoDir } = await createMultiProjectFixture();
+  test("preserves bash tool instructions from every multi-project context source", async () => {
+    const { metadata, primaryWorkspaceRepoDir, secondaryWorkspaceRepoDir } =
+      await createMultiProjectFixture();
 
+    await fs.writeFile(
+      path.join(globalDir, "AGENTS.md"),
+      `# Global Instructions
+## Tool: bash
+From global: this should only apply when context has no bash section.
+`
+    );
+    await fs.writeFile(
+      path.join(primaryWorkspaceRepoDir, "AGENTS.md"),
+      `# Primary Instructions
+## Tool: bash
+From primary repo: prefer git status --short.
+`
+    );
     await fs.writeFile(
       path.join(secondaryWorkspaceRepoDir, "AGENTS.md"),
       `# Secondary Instructions
@@ -252,7 +289,13 @@ From secondary repo: prefer rg --files before find.
       "anthropic:claude-sonnet-4-20250514"
     );
 
-    expect(toolInstructions.bash).toContain("From secondary repo: prefer rg --files before find.");
+    expect(toolInstructions.bash).toBe(
+      [
+        "From primary repo: prefer git status --short.",
+        "From secondary repo: prefer rg --files before find.",
+      ].join("\n\n")
+    );
+    expect(toolInstructions.bash).not.toContain("From global");
   });
 
   test("includes model-specific section when regex matches active model", async () => {
