@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import type { SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 
 describe("AgentSession tool-end queue semantics", () => {
@@ -99,4 +100,56 @@ describe("AgentSession tool-end queue semantics", () => {
       })
     ).toBe(true);
   });
+});
+
+test("getFlowPromptSendOptions strips inherited fileParts from the active turn", async () => {
+  const result = await (
+    AgentSession.prototype as unknown as {
+      getFlowPromptSendOptions(this: {
+        workspaceId: string;
+        activeStreamContext?: {
+          modelString: string;
+          options?: SendMessageOptions & {
+            fileParts?: Array<{ url: string; mediaType: string; filename?: string }>;
+          };
+        };
+        aiService: {
+          getWorkspaceMetadata: () => Promise<unknown>;
+        };
+      }): Promise<
+        SendMessageOptions & {
+          fileParts?: Array<{ url: string; mediaType: string; filename?: string }>;
+        }
+      >;
+    }
+  ).getFlowPromptSendOptions.call({
+    workspaceId: "workspace-1",
+    activeStreamContext: {
+      modelString: "openai:gpt-4o",
+      options: {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+        thinkingLevel: "high",
+        queueDispatchMode: "turn-end",
+        muxMetadata: { type: "user-send" },
+        fileParts: [
+          {
+            url: "file:///tmp/attachment.txt",
+            mediaType: "text/plain",
+            filename: "attachment.txt",
+          },
+        ],
+      },
+    },
+    aiService: {
+      getWorkspaceMetadata: () => Promise.reject(new Error("should not be called")),
+    },
+  });
+
+  expect(result.model).toBe("openai:gpt-4o");
+  expect(result.agentId).toBe("exec");
+  expect(result.thinkingLevel).toBe("high");
+  expect("fileParts" in result).toBe(false);
+  expect("muxMetadata" in result).toBe(false);
+  expect("queueDispatchMode" in result).toBe(false);
 });

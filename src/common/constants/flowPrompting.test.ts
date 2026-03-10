@@ -11,6 +11,10 @@ describe("flowPrompting constants", () => {
     );
   });
 
+  it("preserves slash-delimited workspace names so branch segments stay unique", () => {
+    expect(getFlowPromptRelativePath("feature/foo")).toBe(`${FLOW_PROMPTS_DIR}/feature/foo.md`);
+  });
+
   it("uses the basename for in-place workspace names that look like absolute POSIX paths", () => {
     expect(getFlowPromptRelativePath("/tmp/projects/repo")).toBe(`${FLOW_PROMPTS_DIR}/repo.md`);
   });

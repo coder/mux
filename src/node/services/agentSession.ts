@@ -3958,10 +3958,13 @@ export class AgentSession {
   async getFlowPromptSendOptions(): Promise<SendMessageOptions> {
     const activeOptions = this.activeStreamContext?.options;
     if (activeOptions?.model) {
-      const restActiveOptions: SendMessageOptions = { ...activeOptions };
+      const restActiveOptions: SendMessageOptions & { fileParts?: FilePart[] } = {
+        ...activeOptions,
+      };
       delete restActiveOptions.editMessageId;
       delete restActiveOptions.queueDispatchMode;
       delete restActiveOptions.muxMetadata;
+      delete restActiveOptions.fileParts;
       return {
         ...restActiveOptions,
         model: this.activeStreamContext?.modelString ?? activeOptions.model,
