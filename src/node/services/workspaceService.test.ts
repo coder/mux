@@ -1031,6 +1031,67 @@ describe("WorkspaceService Flow Prompting update ordering", () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(flowPromptSession.queueFlowPromptUpdate).not.toHaveBeenCalled();
   });
+
+  test("marks immediately dispatched Flow Prompting revisions as in flight", async () => {
+    const workspaceId = "flow-in-flight-workspace";
+    const flowPromptSession = {
+      isBusy: mock(() => false),
+      getFlowPromptSendOptions: mock(() =>
+        Promise.resolve({
+          model: "openai:gpt-4o-mini",
+          agentId: "exec",
+        })
+      ),
+      queueFlowPromptUpdate: mock(() => undefined),
+    };
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = mock(() => flowPromptSession as unknown as AgentSession);
+
+    const flowPromptService = (
+      workspaceService as unknown as {
+        flowPromptService: {
+          isCurrentFingerprint: (workspaceId: string, fingerprint: string) => Promise<boolean>;
+          rememberUpdate: (workspaceId: string, fingerprint: string, nextContent: string) => void;
+          markInFlightUpdate: (workspaceId: string, fingerprint: string) => void;
+          clearInFlightUpdate: (workspaceId: string, fingerprint?: string) => void;
+        };
+      }
+    ).flowPromptService;
+    spyOn(flowPromptService, "rememberUpdate").mockImplementation(() => undefined);
+    spyOn(flowPromptService, "isCurrentFingerprint").mockResolvedValue(true);
+    const markInFlightUpdate = spyOn(flowPromptService, "markInFlightUpdate").mockImplementation(
+      () => undefined
+    );
+    const clearInFlightUpdate = spyOn(flowPromptService, "clearInFlightUpdate").mockImplementation(
+      () => undefined
+    );
+    const sendMessage = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
+
+    await (
+      workspaceService as unknown as {
+        handleFlowPromptUpdate: (event: {
+          workspaceId: string;
+          path: string;
+          nextContent: string;
+          nextFingerprint: string;
+          text: string;
+        }) => Promise<void>;
+      }
+    ).handleFlowPromptUpdate({
+      workspaceId,
+      path: "/tmp/test/workspace/.mux/prompts/test-workspace.md",
+      nextContent: "current flow prompt revision",
+      nextFingerprint: "current-fingerprint",
+      text: "[Flow prompt updated. Follow current agent instructions.]",
+    });
+
+    expect(markInFlightUpdate).toHaveBeenCalledWith(workspaceId, "current-fingerprint");
+    expect(clearInFlightUpdate).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("WorkspaceService Flow Prompting controls", () => {

@@ -3123,18 +3123,40 @@ export class WorkspaceService extends EventEmitter {
       return Ok(undefined);
     }
 
-    const result = await this.sendMessage(
+    this.flowPromptService.markInFlightUpdate(
       prepared.event.workspaceId,
-      prepared.event.text,
-      prepared.options,
-      {
-        synthetic: true,
-        requireIdle: true,
-        skipAutoResumeReset: true,
-      }
+      prepared.event.nextFingerprint
     );
 
+    let result: Awaited<ReturnType<WorkspaceService["sendMessage"]>>;
+    try {
+      result = await this.sendMessage(
+        prepared.event.workspaceId,
+        prepared.event.text,
+        prepared.options,
+        {
+          synthetic: true,
+          requireIdle: true,
+          skipAutoResumeReset: true,
+        }
+      );
+    } catch (error) {
+      this.flowPromptService.clearInFlightUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      this.flowPromptService.forgetUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      throw error;
+    }
+
     if (!result.success && prepared.session.isBusy()) {
+      this.flowPromptService.clearInFlightUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
       this.queueFlowPromptUpdateForLater(prepared);
       if (!options?.interruptCurrentTurn) {
         return Ok(undefined);
@@ -3150,6 +3172,10 @@ export class WorkspaceService extends EventEmitter {
     }
 
     if (!result.success) {
+      this.flowPromptService.clearInFlightUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
       this.flowPromptService.forgetUpdate(
         prepared.event.workspaceId,
         prepared.event.nextFingerprint

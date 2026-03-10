@@ -519,6 +519,7 @@ test("shouldEmitUpdate skips repeated clear notifications while deletion is pend
           autoSendMode: "off" | "end-of-turn";
         },
         pendingFingerprint: string | null,
+        inFlightFingerprint: string | null,
         currentFingerprint: string
       ) => boolean;
     }
@@ -532,6 +533,7 @@ test("shouldEmitUpdate skips repeated clear notifications while deletion is pend
         autoSendMode: "end-of-turn",
       },
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      null,
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     )
   ).toBe(false);
@@ -551,6 +553,7 @@ test("shouldEmitUpdate respects auto-send being off", () => {
           autoSendMode: "off" | "end-of-turn";
         },
         pendingFingerprint: string | null,
+        inFlightFingerprint: string | null,
         currentFingerprint: string
       ) => boolean;
     }
@@ -564,6 +567,41 @@ test("shouldEmitUpdate respects auto-send being off", () => {
         autoSendMode: "off",
       },
       null,
+      null,
+      "new-fingerprint"
+    )
+  ).toBe(false);
+});
+
+test("shouldEmitUpdate suppresses flow prompt revisions that are already in flight", () => {
+  const service = new WorkspaceFlowPromptService({
+    getSessionDir: () => "/tmp/flow-prompt-session",
+  } as unknown as Config);
+
+  const shouldEmitUpdate = (
+    service as unknown as {
+      shouldEmitUpdate: (
+        persisted: {
+          lastSentContent: string | null;
+          lastSentFingerprint: string | null;
+          autoSendMode: "off" | "end-of-turn";
+        },
+        pendingFingerprint: string | null,
+        inFlightFingerprint: string | null,
+        currentFingerprint: string
+      ) => boolean;
+    }
+  ).shouldEmitUpdate.bind(service);
+
+  expect(
+    shouldEmitUpdate(
+      {
+        lastSentContent: "Keep this instruction active.",
+        lastSentFingerprint: "previous-fingerprint",
+        autoSendMode: "end-of-turn",
+      },
+      null,
+      "new-fingerprint",
       "new-fingerprint"
     )
   ).toBe(false);
@@ -604,6 +642,7 @@ test("getState waits for an in-flight refresh instead of returning stale state",
           refreshing: boolean;
           refreshPromise: Promise<typeof freshState> | null;
           pendingFingerprint: string | null;
+          inFlightFingerprint: string | null;
           lastState: typeof staleState | null;
           activeChatSubscriptions: number;
           lastOpenedAtMs: number | null;
@@ -618,6 +657,7 @@ test("getState waits for an in-flight refresh instead of returning stale state",
     refreshing: true,
     refreshPromise: Promise.resolve(freshState),
     pendingFingerprint: null,
+    inFlightFingerprint: null,
     lastState: staleState,
     activeChatSubscriptions: 0,
     lastOpenedAtMs: null,

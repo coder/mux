@@ -62,6 +62,7 @@ interface FlowPromptMonitor {
   refreshing: boolean;
   refreshPromise: Promise<FlowPromptState> | null;
   pendingFingerprint: string | null;
+  inFlightFingerprint: string | null;
   lastState: FlowPromptState | null;
   activeChatSubscriptions: number;
   lastOpenedAtMs: number | null;
@@ -476,6 +477,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       refreshing: false,
       refreshPromise: null,
       pendingFingerprint: null,
+      inFlightFingerprint: null,
       lastState: null,
       activeChatSubscriptions: 0,
       lastOpenedAtMs: null,
@@ -507,6 +509,30 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     }
 
     monitor.pendingFingerprint = computeFingerprint(nextContent);
+    this.refreshMonitorInBackground(workspaceId);
+  }
+
+  markInFlightUpdate(workspaceId: string, fingerprint: string): void {
+    const monitor = this.monitors.get(workspaceId);
+    if (!monitor) {
+      return;
+    }
+
+    monitor.inFlightFingerprint = fingerprint;
+    this.refreshMonitorInBackground(workspaceId);
+  }
+
+  clearInFlightUpdate(workspaceId: string, fingerprint?: string): void {
+    const monitor = this.monitors.get(workspaceId);
+    if (!monitor) {
+      return;
+    }
+
+    if (fingerprint && monitor.inFlightFingerprint !== fingerprint) {
+      return;
+    }
+
+    monitor.inFlightFingerprint = null;
     this.refreshMonitorInBackground(workspaceId);
   }
 
@@ -574,6 +600,9 @@ export class WorkspaceFlowPromptService extends EventEmitter {
 
     if (monitor?.pendingFingerprint === nextFingerprint) {
       monitor.pendingFingerprint = null;
+    }
+    if (monitor?.inFlightFingerprint === nextFingerprint) {
+      monitor.inFlightFingerprint = null;
     }
 
     await this.refreshMonitor(workspaceId, true);
@@ -656,6 +685,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       }
 
       const pendingFingerprint = monitor?.pendingFingerprint ?? null;
+      const inFlightFingerprint = monitor?.inFlightFingerprint ?? null;
       const state = this.buildState(snapshot, persisted, pendingFingerprint);
       const currentUpdate = this.buildCurrentUpdate(snapshot, persisted, state);
 
@@ -670,7 +700,12 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       if (
         emitEvents &&
         currentUpdate &&
-        this.shouldEmitUpdate(persisted, pendingFingerprint, currentUpdate.nextFingerprint)
+        this.shouldEmitUpdate(
+          persisted,
+          pendingFingerprint,
+          inFlightFingerprint,
+          currentUpdate.nextFingerprint
+        )
       ) {
         this.emit("update", currentUpdate);
       }
@@ -701,9 +736,14 @@ export class WorkspaceFlowPromptService extends EventEmitter {
   private shouldEmitUpdate(
     persisted: PersistedFlowPromptState,
     pendingFingerprint: string | null,
+    inFlightFingerprint: string | null,
     currentFingerprint: string
   ): boolean {
-    return persisted.autoSendMode === "end-of-turn" && pendingFingerprint !== currentFingerprint;
+    return (
+      persisted.autoSendMode === "end-of-turn" &&
+      pendingFingerprint !== currentFingerprint &&
+      inFlightFingerprint !== currentFingerprint
+    );
   }
 
   private buildCurrentUpdatePayload(

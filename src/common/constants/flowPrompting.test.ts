@@ -11,6 +11,14 @@ describe("flowPrompting constants", () => {
     );
   });
 
+  it("uses the basename for in-place workspace names that look like absolute POSIX paths", () => {
+    expect(getFlowPromptRelativePath("/tmp/projects/repo")).toBe(`${FLOW_PROMPTS_DIR}/repo.md`);
+  });
+
+  it("uses the basename for in-place workspace names that look like Windows paths", () => {
+    expect(getFlowPromptRelativePath("C:\\Users\\dev\\repo")).toBe(`${FLOW_PROMPTS_DIR}/repo.md`);
+  });
+
   it("includes the exact path marker wording for tool calls", () => {
     const marker = getFlowPromptPathMarkerLine("/tmp/workspace/.mux/prompts/feature-branch.md");
 
