@@ -84,6 +84,20 @@ async function findMenuItem(label: string): Promise<HTMLButtonElement> {
   );
 }
 
+function getAncestorTrunkSegments(container: HTMLElement, workspaceId: string): HTMLElement[] {
+  const connector = getSubagentConnector(container, workspaceId);
+  if (!connector) {
+    return [];
+  }
+
+  const wrapper = connector.parentElement;
+  if (!wrapper) {
+    return [];
+  }
+
+  return Array.from(wrapper.querySelectorAll('[data-testid="ancestor-trunk"]')) as HTMLElement[];
+}
+
 async function createWorkspaceWithTitle(params: {
   projectPath: string;
   trunkBranch: string;
@@ -775,6 +789,182 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("renders ancestor trunk continuity for nested rows across active and inactive branches", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const activeParent = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Nested Parent",
+        branchPrefix: "subagent-ancestor-active-parent",
+      });
+      workspaceIdsToRemove.push(activeParent.id);
+
+      const activeLowerSibling = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Lower Sibling",
+        branchPrefix: "subagent-ancestor-active-sibling",
+      });
+      workspaceIdsToRemove.push(activeLowerSibling.id);
+
+      const activeNestedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Nested Child",
+        branchPrefix: "subagent-ancestor-active-child",
+      });
+      workspaceIdsToRemove.push(activeNestedChild.id);
+
+      const activeGrandchild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Nested Grandchild",
+        branchPrefix: "subagent-ancestor-active-grandchild",
+      });
+      workspaceIdsToRemove.push(activeGrandchild.id);
+
+      const inactiveParent = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Nested Parent",
+        branchPrefix: "subagent-ancestor-inactive-parent",
+      });
+      workspaceIdsToRemove.push(inactiveParent.id);
+
+      const inactiveLowerSibling = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Lower Sibling",
+        branchPrefix: "subagent-ancestor-inactive-sibling",
+      });
+      workspaceIdsToRemove.push(inactiveLowerSibling.id);
+
+      const inactiveNestedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Nested Child",
+        branchPrefix: "subagent-ancestor-inactive-child",
+      });
+      workspaceIdsToRemove.push(inactiveNestedChild.id);
+
+      const inactiveGrandchild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Nested Grandchild",
+        branchPrefix: "subagent-ancestor-inactive-grandchild",
+      });
+      workspaceIdsToRemove.push(inactiveGrandchild.id);
+
+      await env.config.addWorkspace(repoPath, {
+        ...activeNestedChild,
+        parentWorkspaceId: activeParent.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...activeGrandchild,
+        parentWorkspaceId: activeNestedChild.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...activeLowerSibling,
+        parentWorkspaceId: activeParent.id,
+        taskStatus: "running",
+      });
+
+      await env.config.addWorkspace(repoPath, {
+        ...inactiveNestedChild,
+        parentWorkspaceId: inactiveParent.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...inactiveGrandchild,
+        parentWorkspaceId: inactiveNestedChild.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...inactiveLowerSibling,
+        parentWorkspaceId: inactiveParent.id,
+        taskStatus: "queued",
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: activeParent });
+      await setupWorkspaceView(view, activeParent, activeParent.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      await waitFor(
+        () => {
+          if (!getWorkspaceRow(renderedView.container, activeGrandchild.id)) {
+            throw new Error("Expected active nested grandchild row to be visible");
+          }
+          if (!getWorkspaceRow(renderedView.container, inactiveGrandchild.id)) {
+            throw new Error("Expected inactive nested grandchild row to be visible");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      const activeAncestorTrunks = getAncestorTrunkSegments(
+        renderedView.container,
+        activeGrandchild.id
+      );
+      expect(activeAncestorTrunks.length).toBeGreaterThan(0);
+      expect(activeAncestorTrunks[0]?.getAttribute("data-trunk-active")).toBe("true");
+
+      const inactiveAncestorTrunks = getAncestorTrunkSegments(
+        renderedView.container,
+        inactiveGrandchild.id
+      );
+      expect(inactiveAncestorTrunks.length).toBeGreaterThan(0);
+      expect(inactiveAncestorTrunks[0]?.getAttribute("data-trunk-active")).toBe("false");
+
+      const peerAncestorTrunks = getAncestorTrunkSegments(
+        renderedView.container,
+        activeLowerSibling.id
+      );
+      expect(peerAncestorTrunks).toHaveLength(0);
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);

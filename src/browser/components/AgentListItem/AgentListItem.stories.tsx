@@ -313,6 +313,7 @@ const SUB_AGENT_ROW_META_BASE = {
   connectorStartsAtParent: true,
   sharedTrunkActiveThroughRow: false,
   sharedTrunkActiveBelowRow: false,
+  ancestorTrunks: [],
   hasHiddenCompletedChildren: false,
   visibleCompletedChildrenCount: 0,
 } as const satisfies Omit<AgentRowRenderMeta, "connectorPosition">;
@@ -418,6 +419,7 @@ const PRIMARY_ROW_META_WITH_HIDDEN_COMPLETED_CHILDREN = {
   connectorStartsAtParent: false,
   sharedTrunkActiveThroughRow: false,
   sharedTrunkActiveBelowRow: false,
+  ancestorTrunks: [],
   hasHiddenCompletedChildren: true,
   visibleCompletedChildrenCount: 0,
 } as const satisfies AgentRowRenderMeta;

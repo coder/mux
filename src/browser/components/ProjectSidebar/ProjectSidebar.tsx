@@ -1461,6 +1461,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const visibleRows = workspaces.filter((workspace) =>
                                   visibleRowIds.has(workspace.id)
                                 );
+                                const visibleRowsById = new Map(
+                                  visibleRows.map((workspace) => [workspace.id, workspace])
+                                );
                                 const visibleChildrenByParent = new Map<
                                   string,
                                   FrontendWorkspaceMetadata[]
@@ -1488,7 +1491,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   const parentId = workspace.parentWorkspaceId;
                                   if (!parentId) {
-                                    rowMetaByVisibleWorkspaceId.set(workspace.id, baseRowMeta);
+                                    rowMetaByVisibleWorkspaceId.set(workspace.id, {
+                                      ...baseRowMeta,
+                                      ancestorTrunks: [],
+                                    });
                                     continue;
                                   }
 
@@ -1523,12 +1529,42 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     lastRunningSiblingIndex >= 0 &&
                                     siblingIndex < lastRunningSiblingIndex;
 
+                                  const ancestorTrunks: Array<{ depth: number; active: boolean }> =
+                                    [];
+                                  const visitedAncestorIds = new Set<string>();
+                                  let ancestorId: string | undefined = parentId;
+                                  while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
+                                    visitedAncestorIds.add(ancestorId);
+
+                                    const ancestorMeta =
+                                      rowMetaByVisibleWorkspaceId.get(ancestorId) ??
+                                      baseRowMetaByWorkspaceId.get(ancestorId);
+                                    const ancestorDepth = depthByWorkspaceId[ancestorId] ?? 0;
+                                    if (
+                                      ancestorDepth > 0 &&
+                                      ancestorMeta?.connectorPosition === "middle"
+                                    ) {
+                                      ancestorTrunks.push({
+                                        depth: ancestorDepth,
+                                        active: ancestorMeta.sharedTrunkActiveBelowRow,
+                                      });
+                                    }
+
+                                    const ancestorWorkspace = visibleRowsById.get(ancestorId);
+                                    if (!ancestorWorkspace) {
+                                      break;
+                                    }
+                                    ancestorId = ancestorWorkspace.parentWorkspaceId;
+                                  }
+                                  ancestorTrunks.sort((left, right) => left.depth - right.depth);
+
                                   rowMetaByVisibleWorkspaceId.set(workspace.id, {
                                     ...baseRowMeta,
                                     connectorPosition,
                                     connectorStartsAtParent,
                                     sharedTrunkActiveThroughRow,
                                     sharedTrunkActiveBelowRow,
+                                    ancestorTrunks,
                                   });
                                 }
 

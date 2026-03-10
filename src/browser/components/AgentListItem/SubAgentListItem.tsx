@@ -6,6 +6,7 @@ interface SubAgentListItemProps {
   connectorStartsAtParent: boolean;
   sharedTrunkActiveThroughRow: boolean;
   sharedTrunkActiveBelowRow: boolean;
+  ancestorTrunks: ReadonlyArray<{ left: number; active: boolean }>;
   indentLeft: number;
   isSelected: boolean;
   isElbowActive: boolean;
@@ -31,6 +32,22 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
 
   return (
     <div className="relative">
+      {props.ancestorTrunks.map((trunk, index) => (
+        <span
+          key={`ancestor-trunk-${index}-${trunk.left}`}
+          aria-hidden
+          data-testid="ancestor-trunk"
+          data-trunk-active={trunk.active}
+          className={cn(
+            connectorFillClass,
+            // Render one full-height trunk per continuing ancestor depth so
+            // nested rows stay visually connected to higher-level siblings.
+            "pointer-events-none absolute inset-y-0 z-10 w-px",
+            trunk.active && "subagent-connector-active"
+          )}
+          style={{ left: trunk.left }}
+        />
+      ))}
       <div
         aria-hidden
         data-testid="subagent-connector"

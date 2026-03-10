@@ -923,6 +923,11 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
     const isElbowActive = props.metadata.taskStatus === "running";
+    const indentLeft = getItemPaddingLeft(props.depth);
+    const ancestorTrunks = rowMeta.ancestorTrunks.map((trunk) => ({
+      left: getItemPaddingLeft(trunk.depth) - 4,
+      active: trunk.active,
+    }));
 
     return (
       <SubAgentListItem
@@ -930,7 +935,8 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
         connectorStartsAtParent={rowMeta.connectorStartsAtParent}
         sharedTrunkActiveThroughRow={rowMeta.sharedTrunkActiveThroughRow}
         sharedTrunkActiveBelowRow={rowMeta.sharedTrunkActiveBelowRow}
-        indentLeft={getItemPaddingLeft(props.depth)}
+        ancestorTrunks={ancestorTrunks}
+        indentLeft={indentLeft}
         isSelected={props.isSelected}
         isElbowActive={isElbowActive}
       >

@@ -123,6 +123,10 @@ export interface AgentRowRenderMeta {
   connectorStartsAtParent: boolean;
   sharedTrunkActiveThroughRow: boolean;
   sharedTrunkActiveBelowRow: boolean;
+  // Nested sub-agents need ancestor continuation columns whenever an ancestor
+  // branch has visible lower siblings, so connector rendering receives one trunk
+  // descriptor per continuing ancestor depth.
+  ancestorTrunks: ReadonlyArray<{ depth: number; active: boolean }>;
   hasHiddenCompletedChildren: boolean;
   visibleCompletedChildrenCount: number;
 }
@@ -200,8 +204,11 @@ export function computeAgentRowRenderMeta(
 
   const visibleChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
   const completedChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
+  const visibleWorkspaceById = new Map<string, FrontendWorkspaceMetadata>();
 
   for (const workspace of visibleRows) {
+    visibleWorkspaceById.set(workspace.id, workspace);
+
     const parentId = workspace.parentWorkspaceId;
     if (!parentId) {
       continue;
@@ -231,6 +238,7 @@ export function computeAgentRowRenderMeta(
     let connectorStartsAtParent = false;
     let sharedTrunkActiveThroughRow = false;
     let sharedTrunkActiveBelowRow = false;
+    let ancestorTrunks: AgentRowRenderMeta["ancestorTrunks"] = [];
 
     if (workspace.parentWorkspaceId) {
       const siblings = visibleChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
@@ -257,6 +265,31 @@ export function computeAgentRowRenderMeta(
           sharedTrunkActiveBelowRow = siblingIndex < lastRunningSiblingIndex;
         }
       }
+
+      const continuingAncestorTrunks: Array<{ depth: number; active: boolean }> = [];
+      const visitedAncestorIds = new Set<string>();
+      let ancestorId: string | undefined = workspace.parentWorkspaceId;
+      while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
+        visitedAncestorIds.add(ancestorId);
+
+        const ancestorMeta = metadataByWorkspaceId.get(ancestorId);
+        const ancestorDepth = depthByWorkspaceId[ancestorId] ?? 0;
+        if (ancestorDepth > 0 && ancestorMeta?.connectorPosition === "middle") {
+          continuingAncestorTrunks.push({
+            depth: ancestorDepth,
+            active: ancestorMeta.sharedTrunkActiveBelowRow,
+          });
+        }
+
+        const ancestorWorkspace = visibleWorkspaceById.get(ancestorId);
+        if (!ancestorWorkspace) {
+          break;
+        }
+        ancestorId = ancestorWorkspace.parentWorkspaceId;
+      }
+
+      continuingAncestorTrunks.sort((left, right) => left.depth - right.depth);
+      ancestorTrunks = continuingAncestorTrunks;
     }
 
     const completedChildren = completedChildrenByParent.get(workspace.id) ?? [];
@@ -274,6 +307,7 @@ export function computeAgentRowRenderMeta(
       connectorStartsAtParent,
       sharedTrunkActiveThroughRow,
       sharedTrunkActiveBelowRow,
+      ancestorTrunks,
       hasHiddenCompletedChildren: visibleCompletedChildrenCount < completedChildren.length,
       visibleCompletedChildrenCount,
     });
