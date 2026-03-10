@@ -1,24 +1,19 @@
-import React, { useEffect, useRef, useSyncExternalStore } from "react";
+import React, { useSyncExternalStore } from "react";
 import { TodoList } from "../TodoList/TodoList";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getPinnedTodoExpandedKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
-import assert from "@/common/utils/assert";
 
 interface PinnedTodoListProps {
   workspaceId: string;
-}
-
-function getPinnedTodoExpandedKey(workspaceId: string): string {
-  assert(workspaceId.length > 0, "Pinned todo expansion state requires a workspace ID");
-  return `pinnedTodoExpanded:${workspaceId}`;
 }
 
 /**
  * Pinned TODO list displayed at bottom of chat (before StreamingBarrier).
  * Shows current TODOs — incomplete plans persist across streams until the agent updates them,
  * while fully completed plans clear when the final stream ends for this workspace.
- * The pinned panel can also auto-collapse after a stream ends for this workspace.
+ * The pinned panel expansion state persists separately in localStorage.
  * Reuses TodoList component for consistent styling.
  *
  * Relies on natural reference stability from MapStore + Aggregator architecture:
@@ -36,22 +31,6 @@ export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) =
     subscribeToWorkspace,
     () => workspaceStore.getWorkspaceState(workspaceId).todos
   );
-  const canInterrupt = useSyncExternalStore(
-    subscribeToWorkspace,
-    () => workspaceStore.getWorkspaceState(workspaceId).canInterrupt
-  );
-  const previousCanInterruptRef = useRef(canInterrupt);
-
-  useEffect(() => {
-    const previousCanInterrupt = previousCanInterruptRef.current;
-
-    // Only persist an auto-collapse when this workspace actually has a visible pinned TODO panel.
-    if (previousCanInterrupt && !canInterrupt && todos.length > 0) {
-      setExpanded(false);
-    }
-
-    previousCanInterruptRef.current = canInterrupt;
-  }, [canInterrupt, setExpanded, todos.length]);
 
   // No todos have been written yet in this session
   if (todos.length === 0) {

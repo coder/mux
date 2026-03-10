@@ -57,7 +57,11 @@ import {
   type LiveBashOutputView,
 } from "@/browser/utils/messages/liveBashOutputBuffer";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getAutoCompactionThresholdKey, getAutoRetryKey } from "@/common/constants/storage";
+import {
+  getAutoCompactionThresholdKey,
+  getAutoRetryKey,
+  getPinnedTodoExpandedKey,
+} from "@/common/constants/storage";
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
 import { trackStreamCompleted } from "@/common/telemetry";
 
@@ -290,6 +294,23 @@ function formatValidationError(error: IteratorValidationFailedError): string {
   const eventType = data?.type ? ` [event: ${data.type}]` : "";
 
   return `${issuesSummary}${moreCount}${eventType}`;
+}
+
+/**
+ * Auto-collapse the pinned TODO panel when a workspace's stream stops.
+ * Lives in the store (not the component) because PinnedTodoList is only
+ * mounted for the active workspace — background workspaces would miss
+ * the transition.
+ */
+function collapsePinnedTodoOnStreamStop(
+  workspaceId: string,
+  aggregator: StreamingMessageAggregator
+): void {
+  if (aggregator.getCurrentTodos().length === 0) {
+    return;
+  }
+
+  updatePersistedState(getPinnedTodoExpandedKey(workspaceId), false);
 }
 
 function areAgentStatusesEqual(
@@ -605,6 +626,8 @@ export class WorkspaceStore {
         }
       }
 
+      collapsePinnedTodoOnStreamStop(workspaceId, aggregator);
+
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
@@ -629,6 +652,8 @@ export class WorkspaceStore {
           true
         );
       }
+
+      collapsePinnedTodoOnStreamStop(workspaceId, aggregator);
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
@@ -2356,6 +2381,10 @@ export class WorkspaceStore {
 
     const stoppedStreamingSnapshot =
       previous?.streaming === true && snapshot?.streaming === false ? snapshot : null;
+    const aggregator = this.aggregators.get(workspaceId);
+    if (stoppedStreamingSnapshot && aggregator) {
+      collapsePinnedTodoOnStreamStop(workspaceId, aggregator);
+    }
     const isBackgroundStreamingStop =
       stoppedStreamingSnapshot !== null && workspaceId !== this.activeWorkspaceId;
     const streamStartRecency = this.activityStreamingStartRecency.get(workspaceId);
