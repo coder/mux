@@ -2379,7 +2379,10 @@ export class WorkspaceStore {
 
     const stoppedStreamingSnapshot =
       previous?.streaming === true && snapshot?.streaming === false ? snapshot : null;
-    if (stoppedStreamingSnapshot) {
+    // Activity snapshots only collapse for background workspaces — active workspaces
+    // already collapse from onChat stream-end/stream-abort, which is faster and authoritative.
+    // Firing here too would let a late async snapshot override the user re-expanding the panel.
+    if (stoppedStreamingSnapshot && !this.isOnChatSubscriptionActive(workspaceId)) {
       collapsePinnedTodoOnStreamStop(workspaceId, stoppedStreamingSnapshot.hasTodos === true);
     }
     const isBackgroundStreamingStop =

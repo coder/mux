@@ -398,6 +398,122 @@ describe("WorkspaceStore", () => {
       expect(collapsed).toBe(true);
     });
 
+    it("active workspace activity snapshot does not re-collapse after user re-expands", async () => {
+      const workspaceId = "active-workspace-pinned-todo-snapshot-race";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
+      const initialRecency = new Date("2099-01-10T00:00:00.000Z").getTime();
+
+      let releaseStopSnapshot!: () => void;
+      const stopSnapshotReady = new Promise<void>((resolve) => {
+        releaseStopSnapshot = resolve;
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await stopSnapshotReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId,
+          activity: {
+            recency: initialRecency,
+            streaming: true,
+            hasTodos: true,
+            lastModel: "claude-sonnet-4",
+            lastThinkingLevel: null,
+          },
+        };
+        yield {
+          type: "activity" as const,
+          workspaceId,
+          activity: {
+            recency: initialRecency + 1,
+            streaming: false,
+            hasTodos: true,
+            lastModel: "claude-sonnet-4",
+            lastThinkingLevel: null,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "stream-end-msg",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: 1_000,
+        };
+        yield {
+          type: "tool-call-start",
+          workspaceId,
+          messageId: "stream-end-msg",
+          toolCallId: "stream-end-todo-write",
+          toolName: "todo_write",
+          args: { todos: pinnedTodos },
+          tokens: 10,
+          timestamp: 1_001,
+        };
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "stream-end-msg",
+          toolCallId: "stream-end-todo-write",
+          toolName: "todo_write",
+          result: { success: true },
+          timestamp: 1_002,
+        };
+        yield {
+          type: "stream-end",
+          workspaceId,
+          messageId: "stream-end-msg",
+          metadata: {
+            model: "claude-sonnet-4",
+            historySequence: 1,
+            timestamp: 1_003,
+          },
+          parts: [],
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const collapsed = await waitUntil(
+        () => localStorageBacking.get(pinnedTodoKey) === JSON.stringify(false)
+      );
+      expect(collapsed).toBe(true);
+
+      localStorageBacking.set(pinnedTodoKey, JSON.stringify(true));
+
+      releaseStopSnapshot();
+
+      const processedSnapshot = await waitUntil(
+        () => store.getWorkspaceState(workspaceId).recencyTimestamp === initialRecency + 1
+      );
+      expect(processedSnapshot).toBe(true);
+      expect(localStorageBacking.get(pinnedTodoKey)).toBe(JSON.stringify(true));
+    });
+
     it("background stream-stop with hasTodos: true collapses panel even with empty aggregator", async () => {
       const activeWorkspaceId = "active-workspace-pinned-todo";
       const backgroundWorkspaceId = "background-workspace-pinned-todo";
