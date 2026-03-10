@@ -3921,7 +3921,11 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, sendMessage, remove, emit } = createWorkspaceServiceMocks();
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, sendMessage, emit } = createWorkspaceServiceMocks({ remove });
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -4033,15 +4037,15 @@ describe("TaskService", () => {
     const ws = Array.from(postCfg.projects.values())
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === childId);
-    expect(ws?.taskStatus).toBe("reported");
-    expect(ws?.reportedAt).toBeTruthy();
+    expect(ws).toBeUndefined();
 
     expect(emit).toHaveBeenCalledWith(
       "metadata",
       expect.objectContaining({ workspaceId: childId })
     );
 
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childId, true);
     expect(sendMessage).toHaveBeenCalledWith(
       parentId,
       expect.stringContaining("sub-agent task(s) have completed"),
@@ -4051,7 +4055,7 @@ describe("TaskService", () => {
     expect(emit).toHaveBeenCalled();
   });
 
-  test("agent_report generates git format-patch artifact for exec tasks and defers cleanup", async () => {
+  test("agent_report generates git format-patch artifact for exec tasks before cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -4105,7 +4109,11 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -4208,10 +4216,17 @@ describe("TaskService", () => {
     expect(artifact?.status).toBe("ready");
 
     await fsPromises.stat(patchPath);
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childId, true);
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws).toBeUndefined();
   }, 20_000);
 
-  test("agent_report generates git format-patch artifact for exec-derived custom tasks", async () => {
+  test("agent_report generates git format-patch artifact for exec-derived custom tasks before cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -4274,7 +4289,11 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -4377,7 +4396,14 @@ describe("TaskService", () => {
     expect(artifact?.status).toBe("ready");
 
     await fsPromises.stat(patchPath);
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childId, true);
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws).toBeUndefined();
   }, 20_000);
   test("agent_report updates queued/running task tool output in parent history", async () => {
     const config = await createTestConfig(rootDir);
@@ -4410,11 +4436,13 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const {
-      workspaceService,
-      sendMessage: sendMessageMock,
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, sendMessage: sendMessageMock } = createWorkspaceServiceMocks({
       remove,
-    } = createWorkspaceServiceMocks();
+    });
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -4503,7 +4531,8 @@ describe("TaskService", () => {
       expect(text).toContain(childId);
     }
 
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childId, true);
     expect(sendMessageMock).toHaveBeenCalledWith(
       parentId,
       expect.stringContaining("sub-agent task(s) have completed"),
@@ -4544,7 +4573,11 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, sendMessage, remove } = createWorkspaceServiceMocks();
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({ remove });
     const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -4630,9 +4663,10 @@ describe("TaskService", () => {
     const ws = Array.from(postCfg.projects.values())
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === childId);
-    expect(ws?.taskStatus).toBe("reported");
+    expect(ws).toBeUndefined();
 
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childId, true);
     // Parent auto-resume fires after the child report is finalized at stream-end.
     expect(sendMessage).toHaveBeenCalled();
   });
@@ -4822,7 +4856,11 @@ describe("TaskService", () => {
     });
 
     const { aiService } = createAIServiceMocks(config);
-    const { workspaceService, sendMessage, remove, emit } = createWorkspaceServiceMocks();
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, sendMessage, emit } = createWorkspaceServiceMocks({ remove });
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
@@ -4920,9 +4958,10 @@ describe("TaskService", () => {
     const ws = Array.from(postCfg.projects.values())
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === childId);
-    expect(ws?.taskStatus).toBe("reported");
+    expect(ws).toBeUndefined();
 
-    expect(remove).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childId, true);
     // Parent auto-resume now uses sendMessage instead of resumeStream
     expect(sendMessage).toHaveBeenCalledWith(
       parentId,
@@ -5542,7 +5581,25 @@ describe("TaskService", () => {
     expect(childEntry?.runtimeConfig?.type).toBe("worktree");
   }, 20_000);
 
-  test("reported leaf cleanup retains sibling and parent metadata in config", async () => {
+  async function removeWorkspaceFromTestConfig(config: Config, workspaceId: string): Promise<void> {
+    const cfg = config.loadConfigOrDefault();
+    let removed = false;
+
+    for (const project of cfg.projects.values()) {
+      const nextWorkspaces = project.workspaces.filter((workspace) => workspace.id !== workspaceId);
+      if (nextWorkspaces.length === project.workspaces.length) {
+        continue;
+      }
+
+      project.workspaces = nextWorkspaces;
+      removed = true;
+    }
+
+    assert(removed, `Expected workspace ${workspaceId} to exist in test config`);
+    await config.saveConfig(cfg);
+  }
+
+  test("reported leaf cleanup deletes the finished leaf but keeps siblings and parents", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -5591,20 +5648,22 @@ describe("TaskService", () => {
     });
 
     const isStreaming = mock(() => false);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
     const { aiService } = createAIServiceMocks(config, { isStreaming });
-    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const internal = taskService as unknown as {
       cleanupReportedLeafTask: (workspaceId: string) => Promise<void>;
     };
 
-    const deleteWorkspaceSpy = spyOn(WorktreeRuntime.prototype, "deleteWorkspace");
-    try {
-      await internal.cleanupReportedLeafTask(childTaskAId);
-      expect(deleteWorkspaceSpy).not.toHaveBeenCalled();
-    } finally {
-      deleteWorkspaceSpy.mockRestore();
-    }
+    await internal.cleanupReportedLeafTask(childTaskAId);
+
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childTaskAId, true);
 
     const postCfg = config.loadConfigOrDefault();
     const remainingWorkspaceIds = new Set(
@@ -5613,19 +5672,18 @@ describe("TaskService", () => {
         .map((workspace) => workspace.id)
     );
     expect(remainingWorkspaceIds.has(parentTaskId)).toBe(true);
-    expect(remainingWorkspaceIds.has(childTaskAId)).toBe(true);
+    expect(remainingWorkspaceIds.has(childTaskAId)).toBe(false);
     expect(remainingWorkspaceIds.has(childTaskBId)).toBe(true);
   });
 
-  test("reported sibling cleanup walks up and rechecks reported ancestors", async () => {
+  test("reported leaf cleanup cascades through newly empty reported ancestors", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
     const grandparentTaskId = "grandparent-000";
     const parentTaskId = "parent-222";
-    const childTaskAId = "child-a-333";
-    const childTaskBId = "child-b-444";
+    const childTaskId = "child-a-333";
 
     await config.saveConfig({
       projects: new Map([
@@ -5653,16 +5711,8 @@ describe("TaskService", () => {
               },
               {
                 path: path.join(projectPath, "child-task-a"),
-                id: childTaskAId,
+                id: childTaskId,
                 name: "agent_explore_child_a",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "reported",
-              },
-              {
-                path: path.join(projectPath, "child-task-b"),
-                id: childTaskBId,
-                name: "agent_explore_child_b",
                 parentWorkspaceId: parentTaskId,
                 agentType: "explore",
                 taskStatus: "reported",
@@ -5675,43 +5725,49 @@ describe("TaskService", () => {
     });
 
     const isStreaming = mock(() => false);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
     const { aiService } = createAIServiceMocks(config, { isStreaming });
-    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const internal = taskService as unknown as {
       cleanupReportedLeafTask: (workspaceId: string) => Promise<void>;
     };
 
-    await internal.cleanupReportedLeafTask(childTaskAId);
+    await internal.cleanupReportedLeafTask(childTaskId);
 
     const isStreamingCalls = (isStreaming as unknown as { mock: { calls: Array<[string]> } }).mock
       .calls;
     const checkedWorkspaceIds = new Set(isStreamingCalls.map((call) => call[0]));
-    expect(checkedWorkspaceIds.has(childTaskAId)).toBe(true);
+    expect(checkedWorkspaceIds.has(childTaskId)).toBe(true);
     expect(checkedWorkspaceIds.has(parentTaskId)).toBe(true);
     expect(checkedWorkspaceIds.has(grandparentTaskId)).toBe(true);
+    expect(remove.mock.calls).toEqual([
+      [childTaskId, true],
+      [parentTaskId, true],
+      [grandparentTaskId, true],
+    ]);
 
     const postCfg = config.loadConfigOrDefault();
-    const reportedWorkspacesById = new Map(
+    const remainingWorkspaceIds = new Set(
       Array.from(postCfg.projects.values())
         .flatMap((project) => project.workspaces)
-        .map((workspace) => [workspace.id, workspace.taskStatus])
+        .map((workspace) => workspace.id)
     );
-    expect(reportedWorkspacesById.get(grandparentTaskId)).toBe("reported");
-    expect(reportedWorkspacesById.get(parentTaskId)).toBe("reported");
-    expect(reportedWorkspacesById.get(childTaskAId)).toBe("reported");
-    expect(reportedWorkspacesById.get(childTaskBId)).toBe("reported");
+    expect(remainingWorkspaceIds).toEqual(new Set([rootWorkspaceId]));
   });
 
-  test("cleanupReportedLeafTask treats interrupted tasks with reportedAt as completed", async () => {
+  test("cleanupReportedLeafTask deletes interrupted tasks that still have completed reports", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
     const grandparentTaskId = "grandparent-000";
     const parentTaskId = "parent-222";
-    const childTaskAId = "child-a-333";
-    const childTaskBId = "child-b-444";
+    const childTaskId = "child-a-333";
     const completedAt = "2026-03-09T11:05:58.780Z";
 
     await config.saveConfig({
@@ -5742,17 +5798,8 @@ describe("TaskService", () => {
               },
               {
                 path: path.join(projectPath, "child-task-a"),
-                id: childTaskAId,
+                id: childTaskId,
                 name: "agent_explore_child_a",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                reportedAt: completedAt,
-              },
-              {
-                path: path.join(projectPath, "child-task-b"),
-                id: childTaskBId,
-                name: "agent_explore_child_b",
                 parentWorkspaceId: parentTaskId,
                 agentType: "explore",
                 taskStatus: "interrupted",
@@ -5766,32 +5813,39 @@ describe("TaskService", () => {
     });
 
     const isStreaming = mock(() => false);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
     const { aiService } = createAIServiceMocks(config, { isStreaming });
-    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
     const internal = taskService as unknown as {
       cleanupReportedLeafTask: (workspaceId: string) => Promise<void>;
     };
 
-    await internal.cleanupReportedLeafTask(childTaskAId);
+    await internal.cleanupReportedLeafTask(childTaskId);
 
     const isStreamingCalls = (isStreaming as unknown as { mock: { calls: Array<[string]> } }).mock
       .calls;
     const checkedWorkspaceIds = new Set(isStreamingCalls.map((call) => call[0]));
-    expect(checkedWorkspaceIds.has(childTaskAId)).toBe(true);
+    expect(checkedWorkspaceIds.has(childTaskId)).toBe(true);
     expect(checkedWorkspaceIds.has(parentTaskId)).toBe(true);
     expect(checkedWorkspaceIds.has(grandparentTaskId)).toBe(true);
+    expect(remove.mock.calls).toEqual([
+      [childTaskId, true],
+      [parentTaskId, true],
+      [grandparentTaskId, true],
+    ]);
 
     const postCfg = config.loadConfigOrDefault();
-    const statusesByWorkspaceId = new Map(
+    const remainingWorkspaceIds = new Set(
       Array.from(postCfg.projects.values())
         .flatMap((project) => project.workspaces)
-        .map((workspace) => [workspace.id, workspace.taskStatus])
+        .map((workspace) => workspace.id)
     );
-    expect(statusesByWorkspaceId.get(grandparentTaskId)).toBe("interrupted");
-    expect(statusesByWorkspaceId.get(parentTaskId)).toBe("interrupted");
-    expect(statusesByWorkspaceId.get(childTaskAId)).toBe("interrupted");
-    expect(statusesByWorkspaceId.get(childTaskBId)).toBe("interrupted");
+    expect(remainingWorkspaceIds).toEqual(new Set([rootWorkspaceId]));
   });
 
   describe("parent auto-resume flood protection", () => {
