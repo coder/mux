@@ -6,6 +6,7 @@ import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools"
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { isMuxMdUrl, parseMuxMdUrl, uploadToMuxMd, deleteFromMuxMd } from "@/common/lib/muxMd";
 import type { ToolExecutionOptions } from "ai";
+import { WEB_FETCH_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 
 const itIntegration = process.env.TEST_INTEGRATION === "1" ? it : it.skip;
 const toolCallOptions: ToolExecutionOptions = {
@@ -43,6 +44,15 @@ function isCurlCommand(command: string): boolean {
 
 function isRuntimeResolveCommand(command: string): boolean {
   return command.startsWith("if command -v python3 >/dev/null 2>&1; then");
+}
+
+function getCurlMaxTime(command: string): number {
+  const match = /--max-time\s+([0-9.]+)/.exec(command);
+  if (!match) {
+    throw new Error(`Missing --max-time in curl command: ${command}`);
+  }
+
+  return Number.parseFloat(match[1]);
 }
 
 afterEach(() => {
@@ -400,6 +410,67 @@ describe("web_fetch tool", () => {
     if (result.success) {
       expect(result.title).toBe("Redirected Page");
       expect(result.content).toContain("Public content.");
+    }
+  });
+
+  it("shares one overall timeout budget across redirect validation and fetch hops", async () => {
+    using testEnv = createTestWebFetchTool();
+
+    let now = 1_000;
+    spyOn(Date, "now").mockImplementation(() => now);
+
+    const execSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
+      (_runtime, command, options) => {
+        if (isRuntimeResolveCommand(command) && command.includes("public.example")) {
+          expect(options.timeout).toBeCloseTo(6, 5);
+          now = 3_000;
+          return Promise.resolve(createExecResult({ stdout: '["93.184.216.34"]' }));
+        }
+        if (isCurlCommand(command) && command.includes("https://public.example/start")) {
+          expect(getCurlMaxTime(command)).toBeCloseTo(WEB_FETCH_TIMEOUT_SECS - 2, 5);
+          expect(options.timeout).toBeCloseTo(WEB_FETCH_TIMEOUT_SECS - 1, 5);
+          now = 12_000;
+          return Promise.resolve(
+            createExecResult({
+              stdout:
+                "HTTP/1.1 302 Found\r\n" +
+                "Location: https://redirect.example/final\r\n" +
+                "Content-Type: text/plain\r\n\r\n",
+            })
+          );
+        }
+        if (isRuntimeResolveCommand(command) && command.includes("redirect.example")) {
+          expect(options.timeout).toBeCloseTo(5, 5);
+          now = 13_500;
+          return Promise.resolve(createExecResult({ stdout: '["93.184.216.35"]' }));
+        }
+        if (isCurlCommand(command) && command.includes("https://redirect.example/final")) {
+          expect(getCurlMaxTime(command)).toBeCloseTo(2.5, 5);
+          expect(options.timeout).toBeCloseTo(3.5, 5);
+          return Promise.resolve(
+            createExecResult({
+              stdout:
+                "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: text/html; charset=utf-8\r\n\r\n" +
+                "<!DOCTYPE html><html><head><title>Shared Deadline</title></head><body><article><h1>Done</h1><p>Final content.</p></article></body></html>",
+            })
+          );
+        }
+
+        throw new Error(`Unexpected command: ${command}`);
+      }
+    );
+
+    const result = (await testEnv.tool.execute!(
+      { url: "https://public.example/start" },
+      toolCallOptions
+    )) as WebFetchToolResult;
+
+    expect(execSpy).toHaveBeenCalledTimes(4);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.title).toBe("Shared Deadline");
+      expect(result.content).toContain("Final content.");
     }
   });
 

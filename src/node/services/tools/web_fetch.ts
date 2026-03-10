@@ -12,6 +12,7 @@ import {
   WEB_FETCH_MAX_OUTPUT_BYTES,
   WEB_FETCH_MAX_HTML_BYTES,
 } from "@/common/constants/toolLimits";
+import { EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import {
   downloadFromMuxMd,
@@ -24,10 +25,12 @@ import { getErrorMessage } from "@/common/utils/errors";
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 const WEB_FETCH_MAX_REDIRECTS = 10;
 const WEB_FETCH_RESOLVE_TIMEOUT_SECS = 5;
+const WEB_FETCH_RUNTIME_TIMEOUT_GRACE_SECS = 1;
 const WEB_FETCH_ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 const WEB_FETCH_BLOCKED_TARGET_ERROR =
   "Blocked URL: web_fetch cannot access loopback, private, link-local, or internal network targets";
 const WEB_FETCH_RESOLVE_ERROR = "Failed to fetch URL: Could not resolve host";
+const WEB_FETCH_TIMEOUT_ERROR = "Failed to fetch URL: Operation timed out";
 const WEB_FETCH_BLOCKED_HOSTNAMES = new Set([
   "localhost",
   "metadata",
@@ -250,6 +253,20 @@ function assertSupportedWebFetchProtocol(url: URL): void {
   }
 }
 
+function getRemainingWebFetchTimeoutSecs(deadlineMs: number, maxTimeoutSecs?: number): number {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new WebFetchValidationError(WEB_FETCH_TIMEOUT_ERROR);
+  }
+
+  const remainingSecs = remainingMs / 1000;
+  return maxTimeoutSecs != null ? Math.min(remainingSecs, maxTimeoutSecs) : remainingSecs;
+}
+
+function formatCurlTimeoutSecs(timeoutSecs: number): string {
+  return timeoutSecs.toFixed(3);
+}
+
 function buildResolveHostnameCommand(hostname: string): string {
   const resolverScript = [
     "import json",
@@ -353,8 +370,14 @@ function parseResolvedAddresses(output: string): string[] {
 async function resolveHostnameInRuntime(
   config: ToolConfiguration,
   hostname: string,
+  deadlineMs: number,
   abortSignal?: AbortSignal
 ): Promise<string[]> {
+  const resolveTimeoutSecs = getRemainingWebFetchTimeoutSecs(
+    deadlineMs,
+    WEB_FETCH_RESOLVE_TIMEOUT_SECS
+  );
+
   // Resolve hostnames inside the target runtime so DNS checks match the curl path,
   // including redirected hosts that may resolve differently from local Mux.
   const result = await runtimeHelpers.execBuffered(
@@ -363,7 +386,9 @@ async function resolveHostnameInRuntime(
     {
       cwd: config.cwd,
       abortSignal,
-      timeout: WEB_FETCH_RESOLVE_TIMEOUT_SECS,
+      // Keep DNS validation inside the overall fetch deadline instead of granting
+      // every redirect hop its own fresh resolve timeout budget.
+      timeout: resolveTimeoutSecs + WEB_FETCH_RUNTIME_TIMEOUT_GRACE_SECS,
     }
   );
 
@@ -377,6 +402,7 @@ async function resolveHostnameInRuntime(
 async function assertWebFetchTargetAllowed(
   config: ToolConfiguration,
   rawUrl: string,
+  deadlineMs: number,
   abortSignal?: AbortSignal
 ): Promise<URL> {
   let parsedUrl: URL;
@@ -400,7 +426,12 @@ async function assertWebFetchTargetAllowed(
     return parsedUrl;
   }
 
-  const resolvedAddresses = await resolveHostnameInRuntime(config, hostname, abortSignal);
+  const resolvedAddresses = await resolveHostnameInRuntime(
+    config,
+    hostname,
+    deadlineMs,
+    abortSignal
+  );
   for (const resolvedAddress of resolvedAddresses) {
     if (isBlockedIpAddress(resolvedAddress)) {
       throw new WebFetchValidationError(WEB_FETCH_BLOCKED_TARGET_ERROR);
@@ -463,7 +494,7 @@ function isRedirectStatusCode(statusCode: number): boolean {
   );
 }
 
-function buildCurlCommand(url: string): string {
+function buildCurlCommand(url: string, timeoutSecs: number): string {
   return [
     "curl",
     "-sS", // Silent but show errors
@@ -474,7 +505,7 @@ function buildCurlCommand(url: string): string {
     "--proto-redir",
     shellQuote("=http,https"),
     "--max-time",
-    String(WEB_FETCH_TIMEOUT_SECS),
+    formatCurlTimeoutSecs(timeoutSecs),
     "--max-filesize",
     String(WEB_FETCH_MAX_HTML_BYTES),
     "-A",
@@ -493,16 +524,20 @@ async function executeWebFetchRequest(
   rawUrl: string,
   abortSignal?: AbortSignal
 ): Promise<{ result: runtimeHelpers.ExecResult; finalUrl: string }> {
-  let currentUrl = await assertWebFetchTargetAllowed(config, rawUrl, abortSignal);
+  const deadlineMs = Date.now() + WEB_FETCH_TIMEOUT_SECS * 1000;
+  let currentUrl = await assertWebFetchTargetAllowed(config, rawUrl, deadlineMs, abortSignal);
 
   for (let redirectCount = 0; redirectCount <= WEB_FETCH_MAX_REDIRECTS; redirectCount++) {
+    const curlTimeoutSecs = getRemainingWebFetchTimeoutSecs(deadlineMs);
     const result = await runtimeHelpers.execBuffered(
       config.runtime,
-      buildCurlCommand(currentUrl.toString()),
+      buildCurlCommand(currentUrl.toString(), curlTimeoutSecs),
       {
         cwd: config.cwd,
         abortSignal,
-        timeout: WEB_FETCH_TIMEOUT_SECS + 5, // Slightly longer than curl's timeout (seconds)
+        // Keep redirect hops inside the original fetch deadline instead of
+        // letting each curl invocation block for a fresh full timeout.
+        timeout: curlTimeoutSecs + WEB_FETCH_RUNTIME_TIMEOUT_GRACE_SECS,
       }
     );
 
@@ -528,6 +563,7 @@ async function executeWebFetchRequest(
     currentUrl = await assertWebFetchTargetAllowed(
       config,
       new URL(redirectLocation, currentUrl).toString(),
+      deadlineMs,
       abortSignal
     );
   }
@@ -632,6 +668,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
         if (result.exitCode !== 0) {
           // curl exit codes: https://curl.se/docs/manpage.html
           const exitCodeMessages: Record<number, string> = {
+            [EXIT_CODE_TIMEOUT]: "Operation timed out",
             6: "Could not resolve host",
             7: "Failed to connect",
             28: "Operation timed out",
