@@ -21,9 +21,9 @@ import {
   sendMessageWithModel,
   createStreamCollector,
   readChatHistory,
-  modelString,
   resolveOrpcClient,
   configureTestRetries,
+  HAIKU_MODEL,
 } from "../helpers";
 import type { StreamCollector } from "../streamCollector";
 
@@ -35,9 +35,9 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
 
-// Use Haiku 4.5 for speed
+// Use Haiku 4.5 for speed.
 const PROVIDER = "anthropic";
-const MODEL = "claude-haiku-4-5";
+const MODEL = HAIKU_MODEL;
 
 // Threshold for stable prefix - interrupt after this many complete markers
 const STABLE_PREFIX_THRESHOLD = 10;
@@ -226,13 +226,9 @@ IMPORTANT: Do not add any other text. Start immediately with ${nonce}-1: one. If
         const collector = createStreamCollector(env.orpc, workspaceId);
         collector.start();
 
-        const sendResult = await sendMessageWithModel(
-          env,
-          workspaceId,
-          prompt,
-          modelString(PROVIDER, MODEL),
-          { toolPolicy: [{ regex_match: ".*", action: "disable" }] }
-        );
+        const sendResult = await sendMessageWithModel(env, workspaceId, prompt, MODEL, {
+          toolPolicy: [{ regex_match: ".*", action: "disable" }],
+        });
         expect(sendResult.success).toBe(true);
 
         // Collect stream deltas until we have at least STABLE_PREFIX_THRESHOLD complete markers
@@ -262,7 +258,7 @@ IMPORTANT: Do not add any other text. Start immediately with ${nonce}-1: one. If
 
         // Resume and wait for completion
         // Disable all tools (same as original message) so model outputs text, not tool calls
-        await resumeAndWaitForSuccess(workspaceId, client, `${PROVIDER}:${MODEL}`, 15000, {
+        await resumeAndWaitForSuccess(workspaceId, client, MODEL, 15000, {
           toolPolicy: [{ regex_match: ".*", action: "disable" }],
         });
 

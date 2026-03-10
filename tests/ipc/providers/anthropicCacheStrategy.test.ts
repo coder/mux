@@ -1,5 +1,5 @@
 import { setupWorkspace, shouldRunIntegrationTests } from "../setup";
-import { sendMessageWithModel, createStreamCollector } from "../helpers";
+import { sendMessageWithModel, createStreamCollector, HAIKU_MODEL } from "../helpers";
 
 // Skip tests unless TEST_INTEGRATION=1 AND required API keys are present
 const hasAnthropicKey = Boolean(process.env.ANTHROPIC_API_KEY);
@@ -19,7 +19,7 @@ describeIntegration("Anthropic cache strategy integration", () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
 
       try {
-        const model = "anthropic:claude-haiku-4-5";
+        const model = HAIKU_MODEL;
 
         // Send an initial message to establish conversation history
         const firstMessage = "Hello, can you help me with a coding task?";

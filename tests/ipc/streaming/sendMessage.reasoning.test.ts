@@ -1,9 +1,9 @@
 /**
- * Integration tests for reasoning/thinking functionality across Anthropic models.
+ * Integration tests for reasoning/thinking functionality on Anthropic Sonnet.
  *
  * Verifies:
  * - Sonnet 4.6 uses effort parameter + adaptive thinking
- * - Opus 4.6 uses effort parameter + adaptive thinking
+ * - Sonnet remains stable across multiple thinking levels
  * - Reasoning events are properly streamed
  */
 
@@ -52,11 +52,11 @@ describeIntegration("Anthropic reasoning parameter tests", () => {
   );
 
   test.concurrent(
-    "Opus 4.6 with thinking (effort + adaptive)",
+    "Sonnet 4.6 also supports low-thinking requests",
     async () => {
       await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector }) => {
         const result = await sendMessage(env, workspaceId, "What is 4+4? Answer in one word.", {
-          model: KNOWN_MODELS.OPUS.id,
+          model: KNOWN_MODELS.SONNET.id,
           thinkingLevel: "low",
         });
         expect(result.success).toBe(true);

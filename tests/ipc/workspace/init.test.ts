@@ -13,6 +13,7 @@ import {
   waitForInitEnd,
   collectInitEvents,
   resolveOrpcClient,
+  HAIKU_MODEL,
 } from "../helpers";
 import { createStreamCollector } from "../streamCollector";
 import type { WorkspaceInitEvent } from "@/common/orpc/types";
@@ -553,7 +554,7 @@ exit 1
               workspaceId: workspaceId!,
               message: "Read the README.md file and tell me what it says.",
               options: {
-                model: "anthropic:claude-haiku-4-5",
+                model: HAIKU_MODEL,
                 agentId: "exec",
               },
             });
@@ -584,7 +585,7 @@ exit 1
               workspaceId: workspaceId!,
               message: "What is 2 + 2?",
               options: {
-                model: "anthropic:claude-haiku-4-5",
+                model: HAIKU_MODEL,
                 agentId: "exec",
               },
             });

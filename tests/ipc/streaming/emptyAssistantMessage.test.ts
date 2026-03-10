@@ -42,7 +42,7 @@ describeIntegration("empty assistant message self-healing", () => {
             parts: [], // Empty - this is the corruption
             metadata: {
               timestamp: Date.now(),
-              model: "anthropic:claude-haiku-4-5",
+              model: HAIKU_MODEL,
               mode: "exec" as const,
               historySequence: 3,
             },
@@ -110,7 +110,7 @@ describeIntegration("empty assistant message self-healing", () => {
             ],
             metadata: {
               timestamp: Date.now(),
-              model: "anthropic:claude-haiku-4-5",
+              model: HAIKU_MODEL,
               mode: "exec" as const,
               historySequence: 1,
             },

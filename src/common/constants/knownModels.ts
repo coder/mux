@@ -149,7 +149,7 @@ export function getKnownModel(key: KnownModelKey): KnownModel {
  *
  * Keep this local (non-exported) to avoid confusion with storage keys.
  */
-const DEFAULT_KNOWN_MODEL_KEY: KnownModelKey = "SONNET";
+const DEFAULT_KNOWN_MODEL_KEY: KnownModelKey = "OPUS";
 
 export const DEFAULT_MODEL = KNOWN_MODELS[DEFAULT_KNOWN_MODEL_KEY].id;
 
