@@ -608,6 +608,107 @@ describe("MCPServerManager", () => {
     expect(cached.timedOutServerNames).toEqual([]);
   });
 
+  test("getToolsForWorkspace does not overlap timed-out retries for concurrent cached requests", async () => {
+    const workspaceId = "ws-timeout-retry-concurrent";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        slow: { transport: "stdio", command: "cmd-slow", disabled: false },
+      })
+    );
+
+    const retryStarted = Promise.withResolvers<void>();
+    const retryFinished = Promise.withResolvers<{
+      instances: Map<string, unknown>;
+      failedServerNames: string[];
+      timedOutServerNames: string[];
+    }>();
+    let hasSignaledRetryStart = false;
+
+    const slowTool = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+    const startServersMock = mock(() => {
+      if (!hasSignaledRetryStart) {
+        hasSignaledRetryStart = true;
+        retryStarted.resolve();
+      }
+
+      return retryFinished.promise;
+    });
+    access.startServers = startServersMock;
+
+    access.workspaceServers.set(workspaceId, {
+      configSignature: JSON.stringify({
+        slow: { transport: "stdio", command: "cmd-slow" },
+      }),
+      instances: new Map(),
+      stats: {
+        enabledServerCount: 1,
+        startedServerCount: 0,
+        failedServerCount: 1,
+        autoFallbackCount: 0,
+        failedServerNames: ["slow"],
+        hasStdio: false,
+        hasHttp: false,
+        hasSse: false,
+        transportMode: "none",
+      },
+      timedOutServerNames: ["slow"],
+      lastActivity: Date.now(),
+    });
+
+    const firstPromise = manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+    await retryStarted.promise;
+
+    const secondPromise = manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    expect(startServersMock).toHaveBeenCalledTimes(1);
+
+    retryFinished.resolve({
+      instances: new Map([
+        [
+          "slow",
+          {
+            name: "slow",
+            resolvedTransport: "stdio",
+            autoFallbackUsed: false,
+            tools: { tool: slowTool },
+            isClosed: false,
+            close: mock(() => Promise.resolve(undefined)),
+          },
+        ],
+      ]),
+      failedServerNames: [],
+      timedOutServerNames: [],
+    });
+
+    const [first] = await Promise.all([firstPromise, secondPromise]);
+
+    expect(startServersMock).toHaveBeenCalledTimes(1);
+    expect(first.stats.failedServerCount).toBe(0);
+    expect(Object.keys(first.tools)).toEqual(["slow_tool"]);
+
+    const cached = access.workspaceServers.get(workspaceId) as {
+      instances: Map<string, unknown>;
+      timedOutServerNames?: string[];
+      retryingTimedOutServerNames?: Set<string>;
+    };
+    expect(cached.instances.has("slow")).toBe(true);
+    expect(cached.timedOutServerNames).toEqual([]);
+    expect(cached.retryingTimedOutServerNames?.size).toBe(0);
+  });
+
   test("getToolsForWorkspace defers restarts while leased and applies them on next request", async () => {
     const workspaceId = "ws-defer";
     const projectPath = "/tmp/project";

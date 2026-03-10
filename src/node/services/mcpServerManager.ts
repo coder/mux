@@ -568,6 +568,8 @@ interface WorkspaceServers {
   instances: Map<string, MCPServerInstance>;
   stats: MCPWorkspaceStats;
   timedOutServerNames: string[];
+  /** Prevent concurrent cached retries from stacking startup attempts for the same server. */
+  retryingTimedOutServerNames: Set<string>;
   lastActivity: number;
 }
 
@@ -721,7 +723,10 @@ export class MCPServerManager {
     enabledServers: MCPServerMap
   ): string[] {
     return entry.timedOutServerNames.filter(
-      (serverName) => enabledServers[serverName] !== undefined && !entry.instances.has(serverName)
+      (serverName) =>
+        enabledServers[serverName] !== undefined &&
+        !entry.instances.has(serverName) &&
+        !entry.retryingTimedOutServerNames.has(serverName)
     );
   }
 
@@ -947,6 +952,9 @@ export class MCPServerManager {
     if (existing && existing.timedOutServerNames === undefined) {
       existing.timedOutServerNames = [];
     }
+    if (existing && existing.retryingTimedOutServerNames === undefined) {
+      existing.retryingTimedOutServerNames = new Set();
+    }
     const leaseCount = this.getLeaseCount(workspaceId);
 
     const hasClosedInstance =
@@ -974,45 +982,57 @@ export class MCPServerManager {
         }
 
         const retryingServerNames = new Set(timedOutServerNamesToRetry);
-        const {
-          instances: retriedInstances,
-          failedServerNames: retryFailedNames,
-          timedOutServerNames: retryTimedOutNames = [],
-        } = await this.startServers(
-          serversToRetry,
-          runtime,
-          projectPath,
-          workspacePath,
-          projectSecrets,
-          () => this.markActivity(workspaceId)
-        );
-
-        for (const [serverName, instance] of retriedInstances) {
-          existing.instances.set(serverName, instance);
+        // Mark retries before awaiting startup so concurrent same-signature calls do not
+        // stack duplicate retry attempts while the previous timeout is still unwinding.
+        for (const serverName of retryingServerNames) {
+          existing.retryingTimedOutServerNames.add(serverName);
         }
 
-        existing.timedOutServerNames = [
-          ...existing.timedOutServerNames.filter(
-            (serverName) =>
-              enabledServerNames.has(serverName) &&
-              !retryingServerNames.has(serverName) &&
-              !existing.instances.has(serverName)
-          ),
-          ...retryTimedOutNames,
-        ];
+        try {
+          const {
+            instances: retriedInstances,
+            failedServerNames: retryFailedNames,
+            timedOutServerNames: retryTimedOutNames = [],
+          } = await this.startServers(
+            serversToRetry,
+            runtime,
+            projectPath,
+            workspacePath,
+            projectSecrets,
+            () => this.markActivity(workspaceId)
+          );
 
-        const failedServerNames = [
-          ...existing.stats.failedServerNames.filter(
-            (serverName) =>
-              enabledServerNames.has(serverName) && !retryingServerNames.has(serverName)
-          ),
-          ...retryFailedNames,
-        ];
-        existing.stats = this.createWorkspaceStats(
-          enabledEntries.length,
-          existing.instances,
-          failedServerNames
-        );
+          for (const [serverName, instance] of retriedInstances) {
+            existing.instances.set(serverName, instance);
+          }
+
+          existing.timedOutServerNames = [
+            ...existing.timedOutServerNames.filter(
+              (serverName) =>
+                enabledServerNames.has(serverName) &&
+                !retryingServerNames.has(serverName) &&
+                !existing.instances.has(serverName)
+            ),
+            ...retryTimedOutNames,
+          ];
+
+          const failedServerNames = [
+            ...existing.stats.failedServerNames.filter(
+              (serverName) =>
+                enabledServerNames.has(serverName) && !retryingServerNames.has(serverName)
+            ),
+            ...retryFailedNames,
+          ];
+          existing.stats = this.createWorkspaceStats(
+            enabledEntries.length,
+            existing.instances,
+            failedServerNames
+          );
+        } finally {
+          for (const serverName of retryingServerNames) {
+            existing.retryingTimedOutServerNames.delete(serverName);
+          }
+        }
       }
 
       log.debug("[MCP] Using cached servers", {
@@ -1168,6 +1188,7 @@ export class MCPServerManager {
       instances,
       stats,
       timedOutServerNames: startTimedOutNames,
+      retryingTimedOutServerNames: new Set(),
       lastActivity: Date.now(),
     });
 
