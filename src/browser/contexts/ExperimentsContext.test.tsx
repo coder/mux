@@ -17,6 +17,10 @@ let originalLocalStorage: typeof globalThis.localStorage;
 let originalLocation: typeof globalThis.location;
 let originalStorageEvent: typeof globalThis.StorageEvent;
 let originalCustomEvent: typeof globalThis.CustomEvent;
+let originalSetTimeout: typeof globalThis.setTimeout;
+let originalClearTimeout: typeof globalThis.clearTimeout;
+let originalSetInterval: typeof globalThis.setInterval;
+let originalClearInterval: typeof globalThis.clearInterval;
 
 describe("ExperimentsProvider", () => {
   beforeEach(() => {
@@ -26,18 +30,27 @@ describe("ExperimentsProvider", () => {
     originalLocation = globalThis.location;
     originalStorageEvent = globalThis.StorageEvent;
     originalCustomEvent = globalThis.CustomEvent;
+    originalSetTimeout = globalThis.setTimeout;
+    originalClearTimeout = globalThis.clearTimeout;
+    originalSetInterval = globalThis.setInterval;
+    originalClearInterval = globalThis.clearInterval;
 
     const dom = new GlobalWindow({ url: "https://example.com/" });
     globalThis.window = dom as unknown as Window & typeof globalThis;
     globalThis.document = dom.document as unknown as Document;
 
-    // Broader browser runs can leave bare globals and event constructors pointed at a previous
-    // happy-dom window. Rebind the globals ExperimentsProvider reaches through indirectly so the
-    // polling test always exercises the fresh DOM installed for this case.
+    // Broader browser runs can leave bare globals, event constructors, and timer functions pointed
+    // at stale or fake implementations from earlier suites. Rebind the globals
+    // ExperimentsProvider reaches through indirectly so the polling test always exercises the fresh
+    // happy-dom window installed for this case.
     globalThis.localStorage = dom.localStorage;
     globalThis.location = dom.location as unknown as Location;
     globalThis.StorageEvent = dom.StorageEvent as unknown as typeof StorageEvent;
     globalThis.CustomEvent = dom.CustomEvent as unknown as typeof CustomEvent;
+    globalThis.setTimeout = dom.setTimeout.bind(dom);
+    globalThis.clearTimeout = dom.clearTimeout.bind(dom);
+    globalThis.setInterval = dom.setInterval.bind(dom);
+    globalThis.clearInterval = dom.clearInterval.bind(dom);
     globalThis.localStorage.clear();
   });
 
@@ -50,6 +63,10 @@ describe("ExperimentsProvider", () => {
     globalThis.location = originalLocation;
     globalThis.StorageEvent = originalStorageEvent;
     globalThis.CustomEvent = originalCustomEvent;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
     currentClientMock = {};
   });
 
