@@ -675,12 +675,13 @@ export class Config {
   }
 
   /**
-   * Find a workspace path and project path by workspace ID
-   * @returns Object with workspace/project paths and available workspace metadata, or null
+   * Find a workspace by ID.
+   * @returns Stored config project key plus a separate attribution project path, or null
    */
   findWorkspace(workspaceId: string): {
     workspacePath: string;
     projectPath: string;
+    attributionProjectPath?: string;
     workspaceName?: string;
     parentWorkspaceId?: string;
   } | null {
@@ -688,13 +689,16 @@ export class Config {
 
     for (const [projectPath, project] of config.projects) {
       for (const workspace of project.workspaces) {
-        const resolvedProjectPath = workspace.projects?.[0]?.projectPath ?? projectPath;
+        const attributionProjectPath = workspace.projects?.[0]?.projectPath ?? projectPath;
 
         // NEW FORMAT: Check config first (primary source of truth after migration)
         if (workspace.id === workspaceId) {
           return {
             workspacePath: workspace.path,
-            projectPath: resolvedProjectPath,
+            // Keep the stored config bucket key so mutation callers can round-trip into
+            // config.projects.get(projectPath), even for multi-project workspaces under _multi.
+            projectPath,
+            attributionProjectPath,
             workspaceName: workspace.name,
             parentWorkspaceId: workspace.parentWorkspaceId,
           };
@@ -715,7 +719,8 @@ export class Config {
               if (metadata.id === workspaceId) {
                 return {
                   workspacePath: workspace.path,
-                  projectPath: resolvedProjectPath,
+                  projectPath,
+                  attributionProjectPath,
                   workspaceName: undefined,
                   parentWorkspaceId: undefined,
                 };
@@ -730,7 +735,8 @@ export class Config {
           if (legacyId === workspaceId) {
             return {
               workspacePath: workspace.path,
-              projectPath: resolvedProjectPath,
+              projectPath,
+              attributionProjectPath,
               workspaceName: undefined,
               parentWorkspaceId: undefined,
             };

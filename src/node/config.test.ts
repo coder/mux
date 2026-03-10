@@ -265,7 +265,7 @@ describe("Config", () => {
   });
 
   describe("findWorkspace", () => {
-    it("returns the primary project path for multi-project workspaces", async () => {
+    it("preserves the config key while exposing a real attribution path for multi-project workspaces", async () => {
       const primaryProjectPath = "/fake/project-a";
       const secondaryProjectPath = "/fake/project-b";
       const workspacePath = path.join(config.srcDir, "project-a+project-b", "feature-branch");
@@ -289,7 +289,8 @@ describe("Config", () => {
 
       expect(config.findWorkspace("workspace-1")).toEqual({
         workspacePath,
-        projectPath: primaryProjectPath,
+        projectPath: MULTI_PROJECT_CONFIG_KEY,
+        attributionProjectPath: primaryProjectPath,
         workspaceName: "feature-branch",
         parentWorkspaceId: undefined,
       });
