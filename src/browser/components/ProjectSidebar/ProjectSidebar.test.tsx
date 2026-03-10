@@ -94,6 +94,7 @@ function installProjectSidebarTestDoubles() {
   spyOn(DesktopTitlebarModule, "isDesktopMode").mockImplementation(() => false);
   spyOn(ThemeContextModule, "useTheme").mockImplementation(() => ({
     theme: "light",
+    themePreference: "light",
     setTheme: () => undefined,
     toggleTheme: () => undefined,
     isForced: false,
