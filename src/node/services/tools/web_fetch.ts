@@ -2,9 +2,9 @@ import { tool } from "ai";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
-import * as dns from "node:dns/promises";
 import * as net from "node:net";
 import type { WebFetchToolResult } from "@/common/types/tools";
+import { shellQuote } from "@/common/utils/shell";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import {
@@ -23,7 +23,11 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 const WEB_FETCH_MAX_REDIRECTS = 10;
+const WEB_FETCH_RESOLVE_TIMEOUT_SECS = 5;
 const WEB_FETCH_ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
+const WEB_FETCH_BLOCKED_TARGET_ERROR =
+  "Blocked URL: web_fetch cannot access loopback, private, link-local, or internal network targets";
+const WEB_FETCH_RESOLVE_ERROR = "Failed to fetch URL: Could not resolve host";
 const WEB_FETCH_BLOCKED_HOSTNAMES = new Set([
   "localhost",
   "metadata",
@@ -32,11 +36,6 @@ const WEB_FETCH_BLOCKED_HOSTNAMES = new Set([
   "gateway.docker.internal",
   "kubernetes.default.svc",
 ]);
-
-interface WebFetchResolvedAddress {
-  address: string;
-  family: number;
-}
 
 class WebFetchValidationError extends Error {}
 
@@ -58,28 +57,6 @@ function normalizeHostname(hostname: string): string {
   const withoutBrackets =
     trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
   return withoutBrackets.replace(/\.$/, "").toLowerCase();
-}
-
-function isWebFetchResolvedAddress(value: unknown): value is WebFetchResolvedAddress {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "address" in value &&
-    typeof value.address === "string" &&
-    "family" in value &&
-    typeof value.family === "number"
-  );
-}
-
-function toWebFetchResolvedAddress(value: unknown): WebFetchResolvedAddress | null {
-  if (!isWebFetchResolvedAddress(value)) {
-    return null;
-  }
-
-  return {
-    address: value.address,
-    family: value.family,
-  };
 }
 
 function parseIpv4Octets(address: string): number[] | null {
@@ -265,7 +242,96 @@ function assertSupportedWebFetchProtocol(url: URL): void {
   }
 }
 
-async function assertWebFetchTargetAllowed(rawUrl: string): Promise<URL> {
+function buildResolveHostnameCommand(hostname: string): string {
+  const resolverScript = [
+    "import json",
+    "import socket",
+    "import sys",
+    "addresses = []",
+    "seen = set()",
+    "for entry in socket.getaddrinfo(sys.argv[1], None, proto=socket.IPPROTO_TCP):",
+    "    address = entry[4][0]",
+    "    if address not in seen:",
+    "        seen.add(address)",
+    "        addresses.append(address)",
+    "print(json.dumps(addresses))",
+  ].join("\n");
+  const runResolver = (pythonExecutable: string) =>
+    `${pythonExecutable} -c ${shellQuote(resolverScript)} ${shellQuote(hostname)}`;
+
+  return [
+    "if command -v python3 >/dev/null 2>&1; then",
+    `  ${runResolver("python3")}`,
+    "elif command -v python >/dev/null 2>&1; then",
+    `  ${runResolver("python")}`,
+    "else",
+    "  exit 1",
+    "fi",
+  ].join("\n");
+}
+
+function parseResolvedAddresses(output: string): string[] {
+  const trimmedOutput = output.trim();
+  if (!trimmedOutput) {
+    throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
+  }
+
+  let parsedOutput: unknown;
+  try {
+    parsedOutput = JSON.parse(trimmedOutput);
+  } catch {
+    throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
+  }
+
+  if (!Array.isArray(parsedOutput) || parsedOutput.length === 0) {
+    throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
+  }
+
+  const resolvedAddresses = parsedOutput.map((value) => {
+    if (typeof value !== "string") {
+      throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
+    }
+
+    const normalizedAddress = normalizeHostname(value);
+    if (net.isIP(normalizedAddress) === 0) {
+      throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
+    }
+
+    return normalizedAddress;
+  });
+
+  return [...new Set(resolvedAddresses)];
+}
+
+async function resolveHostnameInRuntime(
+  config: ToolConfiguration,
+  hostname: string,
+  abortSignal?: AbortSignal
+): Promise<string[]> {
+  // Resolve hostnames inside the target runtime so DNS checks match the curl path,
+  // including redirected hosts that may resolve differently from local Mux.
+  const result = await runtimeHelpers.execBuffered(
+    config.runtime,
+    buildResolveHostnameCommand(hostname),
+    {
+      cwd: config.cwd,
+      abortSignal,
+      timeout: WEB_FETCH_RESOLVE_TIMEOUT_SECS,
+    }
+  );
+
+  if (result.exitCode !== 0) {
+    throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
+  }
+
+  return parseResolvedAddresses(result.stdout);
+}
+
+async function assertWebFetchTargetAllowed(
+  config: ToolConfiguration,
+  rawUrl: string,
+  abortSignal?: AbortSignal
+): Promise<URL> {
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(rawUrl);
@@ -277,50 +343,20 @@ async function assertWebFetchTargetAllowed(rawUrl: string): Promise<URL> {
 
   const hostname = normalizeHostname(parsedUrl.hostname);
   if (isBlockedHostname(hostname)) {
-    throw new WebFetchValidationError(
-      "Blocked URL: web_fetch cannot access loopback, private, link-local, or internal network targets"
-    );
+    throw new WebFetchValidationError(WEB_FETCH_BLOCKED_TARGET_ERROR);
   }
 
   if (net.isIP(hostname) !== 0) {
     if (isBlockedIpAddress(hostname)) {
-      throw new WebFetchValidationError(
-        "Blocked URL: web_fetch cannot access loopback, private, link-local, or internal network targets"
-      );
+      throw new WebFetchValidationError(WEB_FETCH_BLOCKED_TARGET_ERROR);
     }
     return parsedUrl;
   }
 
-  const resolvedAddresses: string[] = [];
-  try {
-    const lookupResult: unknown = await dns.lookup(hostname, { all: true, verbatim: true });
-    if (!Array.isArray(lookupResult)) {
-      throw new WebFetchValidationError("Failed to fetch URL: Could not resolve host");
-    }
-
-    for (const candidate of lookupResult) {
-      const resolvedAddress = toWebFetchResolvedAddress(candidate);
-      if (!resolvedAddress) {
-        throw new WebFetchValidationError("Failed to fetch URL: Could not resolve host");
-      }
-      resolvedAddresses.push(resolvedAddress.address);
-    }
-  } catch (error) {
-    if (error instanceof WebFetchValidationError) {
-      throw error;
-    }
-    throw new WebFetchValidationError("Failed to fetch URL: Could not resolve host");
-  }
-
-  if (resolvedAddresses.length === 0) {
-    throw new WebFetchValidationError("Failed to fetch URL: Could not resolve host");
-  }
-
+  const resolvedAddresses = await resolveHostnameInRuntime(config, hostname, abortSignal);
   for (const resolvedAddress of resolvedAddresses) {
     if (isBlockedIpAddress(resolvedAddress)) {
-      throw new WebFetchValidationError(
-        "Blocked URL: web_fetch cannot access loopback, private, link-local, or internal network targets"
-      );
+      throw new WebFetchValidationError(WEB_FETCH_BLOCKED_TARGET_ERROR);
     }
   }
 
@@ -381,9 +417,6 @@ function isRedirectStatusCode(statusCode: number): boolean {
 }
 
 function buildCurlCommand(url: string): string {
-  // Use shell quoting helper to escape values safely.
-  const shellQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
-
   return [
     "curl",
     "-sS", // Silent but show errors
@@ -413,7 +446,7 @@ async function executeWebFetchRequest(
   rawUrl: string,
   abortSignal?: AbortSignal
 ): Promise<{ result: runtimeHelpers.ExecResult; finalUrl: string }> {
-  let currentUrl = await assertWebFetchTargetAllowed(rawUrl);
+  let currentUrl = await assertWebFetchTargetAllowed(config, rawUrl, abortSignal);
 
   for (let redirectCount = 0; redirectCount <= WEB_FETCH_MAX_REDIRECTS; redirectCount++) {
     const result = await runtimeHelpers.execBuffered(
@@ -446,7 +479,9 @@ async function executeWebFetchRequest(
     }
 
     currentUrl = await assertWebFetchTargetAllowed(
-      new URL(redirectLocation, currentUrl).toString()
+      config,
+      new URL(redirectLocation, currentUrl).toString(),
+      abortSignal
     );
   }
 
