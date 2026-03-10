@@ -243,6 +243,7 @@ function isWithinAllowedRoot(
  * @param cwd - The working directory that file operations are restricted to
  * @param runtime - The runtime whose path semantics should be used for validation
  * @param extraAllowedDirs - Additional absolute directories that are allowlisted for access.
+ * Note: this is a lexical containment check on normalized paths; it does not resolve symlink targets.
  * @returns Error object if invalid, null if valid
  */
 export function validatePathInCwd(

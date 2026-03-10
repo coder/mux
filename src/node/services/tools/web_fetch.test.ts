@@ -160,6 +160,9 @@ describe("web_fetch tool", () => {
     "http://192.168.1.10/page",
     "http://169.254.169.254/latest/meta-data",
     "http://metadata.google.internal/computeMetadata/v1/",
+    "http://[::ffff:127.0.0.1]/page",
+    "http://[::ffff:192.168.1.1]/page",
+    "http://[::ffff:169.254.169.254]/latest/meta-data",
   ])("rejects blocked internal targets: %s", async (url: string) => {
     using testEnv = createTestWebFetchTool();
 
@@ -211,6 +214,47 @@ describe("web_fetch tool", () => {
     expect(lookupSpy).toHaveBeenCalledTimes(1);
     expect(execSpy).not.toHaveBeenCalled();
   });
+
+  it.each(["::ffff:127.0.0.1", "::ffff:192.168.1.1", "::ffff:169.254.169.254"])(
+    "rejects hostnames that resolve to blocked IPv6-mapped IPv4 addresses: %s",
+    async (resolvedAddress: string) => {
+      using testEnv = createTestWebFetchTool();
+
+      function lookupMock(hostname: string, family: number): Promise<LookupAddress>;
+      function lookupMock(hostname: string, options: LookupOneOptions): Promise<LookupAddress>;
+      function lookupMock(hostname: string, options: LookupAllOptions): Promise<LookupAddress[]>;
+      function lookupMock(
+        hostname: string,
+        options: LookupOptions
+      ): Promise<LookupAddress | LookupAddress[]>;
+      function lookupMock(hostname: string): Promise<LookupAddress>;
+      function lookupMock(
+        _hostname: string,
+        options?: number | LookupOptions
+      ): Promise<LookupAddress | LookupAddress[]> {
+        if (typeof options === "object" && options?.all) {
+          return Promise.resolve([{ address: resolvedAddress, family: 6 }]);
+        }
+        return Promise.resolve({ address: resolvedAddress, family: 6 });
+      }
+
+      const lookupSpy = spyOn(dns, "lookup").mockImplementation(lookupMock);
+      const execSpy = spyOn(runtimeHelpers, "execBuffered");
+
+      const result = (await testEnv.tool.execute!(
+        { url: "https://public.example/article" },
+        toolCallOptions
+      )) as WebFetchToolResult;
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Blocked URL");
+        expect(result.error).toContain("internal network targets");
+      }
+      expect(lookupSpy).toHaveBeenCalledTimes(1);
+      expect(execSpy).not.toHaveBeenCalled();
+    }
+  );
 
   it("rejects redirects into blocked targets before following them", async () => {
     using testEnv = createTestWebFetchTool();
