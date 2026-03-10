@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, renderHook } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { PolicyProvider } from "@/browser/contexts/PolicyContext";
 import { GlobalWindow } from "happy-dom";
-import {
-  filterHiddenModels,
-  getSuggestedModels,
-  useModelsFromSettings,
-} from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { HIDDEN_MODELS_KEY } from "@/common/constants/storage";
+
+let filterHiddenModels!: typeof import("./useModelsFromSettings").filterHiddenModels;
+let getSuggestedModels!: typeof import("./useModelsFromSettings").getSuggestedModels;
+let useModelsFromSettings!: typeof import("./useModelsFromSettings").useModelsFromSettings;
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -21,20 +23,53 @@ const useProvidersConfigMock = mock(() => ({
   refresh: () => Promise.resolve(),
 }));
 
-void mock.module("@/browser/hooks/useProvidersConfig", () => ({
-  useProvidersConfig: useProvidersConfigMock,
-}));
+// Keep API and policy wiring real so this suite only localizes the provider-config hook mock
+// that useModelsFromSettings depends on directly. That avoids leaking top-level context mocks
+// into later suites that import the real API/Policy modules.
+const fakeApiClient: Partial<APIClient> = {
+  config: {
+    updateModelPreferences: () => Promise.resolve({ success: true }),
+  },
+  policy: {
+    get: () =>
+      Promise.resolve({
+        source: "none" as const,
+        status: { state: "disabled" as const },
+        policy: null,
+      }),
+    onChanged: () =>
+      Promise.resolve(
+        (async function* () {
+          return;
+        })()
+      ),
+  },
+};
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({ api: null }),
-}));
+function renderUseModelsFromSettingsHook() {
+  return renderHook(() => useModelsFromSettings(), {
+    wrapper: (props: { children: ReactNode }) =>
+      createElement(
+        APIProvider,
+        { client: fakeApiClient as APIClient },
+        createElement(PolicyProvider, null, props.children)
+      ),
+  });
+}
 
-void mock.module("@/browser/contexts/PolicyContext", () => ({
-  usePolicy: () => ({
-    status: { state: "disabled" as const },
-    policy: null,
-  }),
-}));
+async function importUseModelsFromSettingsWithLocalizedMocks() {
+  void mock.module("@/browser/hooks/useProvidersConfig", () => ({
+    useProvidersConfig: useProvidersConfigMock,
+  }));
+
+  ({ filterHiddenModels, getSuggestedModels, useModelsFromSettings } =
+    await import("./useModelsFromSettings"));
+  mock.restore();
+}
+
+beforeEach(async () => {
+  await importUseModelsFromSettingsWithLocalizedMocks();
+});
 
 describe("getSuggestedModels", () => {
   test("returns custom models first, then built-ins (deduped)", () => {
@@ -127,7 +162,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
       openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: true },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
     expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
@@ -141,7 +176,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true, codexOauthSet: false },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
     expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
@@ -154,7 +189,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true, codexOauthSet: true },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
     expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
@@ -167,7 +202,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
       openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: false },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
     expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
@@ -180,7 +215,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
       openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: true },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.openaiApiKeySet).toBe(false);
     expect(result.current.codexOauthSet).toBe(true);
@@ -189,7 +224,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
   test("returns false OpenAI auth state flags when openai provider is missing", () => {
     providersConfig = {};
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.openaiApiKeySet).toBe(false);
     expect(result.current.codexOauthSet).toBe(false);
@@ -198,7 +233,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
   test("returns null OpenAI auth state flags when provider config is unknown", () => {
     providersConfig = null;
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.openaiApiKeySet).toBeNull();
     expect(result.current.codexOauthSet).toBeNull();
@@ -226,7 +261,7 @@ describe("useModelsFromSettings provider availability gating", () => {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).not.toContain(KNOWN_MODELS.OPUS.id);
     expect(result.current.models).not.toContain(KNOWN_MODELS.SONNET.id);
@@ -251,7 +286,7 @@ describe("useModelsFromSettings provider availability gating", () => {
       },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     // OPUS is opted-in to gateway — should stay visible
     expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
@@ -270,7 +305,7 @@ describe("useModelsFromSettings provider availability gating", () => {
       openai: { apiKeySet: false, isEnabled: true, isConfigured: false, codexOauthSet: false },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     // OAuth-required models (currently Spark) should NOT appear in either list
     // because selecting them from "Show all models…" would fail at send time.
@@ -289,7 +324,7 @@ describe("useModelsFromSettings provider availability gating", () => {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).not.toContain(KNOWN_MODELS.OPUS.id);
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.OPUS.id);
@@ -307,7 +342,7 @@ describe("useModelsFromSettings provider availability gating", () => {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.hiddenModels).toEqual([KNOWN_MODELS.GPT.id]);
     expect(result.current.hiddenModels).not.toContain(KNOWN_MODELS.OPUS.id);
@@ -319,7 +354,7 @@ describe("useModelsFromSettings provider availability gating", () => {
   test("shows all built-in provider models when config is null", () => {
     providersConfig = null;
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
@@ -331,7 +366,7 @@ describe("useModelsFromSettings provider availability gating", () => {
       anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
 
-    const { result } = renderHook(() => useModelsFromSettings());
+    const { result } = renderUseModelsFromSettingsHook();
 
     expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
