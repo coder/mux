@@ -1,23 +1,87 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { GlobalWindow } from "happy-dom";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { GLOBAL_SCOPE_ID, getAgentIdKey, getProjectScopeId } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
-import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { ProjectProvider } from "./ProjectContext";
-import { RouterProvider } from "./RouterContext";
-import { WorkspaceProvider } from "./WorkspaceContext";
-import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import type { AgentContextValue } from "./AgentContext";
+import type { APIClient } from "./API";
 
 let mockAgentDefinitions: AgentDefinitionDescriptor[] = [];
 let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string; agentId?: string }>();
 
-import { AgentProvider, useAgent, type AgentContextValue } from "./AgentContext";
+let APIProvider!: typeof import("./API").APIProvider;
+let RouterProvider!: typeof import("./RouterContext").RouterProvider;
+let ProjectProvider!: typeof import("./ProjectContext").ProjectProvider;
+let WorkspaceProvider!: typeof import("./WorkspaceContext").WorkspaceProvider;
+let AgentProvider!: typeof import("./AgentContext").AgentProvider;
+let useAgent!: typeof import("./AgentContext").useAgent;
+let isolatedModuleDir: string | null = null;
+
+const contextsDir = dirname(fileURLToPath(import.meta.url));
+
+async function importIsolatedAgentModules() {
+  const tempDir = await mkdtemp(join(contextsDir, ".agent-context-test-"));
+  const isolatedApiPath = join(tempDir, "API.real.tsx");
+  const isolatedRouterPath = join(tempDir, "RouterContext.real.tsx");
+  const isolatedProjectPath = join(tempDir, "ProjectContext.real.tsx");
+  const isolatedWorkspacePath = join(tempDir, "WorkspaceContext.real.tsx");
+  const isolatedAgentPath = join(tempDir, "AgentContext.real.tsx");
+
+  await copyFile(join(contextsDir, "API.tsx"), isolatedApiPath);
+  await copyFile(join(contextsDir, "RouterContext.tsx"), isolatedRouterPath);
+
+  const projectContextSource = await readFile(join(contextsDir, "ProjectContext.tsx"), "utf8");
+  const isolatedProjectContextSource = projectContextSource.replace(
+    'from "@/browser/contexts/API";',
+    'from "./API.real.tsx";'
+  );
+
+  if (isolatedProjectContextSource === projectContextSource) {
+    throw new Error("Failed to rewrite ProjectContext API import for the isolated test copy");
+  }
+
+  await writeFile(isolatedProjectPath, isolatedProjectContextSource);
+
+  const workspaceContextSource = await readFile(join(contextsDir, "WorkspaceContext.tsx"), "utf8");
+  const isolatedWorkspaceContextSource = workspaceContextSource
+    .replaceAll('from "@/browser/contexts/API";', 'from "./API.real.tsx";')
+    .replace('from "@/browser/contexts/ProjectContext";', 'from "./ProjectContext.real.tsx";')
+    .replace('from "@/browser/contexts/RouterContext";', 'from "./RouterContext.real.tsx";');
+
+  if (isolatedWorkspaceContextSource === workspaceContextSource) {
+    throw new Error("Failed to rewrite WorkspaceContext imports for the isolated test copy");
+  }
+
+  await writeFile(isolatedWorkspacePath, isolatedWorkspaceContextSource);
+
+  const agentContextSource = await readFile(join(contextsDir, "AgentContext.tsx"), "utf8");
+  const isolatedAgentContextSource = agentContextSource
+    .replace('from "@/browser/contexts/API";', 'from "./API.real.tsx";')
+    .replace('from "@/browser/contexts/WorkspaceContext";', 'from "./WorkspaceContext.real.tsx";');
+
+  if (isolatedAgentContextSource === agentContextSource) {
+    throw new Error("Failed to rewrite AgentContext imports for the isolated test copy");
+  }
+
+  await writeFile(isolatedAgentPath, isolatedAgentContextSource);
+
+  ({ APIProvider } = await import(pathToFileURL(isolatedApiPath).href));
+  ({ RouterProvider } = await import(pathToFileURL(isolatedRouterPath).href));
+  ({ ProjectProvider } = await import(pathToFileURL(isolatedProjectPath).href));
+  ({ WorkspaceProvider } = await import(pathToFileURL(isolatedWorkspacePath).href));
+  ({ AgentProvider, useAgent } = await import(pathToFileURL(isolatedAgentPath).href));
+
+  return tempDir;
+}
 
 const AUTO_AGENT: AgentDefinitionDescriptor = {
   id: "auto",
@@ -154,7 +218,8 @@ describe("AgentContext", () => {
   let originalDocument: typeof globalThis.document;
   let originalLocalStorage: typeof globalThis.localStorage;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    isolatedModuleDir = await importIsolatedAgentModules();
     mockAgentDefinitions = [];
     mockWorkspaceMetadata = new Map();
 
@@ -174,13 +239,18 @@ describe("AgentContext", () => {
     };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
     getWorkspaceStoreRaw().dispose();
     mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.localStorage = originalLocalStorage;
+
+    if (isolatedModuleDir) {
+      await rm(isolatedModuleDir, { recursive: true, force: true });
+      isolatedModuleDir = null;
+    }
   });
 
   test("project-scoped agent falls back to global default when project preference is unset", async () => {
