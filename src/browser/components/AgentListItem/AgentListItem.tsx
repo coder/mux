@@ -183,7 +183,7 @@ function StatusDot(props: {
         "block h-3 w-3",
         props.state === "active" &&
           "bg-content-success border-surface-green workspace-status-dot-active",
-        usesSubAgentConnectorDot && "bg-border-light border-border-light",
+        usesSubAgentConnectorDot && "bg-border-light border-border-light h-2 w-2",
         props.state === "idle" &&
           props.isSubAgent !== true &&
           "bg-surface-invert-secondary border-surface-tertiary",
