@@ -62,6 +62,21 @@ export function normalizeToCanonical(modelString: string): string {
 }
 
 /**
+ * Return the explicitly requested gateway provider prefix from a raw model string.
+ * This preserves user-selected gateway routing (for example, openrouter:openai/gpt-5)
+ * instead of canonicalizing back to a direct provider model string.
+ */
+export function getExplicitGatewayPrefix(modelString: string): ProviderName | undefined {
+  const trimmedModelString = modelString.trim();
+  const colonIndex = trimmedModelString.indexOf(":");
+  if (colonIndex <= 0 || colonIndex === trimmedModelString.length - 1) {
+    return undefined;
+  }
+
+  const providerName = trimmedModelString.slice(0, colonIndex) as ProviderName;
+  return PROVIDER_DEFINITIONS[providerName]?.kind === "gateway" ? providerName : undefined;
+}
+/**
  * Extract the model name from a model string (e.g., "anthropic:claude-sonnet-4-5" -> "claude-sonnet-4-5")
  * @param modelString - Full model string in format "provider:model-name"
  * @returns The model name part (after the colon), or the full string if no colon is found

@@ -1,5 +1,5 @@
-import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import {
+  getExplicitGatewayPrefix,
   resolveModelAlias,
   isValidModelFormat,
   normalizeToCanonical,
@@ -20,12 +20,9 @@ export function normalizeModelInput(raw: string | null | undefined): ModelInputR
 
   const resolved = resolveModelAlias(trimmed);
   const isAlias = resolved !== trimmed;
-  const colonIdx = resolved.indexOf(":");
-  const prefix = colonIdx > 0 ? resolved.slice(0, colonIdx) : undefined;
-  const isExplicitGateway =
-    prefix != null && PROVIDER_DEFINITIONS[prefix as ProviderName]?.kind === "gateway";
+  const explicitGateway = getExplicitGatewayPrefix(resolved);
   // Explicit gateway scoping is user intent — preserve it for the backend to honor.
-  const canonical = isExplicitGateway ? resolved.trim() : normalizeToCanonical(resolved).trim();
+  const canonical = explicitGateway ? resolved.trim() : normalizeToCanonical(resolved).trim();
 
   if (!isValidModelFormat(canonical)) {
     return { model: null, isAlias, error: "invalid-format" };

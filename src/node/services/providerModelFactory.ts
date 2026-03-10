@@ -29,7 +29,10 @@ import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
 import { resolveRoute, type RouteContext } from "@/common/routing";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import {
+  getExplicitGatewayPrefix as getExplicitGatewayProvider,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
@@ -473,17 +476,6 @@ export function classifyCopilotInitiator(body: string | null | undefined): "user
   } catch {
     return "user"; // parse failure → safe fallback (don't hide usage)
   }
-}
-
-function getExplicitGatewayProvider(modelString: string): ProviderName | undefined {
-  const trimmedModelString = modelString.trim();
-  const [rawProviderName, rawModelId] = parseModelString(trimmedModelString);
-  if (!rawModelId || !(rawProviderName in PROVIDER_DEFINITIONS)) {
-    return undefined;
-  }
-
-  const providerName = rawProviderName as ProviderName;
-  return PROVIDER_DEFINITIONS[providerName].kind === "gateway" ? providerName : undefined;
 }
 
 function parseAnthropicCacheTtl(value: unknown): AnthropicCacheTtl | undefined {

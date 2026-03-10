@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import {
+  getExplicitGatewayPrefix,
   normalizeToCanonical,
   getModelName,
   supports1MContext,
@@ -31,6 +32,19 @@ describe("normalizeToCanonical", () => {
   });
 });
 
+describe("getExplicitGatewayPrefix", () => {
+  it("returns the gateway provider name for explicit gateway-scoped model strings", () => {
+    expect(getExplicitGatewayPrefix("openrouter:openai/gpt-5")).toBe("openrouter");
+    expect(getExplicitGatewayPrefix("mux-gateway:anthropic/claude-sonnet-4-5")).toBe("mux-gateway");
+    expect(getExplicitGatewayPrefix("bedrock:anthropic.claude-sonnet-4-5")).toBe("bedrock");
+  });
+
+  it("returns undefined for direct providers and malformed model strings", () => {
+    expect(getExplicitGatewayPrefix("openai:gpt-5")).toBeUndefined();
+    expect(getExplicitGatewayPrefix("anthropic:claude-sonnet-4-5")).toBeUndefined();
+    expect(getExplicitGatewayPrefix("no-colon-model-string")).toBeUndefined();
+  });
+});
 describe("getModelName", () => {
   it("should extract model name from provider:model format", () => {
     expect(getModelName("anthropic:claude-opus-4-5")).toBe("claude-opus-4-5");
