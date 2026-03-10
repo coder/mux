@@ -4,21 +4,28 @@ import { cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { useAIViewKeybinds } from "./useAIViewKeybinds";
 import type { ChatInputAPI } from "@/browser/features/ChatInput";
-import type { APIClient } from "@/browser/contexts/API";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import type { RecursivePartial } from "@/browser/testUtils";
 
 let currentClientMock: RecursivePartial<APIClient> = {};
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: currentClientMock as APIClient,
-    status: "connected" as const,
-    error: null,
-  }),
-  APIProvider: ({ children }: { children: ReactNode }) => children,
-}));
+let originalWindow: typeof globalThis.window;
+let originalDocument: typeof globalThis.document;
+let originalHTMLElement: unknown;
+
+function renderUseAIViewKeybinds(props: Parameters<typeof useAIViewKeybinds>[0]) {
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <APIProvider client={currentClientMock as APIClient}>{children}</APIProvider>
+  );
+
+  return renderHook(() => useAIViewKeybinds(props), { wrapper });
+}
 
 describe("useAIViewKeybinds", () => {
   beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    originalHTMLElement = (globalThis as unknown as { HTMLElement: unknown }).HTMLElement;
+
     const domWindow = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.window = domWindow;
     globalThis.document = domWindow.document;
@@ -29,9 +36,9 @@ describe("useAIViewKeybinds", () => {
 
   afterEach(() => {
     cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-    (globalThis as unknown as { HTMLElement: unknown }).HTMLElement = undefined;
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    (globalThis as unknown as { HTMLElement: unknown }).HTMLElement = originalHTMLElement;
     currentClientMock = {};
   });
 
@@ -47,21 +54,19 @@ describe("useAIViewKeybinds", () => {
 
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
 
-    renderHook(() =>
-      useAIViewKeybinds({
-        workspaceId: "ws",
-        canInterrupt: true,
-        showRetryBarrier: false,
-        chatInputAPI,
-        jumpToBottom: () => undefined,
-        loadOlderHistory: null,
-        handleOpenTerminal: () => undefined,
-        handleOpenInEditor: () => undefined,
-        aggregator: undefined,
-        setEditingMessage: () => undefined,
-        vimEnabled: false,
-      })
-    );
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: true,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+    });
 
     document.body.dispatchEvent(
       new window.KeyboardEvent("keydown", {
@@ -86,21 +91,19 @@ describe("useAIViewKeybinds", () => {
 
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
 
-    renderHook(() =>
-      useAIViewKeybinds({
-        workspaceId: "ws",
-        canInterrupt: true,
-        showRetryBarrier: false,
-        chatInputAPI,
-        jumpToBottom: () => undefined,
-        loadOlderHistory: null,
-        handleOpenTerminal: () => undefined,
-        handleOpenInEditor: () => undefined,
-        aggregator: undefined,
-        setEditingMessage: () => undefined,
-        vimEnabled: false,
-      })
-    );
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: true,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+    });
 
     const input = document.createElement("input");
     document.body.appendChild(input);
@@ -129,21 +132,19 @@ describe("useAIViewKeybinds", () => {
 
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
 
-    renderHook(() =>
-      useAIViewKeybinds({
-        workspaceId: "ws",
-        canInterrupt: true,
-        showRetryBarrier: false,
-        chatInputAPI,
-        jumpToBottom: () => undefined,
-        loadOlderHistory: null,
-        handleOpenTerminal: () => undefined,
-        handleOpenInEditor: () => undefined,
-        aggregator: undefined,
-        setEditingMessage: () => undefined,
-        vimEnabled: false,
-      })
-    );
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: true,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+    });
 
     const input = document.createElement("input");
     input.setAttribute("data-escape-interrupts-stream", "true");
@@ -173,21 +174,19 @@ describe("useAIViewKeybinds", () => {
 
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
 
-    renderHook(() =>
-      useAIViewKeybinds({
-        workspaceId: "ws",
-        canInterrupt: true,
-        showRetryBarrier: false,
-        chatInputAPI,
-        jumpToBottom: () => undefined,
-        loadOlderHistory: null,
-        handleOpenTerminal: () => undefined,
-        handleOpenInEditor: () => undefined,
-        aggregator: undefined,
-        setEditingMessage: () => undefined,
-        vimEnabled: true,
-      })
-    );
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: true,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: true,
+    });
 
     const input = document.createElement("input");
     document.body.appendChild(input);
@@ -209,21 +208,19 @@ describe("useAIViewKeybinds", () => {
     const loadOlderHistory = mock(() => undefined);
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
 
-    renderHook(() =>
-      useAIViewKeybinds({
-        workspaceId: "ws",
-        canInterrupt: false,
-        showRetryBarrier: false,
-        chatInputAPI,
-        jumpToBottom: () => undefined,
-        loadOlderHistory,
-        handleOpenTerminal: () => undefined,
-        handleOpenInEditor: () => undefined,
-        aggregator: undefined,
-        setEditingMessage: () => undefined,
-        vimEnabled: false,
-      })
-    );
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: false,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+    });
 
     document.body.dispatchEvent(
       new window.KeyboardEvent("keydown", {
@@ -249,21 +246,19 @@ describe("useAIViewKeybinds", () => {
 
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
 
-    renderHook(() =>
-      useAIViewKeybinds({
-        workspaceId: "ws",
-        canInterrupt: true,
-        showRetryBarrier: false,
-        chatInputAPI,
-        jumpToBottom: () => undefined,
-        loadOlderHistory: null,
-        handleOpenTerminal: () => undefined,
-        handleOpenInEditor: () => undefined,
-        aggregator: undefined,
-        setEditingMessage: () => undefined,
-        vimEnabled: false,
-      })
-    );
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: true,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+    });
 
     const stopImmersiveEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -301,21 +296,19 @@ describe("useAIViewKeybinds", () => {
 
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
 
-    renderHook(() =>
-      useAIViewKeybinds({
-        workspaceId: "ws",
-        canInterrupt: true,
-        showRetryBarrier: false,
-        chatInputAPI,
-        jumpToBottom: () => undefined,
-        loadOlderHistory: null,
-        handleOpenTerminal: () => undefined,
-        handleOpenInEditor: () => undefined,
-        aggregator: undefined,
-        setEditingMessage: () => undefined,
-        vimEnabled: false,
-      })
-    );
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: true,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+    });
 
     const stopEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
