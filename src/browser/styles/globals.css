@@ -2214,8 +2214,28 @@ input[type="checkbox"] {
   animation: connector-dash-scroll 0.4s linear infinite;
 }
 
+
+@keyframes connector-elbow-dash-scroll {
+  from {
+    stroke-dashoffset: 6;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.subagent-connector-elbow-active {
+  fill: none;
+  stroke: var(--connector-color);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  stroke-dasharray: 3 3;
+  animation: connector-elbow-dash-scroll 0.4s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .subagent-connector-active::before {
+  .subagent-connector-active::before,
+  .subagent-connector-elbow-active {
     animation: none;
   }
 }

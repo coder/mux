@@ -64,15 +64,29 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
             style={{ top: `calc(50% - ${connectorTurnSizePx}px)` }}
           />
         )}
-        <span
-          className={cn(
-            connectorBorderClass,
-            // Draw a rounded elbow instead of a hard 90-degree corner where the
-            // vertical connector turns into the sub-agent branch.
-            "absolute top-1/2 left-[6px] h-[6px] w-[10px] -translate-y-full rounded-bl-[6px] border-l border-b",
-            props.isActive && "border-dashed"
-          )}
-        />
+        {props.isActive ? (
+          <svg
+            aria-hidden
+            className="absolute top-1/2 left-[6px] h-[6px] w-[10px] -translate-y-full"
+            viewBox="0 0 10 6"
+          >
+            <path
+              // Border dashes cannot animate their offset, so we draw the
+              // rounded elbow as an SVG path and animate stroke-dashoffset.
+              className="subagent-connector-elbow-active"
+              d="M0.5 0.5 Q0.5 5.5 5.5 5.5 H9.5"
+            />
+          </svg>
+        ) : (
+          <span
+            className={cn(
+              connectorBorderClass,
+              // Draw a rounded elbow instead of a hard 90-degree corner where the
+              // vertical connector turns into the sub-agent branch.
+              "absolute top-1/2 left-[6px] h-[6px] w-[10px] -translate-y-full rounded-bl-[6px] border-l border-b"
+            )}
+          />
+        )}
       </div>
       {props.children}
     </div>

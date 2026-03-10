@@ -414,6 +414,11 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
           if (activeSegments.length === 0) {
             throw new Error("Expected active connector segments for running child");
           }
+
+          const animatedElbow = connector.querySelector("path.subagent-connector-elbow-active");
+          if (!animatedElbow) {
+            throw new Error("Expected animated connector elbow for running child");
+          }
         },
         { timeout: 10_000 }
       );
@@ -499,6 +504,11 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         "span.subagent-connector-active"
       );
       expect(activeSegments.length).toBe(0);
+
+      const animatedElbows = renderedView.container.querySelectorAll(
+        "path.subagent-connector-elbow-active"
+      );
+      expect(animatedElbows.length).toBe(0);
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);

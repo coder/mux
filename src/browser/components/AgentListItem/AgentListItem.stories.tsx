@@ -423,7 +423,6 @@ export const SubAgentMiddle: Story = {
 
 export const SubAgentRunning: Story = {
   args: undefined as never,
-  name: "Sub Agent Running",
   render: () =>
     renderWorkspaceWithRowMeta({
       workspaceIndex: 2,
