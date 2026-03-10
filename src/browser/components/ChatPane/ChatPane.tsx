@@ -1066,6 +1066,30 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           This agent task is queued and will start automatically when a parallel slot is available.
         </div>
       )}
+      {flowPrompt.state?.exists ? (
+        <FlowPromptComposerCard
+          state={flowPrompt.state}
+          error={flowPrompt.error}
+          isCollapsed={isFlowPromptCollapsed}
+          isUpdatingAutoSendMode={flowPrompt.isUpdatingAutoSendMode}
+          isSendingNow={flowPrompt.isSendingNow}
+          onOpen={() => {
+            void flowPrompt.openFlowPrompt();
+          }}
+          onDisable={() => {
+            void flowPrompt.disableFlowPrompt();
+          }}
+          onAutoSendModeChange={(mode) => {
+            void flowPrompt.updateAutoSendMode(mode);
+          }}
+          onSendNow={() => {
+            void flowPrompt.sendNow();
+          }}
+          onToggleCollapsed={() => {
+            setIsFlowPromptCollapsed((collapsed) => !collapsed);
+          }}
+        />
+      ) : null}
       <ChatInput
         key={props.workspaceId}
         variant="workspace"
@@ -1089,57 +1113,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onReady={props.onChatInputReady}
         showFlowPromptShortcutHint={
           props.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID && !flowPrompt.state?.exists
-        }
-        topAccessory={
-          flowPrompt.state?.exists && !isFlowPromptCollapsed ? (
-            <FlowPromptComposerCard
-              state={flowPrompt.state}
-              error={flowPrompt.error}
-              isUpdatingAutoSendMode={flowPrompt.isUpdatingAutoSendMode}
-              isSendingNow={flowPrompt.isSendingNow}
-              onOpen={() => {
-                void flowPrompt.openFlowPrompt();
-              }}
-              onDisable={() => {
-                void flowPrompt.disableFlowPrompt();
-              }}
-              onAutoSendModeChange={(mode) => {
-                void flowPrompt.updateAutoSendMode(mode);
-              }}
-              onSendNow={() => {
-                void flowPrompt.sendNow();
-              }}
-              onToggleCollapsed={() => {
-                setIsFlowPromptCollapsed(true);
-              }}
-            />
-          ) : null
-        }
-        leadingAccessory={
-          flowPrompt.state?.exists && isFlowPromptCollapsed ? (
-            <FlowPromptComposerCard
-              state={flowPrompt.state}
-              error={flowPrompt.error}
-              isCollapsed
-              isUpdatingAutoSendMode={flowPrompt.isUpdatingAutoSendMode}
-              isSendingNow={flowPrompt.isSendingNow}
-              onOpen={() => {
-                void flowPrompt.openFlowPrompt();
-              }}
-              onDisable={() => {
-                void flowPrompt.disableFlowPrompt();
-              }}
-              onAutoSendModeChange={(mode) => {
-                void flowPrompt.updateAutoSendMode(mode);
-              }}
-              onSendNow={() => {
-                void flowPrompt.sendNow();
-              }}
-              onToggleCollapsed={() => {
-                setIsFlowPromptCollapsed(false);
-              }}
-            />
-          ) : null
         }
         attachedReviews={reviews.attachedReviews}
         onDetachReview={reviews.detachReview}

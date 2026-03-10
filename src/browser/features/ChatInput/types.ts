@@ -44,8 +44,6 @@ export interface ChatInputWorkspaceVariant {
   showFlowPromptShortcutHint?: boolean;
   /** Optional UI rendered above the textarea while remaining part of the composer chrome. */
   topAccessory?: ReactNode;
-  /** Optional UI rendered inline to the left of the textarea for compact composer affordances. */
-  leadingAccessory?: ReactNode;
   /** Reviews currently attached to chat (from useReviews hook) */
   attachedReviews?: Review[];
   /** Detach a review from chat input (sets status to pending) */

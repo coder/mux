@@ -69,7 +69,7 @@ describe("FlowPromptComposerCard", () => {
     expect(view.getByText("Live flow prompt diff")).toBeTruthy();
   });
 
-  test("renders a minimizable strip that can expand again", () => {
+  test("renders a minimizable horizontal strip that can expand again", () => {
     const onToggleCollapsed = mock(() => undefined);
     const view = render(
       <FlowPromptComposerCard
@@ -84,6 +84,7 @@ describe("FlowPromptComposerCard", () => {
     );
 
     expect(view.getByTestId("flow-prompt-composer-strip")).toBeTruthy();
+    expect(view.container.textContent).toContain("Flow Prompting");
     fireEvent.click(view.getByLabelText("Expand Flow Prompting composer"));
     expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
   });
