@@ -6,12 +6,7 @@ import { execBuffered } from "@/node/utils/runtime/helpers";
 
 import { quoteRuntimeProbePath } from "./runtimePathShellQuote";
 import { inspectContainmentOnRuntime } from "./runtimeSkillPathUtils";
-import { hasErrorCode } from "./skillFileUtils";
-
-export function isPathInsideRoot(rootPath: string, targetPath: string): boolean {
-  const relativePath = path.relative(rootPath, targetPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-}
+import { hasErrorCode, isPathInsideRoot } from "./skillFileUtils";
 
 export type ResolvedAgentsPath =
   | { kind: "missing"; rootReal: string; writePath: string }
