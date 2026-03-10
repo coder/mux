@@ -1849,6 +1849,9 @@ export const router = (authToken?: string) => {
           const resolvedProjectPath = projectPathProvided
             ? input.projectPath!
             : context.config.rootDir;
+          const trusted = projectPathProvided
+            ? isTrustedProjectPath(context, resolvedProjectPath)
+            : false;
           const opResolver = context.onePasswordService?.resolve.bind(context.onePasswordService);
 
           const secrets = await secretsToRecord(
@@ -1862,7 +1865,7 @@ export const router = (authToken?: string) => {
             ? (
                 await context.mcpConfigService.listServers(
                   projectPathProvided ? resolvedProjectPath : undefined,
-                  projectPathProvided ? isTrustedProjectPath(context, resolvedProjectPath) : false
+                  trusted
                 )
               )[input.name]?.transport
             : undefined;
@@ -1878,6 +1881,7 @@ export const router = (authToken?: string) => {
 
           const result = await context.mcpServerManager.test({
             projectPath: resolvedProjectPath,
+            trusted,
             name: input.name,
             command: input.command,
             transport: input.transport,
