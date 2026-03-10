@@ -153,21 +153,59 @@ function StatusDot(props: {
   state: VisualState;
   isDraft?: boolean;
   completedChildrenChevronState?: "collapsed" | "expanded";
+  completedChildrenChevronLabel?: string;
+  onToggleCompletedChildren?: () => void;
+  isDisabled?: boolean;
 }) {
   const shouldHideDot = !props.isDraft && (props.state === "seen" || props.state === "hidden");
+  const indicatorClasses =
+    "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center";
+
+  if (props.completedChildrenChevronState) {
+    return (
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          if (props.isDisabled) {
+            return;
+          }
+          props.onToggleCompletedChildren?.();
+        }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+        }}
+        onKeyDown={stopKeyboardPropagation}
+        aria-label={
+          props.completedChildrenChevronState === "expanded"
+            ? `Collapse completed sub-agents for ${props.completedChildrenChevronLabel}`
+            : `Expand completed sub-agents for ${props.completedChildrenChevronLabel}`
+        }
+        aria-expanded={props.completedChildrenChevronState === "expanded"}
+        disabled={props.isDisabled}
+        className={cn(
+          indicatorClasses,
+          // Reuse the leading dot slot as a real chevron button so completed rows
+          // keep an explicit expand affordance without stealing title space.
+          "text-muted rounded-sm border-none bg-transparent p-0 transition-colors duration-200",
+          !props.isDisabled && "cursor-pointer hover:text-foreground",
+          props.isDisabled && "cursor-default opacity-60"
+        )}
+        data-completed-children-chevron={props.completedChildrenChevronState}
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={cn(
+            "h-3 w-3 transition-transform duration-200 ease-in-out",
+            props.completedChildrenChevronState === "expanded" && "rotate-90"
+          )}
+        />
+      </button>
+    );
+  }
+
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
-  ) : props.completedChildrenChevronState ? (
-    <ChevronRight
-      aria-hidden="true"
-      className={cn(
-        // When a completed parent row has no unread dot, reuse that leading slot
-        // for the expansion chevron so hidden reported children still advertise
-        // themselves without stealing title space from the workspace name.
-        "text-muted h-3 w-3 transition-transform duration-200 ease-in-out",
-        props.completedChildrenChevronState === "expanded" && "rotate-90"
-      )}
-    />
   ) : shouldHideDot ? (
     <span className="block h-3 w-3 opacity-0" />
   ) : (
@@ -191,8 +229,7 @@ function StatusDot(props: {
       // Keep the leading indicator above sub-agent connector overlays so branch
       // lines do not draw across either the status dot or completed-child chevron
       // when rows are nested.
-      className="relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
-      data-completed-children-chevron={props.completedChildrenChevronState}
+      className={indicatorClasses}
     >
       {dot}
     </div>
@@ -582,37 +619,14 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
             workspaceId,
           });
         }}
-        onDoubleClick={(event) => {
-          if (isDisabled || isEditing) {
-            return;
-          }
-          const doubleClickTarget =
-            event.target instanceof Element
-              ? event.target
-              : event.target instanceof Node
-                ? event.target.parentElement
-                : null;
-          if (doubleClickTarget?.closest("button,input,textarea,[contenteditable='true']")) {
-            return;
-          }
-          // Completed-child rows no longer render a dedicated chevron, so the row
-          // itself owns the pointer expand/collapse gesture. Rows without completed
-          // children keep double-click rename as their fallback affordance.
-          if (toggleCompletedChildren()) {
-            event.stopPropagation();
-            return;
-          }
-          startEditing();
-          event.stopPropagation();
-        }}
         {...ctxMenu.touchHandlers}
         onKeyDown={(e) => {
           if (isDisabled || isEditing) return;
           // Only treat these shortcuts as row-level controls when the row itself is
           // focused so child buttons keep their own keyboard behavior.
           if (e.target !== e.currentTarget) return;
-          // Keep completed-child expansion reachable from the same focusable row now
-          // that the visible chevron control is gone.
+          // Keep completed-child expansion reachable from the focused row even
+          // though pointer users now toggle it from the dedicated chevron button.
           if (
             e.key === "ArrowRight" &&
             canToggleCompletedChildren &&
@@ -663,6 +677,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         <StatusDot
           state={visualState}
           completedChildrenChevronState={completedChildrenChevronState}
+          completedChildrenChevronLabel={displayTitle}
+          onToggleCompletedChildren={toggleCompletedChildren}
+          isDisabled={isDisabled}
         />
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
@@ -833,6 +850,17 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     isGeneratingTitle && "italic",
                     !isSelected && visualState === "seen" && "text-secondary"
                   )}
+                  onDoubleClick={(event) => {
+                    if (isDisabled) {
+                      return;
+                    }
+                    // Keep rename scoped to the title itself so parent rows can use
+                    // the leading chevron for completed-child expansion without
+                    // turning the whole row into an ambiguous double-click target.
+                    event.stopPropagation();
+                    startEditing();
+                  }}
+                  data-workspace-title
                 >
                   {displayTitle}
                 </span>

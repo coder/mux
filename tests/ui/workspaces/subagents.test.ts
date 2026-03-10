@@ -52,6 +52,12 @@ function getCompletedChildrenChevron(
   ) as HTMLElement | null;
 }
 
+function getWorkspaceTitleElement(container: HTMLElement, workspaceId: string): HTMLElement | null {
+  return container.querySelector(
+    `[data-workspace-id="${workspaceId}"][role="button"] [data-workspace-title]`
+  ) as HTMLElement | null;
+}
+
 async function createWorkspaceWithTitle(params: {
   projectPath: string;
   trunkBranch: string;
@@ -196,24 +202,26 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
-      expect(
-        renderedView.container.querySelector(
-          `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
-        )
-      ).toBeNull();
-      expect(
-        renderedView.container.querySelector(
-          `button[aria-label="Collapse completed sub-agents for ${parentDisplayTitle}"]`
-        )
-      ).toBeNull();
+      const expandChevronButton = await waitFor(
+        () => {
+          const button = renderedView.container.querySelector(
+            `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
+          ) as HTMLButtonElement | null;
+          if (!button) {
+            throw new Error("Expand completed sub-agents button not found");
+          }
+          return button;
+        },
+        { timeout: 10_000 }
+      );
       expect(
         getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
-      ).not.toBeNull();
+      ).toBe(expandChevronButton);
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
       expect(parentRow.getAttribute("aria-keyshortcuts")).toBe("ArrowRight ArrowLeft");
 
-      // Scenario 2: double-clicking the parent reveals both completed children.
-      fireEvent.doubleClick(parentRow);
+      // Scenario 2: clicking the chevron reveals both completed children.
+      fireEvent.click(expandChevronButton);
 
       await waitFor(
         () => {
@@ -308,8 +316,20 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "expanded")
       ).not.toBeNull();
 
-      // Scenario 4: double-clicking the parent again hides both completed children.
-      fireEvent.doubleClick(parentRow);
+      // Scenario 4: clicking the chevron again hides both completed children.
+      const collapseChevronButton = await waitFor(
+        () => {
+          const button = renderedView.container.querySelector(
+            `button[aria-label="Collapse completed sub-agents for ${parentDisplayTitle}"]`
+          ) as HTMLButtonElement | null;
+          if (!button) {
+            throw new Error("Collapse completed sub-agents button not found");
+          }
+          return button;
+        },
+        { timeout: 10_000 }
+      );
+      fireEvent.click(collapseChevronButton);
 
       await waitFor(
         () => {
@@ -419,12 +439,24 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
 
+      const expandChevronButton = await waitFor(
+        () => {
+          const button = renderedView.container.querySelector(
+            `button[aria-label="Expand completed sub-agents for ${parentWorkspace.title ?? parentWorkspace.name}"]`
+          ) as HTMLButtonElement | null;
+          if (!button) {
+            throw new Error("Expand completed sub-agents button not found");
+          }
+          return button;
+        },
+        { timeout: 10_000 }
+      );
       expect(
         getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
-      ).not.toBeNull();
+      ).toBe(expandChevronButton);
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
 
-      fireEvent.doubleClick(parentRow);
+      fireEvent.click(expandChevronButton);
 
       await waitFor(
         () => {
@@ -463,7 +495,118 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
     }
   }, 90_000);
 
-  test("double-clicking a workspace without completed children still enters rename mode", async () => {
+  test("double-clicking a completed parent title enters rename without expanding children from the whole row", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const parentWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Renameable Parent Agent",
+        branchPrefix: "subagent-title-rename-parent",
+      });
+      workspaceIdsToRemove.push(parentWorkspace.id);
+
+      const reportedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Reported Child",
+        branchPrefix: "subagent-title-rename-reported",
+      });
+      workspaceIdsToRemove.push(reportedChild.id);
+
+      const completedAt = new Date().toISOString();
+      await env.config.addWorkspace(repoPath, {
+        ...reportedChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "reported",
+        reportedAt: completedAt,
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: parentWorkspace });
+      await setupWorkspaceView(view, parentWorkspace, parentWorkspace.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+      const parentDisplayTitle = parentWorkspace.title ?? parentWorkspace.name;
+
+      const parentRow = await waitFor(
+        () => {
+          const row = getWorkspaceRow(renderedView.container, parentWorkspace.id);
+          if (!row) {
+            throw new Error("Parent workspace row not found");
+          }
+          return row;
+        },
+        { timeout: 10_000 }
+      );
+      const titleEl = await waitFor(
+        () => {
+          const title = getWorkspaceTitleElement(renderedView.container, parentWorkspace.id);
+          if (!title) {
+            throw new Error("Parent workspace title not found");
+          }
+          return title;
+        },
+        { timeout: 10_000 }
+      );
+
+      fireEvent.doubleClick(parentRow);
+      expect(getWorkspaceRow(renderedView.container, reportedChild.id)).toBeNull();
+      expect(
+        renderedView.container.querySelector(
+          `input[aria-label="Edit title for workspace ${parentDisplayTitle}"]`
+        )
+      ).toBeNull();
+
+      fireEvent.doubleClick(titleEl);
+
+      await waitFor(
+        () => {
+          const editInput = renderedView.container.querySelector(
+            `input[aria-label="Edit title for workspace ${parentDisplayTitle}"]`
+          );
+          if (!editInput) {
+            throw new Error("Expected rename input to appear after double-clicking the title");
+          }
+        },
+        { timeout: 10_000 }
+      );
+      expect(getWorkspaceRow(renderedView.container, reportedChild.id)).toBeNull();
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("double-clicking a leaf workspace title still enters rename mode", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
 
@@ -503,10 +646,27 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
+      const titleEl = await waitFor(
+        () => {
+          const title = getWorkspaceTitleElement(renderedView.container, workspace.id);
+          if (!title) {
+            throw new Error("Workspace title not found");
+          }
+          return title;
+        },
+        { timeout: 10_000 }
+      );
       expect(row.getAttribute("aria-expanded")).toBeNull();
       expect(getCompletedChildrenChevron(renderedView.container, workspace.id)).toBeNull();
 
       fireEvent.doubleClick(row);
+      expect(
+        renderedView.container.querySelector(
+          `input[aria-label="Edit title for workspace ${displayTitle}"]`
+        )
+      ).toBeNull();
+
+      fireEvent.doubleClick(titleEl);
 
       await waitFor(
         () => {
@@ -514,7 +674,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
             `input[aria-label="Edit title for workspace ${displayTitle}"]`
           );
           if (!editInput) {
-            throw new Error("Expected rename input to appear after double-clicking a leaf row");
+            throw new Error("Expected rename input to appear after double-clicking the title");
           }
         },
         { timeout: 10_000 }
@@ -623,16 +783,23 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
-      expect(
-        renderedView.container.querySelector(
-          `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
-        )
-      ).toBeNull();
+      const expandChevronButton = await waitFor(
+        () => {
+          const button = renderedView.container.querySelector(
+            `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
+          ) as HTMLButtonElement | null;
+          if (!button) {
+            throw new Error("Expand completed sub-agents button not found");
+          }
+          return button;
+        },
+        { timeout: 10_000 }
+      );
       expect(
         getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
-      ).not.toBeNull();
+      ).toBe(expandChevronButton);
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
-      fireEvent.doubleClick(parentRow);
+      fireEvent.click(expandChevronButton);
 
       await waitFor(
         () => {
