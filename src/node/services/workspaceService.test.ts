@@ -22,6 +22,7 @@ import type { TerminalService } from "@/node/services/terminalService";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import * as todoStorageModule from "@/node/services/todos/todoStorage";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as bashToolModule from "@/node/services/tools/bash";
 import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
@@ -67,6 +68,16 @@ async function writePlanFile(
   const planFile = path.join(planDir, `${workspaceName}.md`);
   await fsPromises.writeFile(planFile, "# Plan\n");
   return planFile;
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 // NOTE: This test file uses bun:test mocks (not Jest).
@@ -1000,7 +1011,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
 
     await internals.updateStreamingStatus(workspaceId, true);
 
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, undefined, undefined);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, undefined, undefined, undefined);
     expect(emitWorkspaceActivity).toHaveBeenCalledTimes(1);
     expect(emitWorkspaceActivity).toHaveBeenCalledWith(workspaceId, snapshot);
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(true);
@@ -1035,7 +1046,192 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await internals.updateStreamingStatus(workspaceId, false);
 
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(false);
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined, false);
+  });
+});
+
+describe("WorkspaceService streaming generation guard", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let readTodosSpy:
+    | ReturnType<typeof spyOn<typeof todoStorageModule, "readTodosForSessionDir">>
+    | undefined;
+
+  beforeEach(async () => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock((workspaceId: string) => `/tmp/test/sessions/${workspaceId}`),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  afterEach(async () => {
+    readTodosSpy?.mockRestore();
+    await cleanupHistory();
+  });
+
+  test("stop-side metadata write is skipped when a newer stream has started", async () => {
+    const workspaceId = "ws-generation-guard";
+    const todoReadDeferred =
+      createDeferred<Awaited<ReturnType<typeof todoStorageModule.readTodosForSessionDir>>>();
+    let todoReadCalls = 0;
+    const setStreaming = mock(
+      (
+        _workspaceId: string,
+        streaming: boolean,
+        model?: string,
+        _thinkingLevel?: string | null,
+        hasTodos?: boolean
+      ) =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming,
+          lastModel: model ?? null,
+          lastThinkingLevel: null,
+          hasTodos,
+          agentStatus: null,
+        })
+    );
+
+    readTodosSpy = spyOn(todoStorageModule, "readTodosForSessionDir").mockImplementation(() => {
+      todoReadCalls += 1;
+      if (todoReadCalls === 1) {
+        return todoReadDeferred.promise;
+      }
+      return Promise.resolve([]);
+    });
+
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+      }
+    ).extensionMetadata = {
+      setStreaming,
+    } as unknown as ExtensionMetadataService;
+
+    const internals = workspaceService as unknown as {
+      streamingGenerations: Map<string, number>;
+      updateStreamingStatus: (
+        workspaceId: string,
+        streaming: boolean,
+        model?: string,
+        agentId?: string,
+        hasTodos?: boolean,
+        expectedGeneration?: number
+      ) => Promise<void>;
+    };
+
+    internals.streamingGenerations.set(workspaceId, 1);
+    const staleStopPromise = internals.updateStreamingStatus(
+      workspaceId,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      1
+    );
+
+    internals.streamingGenerations.set(workspaceId, 2);
+    await internals.updateStreamingStatus(workspaceId, true, "openai:gpt-4o");
+
+    todoReadDeferred.resolve([]);
+    await staleStopPromise;
+
+    expect(setStreaming).toHaveBeenCalledTimes(1);
+    expect(setStreaming).toHaveBeenCalledWith(
+      workspaceId,
+      true,
+      "openai:gpt-4o",
+      undefined,
+      undefined
+    );
+  });
+
+  test("handleStreamCompletion captures generation before awaiting recency updates", async () => {
+    const workspaceId = "ws-stream-completion-generation";
+    const recencyDeferred = createDeferred<void>();
+    const setStreaming = mock(
+      (
+        _workspaceId: string,
+        streaming: boolean,
+        model?: string,
+        _thinkingLevel?: string | null,
+        hasTodos?: boolean
+      ) =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming,
+          lastModel: model ?? null,
+          lastThinkingLevel: null,
+          hasTodos,
+          agentStatus: null,
+        })
+    );
+
+    readTodosSpy = spyOn(todoStorageModule, "readTodosForSessionDir").mockResolvedValue([]);
+
+    const internals = workspaceService as unknown as {
+      extensionMetadata: ExtensionMetadataService;
+      streamingGenerations: Map<string, number>;
+      updateStreamingStatus: (
+        workspaceId: string,
+        streaming: boolean,
+        model?: string,
+        agentId?: string,
+        hasTodos?: boolean,
+        expectedGeneration?: number
+      ) => Promise<void>;
+      updateRecencyTimestamp: (workspaceId: string, timestamp?: number) => Promise<void>;
+      handleStreamCompletion: (workspaceId: string) => Promise<void>;
+    };
+
+    internals.extensionMetadata = {
+      setStreaming,
+    } as unknown as ExtensionMetadataService;
+    internals.updateRecencyTimestamp = mock(() => recencyDeferred.promise);
+
+    internals.streamingGenerations.set(workspaceId, 1);
+    const completionPromise = internals.handleStreamCompletion(workspaceId);
+
+    internals.streamingGenerations.set(workspaceId, 2);
+    await internals.updateStreamingStatus(workspaceId, true, "openai:gpt-4o-mini");
+
+    recencyDeferred.resolve();
+    await completionPromise;
+
+    expect(internals.updateRecencyTimestamp).toHaveBeenCalledTimes(1);
+    expect(setStreaming).toHaveBeenCalledTimes(1);
+    expect(setStreaming).toHaveBeenCalledWith(
+      workspaceId,
+      true,
+      "openai:gpt-4o-mini",
+      undefined,
+      undefined
+    );
   });
 });
 
@@ -1752,7 +1948,7 @@ describe("WorkspaceService metadata listeners", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(setStreaming).toHaveBeenCalledTimes(1);
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined, false);
   });
 });
 
