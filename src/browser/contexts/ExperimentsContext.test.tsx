@@ -11,18 +11,45 @@ import type { RecursivePartial } from "@/browser/testUtils";
 // mock.module override into ProjectContext and other later context tests.
 let currentClientMock: RecursivePartial<APIClient> = {};
 
+let originalWindow: typeof globalThis.window;
+let originalDocument: typeof globalThis.document;
+let originalLocalStorage: typeof globalThis.localStorage;
+let originalLocation: typeof globalThis.location;
+let originalStorageEvent: typeof globalThis.StorageEvent;
+let originalCustomEvent: typeof globalThis.CustomEvent;
+
 describe("ExperimentsProvider", () => {
   beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-    globalThis.window.localStorage.clear();
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    originalLocalStorage = globalThis.localStorage;
+    originalLocation = globalThis.location;
+    originalStorageEvent = globalThis.StorageEvent;
+    originalCustomEvent = globalThis.CustomEvent;
+
+    const dom = new GlobalWindow({ url: "https://example.com/" });
+    globalThis.window = dom as unknown as Window & typeof globalThis;
+    globalThis.document = dom.document as unknown as Document;
+
+    // Broader browser runs can leave bare globals and event constructors pointed at a previous
+    // happy-dom window. Rebind the globals ExperimentsProvider reaches through indirectly so the
+    // polling test always exercises the fresh DOM installed for this case.
+    globalThis.localStorage = dom.localStorage;
+    globalThis.location = dom.location as unknown as Location;
+    globalThis.StorageEvent = dom.StorageEvent as unknown as typeof StorageEvent;
+    globalThis.CustomEvent = dom.CustomEvent as unknown as typeof CustomEvent;
+    globalThis.localStorage.clear();
   });
 
   afterEach(() => {
     cleanup();
     mock.restore();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.localStorage = originalLocalStorage;
+    globalThis.location = originalLocation;
+    globalThis.StorageEvent = originalStorageEvent;
+    globalThis.CustomEvent = originalCustomEvent;
     currentClientMock = {};
   });
 
