@@ -1831,6 +1831,83 @@ describe("StreamingMessageAggregator", () => {
 
       expect(aggregator.isCompacting()).toBe(true);
     });
+    test("does not treat non-compact agent streams as compacting even when the latest user message is /compact", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const compactionRequestMessage = {
+        id: "msg1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request" as const,
+            rawCommand: "/compact",
+            parsed: { model: "anthropic:claude-3-5-haiku-20241022" },
+          },
+        },
+      };
+
+      aggregator.loadHistoricalMessages([compactionRequestMessage], true);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "continue-stream",
+        historySequence: 2,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        agentId: "exec",
+        mode: "exec",
+      });
+
+      expect(aggregator.isCompacting()).toBe(false);
+    });
+
+    test("does not reuse a completed compaction request when older stream-start events omit agentId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const compactionRequestMessage = {
+        id: "msg1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request" as const,
+            rawCommand: "/compact",
+            parsed: { model: "anthropic:claude-3-5-haiku-20241022" },
+          },
+        },
+      };
+      const compactionSummaryMessage = createMuxMessage(
+        "summary-1",
+        "assistant",
+        "Compacted summary",
+        {
+          historySequence: 2,
+          timestamp: Date.now(),
+          compactionBoundary: true,
+          muxMetadata: { type: "compaction-summary" },
+        }
+      );
+
+      aggregator.loadHistoricalMessages([compactionRequestMessage, compactionSummaryMessage], true);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "continue-stream",
+        historySequence: 3,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        mode: "exec",
+      });
+
+      expect(aggregator.isCompacting()).toBe(false);
+    });
   });
 
   describe("pending stream model", () => {

@@ -1115,23 +1115,48 @@ export class StreamingMessageAggregator {
     return this.pendingStreamModel;
   }
 
-  private getLatestCompactionRequest(): CompactionRequestData | null {
-    if (this.pendingCompactionRequest) {
-      return this.pendingCompactionRequest;
-    }
-
+  private getLatestHistoricalCompactionRequest(): CompactionRequestData | null {
+    let sawCompletedCompaction = false;
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
+      if (message.role === "assistant" && this.isCompactionBoundarySummaryMessage(message)) {
+        // A completed summary closes the earlier /compact request, so later auto-continue
+        // streams must not inherit a stale "compacting" UI state from that older turn.
+        sawCompletedCompaction = true;
+        continue;
+      }
       if (message.role !== "user") continue;
       const muxMetadata = message.metadata?.muxMetadata;
       if (muxMetadata?.type === "compaction-request") {
-        return muxMetadata.parsed;
+        return sawCompletedCompaction ? null : muxMetadata.parsed;
       }
       return null;
     }
 
     return null;
+  }
+
+  private getLatestUnresolvedCompactionRequest(): CompactionRequestData | null {
+    return this.pendingCompactionRequest ?? this.getLatestHistoricalCompactionRequest();
+  }
+
+  private resolveStreamStartCompaction(data: StreamStartEvent): {
+    isCompacting: boolean;
+    hasCompactionContinue: boolean;
+  } {
+    // Keep stream classification separate from stream context construction so
+    // continue turns after /compact do not inherit stale UI state from history.
+    const streamSignalsCompaction = data.agentId === "compact" || data.mode === "compact";
+    if (!streamSignalsCompaction && data.agentId != null) {
+      return { isCompacting: false, hasCompactionContinue: false };
+    }
+
+    const compactionRequest = this.getLatestUnresolvedCompactionRequest();
+    return {
+      isCompacting: streamSignalsCompaction || compactionRequest !== null,
+      hasCompactionContinue: Boolean(compactionRequest?.followUpContent),
+    };
   }
 
   private setPendingStreamStartTime(time: number | null): void {
@@ -1454,14 +1479,7 @@ export class StreamingMessageAggregator {
 
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
-    // Detect compaction via stream mode (most authoritative).
-    // For backwards compat (older stream-start events without mode), fall back to the
-    // triggering compaction request metadata (pending or last user message).
-    const compactionRequest = this.getLatestCompactionRequest();
-    const isCompacting = data.mode === "compact" || compactionRequest !== null;
-
-    // Capture compaction-continue metadata before clearing pending request state.
-    const hasCompactionContinue = Boolean(compactionRequest?.followUpContent);
+    const { isCompacting, hasCompactionContinue } = this.resolveStreamStartCompaction(data);
 
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
