@@ -2,6 +2,7 @@ import React, { useSyncExternalStore } from "react";
 import { TodoList } from "../TodoList/TodoList";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getPinnedTodoExpandedKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 
 interface PinnedTodoListProps {
@@ -10,25 +11,28 @@ interface PinnedTodoListProps {
 
 /**
  * Pinned TODO list displayed at bottom of chat (before StreamingBarrier).
- * Shows current TODOs from active stream only - automatically cleared when stream ends.
+ * Shows current TODOs — incomplete plans persist across streams until the agent updates them,
+ * while fully completed plans clear when the final stream ends for this workspace.
+ * The pinned panel expansion state persists separately in localStorage.
  * Reuses TodoList component for consistent styling.
  *
  * Relies on natural reference stability from MapStore + Aggregator architecture:
  * - Aggregator.getCurrentTodos() returns direct reference (not a copy)
  * - Reference only changes when todos are actually modified
  * - MapStore caches WorkspaceState per version, avoiding unnecessary recomputation
- * - Todos are cleared by StreamingMessageAggregator when stream completes
  */
 export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) => {
-  const [expanded, setExpanded] = usePersistedState("pinnedTodoExpanded", true);
+  const [expanded, setExpanded] = usePersistedState(getPinnedTodoExpandedKey(workspaceId), true);
 
   const workspaceStore = useWorkspaceStoreRaw();
+  const subscribeToWorkspace = (callback: () => void) =>
+    workspaceStore.subscribeKey(workspaceId, callback);
   const todos = useSyncExternalStore(
-    (callback) => workspaceStore.subscribeKey(workspaceId, callback),
+    subscribeToWorkspace,
     () => workspaceStore.getWorkspaceState(workspaceId).todos
   );
 
-  // Todos are cleared when stream ends, so if there are todos they're from an active stream
+  // No todos have been written yet in this session
   if (todos.length === 0) {
     return null;
   }

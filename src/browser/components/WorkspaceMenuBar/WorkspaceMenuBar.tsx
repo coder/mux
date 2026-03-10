@@ -567,7 +567,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               onOpenTouchFullscreenReview={
                 isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
               }
-              onEnterImmersiveReview={handleEnterImmersiveReview}
+              onEnterImmersiveReview={isTouchMobileScreen ? null : handleEnterImmersiveReview}
               onForkChat={(anchorEl) => {
                 void handleForkChat(anchorEl);
               }}

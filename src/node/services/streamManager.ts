@@ -277,6 +277,32 @@ function markProviderMetadataCostsIncluded(
     },
   };
 }
+/** Build a UsageDeltaEvent with consistent costsIncluded stamping on cumulative metadata. */
+function buildUsageDeltaEvent(opts: {
+  workspaceId: string;
+  messageId: string;
+  usage: LanguageModelV2Usage;
+  providerMetadata: Record<string, unknown> | undefined;
+  cumulativeUsage: LanguageModelV2Usage;
+  cumulativeProviderMetadata: Record<string, unknown> | undefined;
+  costsIncluded: boolean | undefined;
+  replay?: true;
+}): UsageDeltaEvent {
+  return {
+    type: "usage-delta",
+    workspaceId: opts.workspaceId,
+    messageId: opts.messageId,
+    ...(opts.replay ? { replay: true } : {}),
+    usage: opts.usage,
+    providerMetadata: opts.providerMetadata,
+    cumulativeUsage: opts.cumulativeUsage,
+    cumulativeProviderMetadata: markProviderMetadataCostsIncluded(
+      opts.cumulativeProviderMetadata,
+      opts.costsIncluded
+    ),
+  };
+}
+
 // Comprehensive stream info
 interface WorkspaceStreamInfo {
   state: StreamState;
@@ -1953,8 +1979,7 @@ export class StreamManager extends EventEmitter {
                 streamInfo.lastStepUsage = finishStepPart.usage;
                 streamInfo.lastStepProviderMetadata = finishStepPart.providerMetadata;
 
-                const usageEvent: UsageDeltaEvent = {
-                  type: "usage-delta",
+                const usageEvent = buildUsageDeltaEvent({
                   workspaceId: workspaceId as string,
                   messageId: streamInfo.messageId,
                   // Step-level (for context window display)
@@ -1963,7 +1988,9 @@ export class StreamManager extends EventEmitter {
                   // Cumulative (for live cost display)
                   cumulativeUsage: streamInfo.cumulativeUsage,
                   cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
-                };
+                  // Preserve gateway-billed zero-cost behavior throughout the stream.
+                  costsIncluded: streamInfo.initialMetadata?.costsIncluded,
+                });
                 streamInfo.currentStepStartIndex = streamInfo.parts.length;
                 this.emit("usage-delta", usageEvent);
                 await this.checkSoftCancelStream(workspaceId, streamInfo);
@@ -3141,8 +3168,7 @@ export class StreamManager extends EventEmitter {
     // explicitly. Incremental/live-mode replays pass afterTimestamp and should only replay
     // stream context (not stale usage snapshots) to avoid duplicate usage updates.
     if (streamInfo.lastStepUsage && afterTimestamp == null) {
-      const usageEvent: UsageDeltaEvent = {
-        type: "usage-delta",
+      const usageEvent = buildUsageDeltaEvent({
         workspaceId,
         messageId: streamInfo.messageId,
         replay: true,
@@ -3150,7 +3176,9 @@ export class StreamManager extends EventEmitter {
         providerMetadata: streamInfo.lastStepProviderMetadata,
         cumulativeUsage: streamInfo.cumulativeUsage,
         cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
-      };
+        // Replays must preserve gateway-billed zero-cost behavior from the original stream.
+        costsIncluded: streamInfo.initialMetadata?.costsIncluded,
+      });
       this.emit("usage-delta", usageEvent);
     }
   }

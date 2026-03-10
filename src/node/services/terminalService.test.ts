@@ -4,6 +4,7 @@ import type { PTYService } from "./ptyService";
 import type { Config } from "@/node/config";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type { TerminalCreateParams } from "@/common/types/terminal";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import * as childProcess from "child_process";
 import * as fs from "fs/promises";
 
@@ -17,6 +18,7 @@ const mockConfig = {
         id: "ws-1",
         projectPath: "/tmp/project",
         name: "main",
+        namedWorkspacePath: "/tmp/project/main",
         runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
       },
     ])
@@ -28,6 +30,24 @@ const mockConfig = {
   })),
   srcDir: "/tmp",
 } as unknown as Config;
+
+function createConfigWithMetadata(metadata: {
+  id: string;
+  projectPath: string;
+  name: string;
+  runtimeConfig: RuntimeConfig;
+  namedWorkspacePath?: string;
+}): Config {
+  return {
+    getAllWorkspaceMetadata: mock(() => Promise.resolve([metadata])),
+    getEffectiveSecrets: getEffectiveSecretsMock,
+    loadConfigOrDefault: mock(() => ({
+      projects: new Map(),
+      terminalDefaultShell: undefined,
+    })),
+    srcDir: "/tmp",
+  } as unknown as Config;
+}
 
 const createSessionMock = mock(
   (
@@ -126,6 +146,20 @@ describe("TerminalService", () => {
     return options.env;
   }
 
+  function getCreateSessionPathFromFirstCall(): string {
+    const call = createSessionMock.mock.calls[0];
+    if (!call) {
+      throw new Error("Expected createSession to be called");
+    }
+
+    const workspacePath = call[2];
+    if (typeof workspacePath !== "string") {
+      throw new Error("Expected createSession to receive a workspace path");
+    }
+
+    return workspacePath;
+  }
+
   async function withProxyEnv<T>(
     env: { vscodeProxyUri?: string; muxProxyUri?: string },
     run: () => Promise<T>
@@ -180,6 +214,43 @@ describe("TerminalService", () => {
     expect(env.MUX_RUNTIME).toBe("worktree");
     expect(env.MUX_WORKSPACE_NAME).toBe("main");
     expect(env.TEST_SECRET).toBe("secret-value");
+  });
+
+  it("uses the persisted workspace root for worktree terminals", async () => {
+    service = new TerminalService(
+      createConfigWithMetadata({
+        id: "ws-persisted",
+        projectPath: "/tmp/project",
+        name: "feature",
+        namedWorkspacePath: "/persisted/workspace-root",
+        runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/runtime-src" },
+      }),
+      mockPTYService,
+      undefined
+    );
+
+    await service.create({ workspaceId: "ws-persisted", cols: 80, rows: 24 });
+
+    expect(getCreateSessionPathFromFirstCall()).toBe("/persisted/workspace-root");
+  });
+
+  it("keeps docker terminals rooted in the translated runtime path", async () => {
+    service = new TerminalService(
+      createConfigWithMetadata({
+        id: "ws-docker",
+        projectPath: "/tmp/project",
+        name: "feature",
+        namedWorkspacePath: "/persisted/workspace-root",
+        runtimeConfig: { type: "docker", image: "node:20" },
+      }),
+      mockPTYService,
+      undefined
+    );
+
+    await service.create({ workspaceId: "ws-docker", cols: 80, rows: 24 });
+
+    expect(getCreateSessionPathFromFirstCall()).toBe("/src");
+    expect(getEffectiveSecretsMock).not.toHaveBeenCalled();
   });
 
   it("propagates VSCODE_PROXY_URI and falls back MUX_PROXY_URI to it", async () => {
@@ -240,6 +311,7 @@ describe("TerminalService", () => {
           id: "ws-ssh",
           projectPath: "/tmp/project",
           name: "main",
+          namedWorkspacePath: "~/mux/project/main",
           runtimeConfig: {
             type: "ssh",
             host: "example.com",
@@ -666,12 +738,14 @@ describe("TerminalService", () => {
             id: "ws-1",
             projectPath: "/tmp/project",
             name: "main",
+            namedWorkspacePath: "/tmp/project/main",
             runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
           },
           {
             id: "ws-2",
             projectPath: "/tmp/project2",
             name: "dev",
+            namedWorkspacePath: "/tmp/project2/dev",
             runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
           },
         ])

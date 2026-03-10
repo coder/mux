@@ -1787,7 +1787,9 @@ describe("StreamManager - replayStream", () => {
     const usageEvents: Array<{
       replay?: boolean;
       usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      providerMetadata?: Record<string, unknown>;
       cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+      cumulativeProviderMetadata?: Record<string, unknown>;
     }> = [];
 
     streamManager.on(
@@ -1795,7 +1797,9 @@ describe("StreamManager - replayStream", () => {
       (event: {
         replay?: boolean;
         usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+        providerMetadata?: Record<string, unknown>;
         cumulativeUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+        cumulativeProviderMetadata?: Record<string, unknown>;
       }) => {
         usageEvents.push(event);
       }
@@ -1815,7 +1819,7 @@ describe("StreamManager - replayStream", () => {
       metadataModel: "claude-sonnet-4",
       historySequence: 1,
       startTime: 123,
-      initialMetadata: {},
+      initialMetadata: { costsIncluded: true },
       toolCompletionTimestamps: new Map<string, number>(),
       parts: [{ type: "text", text: "hello", timestamp: 10 }],
       lastStepUsage: { inputTokens: 21, outputTokens: 3, totalTokens: 24 },
@@ -1837,10 +1841,17 @@ describe("StreamManager - replayStream", () => {
     expect(usageEvents).toHaveLength(1);
     expect(usageEvents[0]?.replay).toBe(true);
     expect(usageEvents[0]?.usage).toEqual({ inputTokens: 21, outputTokens: 3, totalTokens: 24 });
+    expect(usageEvents[0]?.providerMetadata).toEqual({
+      anthropic: { cacheReadInputTokens: 2 },
+    });
     expect(usageEvents[0]?.cumulativeUsage).toEqual({
       inputTokens: 55,
       outputTokens: 11,
       totalTokens: 66,
+    });
+    expect(usageEvents[0]?.cumulativeProviderMetadata).toEqual({
+      anthropic: { cacheCreationInputTokens: 9 },
+      mux: { costsIncluded: true },
     });
   });
   test("replayStream skips replay usage-delta for incremental afterTimestamp replays", async () => {

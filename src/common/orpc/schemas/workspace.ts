@@ -116,6 +116,9 @@ export const WorkspaceActivitySnapshotSchema = z.object({
     description:
       "Most recent status_set value for this workspace (used to surface background progress in sidebar).",
   }),
+  hasTodos: z.boolean().optional().meta({
+    description: "Whether the workspace still had todos when streaming last stopped",
+  }),
   isIdleCompaction: z.boolean().optional().meta({
     description: "Whether the current streaming activity is an idle (background) compaction",
   }),

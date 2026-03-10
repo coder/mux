@@ -20,6 +20,7 @@ export interface ExtensionMetadata {
   lastModel: string | null;
   lastThinkingLevel: ThinkingLevel | null;
   agentStatus: ExtensionAgentStatus | null;
+  hasTodos?: boolean;
   // Persists the latest status_set URL so later status_set calls without a URL
   // can still carry the last deep link even after agentStatus is cleared.
   lastStatusUrl?: string | null;
@@ -106,6 +107,9 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
         lastModel: metadata.lastModel ?? null,
         lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
         agentStatus: coerceAgentStatus(rawAgentStatus),
+        // Persisted metadata is loaded via JSON.parse without per-field validation,
+        // so only carry hasTodos forward when it is actually boolean.
+        ...(typeof metadata.hasTodos === "boolean" ? { hasTodos: metadata.hasTodos } : {}),
         lastStatusUrl: coerceStatusUrl(rawLastStatusUrl),
       });
     }

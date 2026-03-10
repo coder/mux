@@ -4,7 +4,12 @@ import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream
 import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
-import { getAutoCompactionThresholdKey, getAutoRetryKey } from "@/common/constants/storage";
+import {
+  getAutoCompactionThresholdKey,
+  getAutoRetryKey,
+  getPinnedTodoExpandedKey,
+} from "@/common/constants/storage";
+import type { TodoItem } from "@/common/types/tools";
 import { WorkspaceStore } from "./WorkspaceStore";
 
 interface LoadMoreResponse {
@@ -198,6 +203,52 @@ async function waitForAbortSignal(signal?: AbortSignal): Promise<void> {
   });
 }
 
+async function waitUntil(condition: () => boolean, timeoutMs = 2000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (condition()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
+function seedPinnedTodos(store: WorkspaceStore, workspaceId: string, todos: TodoItem[]): void {
+  const aggregator = store.getAggregator(workspaceId);
+  if (!aggregator) {
+    throw new Error(`Missing aggregator for ${workspaceId}`);
+  }
+
+  aggregator.handleStreamStart({
+    type: "stream-start",
+    workspaceId,
+    messageId: `${workspaceId}-stream`,
+    historySequence: 1,
+    model: "claude-sonnet-4",
+    startTime: 1_000,
+  });
+  aggregator.handleToolCallStart({
+    type: "tool-call-start",
+    workspaceId,
+    messageId: `${workspaceId}-stream`,
+    toolCallId: `${workspaceId}-todo-write`,
+    toolName: "todo_write",
+    args: { todos },
+    tokens: 10,
+    timestamp: 1_001,
+  });
+  aggregator.handleToolCallEnd({
+    type: "tool-call-end",
+    workspaceId,
+    messageId: `${workspaceId}-stream`,
+    toolCallId: `${workspaceId}-todo-write`,
+    toolName: "todo_write",
+    result: { success: true },
+    timestamp: 1_002,
+  });
+}
+
 describe("WorkspaceStore", () => {
   let store: WorkspaceStore;
   let mockOnModelUsed: Mock<(model: string) => void>;
@@ -226,6 +277,411 @@ describe("WorkspaceStore", () => {
 
   afterEach(() => {
     store.dispose();
+  });
+
+  describe("pinned todo auto-collapse", () => {
+    const pinnedTodos: TodoItem[] = [{ content: "Add tests", status: "in_progress" }];
+
+    it("persists a collapsed panel when an active workspace stream ends with todos", async () => {
+      const workspaceId = "pinned-todo-stream-end";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "stream-end-msg",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: 1_000,
+        };
+        yield {
+          type: "tool-call-start",
+          workspaceId,
+          messageId: "stream-end-msg",
+          toolCallId: "stream-end-todo-write",
+          toolName: "todo_write",
+          args: { todos: pinnedTodos },
+          tokens: 10,
+          timestamp: 1_001,
+        };
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "stream-end-msg",
+          toolCallId: "stream-end-todo-write",
+          toolName: "todo_write",
+          result: { success: true },
+          timestamp: 1_002,
+        };
+        yield {
+          type: "stream-end",
+          workspaceId,
+          messageId: "stream-end-msg",
+          metadata: {
+            model: "claude-sonnet-4",
+            historySequence: 1,
+            timestamp: 1_003,
+          },
+          parts: [],
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const collapsed = await waitUntil(
+        () => localStorageBacking.get(pinnedTodoKey) === JSON.stringify(false)
+      );
+      expect(collapsed).toBe(true);
+    });
+
+    it("persists a collapsed panel when an active workspace stream aborts with todos", async () => {
+      const workspaceId = "pinned-todo-stream-abort";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "stream-abort-msg",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: 1_000,
+        };
+        yield {
+          type: "tool-call-start",
+          workspaceId,
+          messageId: "stream-abort-msg",
+          toolCallId: "stream-abort-todo-write",
+          toolName: "todo_write",
+          args: { todos: pinnedTodos },
+          tokens: 10,
+          timestamp: 1_001,
+        };
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "stream-abort-msg",
+          toolCallId: "stream-abort-todo-write",
+          toolName: "todo_write",
+          result: { success: true },
+          timestamp: 1_002,
+        };
+        yield {
+          type: "stream-abort",
+          workspaceId,
+          messageId: "stream-abort-msg",
+          abortReason: "user",
+          metadata: {},
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const collapsed = await waitUntil(
+        () => localStorageBacking.get(pinnedTodoKey) === JSON.stringify(false)
+      );
+      expect(collapsed).toBe(true);
+    });
+
+    it("active workspace activity snapshot does not re-collapse after user re-expands", async () => {
+      const workspaceId = "active-workspace-pinned-todo-snapshot-race";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
+      const initialRecency = new Date("2099-01-10T00:00:00.000Z").getTime();
+
+      let releaseStopSnapshot!: () => void;
+      const stopSnapshotReady = new Promise<void>((resolve) => {
+        releaseStopSnapshot = resolve;
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await stopSnapshotReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId,
+          activity: {
+            recency: initialRecency,
+            streaming: true,
+            hasTodos: true,
+            lastModel: "claude-sonnet-4",
+            lastThinkingLevel: null,
+          },
+        };
+        yield {
+          type: "activity" as const,
+          workspaceId,
+          activity: {
+            recency: initialRecency + 1,
+            streaming: false,
+            hasTodos: true,
+            lastModel: "claude-sonnet-4",
+            lastThinkingLevel: null,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "stream-end-msg",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: 1_000,
+        };
+        yield {
+          type: "tool-call-start",
+          workspaceId,
+          messageId: "stream-end-msg",
+          toolCallId: "stream-end-todo-write",
+          toolName: "todo_write",
+          args: { todos: pinnedTodos },
+          tokens: 10,
+          timestamp: 1_001,
+        };
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "stream-end-msg",
+          toolCallId: "stream-end-todo-write",
+          toolName: "todo_write",
+          result: { success: true },
+          timestamp: 1_002,
+        };
+        yield {
+          type: "stream-end",
+          workspaceId,
+          messageId: "stream-end-msg",
+          metadata: {
+            model: "claude-sonnet-4",
+            historySequence: 1,
+            timestamp: 1_003,
+          },
+          parts: [],
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const collapsed = await waitUntil(
+        () => localStorageBacking.get(pinnedTodoKey) === JSON.stringify(false)
+      );
+      expect(collapsed).toBe(true);
+
+      localStorageBacking.set(pinnedTodoKey, JSON.stringify(true));
+
+      releaseStopSnapshot();
+
+      const processedSnapshot = await waitUntil(
+        () => store.getWorkspaceState(workspaceId).recencyTimestamp === initialRecency + 1
+      );
+      expect(processedSnapshot).toBe(true);
+      expect(localStorageBacking.get(pinnedTodoKey)).toBe(JSON.stringify(true));
+    });
+
+    it("background stream-stop with hasTodos: true collapses panel even with empty aggregator", async () => {
+      const activeWorkspaceId = "active-workspace-pinned-todo";
+      const backgroundWorkspaceId = "background-workspace-pinned-todo";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(backgroundWorkspaceId);
+      const initialRecency = new Date("2024-01-10T00:00:00.000Z").getTime();
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            hasTodos: true,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+
+      releaseBackgroundCompletion();
+
+      const collapsed = await waitUntil(
+        () => localStorageBacking.get(pinnedTodoKey) === JSON.stringify(false)
+      );
+      expect(collapsed).toBe(true);
+    });
+
+    it("background stream-stop with hasTodos: false does not collapse panel even with stale aggregator todos", async () => {
+      const activeWorkspaceId = "active-workspace-pinned-todo-stale";
+      const backgroundWorkspaceId = "background-workspace-pinned-todo-stale";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(backgroundWorkspaceId);
+      const initialRecency = new Date("2024-01-10T00:00:00.000Z").getTime();
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            hasTodos: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+      seedPinnedTodos(store, backgroundWorkspaceId, pinnedTodos);
+
+      const appliedInitialSnapshot = await waitUntil(
+        () => store.getWorkspaceState(backgroundWorkspaceId).canInterrupt
+      );
+      expect(appliedInitialSnapshot).toBe(true);
+
+      releaseBackgroundCompletion();
+
+      const processedSnapshot = await waitUntil(
+        () => !store.getWorkspaceState(backgroundWorkspaceId).canInterrupt
+      );
+      expect(processedSnapshot).toBe(true);
+      expect(localStorageBacking.has(pinnedTodoKey)).toBe(false);
+    });
+
+    it("does not persist a collapsed panel when a stream ends without todos", async () => {
+      const workspaceId = "pinned-todo-no-todos";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
+      let emittedStreamEnd = false;
+
+      mockOnChat.mockImplementation(async function* (
+        _input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "stream-no-todos-msg",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: 1_000,
+        };
+        yield {
+          type: "stream-end",
+          workspaceId,
+          messageId: "stream-no-todos-msg",
+          metadata: {
+            model: "claude-sonnet-4",
+            historySequence: 1,
+            timestamp: 1_001,
+          },
+          parts: [],
+        };
+        emittedStreamEnd = true;
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const processedStreamEnd = await waitUntil(() => emittedStreamEnd);
+      expect(processedStreamEnd).toBe(true);
+      expect(localStorageBacking.has(pinnedTodoKey)).toBe(false);
+    });
   });
 
   describe("recency calculation for new workspaces", () => {

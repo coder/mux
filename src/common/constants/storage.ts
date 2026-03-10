@@ -183,6 +183,14 @@ export function getInputKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for the pinned TODO panel expansion state.
+ * Format: "pinnedTodoExpanded:{workspaceId}"
+ */
+export function getPinnedTodoExpandedKey(workspaceId: string): string {
+  return `pinnedTodoExpanded:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for persisted workspace name-generation state.
  *
  * This is used by the workspace creation flow so drafts can preserve their

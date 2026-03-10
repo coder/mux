@@ -11,9 +11,12 @@ import type {
   TerminalCreateParams,
   TerminalResizeParams,
 } from "@/common/types/terminal";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isDockerRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
+import {
+  createRuntimeForWorkspace,
+  resolveWorkspaceExecutionPath,
+} from "@/node/runtime/runtimeHelpers";
 import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
 import { Terminal } from "@xterm/headless";
@@ -122,16 +125,11 @@ export class TerminalService {
       }
 
       // 2. Create runtime (pass workspace info for Docker container name derivation)
-      const runtime = createRuntime(workspaceMetadata.runtimeConfig, {
-        projectPath: workspaceMetadata.projectPath,
-        workspaceName: workspaceMetadata.name,
-      });
+      const runtime = createRuntimeForWorkspace(workspaceMetadata);
 
-      // 3. Compute workspace path
-      const workspacePath = runtime.getWorkspacePath(
-        workspaceMetadata.projectPath,
-        workspaceMetadata.name
-      );
+      // 3. Use the persisted workspace root everywhere users can observe it, except for runtimes
+      // like Docker whose executable cwd is intentionally translated inside the runtime.
+      const workspacePath = resolveWorkspaceExecutionPath(workspaceMetadata, runtime);
 
       // Keep integrated terminal context aligned with the bash tool for stable workspace metadata.
       // We intentionally skip dynamic values (like cost/model) because long-lived shells would go stale.

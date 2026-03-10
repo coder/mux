@@ -32,6 +32,7 @@ jobs:
       config: ${{ steps.filter.outputs.config }}
       backend: ${{ steps.filter.outputs.backend }}
       browser: ${{ steps.filter.outputs.browser }}
+      nix_deps: ${{ steps.filter.outputs.nix_deps }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -59,11 +60,16 @@ jobs:
               - 'jest.config.cjs'
               - 'babel.config.cjs'
               - 'package.json'
-              - 'bun.lockb'
+              - 'bun.lock'
               - 'tsconfig*.json'
               - 'vite*.ts'
               - 'Makefile'
               - 'electron-builder.yml'
+            nix_deps:
+              - 'package.json'
+              - 'bun.lock'
+              - 'flake.nix'
+              - 'flake.lock'
 
   static-check:
     name: Static Checks
@@ -126,6 +132,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lint-fmt-${{ hashFiles('eslint.config.mjs', '.prettierrc', '.prettierignore') }}-
       - run: make -j static-check
+
+  flake-hash-check:
+    name: Flake Hash Check
+    needs: [changes]
+    if: ${{ needs.changes.outputs.nix_deps == 'true' && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      # Keep the expensive nix build off the default static-check path.
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - run: make flake-hash-check
 
   lint-actions:
     name: Lint Actions
@@ -525,6 +547,7 @@ jobs:
     needs:
       - changes
       - static-check
+      - flake-hash-check
       - lint-actions
       - test-unit
       - test-integration

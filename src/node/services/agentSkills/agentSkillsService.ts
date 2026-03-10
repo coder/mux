@@ -1,5 +1,4 @@
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
@@ -483,41 +482,4 @@ export async function readAgentSkill(
   }
 
   throw new Error(`Agent skill not found: ${name}`);
-}
-
-function isAbsolutePathAny(filePath: string): boolean {
-  if (filePath.startsWith("/") || filePath.startsWith("\\")) return true;
-  // Windows drive letter paths (e.g., C:\foo or C:/foo)
-  return /^[A-Za-z]:[\\/]/.test(filePath);
-}
-
-export function resolveAgentSkillFilePath(
-  runtime: Runtime,
-  skillDir: string,
-  filePath: string
-): string {
-  if (!filePath) {
-    throw new Error("filePath is required");
-  }
-
-  // Disallow absolute paths and home-relative paths.
-  if (isAbsolutePathAny(filePath) || filePath.startsWith("~")) {
-    throw new Error(`Invalid filePath (must be relative to the skill directory): ${filePath}`);
-  }
-
-  const pathModule = runtime instanceof SSHRuntime ? path.posix : path;
-
-  // Resolve relative to skillDir and ensure it stays within skillDir.
-  const resolved = pathModule.resolve(skillDir, filePath);
-  const relative = pathModule.relative(skillDir, resolved);
-
-  if (relative === "" || relative === ".") {
-    throw new Error(`Invalid filePath (expected a file, got directory): ${filePath}`);
-  }
-
-  if (relative.startsWith("..") || pathModule.isAbsolute(relative)) {
-    throw new Error(`Invalid filePath (path traversal): ${filePath}`);
-  }
-
-  return resolved;
 }

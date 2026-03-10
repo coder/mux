@@ -26,7 +26,6 @@ import {
   Sparkles,
   PenLine,
   MessageCircleQuestionMark,
-  ChevronRight,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -96,9 +95,18 @@ export interface DraftAgentListItemProps extends AgentListItemBaseProps {
 // Shared components and utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Container styles shared between workspace and draft items */
+/**
+ * Container styles shared between workspace and draft items.
+ * Keep row text non-selectable so touch/pointer drags don't highlight titles
+ * before react-dnd has locked into a drag session.
+ */
 const LIST_ITEM_BASE_CLASSES =
-  "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 transition-all duration-150";
+  "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 select-none transition-all duration-150";
+
+const HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =
+  "[@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:invisible [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:pointer-events-none";
+const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
+  "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100";
 
 /** Calculate left padding based on nesting depth */
 function getItemPaddingLeft(depth?: number): number {
@@ -253,16 +261,18 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
       </div>
 
       <ActionButtonWrapper>
-        {/* Desktop: direct-delete button (hidden on touch devices) */}
+        {/* Inline delete button stays hidden only on the narrow touch sidebar. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
               className={cn(
                 "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200",
-                // On touch devices, fully hide so it can't intercept taps.
-                // Long-press opens the context menu instead.
-                "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
+                // Keep long-press as the compact mobile affordance on narrow
+                // touch layouts, but show the button on wider touch screens so
+                // it never becomes an invisible tappable hotspot.
+                HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH,
+                SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH
               )}
               onKeyDown={stopKeyboardPropagation}
               onClick={(e) => {
@@ -486,7 +496,14 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     (rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
     (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
   const canToggleCompletedChildren = hasCompletedChildren && onToggleCompletedChildren != null;
-  const isCompletedChildrenExpanded = completedChildrenExpanded ?? false;
+  const isCompletedChildrenExpanded = completedChildrenExpanded === true;
+  const toggleCompletedChildren = () => {
+    if (!canToggleCompletedChildren) {
+      return false;
+    }
+    onToggleCompletedChildren?.(workspaceId);
+    return true;
+  };
 
   const paddingLeft = getItemPaddingLeft(depth);
 
@@ -541,9 +558,53 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
             workspaceId,
           });
         }}
+        onDoubleClick={(event) => {
+          if (isDisabled || isEditing) {
+            return;
+          }
+          const doubleClickTarget =
+            event.target instanceof Element
+              ? event.target
+              : event.target instanceof Node
+                ? event.target.parentElement
+                : null;
+          if (doubleClickTarget?.closest("button,input,textarea,[contenteditable='true']")) {
+            return;
+          }
+          // Completed-child rows no longer render a dedicated chevron, so the row
+          // itself owns the pointer expand/collapse gesture. Rows without completed
+          // children keep double-click rename as their fallback affordance.
+          if (toggleCompletedChildren()) {
+            event.stopPropagation();
+            return;
+          }
+          startEditing();
+          event.stopPropagation();
+        }}
         {...ctxMenu.touchHandlers}
         onKeyDown={(e) => {
           if (isDisabled || isEditing) return;
+          // Only treat these shortcuts as row-level controls when the row itself is
+          // focused so child buttons keep their own keyboard behavior.
+          if (e.target !== e.currentTarget) return;
+          // Keep completed-child expansion reachable from the same focusable row now
+          // that the visible chevron control is gone.
+          if (
+            e.key === "ArrowRight" &&
+            canToggleCompletedChildren &&
+            !isCompletedChildrenExpanded
+          ) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleCompletedChildren();
+            return;
+          }
+          if (e.key === "ArrowLeft" && canToggleCompletedChildren && isCompletedChildrenExpanded) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleCompletedChildren();
+            return;
+          }
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelectWorkspace({
@@ -558,6 +619,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         role="button"
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
+        aria-expanded={canToggleCompletedChildren ? isCompletedChildrenExpanded : undefined}
+        aria-keyshortcuts={canToggleCompletedChildren ? "ArrowRight ArrowLeft" : undefined}
         aria-label={
           isRemoving
             ? `Deleting workspace ${displayTitle}`
@@ -644,7 +707,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
                       ctxMenu.isOpen ? "opacity-100" : "opacity-0",
-                      "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
+                      HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH,
+                      SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH
                     )}
                     onClick={(e) => e.stopPropagation()}
                     aria-label={`Workspace actions for ${displayTitle}`}
@@ -723,7 +787,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           >
             {isEditing ? (
               <input
-                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
+                className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none select-text"
                 value={editingTitle}
                 onChange={(e) => setEditingTitle(e.target.value)}
                 onKeyDown={handleEditKeyDown}
@@ -735,40 +799,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
               />
             ) : (
               <div className="flex min-w-0 items-center gap-1">
-                {canToggleCompletedChildren && (
-                  <button
-                    type="button"
-                    // Keep expansion toggles local to this button so row click/selection
-                    // behavior remains unchanged.
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (isDisabled) {
-                        return;
-                      }
-                      onToggleCompletedChildren?.(workspaceId);
-                    }}
-                    onKeyDown={stopKeyboardPropagation}
-                    aria-label={
-                      isCompletedChildrenExpanded
-                        ? `Collapse completed sub-agents for ${displayTitle}`
-                        : `Expand completed sub-agents for ${displayTitle}`
-                    }
-                    aria-expanded={isCompletedChildrenExpanded}
-                    disabled={isDisabled}
-                    className={cn(
-                      "text-muted inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border-none bg-transparent p-0 transition-colors duration-200",
-                      !isDisabled && "cursor-pointer hover:text-foreground",
-                      isDisabled && "cursor-default opacity-60"
-                    )}
-                  >
-                    <ChevronRight
-                      className={cn(
-                        "h-3 w-3 transition-transform duration-200 ease-in-out",
-                        isCompletedChildrenExpanded && "rotate-90"
-                      )}
-                    />
-                  </button>
-                )}
                 <span
                   className={cn(
                     "text-foreground min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
@@ -776,11 +806,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     isGeneratingTitle && "italic",
                     !isSelected && visualState === "seen" && "text-secondary"
                   )}
-                  onDoubleClick={(e) => {
-                    if (isDisabled) return;
-                    e.stopPropagation();
-                    startEditing();
-                  }}
                 >
                   {displayTitle}
                 </span>
