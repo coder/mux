@@ -200,21 +200,27 @@ describe("fileCommon", () => {
     const runtime = createRuntime({ type: "local", srcBaseDir: cwd });
     const planFilePath = "/home/user/.mux/plans/plan.md";
 
-    it("allows the configured plan file outside cwd in plan mode", () => {
+    it("allows the exact configured plan file outside cwd for reads in any mode", () => {
       const result = resolvePathWithinCwd(planFilePath, cwd, runtime, {
-        planFileOnly: true,
         planFilePath,
+        allowConfiguredPlanFileOutsideCwd: true,
       });
 
       expect(result.correctedPath).toBe(planFilePath);
       expect(result.resolvedPath).toBe(planFilePath);
     });
 
-    it("keeps rejecting other outside-cwd paths in plan mode", () => {
+    it("keeps rejecting writes to the configured plan file outside cwd outside plan mode", () => {
+      expect(() => resolvePathWithinCwd(planFilePath, cwd, runtime, { planFilePath })).toThrow(
+        "restricted to the workspace directory"
+      );
+    });
+
+    it("keeps rejecting other outside-cwd paths even when plan file reads are allowlisted", () => {
       expect(() =>
         resolvePathWithinCwd("/home/user/.mux/plans/other.md", cwd, runtime, {
-          planFileOnly: true,
           planFilePath,
+          allowConfiguredPlanFileOutsideCwd: true,
         })
       ).toThrow("restricted to the workspace directory");
     });

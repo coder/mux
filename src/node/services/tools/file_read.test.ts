@@ -418,38 +418,7 @@ describe("file_read tool", () => {
     await expectReadRejectedBeforeFileAccess(path.join(path.dirname(testDir), "outside.txt"));
   });
 
-  it("should allow reading the configured plan file outside cwd in plan mode", async () => {
-    const planDir = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-plan-read-"));
-    const planPath = path.join(planDir, "plan.md");
-
-    try {
-      const planContent = "# Plan\n\n- Step 1";
-      await fs.writeFile(planPath, planContent);
-
-      const tool = createFileReadTool({
-        ...getTestDeps(),
-        cwd: testDir,
-        runtime: new LocalRuntime(testDir),
-        runtimeTempDir: testDir,
-        planFileOnly: true,
-        planFilePath: planPath,
-      });
-
-      const result = (await tool.execute!(
-        { path: planPath },
-        mockToolCallOptions
-      )) as FileReadToolResult;
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.content).toBe("1\t# Plan\n2\t\n3\t- Step 1");
-      }
-    } finally {
-      await fs.rm(planDir, { recursive: true, force: true });
-    }
-  });
-
-  it("should reject reading the configured plan file when it is outside cwd", async () => {
+  it("should allow reading the exact configured plan file outside cwd outside plan mode", async () => {
     const planDir = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-exec-read-"));
     const planPath = path.join(planDir, "plan.md");
 
@@ -467,6 +436,37 @@ describe("file_read tool", () => {
 
       const result = (await tool.execute!(
         { path: planPath },
+        mockToolCallOptions
+      )) as FileReadToolResult;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.content).toBe("1\t# Plan\n2\t\n3\t- Step 1");
+      }
+    } finally {
+      await fs.rm(planDir, { recursive: true, force: true });
+    }
+  });
+
+  it("should keep rejecting other outside-cwd reads when planFilePath is configured", async () => {
+    const planDir = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-other-read-"));
+    const planPath = path.join(planDir, "plan.md");
+    const otherPath = path.join(planDir, "other.md");
+
+    try {
+      await fs.writeFile(planPath, "# Plan\n");
+      await fs.writeFile(otherPath, "# Other\n");
+
+      const tool = createFileReadTool({
+        ...getTestDeps(),
+        cwd: testDir,
+        runtime: new LocalRuntime(testDir),
+        runtimeTempDir: testDir,
+        planFilePath: planPath,
+      });
+
+      const result = (await tool.execute!(
+        { path: otherPath },
         mockToolCallOptions
       )) as FileReadToolResult;
 

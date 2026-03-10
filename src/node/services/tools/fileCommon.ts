@@ -317,20 +317,30 @@ export function validateAndCorrectPath(
   return { correctedPath: filePath };
 }
 
+interface ResolvePathWithinCwdOptions {
+  planFileOnly?: boolean;
+  planFilePath?: string;
+  allowConfiguredPlanFileOutsideCwd?: boolean;
+}
+
 export function resolvePathWithinCwd(
   filePath: string,
   cwd: string,
   runtime: Runtime,
-  planModeConfig?: Pick<ToolConfiguration, "planFileOnly" | "planFilePath">
+  planModeConfig?: ResolvePathWithinCwdOptions
 ): { correctedPath: string; resolvedPath: string; warning?: string } {
   const { correctedPath, warning } = validateAndCorrectPath(filePath, cwd, runtime);
+  const canBypassCwdForConfiguredPlanFile =
+    planModeConfig?.planFileOnly === true ||
+    planModeConfig?.allowConfiguredPlanFileOutsideCwd === true;
   const isExactConfiguredPlanFileOutsideCwd =
-    planModeConfig?.planFileOnly === true &&
-    planModeConfig.planFilePath != null &&
+    canBypassCwdForConfiguredPlanFile &&
+    planModeConfig?.planFilePath != null &&
     correctedPath === planModeConfig.planFilePath;
 
-  // In plan mode, the configured plan file may live under mux home instead of the workspace.
-  // Keep the exception narrow by only bypassing cwd enforcement for the exact configured path.
+  // Keep the exception narrow by only bypassing cwd enforcement for the exact configured
+  // plan file path. Reads can opt in outside plan mode so compaction/context resets do not
+  // strand the agent away from the configured plan file under mux home.
   if (!isExactConfiguredPlanFileOutsideCwd) {
     const cwdValidation = validatePathInCwd(correctedPath, cwd, runtime);
     if (cwdValidation) {
