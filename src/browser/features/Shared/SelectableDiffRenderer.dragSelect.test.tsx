@@ -8,16 +8,67 @@ import { SelectableDiffRenderer } from "./DiffRenderer";
 
 describe("SelectableDiffRenderer drag selection", () => {
   let onReviewNote: Mock<(data: unknown) => void>;
+  let originalRequestAnimationFrame: typeof globalThis.requestAnimationFrame;
+  let originalCancelAnimationFrame: typeof globalThis.cancelAnimationFrame;
+  let rafHandleCounter = 0;
+  const rafTimeouts = new Map<number, ReturnType<typeof setTimeout>>();
 
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
+
+    originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    rafHandleCounter = 0;
+    rafTimeouts.clear();
+
+    // Happy DOM in this isolated test does not provide RAF globals, but the review composer
+    // schedules textarea resize/drag updates through animation frames during drag selection.
+    const requestAnimationFrameMock: typeof requestAnimationFrame = (callback) => {
+      rafHandleCounter += 1;
+      const handle = rafHandleCounter;
+      const timeout = setTimeout(() => {
+        rafTimeouts.delete(handle);
+        callback(Date.now());
+      }, 0);
+      rafTimeouts.set(handle, timeout);
+      return handle;
+    };
+
+    const cancelAnimationFrameMock: typeof cancelAnimationFrame = (handle) => {
+      const timeout = rafTimeouts.get(handle);
+      if (!timeout) {
+        return;
+      }
+
+      clearTimeout(timeout);
+      rafTimeouts.delete(handle);
+    };
+
+    globalThis.requestAnimationFrame = requestAnimationFrameMock;
+    globalThis.cancelAnimationFrame = cancelAnimationFrameMock;
+    globalThis.window.requestAnimationFrame = requestAnimationFrameMock;
+    globalThis.window.cancelAnimationFrame = cancelAnimationFrameMock;
 
     onReviewNote = mock(() => undefined);
   });
 
   afterEach(() => {
     cleanup();
+
+    for (const timeout of rafTimeouts.values()) {
+      clearTimeout(timeout);
+    }
+    rafTimeouts.clear();
+
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+
+    if (globalThis.window) {
+      globalThis.window.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.window.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
+
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });
