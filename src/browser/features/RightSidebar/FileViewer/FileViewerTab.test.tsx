@@ -111,7 +111,7 @@ describe("FileViewerTab", () => {
     globalThis.document = originalDocument;
   });
 
-  test("reads sibling-project files from the shared container cwd while keeping repo diffs repo-rooted", async () => {
+  test("reads sibling-project files from the shared container cwd while using repo-relative diff paths", async () => {
     const executeBash = mock(() =>
       Promise.resolve({
         success: true,
@@ -143,7 +143,7 @@ describe("FileViewerTab", () => {
     });
     expect(executeBash).toHaveBeenNthCalledWith(2, {
       workspaceId: "workspace-1",
-      script: "DIFF project-b/src/example.ts",
+      script: "DIFF src/example.ts",
       options: { cwdMode: "repo-root", repoRootProjectPath: "/tmp/project-b" },
     });
 

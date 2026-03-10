@@ -25,7 +25,11 @@ import {
   cacheToResult,
 } from "@/browser/utils/fileContentCache";
 import type { ReviewNoteData } from "@/common/types/review";
-import { repoRootBashOptions, resolveRepoRootProjectPath } from "@/browser/utils/executeBash";
+import {
+  normalizeRepoRootFilePath,
+  repoRootBashOptions,
+  resolveRepoRootProjectPath,
+} from "@/browser/utils/executeBash";
 import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 
 interface FileViewerTabProps {
@@ -47,6 +51,12 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const repoRootProjectPath = resolveRepoRootProjectPath(
     workspaceMetadata.get(props.workspaceId),
     props.relativePath
+  );
+
+  const repoRootRelativePath = normalizeRepoRootFilePath(
+    workspaceMetadata.get(props.workspaceId),
+    props.relativePath,
+    repoRootProjectPath
   );
 
   // Initialize from cache if available
@@ -128,7 +138,7 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           }),
           api!.workspace.executeBash({
             workspaceId: props.workspaceId,
-            script: buildFileDiffScript(props.relativePath),
+            script: buildFileDiffScript(repoRootRelativePath),
             options: repoRootBashOptions(undefined, repoRootProjectPath),
           }),
         ]);
@@ -200,7 +210,14 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [api, props.workspaceId, props.relativePath, refreshCounter, repoRootProjectPath]);
+  }, [
+    api,
+    props.workspaceId,
+    props.relativePath,
+    refreshCounter,
+    repoRootProjectPath,
+    repoRootRelativePath,
+  ]);
 
   // Check if we have valid cached content for the current file
   const hasValidCache = loaded && loadedPathRef.current === props.relativePath;

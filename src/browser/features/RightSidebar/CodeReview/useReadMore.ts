@@ -102,6 +102,7 @@ export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
     void readFileLines(
       api,
       workspaceId,
+      workspaceMetadata.get(workspaceId),
       hunk.filePath,
       startLine,
       endLine,
@@ -119,7 +120,16 @@ export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
     return () => {
       cancelled = true;
     };
-  }, [api, readMore.up, hunk.oldStart, hunk.filePath, workspaceId, gitRef, repoRootProjectPath]);
+  }, [
+    api,
+    readMore.up,
+    hunk.oldStart,
+    hunk.filePath,
+    workspaceId,
+    workspaceMetadata,
+    gitRef,
+    repoRootProjectPath,
+  ]);
 
   // Load downward expansion content
   useEffect(() => {
@@ -138,6 +148,7 @@ export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
     void readFileLines(
       api,
       workspaceId,
+      workspaceMetadata.get(workspaceId),
       hunk.filePath,
       startLine,
       endLine,
@@ -162,6 +173,7 @@ export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
     hunk.oldLines,
     hunk.filePath,
     workspaceId,
+    workspaceMetadata,
     gitRef,
     repoRootProjectPath,
   ]);

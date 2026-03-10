@@ -33,7 +33,11 @@ import { ImmersiveReviewView } from "./ImmersiveReviewView";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";
 import { shellQuote } from "@/common/utils/shell";
-import { repoRootBashOptions, resolveRepoRootProjectPath } from "@/browser/utils/executeBash";
+import {
+  normalizeRepoRootFilePath,
+  repoRootBashOptions,
+  resolveRepoRootProjectPath,
+} from "@/browser/utils/executeBash";
 import { readPersistedString, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
@@ -392,6 +396,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const selectedRepoRootProjectPath = resolveRepoRootProjectPath(
     workspaceMetadata.get(workspaceId),
     selectedFilePath
+  );
+
+  const selectedDiffPath = normalizeRepoRootFilePath(
+    workspaceMetadata.get(workspaceId),
+    selectedFilePath ? extractNewPath(selectedFilePath) : null,
+    selectedRepoRootProjectPath
   );
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
@@ -917,8 +927,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     lastDiffRefreshTriggerRef.current = refreshTrigger;
     const isManualRefresh = refreshTrigger !== 0 && prevRefreshTrigger !== refreshTrigger;
 
-    const pathFilter =
-      selectedFilePath && !isImmersive ? ` -- "${extractNewPath(selectedFilePath)}"` : "";
+    const pathFilter = selectedFilePath && !isImmersive ? ` -- "${selectedDiffPath}"` : "";
     const diffRepoRootProjectPath = !isImmersive ? selectedRepoRootProjectPath : undefined;
 
     const diffCommand = buildGitDiffCommand(
@@ -1061,6 +1070,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     filters.includeUncommitted,
     selectedFilePath,
     selectedRepoRootProjectPath,
+    selectedDiffPath,
     refreshTrigger,
     isCreating,
     isImmersive,
