@@ -727,18 +727,20 @@ export const TOOL_DEFINITIONS = {
       })
     ),
   },
-  mux_global_agents_read: {
+  mux_agents_read: {
     description:
-      "Read the global AGENTS.md file (mux-wide agent instructions) from the mux home directory.",
+      "Read the AGENTS.md instructions file. In a project workspace, reads the project's AGENTS.md. " +
+      "In the system workspace, reads the global ~/.mux/AGENTS.md.",
     schema: z.object({}).strict(),
   },
-  mux_global_agents_write: {
+  mux_agents_write: {
     description:
-      "Write the global AGENTS.md file (mux-wide agent instructions) in the mux home directory. " +
+      "Write the AGENTS.md instructions file. In a project workspace, writes the project's AGENTS.md. " +
+      "In the system workspace, writes the global ~/.mux/AGENTS.md. " +
       "Requires explicit confirmation via confirm: true.",
     schema: z
       .object({
-        newContent: z.string().describe("The full new contents of the global AGENTS.md file"),
+        newContent: z.string().describe("The full new contents of the AGENTS.md file"),
         confirm: z
           .boolean()
           .describe(
@@ -816,7 +818,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_list: {
     description:
-      "List available skills in the current workspace. Returns the effective flat skill list across project, global, and built-in scopes, with shadowing already applied. Use each descriptor's scope field to identify where the visible skill came from.",
+      "List available skills. In a project workspace, lists both project skills (.mux/skills/) and global skills (~/.mux/skills/), each tagged with its scope. In the system workspace, lists global skills only.",
     schema: z
       .object({
         includeUnadvertised: z
@@ -828,13 +830,8 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_write: {
     description:
-      "Create or update a file within a global skill directory. " +
-      "When writing SKILL.md, the content is validated as a skill definition (YAML frontmatter + markdown body). " +
-      "Creates the skill directory if it doesn't exist. " +
-      "For SKILL.md: include only required frontmatter fields (name, description). " +
-      "Preserve user-provided wording and structure. " +
-      "Do not add optional fields (advertise, license, etc.) unless explicitly requested. " +
-      "The name field is auto-derived from the skill name argument if omitted or mismatched.",
+      "Create or update a file within the contextual skills directory. In a project workspace, writes under .mux/skills/<name>/. In the system workspace, writes under ~/.mux/skills/<name>/. " +
+      "When writing SKILL.md, content is validated as a skill definition and frontmatter.name is aligned to the skill name argument.",
     schema: z
       .object({
         name: SkillNameSchema.describe("Skill name (directory name under the global skills root)"),
@@ -849,8 +846,8 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_delete: {
     description:
-      "Delete either a file within a global skill directory or the entire skill directory. " +
-      "Requires confirm: true. Cannot delete built-in skills.",
+      "Delete either a file within the contextual skills directory or the entire skill directory. In a project workspace, deletes from .mux/skills/. In the system workspace, deletes from ~/.mux/skills/. " +
+      "Requires confirm: true.",
     schema: z
       .object({
         name: SkillNameSchema.describe("Skill name to delete"),
@@ -1471,9 +1468,9 @@ export const BashBackgroundTerminateResultSchema = z.union([
 ]);
 
 /**
- * mux_global_agents_read tool result.
+ * mux_agents_read tool result.
  */
-export const MuxGlobalAgentsReadToolResultSchema = z.union([
+export const MuxAgentsReadToolResultSchema = z.union([
   z.object({
     success: z.literal(true),
     content: z.string(),
@@ -1485,9 +1482,9 @@ export const MuxGlobalAgentsReadToolResultSchema = z.union([
 ]);
 
 /**
- * mux_global_agents_write tool result.
+ * mux_agents_write tool result.
  */
-export const MuxGlobalAgentsWriteToolResultSchema = z.union([
+export const MuxAgentsWriteToolResultSchema = z.union([
   z
     .object({
       success: z.literal(true),
@@ -1719,25 +1716,25 @@ export function getAvailableTools(
   modelString: string,
   options?: {
     enableAgentReport?: boolean;
+    enableAnalyticsQuery?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
-    enableSkillsCatalogTools?: boolean;
   }
 ): string[] {
   const [provider] = modelString.split(":");
   const enableAgentReport = options?.enableAgentReport ?? true;
+  const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const baseTools = [
-    "mux_global_agents_read",
-    "mux_global_agents_write",
+    "mux_agents_read",
+    "mux_agents_write",
     "agent_skill_list",
     "agent_skill_write",
     "agent_skill_delete",
-    ...(options?.enableSkillsCatalogTools
-      ? (["skills_catalog_search", "skills_catalog_read"] as const)
-      : []),
+    "skills_catalog_search",
+    "skills_catalog_read",
     "mux_config_read",
     "mux_config_write",
     "file_read",
@@ -1761,7 +1758,7 @@ export function getAvailableTools(
     "todo_read",
     "status_set",
     "notify",
-    "analytics_query",
+    ...(enableAnalyticsQuery ? ["analytics_query"] : []),
     "web_fetch",
   ];
 

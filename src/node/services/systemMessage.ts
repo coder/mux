@@ -222,7 +222,6 @@ export function extractToolInstructions(
   options?: {
     enableAgentReport?: boolean;
     enableMuxGlobalAgentsTools?: boolean;
-    enableSkillsCatalogTools?: boolean;
     agentInstructions?: string;
   }
 ): Record<string, string> {

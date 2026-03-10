@@ -65,17 +65,13 @@ describe("tokenizer", () => {
     expect(second).toBe(first);
   });
 
-  test("counts skills catalog tool schema tokens when explicitly enabled", async () => {
-    const tokens = await getToolDefinitionTokens("skills_catalog_read", openaiModel, undefined, {
-      enableSkillsCatalogTools: true,
-    });
+  test("counts skills catalog tool schema tokens", async () => {
+    const tokens = await getToolDefinitionTokens(
+      "skills_catalog_read",
+      openaiModel,
+      undefined,
+      undefined
+    );
     expect(tokens).toBeGreaterThan(0);
-  });
-
-  test("does not count skills catalog tool schema tokens when explicitly disabled", async () => {
-    const tokens = await getToolDefinitionTokens("skills_catalog_read", openaiModel, undefined, {
-      enableSkillsCatalogTools: false,
-    });
-    expect(tokens).toBe(0);
   });
 });

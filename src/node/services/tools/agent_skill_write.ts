@@ -9,8 +9,9 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
+import { readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { generateDiff } from "@/node/services/tools/fileCommon";
-import { getMuxHomeFromWorkspaceSessionDir } from "@/node/services/tools/muxHome";
 import {
   hasErrorCode,
   isSkillMarkdownRootFile,
@@ -18,6 +19,11 @@ import {
   SKILL_FILENAME,
   validateLocalSkillDirectory,
 } from "./skillFileUtils";
+import {
+  ensureRuntimePathWithinWorkspace,
+  inspectContainmentOnRuntime,
+  resolveSkillFilePathForRuntime,
+} from "./runtimeSkillPathUtils";
 
 interface AgentSkillWriteToolArgs {
   name: string;
@@ -71,7 +77,7 @@ function injectSkillNameIntoFrontmatter(content: string, skillName: string): str
 }
 
 /**
- * Tool that creates/updates files in ~/.mux/skills/<name>/.
+ * Tool that creates/updates files in the contextual skills directory.
  */
 export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -92,15 +98,133 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
 
       try {
         const relativeFilePath = filePath ?? SKILL_FILENAME;
+        const skillCtx = resolveSkillStorageContext({
+          runtime: config.runtime,
+          workspacePath: config.cwd,
+          muxScope: config.muxScope ?? null,
+        });
 
-        const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "agent_skill_write");
-        await fsPromises.mkdir(muxHome, { recursive: true });
+        if (skillCtx.kind === "project-runtime") {
+          const skillsRoot = config.runtime.normalizePath(".mux/skills", skillCtx.workspacePath);
+          const skillDir = config.runtime.normalizePath(parsedName.data, skillsRoot);
 
-        const muxHomeReal = await fsPromises.realpath(muxHome);
-        const skillDir = path.join(muxHomeReal, "skills", parsedName.data);
+          let resolvedTarget: ReturnType<typeof resolveSkillFilePathForRuntime>;
+          try {
+            resolvedTarget = resolveSkillFilePathForRuntime(
+              config.runtime,
+              skillDir,
+              relativeFilePath
+            );
+          } catch (error) {
+            return {
+              success: false,
+              error: getErrorMessage(error),
+            };
+          }
+
+          // Canonicalize any casing variant of SKILL.md to the canonical path.
+          // Validate the exact path we will write so casing aliases cannot bypass leaf-symlink checks.
+          if (isSkillMarkdownRootFile(resolvedTarget.normalizedRelativePath)) {
+            resolvedTarget = {
+              ...resolvedTarget,
+              resolvedPath: config.runtime.normalizePath(SKILL_FILENAME, skillDir),
+              normalizedRelativePath: SKILL_FILENAME,
+            };
+          }
+
+          const targetContainment = await inspectContainmentOnRuntime(
+            config.runtime,
+            skillDir,
+            resolvedTarget.resolvedPath
+          );
+          if (!targetContainment.withinRoot) {
+            return {
+              success: false,
+              error: `Invalid filePath (path escapes skill directory after symlink resolution): ${relativeFilePath}`,
+            };
+          }
+          if (targetContainment.leafSymlink) {
+            return {
+              success: false,
+              error: `Target file is a symbolic link and cannot be accessed: ${relativeFilePath}`,
+            };
+          }
+
+          await ensureRuntimePathWithinWorkspace(
+            config.runtime,
+            skillCtx.workspacePath,
+            resolvedTarget.resolvedPath,
+            "Skill file"
+          );
+
+          const writesSkillMarkdown = isSkillMarkdownRootFile(
+            resolvedTarget.normalizedRelativePath
+          );
+          const contentToWrite = writesSkillMarkdown
+            ? injectSkillNameIntoFrontmatter(content, parsedName.data)
+            : content;
+
+          if (writesSkillMarkdown) {
+            try {
+              parseSkillMarkdown({
+                content: contentToWrite,
+                byteSize: Buffer.byteLength(contentToWrite, "utf-8"),
+                directoryName: parsedName.data,
+              });
+            } catch (error) {
+              return {
+                success: false,
+                error: getErrorMessage(error),
+              };
+            }
+          }
+
+          let originalContent = "";
+          try {
+            originalContent = await readFileString(config.runtime, resolvedTarget.resolvedPath);
+          } catch {
+            // Best-effort read for diff generation.
+          }
+
+          await config.runtime.ensureDir(path.dirname(resolvedTarget.resolvedPath));
+          await writeFileString(config.runtime, resolvedTarget.resolvedPath, contentToWrite);
+
+          const diff = generateDiff(resolvedTarget.resolvedPath, originalContent, contentToWrite);
+
+          return {
+            success: true,
+            diff: FILE_EDIT_DIFF_OMITTED_MESSAGE,
+            ui_only: {
+              file_edit: {
+                diff,
+              },
+            },
+          };
+        }
+
+        const { muxScope } = config;
+        if (!muxScope) {
+          throw new Error("agent_skill_write requires muxScope");
+        }
+
+        const skillsRoot =
+          muxScope.type === "project"
+            ? path.join(muxScope.projectRoot, ".mux", "skills")
+            : path.join(muxScope.muxHome, "skills");
+        // Containment is anchored at workspace root (project) or mux home (global),
+        // never at .mux — a symlinked .mux must not redirect skill operations outside.
+        const containmentRoot =
+          muxScope.type === "project" ? muxScope.projectRoot : muxScope.muxHome;
+
+        const skillDir = path.join(skillsRoot, parsedName.data);
 
         try {
-          await validateLocalSkillDirectory(skillDir, muxHomeReal);
+          if (muxScope.type !== "project") {
+            // Self-heal a deleted mux home before realpath-based containment validation runs.
+            await fsPromises.mkdir(containmentRoot, { recursive: true });
+          }
+
+          await validateLocalSkillDirectory(containmentRoot, skillDir);
         } catch (error) {
           return {
             success: false,

@@ -5,7 +5,6 @@ import type { MuxConfigReadToolArgs, MuxConfigReadToolResult } from "@/common/ty
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
-  getMuxHomeFromWorkspaceSessionDir,
   hasOwnRecordKey,
   isObjectRecord,
   parseArrayIndex,
@@ -24,7 +23,7 @@ export const createMuxConfigReadTool: ToolFactory = (config: ToolConfiguration) 
       { abortSignal: _abortSignal }
     ): Promise<MuxConfigReadToolResult> => {
       try {
-        const muxHome = getMuxHomeFromWorkspaceSessionDir(config, "mux_config_read");
+        const muxHome = config.muxScope!.muxHome;
         const rawDocument = await readConfigDocumentUnvalidated(muxHome, args.file);
         const redactedDocument = redactConfigDocument(args.file, rawDocument);
         const data = args.path != null ? getAtPath(redactedDocument, args.path) : redactedDocument;

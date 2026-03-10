@@ -6,6 +6,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
 import { RuntimeError } from "@/node/runtime/Runtime";
@@ -105,6 +106,12 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
         };
       }
 
+      const skillCtx = resolveSkillStorageContext({
+        runtime: config.runtime,
+        workspacePath,
+        muxScope: config.muxScope ?? null,
+      });
+
       // Defensive: validate again even though inputSchema should guarantee shape.
       const parsedName = SkillNameSchema.safeParse(name);
       if (!parsedName.success) {
@@ -122,7 +129,15 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
           };
         }
 
-        const resolvedSkill = await readAgentSkill(config.runtime, workspacePath, parsedName.data);
+        const resolvedSkill = await readAgentSkill(
+          skillCtx.runtime,
+          skillCtx.workspacePath,
+          parsedName.data,
+          {
+            roots: skillCtx.roots,
+            containment: skillCtx.containment,
+          }
+        );
 
         // Built-in skills are embedded in the app bundle (no filesystem access).
         if (resolvedSkill.package.scope === "built-in") {
@@ -139,7 +154,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
         let targetPath: string;
         try {
           ({ resolvedPath: targetPath } = await resolveContainedSkillFilePathOnRuntime(
-            config.runtime,
+            skillCtx.runtime,
             resolvedSkill.skillDir,
             filePath
           ));
@@ -168,7 +183,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
 
         let stat;
         try {
-          stat = await config.runtime.stat(targetPath);
+          stat = await skillCtx.runtime.stat(targetPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {
@@ -196,7 +211,7 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
 
         let fullContent: string;
         try {
-          fullContent = await readFileString(config.runtime, targetPath);
+          fullContent = await readFileString(skillCtx.runtime, targetPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {
