@@ -9,6 +9,8 @@ import {
 } from "@/browser/components/Dialog/Dialog";
 import { Button } from "@/browser/components/Button/Button";
 import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
 
 interface MultiProjectOption {
@@ -24,6 +26,7 @@ interface MultiProjectWorkspaceCreateModalProps {
 }
 
 export function MultiProjectWorkspaceCreateModal(props: MultiProjectWorkspaceCreateModalProps) {
+  const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
   const [selectedProjectPaths, setSelectedProjectPaths] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -36,6 +39,10 @@ export function MultiProjectWorkspaceCreateModal(props: MultiProjectWorkspaceCre
     setSelectedProjectPaths([]);
     setErrorMessage(null);
   }, [props.isOpen]);
+
+  if (!multiProjectWorkspacesEnabled) {
+    return null;
+  }
 
   const toggleProject = (projectPath: string, checked: boolean) => {
     setSelectedProjectPaths((previous) => {

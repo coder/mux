@@ -24,6 +24,7 @@ import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import * as WorkspaceFallbackModelModule from "@/browser/hooks/useWorkspaceFallbackModel";
 import * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import * as ExperimentsModule from "@/browser/hooks/useExperiments";
 import * as TooltipModule from "../Tooltip/Tooltip";
 import * as SidebarCollapseButtonModule from "../SidebarCollapseButton/SidebarCollapseButton";
 import * as ConfirmationModalModule from "../ConfirmationModal/ConfirmationModal";
@@ -205,6 +206,8 @@ function installProjectSidebarTestDoubles() {
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
   );
 
+  spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(() => true);
+
   spyOn(TooltipModule, "Tooltip").mockImplementation(
     TestWrapper as unknown as typeof TooltipModule.Tooltip
   );
@@ -320,6 +323,34 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     cleanupDom?.();
     cleanupDom = null;
     mock.restore();
+  });
+
+  test("filters multi-project rows out entirely when the experiment is disabled", () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(() => false);
+
+    const parentWorkspace = createWorkspace("parent", { title: "Parent workspace" });
+    const completedChildWorkspace = createWorkspace("child", {
+      parentWorkspaceId: "parent",
+      taskStatus: "reported",
+      title: "Completed child workspace",
+    });
+
+    const sortedWorkspacesByProject = new Map([
+      ["/projects/demo-project", [parentWorkspace, completedChildWorkspace]],
+    ]);
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        workspaceRecency={{}}
+      />
+    );
+
+    expect(view.queryByText("Multi-Project")).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("parent"))).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("child"))).toBeNull();
   });
 
   test("reuses normal workspace chevron/collapse behavior for multi-project rows", async () => {

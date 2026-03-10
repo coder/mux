@@ -83,6 +83,8 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "../AgentListItem/AgentListItem";
@@ -474,6 +476,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Theme for logo variant
   const { theme } = useTheme();
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
+  const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
@@ -1006,10 +1009,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     const singleProjectWorkspaces: FrontendWorkspaceMetadata[] = [];
     for (const workspace of workspaces) {
       if (isMultiProject(workspace)) {
-        multiProjectWorkspacesById.set(workspace.id, workspace);
-      } else {
-        singleProjectWorkspaces.push(workspace);
+        if (multiProjectWorkspacesEnabled) {
+          multiProjectWorkspacesById.set(workspace.id, workspace);
+        }
+        continue;
       }
+
+      singleProjectWorkspaces.push(workspace);
     }
     singleProjectWorkspacesByProject.set(projectPath, singleProjectWorkspaces);
   }

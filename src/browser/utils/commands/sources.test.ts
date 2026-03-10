@@ -46,6 +46,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onSetThinkingLevel: () => undefined,
     onStartWorkspaceCreation: () => undefined,
     onStartMultiProjectWorkspaceCreation: () => undefined,
+    multiProjectWorkspacesEnabled: true,
     onArchiveMergedWorkspacesInProject: () => Promise.resolve(),
     onSelectWorkspace: () => undefined,
     onRemoveWorkspace: () => Promise.resolve({ success: true }),
@@ -221,10 +222,28 @@ test("multi-project workspace command triggers creation flow", async () => {
 
   expect(multiProjectAction).toBeDefined();
   expect(multiProjectAction?.title).toBe("New Multi-Project Workspace");
+  expect(multiProjectAction?.visible?.()).toBe(true);
 
   await multiProjectAction!.run();
 
   expect(onStartMultiProjectWorkspaceCreation).toHaveBeenCalledTimes(1);
+});
+
+test("multi-project workspace command hides itself when the experiment is disabled", async () => {
+  const onStartMultiProjectWorkspaceCreation = mock();
+  const sources = mk({
+    onStartMultiProjectWorkspaceCreation,
+    multiProjectWorkspacesEnabled: false,
+  });
+  const actions = sources.flatMap((s) => s());
+  const multiProjectAction = actions.find((a) => a.id === "ws:new-multi-project");
+
+  expect(multiProjectAction).toBeDefined();
+  expect(multiProjectAction?.visible?.()).toBe(false);
+
+  await multiProjectAction!.run();
+
+  expect(onStartMultiProjectWorkspaceCreation).not.toHaveBeenCalled();
 });
 
 test("project commands exclude system projects from options", async () => {

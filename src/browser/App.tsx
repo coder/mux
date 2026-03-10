@@ -82,6 +82,8 @@ import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
 import { createProjectRefs } from "@/common/utils/multiProject";
@@ -146,6 +148,7 @@ function AppInner() {
   );
 
   const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
+  const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Left sidebar is drag-resizable (mirrors RightSidebar). Width is persisted globally;
   // collapse remains a separate toggle and the drag handle is hidden in mobile-touch overlay mode.
@@ -478,8 +481,19 @@ function AppInner() {
   );
 
   const openNewMultiProjectWorkspaceFromPalette = useCallback(() => {
+    if (!multiProjectWorkspacesEnabled) {
+      return;
+    }
     setMultiProjectWorkspaceModalOpen(true);
-  }, []);
+  }, [multiProjectWorkspacesEnabled]);
+
+  useEffect(() => {
+    if (multiProjectWorkspacesEnabled || !isMultiProjectWorkspaceModalOpen) {
+      return;
+    }
+
+    setMultiProjectWorkspaceModalOpen(false);
+  }, [isMultiProjectWorkspaceModalOpen, multiProjectWorkspacesEnabled]);
 
   const createMultiProjectWorkspace = useCallback(
     async (projectPaths: string[]) => {
@@ -667,6 +681,7 @@ function AppInner() {
     onSetThinkingLevel: setThinkingLevelFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,
+    multiProjectWorkspacesEnabled,
     onArchiveMergedWorkspacesInProject: archiveMergedWorkspacesInProjectFromPalette,
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
@@ -1188,16 +1203,18 @@ function AppInner() {
             beginWorkspaceCreation(normalizedPath);
           }}
         />
-        <MultiProjectWorkspaceCreateModal
-          isOpen={isMultiProjectWorkspaceModalOpen}
-          onClose={() => setMultiProjectWorkspaceModalOpen(false)}
-          projectOptions={Array.from(userProjects.keys()).map((projectPath) => ({
-            projectPath,
-            projectName:
-              projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Unnamed Project",
-          }))}
-          onConfirm={createMultiProjectWorkspace}
-        />
+        {multiProjectWorkspacesEnabled && (
+          <MultiProjectWorkspaceCreateModal
+            isOpen={isMultiProjectWorkspaceModalOpen}
+            onClose={() => setMultiProjectWorkspaceModalOpen(false)}
+            projectOptions={Array.from(userProjects.keys()).map((projectPath) => ({
+              projectPath,
+              projectName:
+                projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Unnamed Project",
+            }))}
+            onConfirm={createMultiProjectWorkspace}
+          />
+        )}
         <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
         <SshPromptDialog />
