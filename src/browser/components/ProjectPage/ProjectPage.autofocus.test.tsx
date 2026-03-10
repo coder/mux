@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
+import * as actualAgentContext from "../../contexts/AgentContext";
 import { installDom } from "../../../../tests/ui/dom";
 
 let cleanupDom: (() => void) | null = null;
@@ -32,8 +33,10 @@ function registerProjectPageMocks() {
 
   // ProjectPage wraps creation mode in AgentProvider, but this autofocus test only
   // needs the ChatInput lifecycle. Keep the provider inert so WorkspaceProvider
-  // wiring changes do not affect this narrow focus assertion.
+  // wiring changes do not affect this narrow focus assertion, while re-exporting
+  // the real module surface so later suites do not inherit a partial mock.
   void mock.module("@/browser/contexts/AgentContext", () => ({
+    ...actualAgentContext,
     AgentProvider: (props: { children: ReactNode }) => props.children,
   }));
 
