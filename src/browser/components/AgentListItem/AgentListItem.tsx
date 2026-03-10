@@ -834,6 +834,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   projectPath={projectPath}
                   tooltipPosition="right"
                   isWorking={isWorking}
+                  // Keep agent rows focused on commit-level progress; users asked to
+                  // remove the green/red +/- line counts from the left sidebar.
+                  showLineDelta={false}
                 />
               </div>
             )}

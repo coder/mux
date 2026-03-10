@@ -45,6 +45,8 @@ export interface GitStatusIndicatorViewProps {
   gitStatus: GitStatus | null;
   tooltipPosition?: "right" | "bottom";
   mode: GitStatusIndicatorMode;
+  /** Whether line-delta mode is available in this surface. */
+  allowLineDelta?: boolean;
   // Tooltip data
   branchHeaders: GitBranchHeader[] | null;
   commits: GitCommit[] | null;
@@ -73,6 +75,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   gitStatus,
   tooltipPosition: _tooltipPosition = "right",
   mode,
+  allowLineDelta = true,
   branchHeaders,
   commits,
   dirtyFiles,
@@ -97,13 +100,13 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   }
 
   const outgoingLines = gitStatus.outgoingAdditions + gitStatus.outgoingDeletions;
+  const isLineDeltaMode = allowLineDelta && mode === "line-delta";
 
   // Render empty placeholder when nothing to show (prevents layout shift)
-  // In line-delta mode, also show if behind so users can toggle to divergence view
-  const isEmpty =
-    mode === "divergence"
-      ? gitStatus.ahead === 0 && gitStatus.behind === 0 && !gitStatus.dirty
-      : outgoingLines === 0 && !gitStatus.dirty && gitStatus.behind === 0;
+  // In line-delta mode, also show if behind so users can switch to commit divergence.
+  const isEmpty = isLineDeltaMode
+    ? outgoingLines === 0 && !gitStatus.dirty && gitStatus.behind === 0
+    : gitStatus.ahead === 0 && gitStatus.behind === 0 && !gitStatus.dirty;
 
   if (isEmpty) {
     return (
@@ -235,23 +238,27 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
       <div className="border-separator-light mb-2 flex flex-col gap-1 border-b pb-2">
         <div className="flex items-center gap-2">
           <span className="text-muted-light">Divergence:</span>
-          <ToggleGroup
-            type="single"
-            value={mode}
-            onValueChange={(value) => {
-              if (!value) return;
-              onModeChange(value as GitStatusIndicatorMode);
-            }}
-            aria-label="Git status indicator mode"
-            size="sm"
-          >
-            <ToggleGroupItem value="line-delta" aria-label="Show line delta" size="sm">
-              Lines
-            </ToggleGroupItem>
-            <ToggleGroupItem value="divergence" aria-label="Show commit divergence" size="sm">
-              Commits
-            </ToggleGroupItem>
-          </ToggleGroup>
+          {allowLineDelta ? (
+            <ToggleGroup
+              type="single"
+              value={mode}
+              onValueChange={(value) => {
+                if (!value) return;
+                onModeChange(value as GitStatusIndicatorMode);
+              }}
+              aria-label="Git status indicator mode"
+              size="sm"
+            >
+              <ToggleGroupItem value="line-delta" aria-label="Show line delta" size="sm">
+                Lines
+              </ToggleGroupItem>
+              <ToggleGroupItem value="divergence" aria-label="Show commit divergence" size="sm">
+                Commits
+              </ToggleGroupItem>
+            </ToggleGroup>
+          ) : (
+            <span className="text-muted">Commits</span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -261,22 +268,23 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
           <span className="text-muted-light">Overview:</span>
-          {outgoingHasDelta ? (
-            <span className="flex items-center gap-2">
-              {gitStatus.outgoingAdditions > 0 && (
-                <span className={cn("font-normal", additionsColor)}>
-                  +{formatCountAbbrev(gitStatus.outgoingAdditions)}
-                </span>
-              )}
-              {gitStatus.outgoingDeletions > 0 && (
-                <span className={cn("font-normal", deletionsColor)}>
-                  -{formatCountAbbrev(gitStatus.outgoingDeletions)}
-                </span>
-              )}
-            </span>
-          ) : (
-            <span className="text-muted">Lines: 0</span>
-          )}
+          {allowLineDelta &&
+            (outgoingHasDelta ? (
+              <span className="flex items-center gap-2">
+                {gitStatus.outgoingAdditions > 0 && (
+                  <span className={cn("font-normal", additionsColor)}>
+                    +{formatCountAbbrev(gitStatus.outgoingAdditions)}
+                  </span>
+                )}
+                {gitStatus.outgoingDeletions > 0 && (
+                  <span className={cn("font-normal", deletionsColor)}>
+                    -{formatCountAbbrev(gitStatus.outgoingDeletions)}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-muted">Lines: 0</span>
+            ))}
           {hasCommitDivergence ? (
             <span className="text-muted">
               Commits: {formatCountAbbrev(gitStatus.ahead)} ahead ·{" "}
@@ -294,7 +302,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
 
   const triggerContent = (
     <>
-      {mode === "divergence" ? (
+      {!isLineDeltaMode ? (
         <>
           {gitStatus.ahead > 0 && (
             <span className="flex items-center font-normal">
