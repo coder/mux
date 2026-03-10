@@ -575,6 +575,77 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
     });
 
+    test("marks in-progress todos completed when propose_plan succeeds", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      aggregator.handleToolCallStart({
+        messageId: "msg1",
+        toolCallId: "tool1",
+        toolName: "todo_write",
+        args: {
+          todos: [
+            { content: "Inspected relevant files", status: "completed" },
+            { content: "Writing the plan", status: "in_progress" },
+            { content: "Wait for approval", status: "pending" },
+          ],
+        },
+        tokens: 10,
+        timestamp: Date.now(),
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        toolCallId: "tool1",
+        toolName: "todo_write",
+        result: { success: true },
+        timestamp: Date.now(),
+      });
+
+      aggregator.handleToolCallStart({
+        messageId: "msg1",
+        toolCallId: "tool2",
+        toolName: "propose_plan",
+        args: {},
+        tokens: 1,
+        timestamp: Date.now(),
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        toolCallId: "tool2",
+        toolName: "propose_plan",
+        result: {
+          success: true,
+          planPath: "/tmp/plan.md",
+          message: "Plan proposed. Waiting for user approval.",
+        },
+        timestamp: Date.now(),
+      });
+
+      expect(aggregator.getCurrentTodos()).toEqual([
+        { content: "Inspected relevant files", status: "completed" },
+        { content: "Writing the plan", status: "completed" },
+        { content: "Wait for approval", status: "pending" },
+      ]);
+    });
+
     test("should clear fully completed todos when the final stream ends", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 

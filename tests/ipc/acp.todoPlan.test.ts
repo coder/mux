@@ -196,6 +196,92 @@ describe("ACP todo_write plan translation", () => {
     ]);
   });
 
+  it("marks in-progress plan entries completed after propose_plan succeeds", async () => {
+    const { translator, sessionUpdates } = createHarness();
+    const todos = [
+      { content: "Inspected relevant files", status: "completed" },
+      { content: "Writing the plan", status: "in_progress" },
+      { content: "Wait for approval", status: "pending" },
+    ] as const;
+
+    await forwardEvents(translator, [
+      makeToolCallStart("tool-3", "todo_write", { todos }),
+      makeToolCallEnd("tool-3", "todo_write", { success: true, count: todos.length }),
+      makeToolCallStart("tool-4", "propose_plan", {}),
+      makeToolCallEnd("tool-4", "propose_plan", {
+        success: true,
+        planPath: "/tmp/plan.md",
+        message: "Plan proposed. Waiting for user approval.",
+      }),
+    ]);
+
+    expect(getUpdateKinds(sessionUpdates)).toEqual([
+      "tool_call",
+      "tool_call_update",
+      "plan",
+      "tool_call",
+      "tool_call_update",
+      "plan",
+    ]);
+
+    const planUpdates = sessionUpdates
+      .map((notification) => notification.update)
+      .filter(
+        (update): update is Extract<SessionUpdate, { sessionUpdate: "plan" }> =>
+          update.sessionUpdate === "plan"
+      );
+
+    expect(planUpdates).toHaveLength(2);
+    expect(planUpdates[1]?.entries).toEqual([
+      { content: "Inspected relevant files", status: "completed", priority: "medium" },
+      { content: "Writing the plan", status: "completed", priority: "medium" },
+      { content: "Wait for approval", status: "pending", priority: "medium" },
+    ]);
+  });
+
+  it("drops cached plan entries when the session is cleared", async () => {
+    const { translator, sessionUpdates } = createHarness();
+    const todos = [{ content: "Writing the plan", status: "in_progress" }] as const;
+
+    await forwardEventsForSession(translator, "session-clear", [
+      makeToolCallStart("tool-todo", "todo_write", { todos }, "msg-clear-1"),
+      makeToolCallEnd(
+        "tool-todo",
+        "todo_write",
+        { success: true, count: todos.length },
+        "msg-clear-1"
+      ),
+    ]);
+
+    translator.clearSession("session-clear");
+
+    await forwardEventsForSession(translator, "session-clear", [
+      makeToolCallStart("tool-plan", "propose_plan", {}, "msg-clear-2"),
+      makeToolCallEnd(
+        "tool-plan",
+        "propose_plan",
+        {
+          success: true,
+          planPath: "/tmp/plan.md",
+          message: "Plan proposed. Waiting for user approval.",
+        },
+        "msg-clear-2"
+      ),
+    ]);
+
+    const sessionClearUpdates = sessionUpdates.filter(
+      (notification) => notification.sessionId === "session-clear"
+    );
+
+    expect(getUpdateKinds(sessionClearUpdates)).toEqual([
+      "tool_call",
+      "tool_call_update",
+      "plan",
+      "tool_call",
+      "tool_call_update",
+    ]);
+  });
+
   it("does not emit plan update for non-todo tools", async () => {
     const { translator, sessionUpdates } = createHarness();
 

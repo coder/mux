@@ -6,6 +6,7 @@ import type {
   ToolKind,
 } from "@agentclientprotocol/sdk";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { completeInProgressTodoItems } from "@/common/utils/todoList";
 
 interface ActiveToolCall {
   toolCallId: string;
@@ -35,12 +36,14 @@ interface MessageMetadataWithFrontendFields {
 }
 
 const TODO_WRITE_TOOL_NAME = "todo_write";
+const PROPOSE_PLAN_TOOL_NAME = "propose_plan";
 const DEFAULT_PLAN_ENTRY_PRIORITY: PlanEntryPriority = "medium";
 const SESSION_SCOPED_TOOL_KEY_DELIMITER = "\u0000";
 
 export class StreamTranslator {
   private readonly activeToolCallsByMessageKey = new Map<string, string[]>();
   private readonly toolCallsByKey = new Map<string, ActiveToolCall>();
+  private readonly currentPlanEntriesBySessionId = new Map<string, PlanEntry[]>();
 
   constructor(private readonly connection: AgentSideConnection) {
     assert(connection != null, "StreamTranslator: connection is required");
@@ -133,7 +136,8 @@ export class StreamTranslator {
         const toolState = this.toolCallsByKey.get(
           this.getScopedToolCallKey(sessionId, event.toolCallId)
         );
-        const todoPlanUpdate = this.translateTodoWritePlanUpdate(
+        const todoPlanUpdate = this.translatePlanUpdate(
+          sessionId,
           event.toolName,
           toolState?.rawInput,
           event.result
@@ -255,7 +259,8 @@ export class StreamTranslator {
         });
 
         if (part.state === "output-available") {
-          const todoPlanUpdate = this.translateTodoWritePlanUpdate(
+          const todoPlanUpdate = this.translatePlanUpdate(
+            sessionId,
             part.toolName,
             part.input,
             part.output
@@ -426,29 +431,49 @@ export class StreamTranslator {
     return [textToolContent(text)];
   }
 
-  private translateTodoWritePlanUpdate(
+  private translatePlanUpdate(
+    sessionId: string,
     toolName: string,
     rawInput: unknown,
     rawOutput: unknown
   ): PlanSessionUpdate | null {
-    if (toolName !== TODO_WRITE_TOOL_NAME) {
+    if (toolName === TODO_WRITE_TOOL_NAME) {
+      if (!didTodoWriteSucceed(rawOutput)) {
+        return null;
+      }
+
+      // `todo_write` is Mux's canonical execution-plan surface. Mirror it into
+      // ACP `sessionUpdate: "plan"` so editors can render native plan UIs.
+      const entries = parseTodoWritePlanEntries(rawInput);
+      if (entries == null) {
+        return null;
+      }
+
+      this.currentPlanEntriesBySessionId.set(sessionId, entries);
+      return {
+        sessionUpdate: "plan",
+        entries,
+      };
+    }
+
+    if (toolName !== PROPOSE_PLAN_TOOL_NAME || !didProposePlanSucceed(rawOutput)) {
       return null;
     }
 
-    if (!didTodoWriteSucceed(rawOutput)) {
+    const currentEntries = this.currentPlanEntriesBySessionId.get(sessionId);
+    if (currentEntries == null || currentEntries.length === 0) {
       return null;
     }
 
-    // `todo_write` is Mux's canonical execution-plan surface. Mirror it into
-    // ACP `sessionUpdate: "plan"` so editors can render native plan UIs.
-    const entries = parseTodoWritePlanEntries(rawInput);
-    if (entries == null) {
+    const completedEntries = completeInProgressTodoItems(currentEntries);
+    if (completedEntries === currentEntries) {
       return null;
     }
 
+    this.currentPlanEntriesBySessionId.set(sessionId, completedEntries);
     return {
       sessionUpdate: "plan",
-      entries,
+      entries: completedEntries,
     };
   }
 
@@ -608,6 +633,8 @@ export class StreamTranslator {
         this.toolCallsByKey.delete(scopedToolCallKey);
       }
     }
+
+    this.currentPlanEntriesBySessionId.delete(sessionId);
   }
 
   private hasNonEmptyMessageId(messageId: string): boolean {
@@ -743,6 +770,10 @@ function didTodoWriteSucceed(rawOutput: unknown): boolean {
   }
 
   return rawOutput.success === true;
+}
+
+function didProposePlanSucceed(rawOutput: unknown): boolean {
+  return isJsonObject(rawOutput) && rawOutput.success === true;
 }
 
 function parseTodoWritePlanEntries(rawInput: unknown): PlanEntry[] | null {

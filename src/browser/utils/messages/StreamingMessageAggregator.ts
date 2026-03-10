@@ -24,6 +24,7 @@ import type {
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
+import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
@@ -1928,6 +1929,13 @@ export class StreamingMessageAggregator {
       if (Array.isArray(args.todos) && !this.todosEqual(this.currentTodos, args.todos)) {
         // Only update if todos actually changed (prevents flickering from reference changes)
         this.currentTodos = args.todos;
+      }
+    }
+
+    if (toolName === "propose_plan" && hasSuccessResult(output) && this.currentTodos.length > 0) {
+      const completedTodos = completeInProgressTodoItems(this.currentTodos);
+      if (completedTodos !== this.currentTodos) {
+        this.currentTodos = completedTodos;
       }
     }
 
