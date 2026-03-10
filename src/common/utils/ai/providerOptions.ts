@@ -83,13 +83,6 @@ export function resolveProviderOptionsNamespaceKey(
   return routeProvider;
 }
 
-function createNamespacedProviderOptions<T extends object>(
-  namespaceKey: string,
-  options: T
-): ProviderOptions {
-  return { [namespaceKey]: options } as ProviderOptions;
-}
-
 function resolveAnthropic1MCapabilityModel(
   modelString: string,
   providersConfig?: ProvidersConfigMap | null
@@ -291,13 +284,17 @@ export function buildProviderOptions(
         thinkingLevel: effectiveThinking,
       });
 
-      return createNamespacedProviderOptions(providerOptionsNamespaceKey, {
-        disableParallelToolUse: false,
-        sendReasoning: true,
-        ...(thinking && { thinking }),
-        ...(cacheControl && { cacheControl }),
-        effort: effortLevel,
-      });
+      const options = {
+        anthropic: {
+          disableParallelToolUse: false,
+          sendReasoning: true,
+          ...(thinking && { thinking }),
+          ...(cacheControl && { cacheControl }),
+          effort: effortLevel,
+        },
+      } satisfies { anthropic: AnthropicProviderOptions };
+
+      return options;
     }
 
     // Other Anthropic models: Use thinking parameter with budgetTokens
@@ -307,18 +304,20 @@ export function buildProviderOptions(
       thinkingLevel: effectiveThinking,
     });
 
-    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
-      disableParallelToolUse: false, // Always enable concurrent tool execution
-      sendReasoning: true, // Include reasoning traces in requests sent to the model
-      ...(cacheControl && { cacheControl }),
-      // Conditionally add thinking configuration (non-Opus 4.5 models)
-      ...(budgetTokens > 0 && {
-        thinking: {
-          type: "enabled",
-          budgetTokens,
-        },
-      }),
-    });
+    const options = {
+      anthropic: {
+        disableParallelToolUse: false, // Always enable concurrent tool execution
+        sendReasoning: true, // Include reasoning traces in requests sent to the model
+        ...(cacheControl && { cacheControl }),
+        // Conditionally add thinking configuration (non-Opus 4.5 models)
+        ...(budgetTokens > 0 && {
+          thinking: {
+            type: "enabled",
+            budgetTokens,
+          },
+        }),
+      },
+    } satisfies { anthropic: AnthropicProviderOptions };
     log.debug("buildProviderOptions: Returning Anthropic options", options);
     return options;
   }
@@ -354,32 +353,34 @@ export function buildProviderOptions(
       wireFormat,
     });
 
-    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
-      parallelToolCalls: true, // Always enable concurrent tool execution
-      serviceTier,
-      ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
-      ...(isResponses && {
-        // Default to disabled; allow auto truncation for compaction to avoid context errors
-        truncation: truncationMode,
-        // Stable prompt cache key to improve OpenAI cache hit rates
-        // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
-        ...(promptCacheKey && { promptCacheKey }),
-      }),
-      // Conditionally add reasoning configuration
-      ...(reasoningEffort && {
-        reasoningEffort,
-        ...(isResponses &&
-          shouldSendReasoningSummary && {
-            reasoningSummary: "detailed", // Enable detailed reasoning summaries when the model supports it
-          }),
+    const options = {
+      openai: {
+        parallelToolCalls: true, // Always enable concurrent tool execution
+        serviceTier,
+        ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
         ...(isResponses && {
-          // Include reasoning encrypted content to preserve reasoning context across conversation steps
-          // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls
+          // Default to disabled; allow auto truncation for compaction to avoid context errors
+          truncation: truncationMode,
+          // Stable prompt cache key to improve OpenAI cache hit rates
           // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
-          include: ["reasoning.encrypted_content"],
+          ...(promptCacheKey && { promptCacheKey }),
         }),
-      }),
-    });
+        // Conditionally add reasoning configuration
+        ...(reasoningEffort && {
+          reasoningEffort,
+          ...(isResponses &&
+            shouldSendReasoningSummary && {
+              reasoningSummary: "detailed", // Enable detailed reasoning summaries when the model supports it
+            }),
+          ...(isResponses && {
+            // Include reasoning encrypted content to preserve reasoning context across conversation steps
+            // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls
+            // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
+            include: ["reasoning.encrypted_content"],
+          }),
+        }),
+      },
+    } satisfies { openai: OpenAIResponsesProviderOptions };
     log.info("buildProviderOptions: Returning OpenAI options", options);
     return options;
   }
@@ -411,9 +412,11 @@ export function buildProviderOptions(
       }
     }
 
-    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
-      thinkingConfig,
-    });
+    const options = {
+      google: {
+        thinkingConfig,
+      },
+    } satisfies { google: GoogleGenerativeAIProviderOptions };
     log.debug("buildProviderOptions: Google options", options);
     return options;
   }
@@ -429,14 +432,16 @@ export function buildProviderOptions(
 
     // Only add reasoning config if thinking is enabled
     if (reasoningEffort) {
-      const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
-        reasoning: {
-          enabled: true,
-          effort: reasoningEffort,
-          // Don't exclude reasoning content - we want to display it in the UI
-          exclude: false,
+      const options = {
+        openrouter: {
+          reasoning: {
+            enabled: true,
+            effort: reasoningEffort,
+            // Don't exclude reasoning content - we want to display it in the UI
+            exclude: false,
+          },
         },
-      });
+      } satisfies { openrouter: OpenRouterReasoningOptions };
       log.debug("buildProviderOptions: Returning OpenRouter options", options);
       return options;
     }
@@ -455,10 +460,12 @@ export function buildProviderOptions(
       returnCitations: true,
     };
 
-    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
-      ...overrides,
-      searchParameters: overrides.searchParameters ?? defaultSearchParameters,
-    });
+    const options = {
+      xai: {
+        ...overrides,
+        searchParameters: overrides.searchParameters ?? defaultSearchParameters,
+      },
+    } satisfies { xai: XaiProviderOptions };
     log.debug("buildProviderOptions: Returning xAI options", options);
     return options;
   }
@@ -478,9 +485,11 @@ export function buildProviderOptions(
       return {};
     }
 
-    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
-      reasoningEffort,
-    });
+    const options = {
+      "github-copilot": {
+        reasoningEffort,
+      },
+    } satisfies { "github-copilot": OpenAICompatibleGatewayProviderOptions };
     log.debug("buildProviderOptions: Returning OpenAI-compatible gateway options", options);
     return options;
   }
