@@ -526,22 +526,22 @@ async function assertNestedConnectorContinuity(
   expectedTrunkActive: "true" | "false"
 ) {
   const canvas = within(canvasElement);
-  expect(canvas.getByText("Nested Parent")).toBeInTheDocument();
-  expect(canvas.getByText("Child A")).toBeInTheDocument();
-  expect(canvas.getByText("Grandchild 1")).toBeInTheDocument();
-  expect(canvas.getByText("Grandchild 2")).toBeInTheDocument();
-  expect(canvas.getByText("Child B")).toBeInTheDocument();
+  await expect(canvas.getByText("Nested Parent")).toBeInTheDocument();
+  await expect(canvas.getByText("Child A")).toBeInTheDocument();
+  await expect(canvas.getByText("Grandchild 1")).toBeInTheDocument();
+  await expect(canvas.getByText("Grandchild 2")).toBeInTheDocument();
+  await expect(canvas.getByText("Child B")).toBeInTheDocument();
 
-  await waitFor(() => {
-    expect(canvasElement.querySelectorAll('[data-testid="ancestor-trunk"]')).toHaveLength(2);
+  await waitFor(async () => {
+    await expect(canvasElement.querySelectorAll('[data-testid="ancestor-trunk"]')).toHaveLength(2);
   });
 
   const ancestorTrunks = canvasElement.querySelectorAll<HTMLElement>(
     '[data-testid="ancestor-trunk"]'
   );
   for (const trunk of ancestorTrunks) {
-    expect(trunk).toHaveAttribute("data-trunk-active", expectedTrunkActive);
-    expect(trunk.style.left).toBe("20px");
+    await expect(trunk).toHaveAttribute("data-trunk-active", expectedTrunkActive);
+    await expect(trunk.style.left).toBe("20px");
   }
 }
 
