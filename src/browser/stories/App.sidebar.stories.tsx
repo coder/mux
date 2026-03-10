@@ -596,6 +596,19 @@ export const GitStatusVariations: AppStory = {
     });
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
+
+    // Select the diverged workspace and wait for top-bar git status to render so
+    // we assert absence in the sidebar only after git status has refreshed.
+    await userEvent.click(row);
+    await waitFor(() => {
+      const controls = document.body.querySelectorAll(
+        'button[aria-label="View git divergence details"]'
+      );
+      if (controls.length === 0) {
+        throw new Error("Top-bar git divergence control not rendered yet");
+      }
+    });
+
     if (within(row).queryByLabelText("View git divergence details") !== null) {
       throw new Error("Sidebar rows should not render git divergence indicators");
     }
