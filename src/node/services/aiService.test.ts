@@ -13,9 +13,9 @@ import {
   normalizeAnthropicBaseURL,
   buildAnthropicHeaders,
   buildAppAttributionHeaders,
-  ANTHROPIC_1M_CONTEXT_HEADER,
   type ProviderModelFactory,
 } from "./providerModelFactory";
+import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
 import { HistoryService } from "./historyService";
 import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
