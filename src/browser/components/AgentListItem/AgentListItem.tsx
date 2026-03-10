@@ -26,6 +26,9 @@ import {
   Sparkles,
   PenLine,
   MessageCircleQuestionMark,
+  Eye,
+  EyeOff,
+  ChevronDown,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -148,11 +151,18 @@ function getVisualState(opts: {
   return opts.isUnread ? "idle" : "seen";
 }
 
-function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
-  const shouldHideDot = !props.isDraft && (props.state === "seen" || props.state === "hidden");
+function isStatusDotVisible(state: VisualState, isDraft?: boolean): boolean {
+  if (isDraft) {
+    return true;
+  }
+  return state !== "seen" && state !== "hidden";
+}
+
+function StatusDot(props: { state: VisualState; isDraft?: boolean; overlay?: React.ReactNode }) {
+  const hasVisibleDot = isStatusDotVisible(props.state, props.isDraft);
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
-  ) : shouldHideDot ? (
+  ) : !hasVisibleDot ? (
     <span className="block h-3 w-3 opacity-0" />
   ) : (
     <span
@@ -177,6 +187,11 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
       className="relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
     >
       {dot}
+      {props.overlay && (
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          {props.overlay}
+        </span>
+      )}
     </div>
   );
 }
@@ -487,6 +502,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isSelected,
     hasError,
   });
+  const showsVisibleStatusDot = isStatusDotVisible(visualState);
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
@@ -497,6 +513,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
   const canToggleCompletedChildren = hasCompletedChildren && onToggleCompletedChildren != null;
   const isCompletedChildrenExpanded = completedChildrenExpanded === true;
+  const showCompletedChildrenIndicator =
+    canToggleCompletedChildren && isCompletedChildrenExpanded && !showsVisibleStatusDot;
   const toggleCompletedChildren = () => {
     if (!canToggleCompletedChildren) {
       return false;
@@ -571,13 +589,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           if (doubleClickTarget?.closest("button,input,textarea,[contenteditable='true']")) {
             return;
           }
-          // Completed-child rows no longer render a dedicated chevron, so the row
-          // itself owns the pointer expand/collapse gesture. Rows without completed
-          // children keep double-click rename as their fallback affordance.
-          if (toggleCompletedChildren()) {
-            event.stopPropagation();
-            return;
-          }
           startEditing();
           event.stopPropagation();
         }}
@@ -587,8 +598,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           // Only treat these shortcuts as row-level controls when the row itself is
           // focused so child buttons keep their own keyboard behavior.
           if (e.target !== e.currentTarget) return;
-          // Keep completed-child expansion reachable from the same focusable row now
-          // that the visible chevron control is gone.
+          // Keep completed-child expansion reachable from the same focusable row.
+          // The chevron is only a visual indicator, not an interactive control.
           if (
             e.key === "ArrowRight" &&
             canToggleCompletedChildren &&
@@ -636,7 +647,18 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        <StatusDot state={visualState} />
+        <StatusDot
+          state={visualState}
+          overlay={
+            showCompletedChildrenIndicator ? (
+              <ChevronDown
+                aria-hidden="true"
+                className="text-muted h-3 w-3"
+                data-testid={`completed-children-expanded-indicator-${workspaceId}`}
+              />
+            ) : undefined
+          }
+        />
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
         {isInitializing ? (
@@ -741,6 +763,16 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     linkSharingEnabled={linkSharingEnabled === true}
                     isMuxHelpChat={isMuxHelpChat}
                   />
+                  {canToggleCompletedChildren && (
+                    <PositionedMenuItem
+                      icon={isCompletedChildrenExpanded ? <EyeOff /> : <Eye />}
+                      label={isCompletedChildrenExpanded ? "Hide sub-agents" : "Show sub-agents"}
+                      onClick={() => {
+                        toggleCompletedChildren();
+                        ctxMenu.close();
+                      }}
+                    />
+                  )}
                   <PositionedMenuItem
                     icon={<Sparkles />}
                     label="Generate new title"
