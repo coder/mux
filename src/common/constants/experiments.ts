@@ -12,6 +12,7 @@ export const EXPERIMENT_IDS = {
   SYSTEM_1: "system-1",
   EXEC_SUBAGENT_HARD_RESTART: "exec-subagent-hard-restart",
   MUX_GOVERNOR: "mux-governor",
+  MULTI_PROJECT_WORKSPACES: "multi-project-workspaces",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -87,6 +88,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,
+  },
+  [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: {
+    id: EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
+    name: "Multi-project workspaces",
+    description: "Enable workspaces that can span multiple projects instead of a single project",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: false,
   },
 };
 
