@@ -20,6 +20,7 @@ export interface ExtensionMetadata {
   lastModel: string | null;
   lastThinkingLevel: ThinkingLevel | null;
   agentStatus: ExtensionAgentStatus | null;
+  hasTodos?: boolean;
   // Persists the latest status_set URL so later status_set calls without a URL
   // can still carry the last deep link even after agentStatus is cleared.
   lastStatusUrl?: string | null;

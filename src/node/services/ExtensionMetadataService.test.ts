@@ -148,6 +148,29 @@ describe("ExtensionMetadataService", () => {
     expect(snapshots.get("ws-8")?.lastThinkingLevel).toBe("high");
   });
 
+  test("setStreaming round-trips hasTodos when provided", async () => {
+    const withoutTodos = await service.setStreaming(
+      "workspace-has-todos",
+      false,
+      undefined,
+      undefined,
+      false
+    );
+    expect(withoutTodos.hasTodos).toBe(false);
+
+    const withTodos = await service.setStreaming(
+      "workspace-has-todos",
+      false,
+      undefined,
+      undefined,
+      true
+    );
+    expect(withTodos.hasTodos).toBe(true);
+
+    const snapshots = await service.getAllSnapshots();
+    expect(snapshots.get("workspace-has-todos")?.hasTodos).toBe(true);
+  });
+
   test("setStreaming toggles status and remembers last model", async () => {
     await service.updateRecency("workspace-2", 200);
     const streaming = await service.setStreaming("workspace-2", true, "anthropic/sonnet", "high");

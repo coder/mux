@@ -16,6 +16,7 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { readTodosForSessionDir } from "@/node/services/todos/todoStorage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
@@ -1187,7 +1188,8 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     streaming: boolean,
     model?: string,
-    agentId?: string
+    agentId?: string,
+    hasTodos?: boolean
   ): Promise<void> {
     try {
       let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
@@ -1208,11 +1210,19 @@ export class WorkspaceService extends EventEmitter {
           thinkingLevel = aiSettings?.thinkingLevel;
         }
       }
+      if (!streaming && hasTodos === undefined) {
+        // Stop snapshots need an authoritative todo bit even for background workspaces,
+        // and centralizing the read here preserves the fire-and-forget abort/error handlers.
+        const sessionDir = this.config.getSessionDir(workspaceId);
+        const todos = await readTodosForSessionDir(sessionDir);
+        hasTodos = todos.length > 0;
+      }
       const snapshot = await this.extensionMetadata.setStreaming(
         workspaceId,
         streaming,
         model,
-        thinkingLevel
+        thinkingLevel,
+        hasTodos
       );
       // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
       // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
