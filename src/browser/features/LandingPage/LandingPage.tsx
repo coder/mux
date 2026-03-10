@@ -1,9 +1,9 @@
 import { useEffect, useMemo } from "react";
-import { CircleHelp, Menu, Plus } from "lucide-react";
+import { CircleHelp, Plus } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { cn } from "@/common/lib/utils";
-import { Button } from "@/browser/components/Button/Button";
+import { SidebarCollapseButton } from "@/browser/components/SidebarCollapseButton/SidebarCollapseButton";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -37,6 +37,7 @@ import {
 } from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 // ─── Card styling constant (Analytics dashboard aesthetic) ───────────────
@@ -107,19 +108,12 @@ function LandingTitlebar(props: {
       )}
     >
       {props.leftSidebarCollapsed && (
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={props.onToggleLeftSidebarCollapsed}
-          title="Open sidebar"
-          aria-label="Open sidebar menu"
-          className={cn(
-            "mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0",
-            isDesktopMode() && "titlebar-no-drag"
-          )}
-        >
-          <Menu className="h-4 w-4" />
-        </Button>
+        <SidebarCollapseButton
+          collapsed={true}
+          onToggle={props.onToggleLeftSidebarCollapsed}
+          side="left"
+          shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+        />
       )}
     </div>
   );

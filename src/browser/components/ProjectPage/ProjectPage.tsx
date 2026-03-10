@@ -1,5 +1,4 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
-import { Menu } from "lucide-react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { cn } from "@/common/lib/utils";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
@@ -8,6 +7,7 @@ import { ChatInput } from "@/browser/features/ChatInput/index";
 import type { ChatInputAPI, WorkspaceCreatedOptions } from "@/browser/features/ChatInput/types";
 import { ProjectMCPOverview } from "../ProjectMCPOverview/ProjectMCPOverview";
 import { ArchivedWorkspaces } from "../ArchivedWorkspaces/ArchivedWorkspaces";
+import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
 import { useAPI } from "@/browser/contexts/API";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { GitInitBanner } from "../GitInitBanner/GitInitBanner";
@@ -30,8 +30,8 @@ import {
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
-import { Button } from "@/browser/components/Button/Button";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {
@@ -272,19 +272,12 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             )}
           >
             {leftSidebarCollapsed && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onToggleLeftSidebarCollapsed}
-                title="Open sidebar"
-                aria-label="Open sidebar menu"
-                className={cn(
-                  "hidden mobile-menu-btn h-6 w-6 shrink-0 text-muted hover:text-foreground",
-                  isDesktopMode() && "titlebar-no-drag"
-                )}
-              >
-                <Menu className="h-4 w-4" />
-              </Button>
+              <SidebarCollapseButton
+                collapsed={true}
+                onToggle={onToggleLeftSidebarCollapsed}
+                side="left"
+                shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+              />
             )}
           </div>
           {/* Scrollable content area */}
