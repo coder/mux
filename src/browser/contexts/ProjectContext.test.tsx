@@ -1,33 +1,36 @@
 import type { ProjectConfig } from "@/node/config";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type { ProjectContext } from "./ProjectContext";
 import { ProjectProvider, useProjectContext } from "./ProjectContext";
 import type { RecursivePartial } from "@/browser/testUtils";
 
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import type { APIClient } from "@/browser/contexts/API";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 
-// Mock API
+// Keep the client local to each test instead of using bun's process-global
+// mock.module registry for API, which leaks across context suites.
 let currentClientMock: RecursivePartial<APIClient> = {};
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: currentClientMock as APIClient,
-    status: "connected" as const,
-    error: null,
-  }),
-  APIProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
 
 describe("ProjectContext", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+  let originalLocalStorage: typeof globalThis.localStorage;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    originalLocalStorage = globalThis.localStorage;
+  });
+
   afterEach(() => {
     cleanup();
+    mock.restore();
 
-    // Resetting global state in tests
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    // Resetting global state in tests
-    globalThis.document = undefined as unknown as Document;
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.localStorage = originalLocalStorage;
 
     currentClientMock = {};
   });
@@ -554,9 +557,11 @@ async function setup() {
     return null;
   }
   render(
-    <ProjectProvider>
-      <ContextCapture />
-    </ProjectProvider>
+    <APIProvider client={currentClientMock as APIClient}>
+      <ProjectProvider>
+        <ContextCapture />
+      </ProjectProvider>
+    </APIProvider>
   );
   await waitFor(() => expect(contextRef.current).toBeTruthy());
   return () => contextRef.current!;
@@ -604,10 +609,10 @@ function createMockAPI(overrides: RecursivePartial<APIClient["projects"]>) {
     secrets: projects.secrets as unknown as RecursivePartial<APIClient["secrets"]>,
   };
 
-  // Setting up global state for tests
   globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-  // Setting up global state for tests
   globalThis.document = globalThis.window.document;
+  globalThis.localStorage = globalThis.window.localStorage;
+  globalThis.localStorage = globalThis.window.localStorage;
 
   return projects;
 }

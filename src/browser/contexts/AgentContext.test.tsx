@@ -7,32 +7,15 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { GLOBAL_SCOPE_ID, getAgentIdKey, getProjectScopeId } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { ProjectProvider } from "./ProjectContext";
+import { RouterProvider } from "./RouterContext";
+import { WorkspaceProvider } from "./WorkspaceContext";
+import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 
 let mockAgentDefinitions: AgentDefinitionDescriptor[] = [];
-const apiClient = {
-  agents: {
-    list: () => Promise.resolve(mockAgentDefinitions),
-  },
-};
-
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: apiClient,
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
-
 let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string; agentId?: string }>();
-
-void mock.module("@/browser/contexts/WorkspaceContext", () => ({
-  useWorkspaceMetadata: () => ({
-    workspaceMetadata: mockWorkspaceMetadata,
-    loading: false,
-  }),
-}));
 
 import { AgentProvider, useAgent, type AgentContextValue } from "./AgentContext";
 
@@ -86,6 +69,86 @@ function Harness(props: HarnessProps) {
   return null;
 }
 
+function createWorkspaceMetadata(
+  workspaceId: string,
+  overrides: { parentWorkspaceId?: string; agentId?: string } = {}
+): FrontendWorkspaceMetadata {
+  return {
+    id: workspaceId,
+    projectPath: "/tmp/project",
+    projectName: "project",
+    name: "main",
+    namedWorkspacePath: `/tmp/project/${workspaceId}`,
+    createdAt: "2025-01-01T00:00:00.000Z",
+    runtimeConfig: { type: "local", srcBaseDir: "/tmp/.mux/src" },
+    ...overrides,
+  };
+}
+
+function createEmptyAsyncIterable<T>(): AsyncIterable<T> {
+  return (async function* () {
+    await Promise.resolve();
+  })();
+}
+
+function createApiClient(): APIClient {
+  const workspaceMetadata = Array.from(
+    mockWorkspaceMetadata.entries(),
+    ([workspaceId, overrides]) => createWorkspaceMetadata(workspaceId, overrides)
+  );
+
+  return {
+    agents: {
+      list: () => Promise.resolve(mockAgentDefinitions),
+    },
+    workspace: {
+      list: () => Promise.resolve(workspaceMetadata),
+      onMetadata: async () => createEmptyAsyncIterable(),
+      onChat: async () => createEmptyAsyncIterable(),
+      getSessionUsage: () => Promise.resolve(undefined),
+      activity: {
+        list: () => Promise.resolve({}),
+        subscribe: async () => createEmptyAsyncIterable(),
+      },
+      truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+      interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+    },
+    projects: {
+      list: () => Promise.resolve([]),
+      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      secrets: {
+        get: () => Promise.resolve([]),
+      },
+    },
+    server: {
+      getLaunchProject: () => Promise.resolve(null),
+    },
+    terminal: {
+      openWindow: () => Promise.resolve(),
+    },
+  } as unknown as APIClient;
+}
+
+function renderAgentHarness(props: {
+  projectPath: string;
+  workspaceId?: string;
+  onChange: (value: AgentContextValue) => void;
+}) {
+  return render(
+    <APIProvider client={createApiClient()}>
+      <RouterProvider>
+        <ProjectProvider>
+          <WorkspaceProvider>
+            <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
+              <Harness onChange={props.onChange} />
+            </AgentProvider>
+          </WorkspaceProvider>
+        </ProjectProvider>
+      </RouterProvider>
+    </APIProvider>
+  );
+}
+
 describe("AgentContext", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
@@ -103,10 +166,18 @@ describe("AgentContext", () => {
     globalThis.window = dom as unknown as Window & typeof globalThis;
     globalThis.document = dom.document as unknown as Document;
     globalThis.localStorage = dom.localStorage as unknown as Storage;
+    window.api = {
+      platform: "darwin",
+      versions: {},
+      consumePendingDeepLinks: () => [],
+      onDeepLink: () => () => undefined,
+    };
   });
 
   afterEach(() => {
     cleanup();
+    getWorkspaceStoreRaw().dispose();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.localStorage = originalLocalStorage;
@@ -118,11 +189,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("ask");
@@ -139,11 +206,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("plan");
@@ -157,11 +220,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("auto");
@@ -188,11 +247,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("auto");
@@ -226,11 +281,11 @@ describe("AgentContext", () => {
     window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpenPicker as EventListener);
 
     try {
-      render(
-        <AgentProvider workspaceId={MUX_HELP_CHAT_WORKSPACE_ID} projectPath={projectPath}>
-          <Harness onChange={(value) => (contextValue = value)} />
-        </AgentProvider>
-      );
+      renderAgentHarness({
+        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+        projectPath,
+        onChange: (value) => (contextValue = value),
+      });
 
       await waitFor(() => {
         // Backend-assigned agent overrides stale localStorage in locked workspaces.
@@ -289,11 +344,7 @@ describe("AgentContext", () => {
     window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpenPicker as EventListener);
 
     try {
-      render(
-        <AgentProvider projectPath={projectPath}>
-          <Harness onChange={(value) => (contextValue = value)} />
-        </AgentProvider>
-      );
+      renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
       await waitFor(() => {
         expect(contextValue?.agentId).toBe("mux");
@@ -333,11 +384,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("exec");
