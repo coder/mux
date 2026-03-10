@@ -34,6 +34,7 @@ export const EventSoundSourceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("managed"),
     assetId: z.string().min(1),
+    label: z.string().optional(),
   }),
 ]);
 

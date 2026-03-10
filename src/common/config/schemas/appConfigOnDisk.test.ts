@@ -91,6 +91,60 @@ describe("AppConfigOnDiskSchema", () => {
     }
   });
 
+  it("accepts managed event sound source labels", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        agent_review_ready: {
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+            label: "review-ready.wav",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: false,
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+            label: "review-ready.wav",
+          },
+        },
+      });
+    }
+  });
+
+  it("accepts managed event sound source without labels", () => {
+    const result = AppConfigOnDiskSchema.safeParse({
+      eventSoundSettings: {
+        agent_review_ready: {
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: false,
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+      });
+    }
+  });
+
   it("preserves unknown eventSoundSettings keys", () => {
     const result = AppConfigOnDiskSchema.safeParse({
       eventSoundSettings: {

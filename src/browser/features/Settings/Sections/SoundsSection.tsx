@@ -5,14 +5,45 @@ import { Switch } from "@/browser/components/Switch/Switch";
 import { useAPI } from "@/browser/contexts/API";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
+  ALLOWED_AUDIO_EXTENSIONS,
   EVENT_SOUND_KEYS,
   EVENT_SOUND_LABELS,
+  MAX_AUDIO_FILE_SIZE_BYTES,
   type EventSoundKey,
 } from "@/common/config/eventSoundTypes";
 import type { EventSoundConfig, EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
 
 // Browser mode doesn't expose the native file picker bridge from preload.
 const isDesktopMode = typeof window !== "undefined" && Boolean(window.api);
+
+const AUDIO_UPLOAD_ACCEPT = [
+  "audio/*",
+  ...ALLOWED_AUDIO_EXTENSIONS.map((extension) => `.${extension}`),
+].join(",");
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Failed to read selected file."));
+        return;
+      }
+
+      const separatorIndex = reader.result.indexOf(",");
+      if (separatorIndex < 0) {
+        reject(new Error("Failed to parse selected file."));
+        return;
+      }
+
+      resolve(reader.result.slice(separatorIndex + 1));
+    };
+    reader.onerror = () => {
+      reject(new Error("Failed to read selected file."));
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function getEventSoundConfig(settings: EventSoundSettings, key: EventSoundKey): EventSoundConfig {
   const config = settings?.[key];
@@ -43,6 +74,10 @@ export function SoundsSection() {
     hasPending: false,
     settings: undefined,
   });
+
+  // Browser mode uses one hidden file input for all rows, so we track which event key opened it.
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetKeyRef = useRef<EventSoundKey | null>(null);
 
   useEffect(() => {
     if (!api?.config?.getConfig) {
@@ -141,9 +176,48 @@ export function SoundsSection() {
         source: {
           kind: "managed",
           assetId: importedAsset.assetId,
+          label: importedAsset.originalName,
         },
       });
     });
+  };
+
+  const handleUpload = async (key: EventSoundKey, file: File) => {
+    if (!api?.eventSounds?.uploadAsset) {
+      return;
+    }
+
+    if (file.size > MAX_AUDIO_FILE_SIZE_BYTES) {
+      return;
+    }
+
+    try {
+      const base64 = await readFileAsBase64(file);
+      const uploadedAsset = await api.eventSounds.uploadAsset({
+        base64,
+        originalName: file.name,
+        mimeType: file.type,
+      });
+
+      applySettingsUpdate((prev) => {
+        const current = getEventSoundConfig(prev, key);
+        return updateEventSoundConfig(prev, key, {
+          ...current,
+          source: {
+            kind: "managed",
+            assetId: uploadedAsset.assetId,
+            label: uploadedAsset.originalName,
+          },
+        });
+      });
+    } catch {
+      // Best-effort only.
+    }
+  };
+
+  const openUploadPicker = (key: EventSoundKey) => {
+    uploadTargetKeyRef.current = key;
+    uploadInputRef.current?.click();
   };
 
   const handleClearFile = (key: EventSoundKey) => {
@@ -167,10 +241,29 @@ export function SoundsSection() {
         </p>
       </div>
 
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept={AUDIO_UPLOAD_ACCEPT}
+        className="hidden"
+        onChange={(event) => {
+          const key = uploadTargetKeyRef.current;
+          const file = event.target.files?.[0];
+          event.target.value = "";
+
+          if (!key || !file) {
+            return;
+          }
+
+          void handleUpload(key, file);
+        }}
+      />
+
       <div className="border-border-light divide-border-light divide-y rounded-md border">
         {EVENT_SOUND_KEYS.map((key) => {
           const soundConfig = getEventSoundConfig(eventSoundSettings, key);
-          const fileLabel = soundConfig.source?.assetId ?? "No sound selected";
+          const fileLabel =
+            soundConfig.source?.label ?? soundConfig.source?.assetId ?? "No sound selected";
 
           return (
             <div key={key} className="space-y-3 px-3 py-3">
@@ -205,7 +298,16 @@ export function SoundsSection() {
                   >
                     Browse
                   </Button>
-                ) : null}
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openUploadPicker(key)}
+                    disabled={!canPersist || !api?.eventSounds?.uploadAsset}
+                  >
+                    Upload
+                  </Button>
+                )}
                 {soundConfig.source ? (
                   <Button
                     variant="ghost"
