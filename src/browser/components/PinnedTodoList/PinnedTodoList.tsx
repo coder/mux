@@ -16,15 +16,15 @@ function getPinnedTodoExpandedKey(workspaceId: string): string {
 
 /**
  * Pinned TODO list displayed at bottom of chat (before StreamingBarrier).
- * Shows current TODOs — the todo data persists across streams until updated by todo_write,
- * while the pinned panel can auto-collapse after a stream ends for this workspace.
+ * Shows current TODOs — incomplete plans persist across streams until the agent updates them,
+ * while fully completed plans clear when the final stream ends for this workspace.
+ * The pinned panel can also auto-collapse after a stream ends for this workspace.
  * Reuses TodoList component for consistent styling.
  *
  * Relies on natural reference stability from MapStore + Aggregator architecture:
  * - Aggregator.getCurrentTodos() returns direct reference (not a copy)
  * - Reference only changes when todos are actually modified
  * - MapStore caches WorkspaceState per version, avoiding unnecessary recomputation
- * - Todos persist until updated by a new todo_write call
  */
 export const PinnedTodoList: React.FC<PinnedTodoListProps> = ({ workspaceId }) => {
   const [expanded, setExpanded] = usePersistedState(getPinnedTodoExpandedKey(workspaceId), true);

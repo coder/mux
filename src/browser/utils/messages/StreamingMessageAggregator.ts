@@ -289,7 +289,8 @@ export class StreamingMessageAggregator {
   >();
 
   // Current TODO list (updated when todo_write succeeds)
-  // Session-scoped: persists across streams, reconstructed from history on reload
+  // Incomplete lists persist across streams and reloads; fully completed lists clear
+  // once the final stream finishes so stale plans do not linger in the UI.
   private currentTodos: TodoItem[] = [];
 
   // Current agent status (updated when status_set is called)
@@ -673,10 +674,10 @@ export class StreamingMessageAggregator {
    *
    * Clears:
    * - Active stream tracking (this.activeStreams)
-   * - Current TODOs (this.currentTodos) - reconstructed from history on reload
    * - Transient agentStatus (from displayStatus) - restored to persisted value
    *
    * Preserves:
+   * - currentTodos (incomplete lists stay visible; handleStreamEnd may clear fully completed lists)
    * - lastCompletedStreamStats - timing stats from this stream for display after completion
    */
   private cleanupStreamState(messageId: string): void {
@@ -917,6 +918,7 @@ export class StreamingMessageAggregator {
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
+    let shouldClearCompletedTodosOnIdleReplay = false;
     if (!opts?.skipDerivedState) {
       // Replay historical messages in order to reconstruct derived state
       for (const message of chronologicalMessages) {
@@ -930,10 +932,24 @@ export class StreamingMessageAggregator {
         }
 
         if (message.role === "assistant") {
+          let assistantUpdatedTodos = false;
           for (const part of message.parts) {
             if (isDynamicToolPart(part) && part.state === "output-available") {
               this.processToolResult(part.toolName, part.input, part.output, context);
+              if (
+                part.toolName === "todo_write" &&
+                hasSuccessResult(part.output) &&
+                part.input != null &&
+                typeof part.input === "object" &&
+                Array.isArray((part.input as { todos?: unknown }).todos)
+              ) {
+                assistantUpdatedTodos = true;
+              }
             }
+          }
+
+          if (!hasActiveStream && assistantUpdatedTodos) {
+            shouldClearCompletedTodosOnIdleReplay = message.metadata?.partial !== true;
           }
         }
       }
@@ -946,6 +962,19 @@ export class StreamingMessageAggregator {
         this.agentStatus = persistedStatus;
         this.lastStatusUrl = persistedStatus.url;
       }
+    }
+
+    // Mirror live stream-end cleanup for idle reloads: a completed plan should not reappear
+    // just because we reconstructed it from historical tool output after a successful final stream.
+    if (
+      !opts?.skipDerivedState &&
+      !hasActiveStream &&
+      this.activeStreams.size === 0 &&
+      shouldClearCompletedTodosOnIdleReplay &&
+      this.currentTodos.length > 0 &&
+      this.currentTodos.every((todo) => todo.status === "completed")
+    ) {
+      this.currentTodos = [];
     }
 
     this.invalidateCache();
@@ -1590,7 +1619,7 @@ export class StreamingMessageAggregator {
         ? { hasContinueMessage: activeStream.hasCompactionContinue }
         : undefined;
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
 
       const isFinal = this.activeStreams.size === 0;
@@ -1637,9 +1666,19 @@ export class StreamingMessageAggregator {
 
       this.messages.set(data.messageId, message);
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
     }
+    // Keep incomplete plans available across stream boundaries, but clear a fully completed
+    // plan once the workspace has no active streams so finished work does not linger.
+    if (
+      this.activeStreams.size === 0 &&
+      this.currentTodos.length > 0 &&
+      this.currentTodos.every((todo) => todo.status === "completed")
+    ) {
+      this.currentTodos = [];
+    }
+
     // Assistant message is now stable (completed or reconnected) - invalidate all caches.
     this.markMessageDirty(data.messageId);
   }
@@ -1678,7 +1717,7 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
       // Assistant message is now stable (aborted) - invalidate all caches.
       this.markMessageDirty(data.messageId);
@@ -1708,7 +1747,7 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
       // Assistant message is now stable (errored) - invalidate all caches.
       this.markMessageDirty(data.messageId);
@@ -1875,8 +1914,9 @@ export class StreamingMessageAggregator {
     output: unknown,
     _context: "streaming" | "historical"
   ): void {
-    // Update TODO state if this was a successful todo_write
-    // TODOs are session-scoped: update during both live streaming and historical reload
+    // Update TODO state if this was a successful todo_write.
+    // We still reconstruct from history so interrupted/incomplete plans survive reloads;
+    // final completed plans are cleared later when the last active stream ends.
     if (
       toolName === "todo_write" &&
       hasSuccessResult(output) &&
