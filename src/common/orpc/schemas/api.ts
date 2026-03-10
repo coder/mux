@@ -1743,6 +1743,47 @@ export const config = {
   },
 };
 
+const EventSoundAssetSchema = z.object({
+  assetId: z.string(),
+  originalName: z.string(),
+  mimeType: z.string(),
+  playbackPath: z.string(),
+  createdAt: z.string(),
+});
+
+export const eventSounds = {
+  uploadAsset: {
+    input: z
+      .object({
+        base64: z.string(),
+        originalName: z.string(),
+        mimeType: z.string(),
+      })
+      .strict(),
+    output: EventSoundAssetSchema,
+  },
+  importFromLocalPath: {
+    input: z
+      .object({
+        localPath: z.string(),
+      })
+      .strict(),
+    output: EventSoundAssetSchema,
+  },
+  deleteAsset: {
+    input: z
+      .object({
+        assetId: z.string(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  listAssets: {
+    input: z.void(),
+    output: z.array(EventSoundAssetSchema),
+  },
+};
+
 const DevToolsInputTokenBreakdownSchema = z.object({
   total: z.number(),
   noCache: z.number().optional(),

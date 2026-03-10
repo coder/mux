@@ -33,6 +33,8 @@ type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
 const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
+const EVENT_SOUND_ASSET_ID_PATTERN = /^[0-9a-f-]{36}\.[a-z0-9]+$/i;
+
 // --- Types ---
 
 export interface OrpcServerOptions {
@@ -1244,6 +1246,27 @@ export async function createOrpcServer({
     res.status(result.success ? 200 : 400);
     res.setHeader("Content-Type", "text/html");
     res.send(html);
+  });
+
+  app.get("/assets/event-sounds/:assetId", async (req, res) => {
+    if (!(await isHttpRequestAuthenticated(req))) {
+      res.status(401).json({ error: "Invalid or missing auth token/session" });
+      return;
+    }
+
+    const assetId = req.params.assetId;
+    if (!assetId || !EVENT_SOUND_ASSET_ID_PATTERN.test(assetId)) {
+      res.status(400).json({ error: "Invalid asset id" });
+      return;
+    }
+
+    const filePath = await context.eventSoundAssetService.getAssetFilePath(assetId);
+    if (!filePath) {
+      res.status(404).json({ error: "Asset not found" });
+      return;
+    }
+
+    res.sendFile(filePath);
   });
 
   const orpcRouter = existingRouter ?? router(authToken);

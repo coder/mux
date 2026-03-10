@@ -915,6 +915,32 @@ export const router = (authToken?: string) => {
           await context.policyService.refreshNow();
         }),
     },
+    eventSounds: {
+      uploadAsset: t
+        .input(schemas.eventSounds.uploadAsset.input)
+        .output(schemas.eventSounds.uploadAsset.output)
+        .handler(async ({ context, input }) => {
+          return context.eventSoundAssetService.uploadFromData(input);
+        }),
+      importFromLocalPath: t
+        .input(schemas.eventSounds.importFromLocalPath.input)
+        .output(schemas.eventSounds.importFromLocalPath.output)
+        .handler(async ({ context, input }) => {
+          return context.eventSoundAssetService.importFromLocalPath(input.localPath);
+        }),
+      deleteAsset: t
+        .input(schemas.eventSounds.deleteAsset.input)
+        .output(schemas.eventSounds.deleteAsset.output)
+        .handler(async ({ context, input }) => {
+          await context.eventSoundAssetService.deleteAsset(input.assetId);
+        }),
+      listAssets: t
+        .input(schemas.eventSounds.listAssets.input)
+        .output(schemas.eventSounds.listAssets.output)
+        .handler(async ({ context }) => {
+          return context.eventSoundAssetService.listAssets();
+        }),
+    },
     devtools: {
       getRuns: t
         .input(schemas.devtools.getRuns.input)

@@ -89,6 +89,7 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
     coderService: services.coderService,
     serverAuthService: services.serverAuthService,
     sshPromptService: services.sshPromptService,
+    eventSoundAssetService: services.eventSoundAssetService,
     analyticsService: services.analyticsService,
   };
 

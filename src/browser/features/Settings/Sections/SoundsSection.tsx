@@ -18,8 +18,7 @@ function getEventSoundConfig(settings: EventSoundSettings, key: EventSoundKey): 
   const config = settings?.[key];
   return {
     enabled: config?.enabled === true,
-    filePath:
-      typeof config?.filePath === "string" && config.filePath.length > 0 ? config.filePath : null,
+    source: config?.source ?? null,
   };
 }
 
@@ -124,7 +123,7 @@ export function SoundsSection() {
   };
 
   const handleBrowse = async (key: EventSoundKey) => {
-    if (!api?.projects?.pickAudioFile) {
+    if (!api?.projects?.pickAudioFile || !api?.eventSounds?.importFromLocalPath) {
       return;
     }
 
@@ -133,11 +132,16 @@ export function SoundsSection() {
       return;
     }
 
+    const importedAsset = await api.eventSounds.importFromLocalPath({ localPath: result.filePath });
+
     applySettingsUpdate((prev) => {
       const current = getEventSoundConfig(prev, key);
       return updateEventSoundConfig(prev, key, {
         ...current,
-        filePath: result.filePath,
+        source: {
+          kind: "managed",
+          assetId: importedAsset.assetId,
+        },
       });
     });
   };
@@ -147,7 +151,7 @@ export function SoundsSection() {
       const current = getEventSoundConfig(prev, key);
       return updateEventSoundConfig(prev, key, {
         ...current,
-        filePath: null,
+        source: null,
       });
     });
   };
@@ -166,7 +170,7 @@ export function SoundsSection() {
       <div className="border-border-light divide-border-light divide-y rounded-md border">
         {EVENT_SOUND_KEYS.map((key) => {
           const soundConfig = getEventSoundConfig(eventSoundSettings, key);
-          const fileLabel = soundConfig.filePath ?? "No file selected";
+          const fileLabel = soundConfig.source?.assetId ?? "No sound selected";
 
           return (
             <div key={key} className="space-y-3 px-3 py-3">
@@ -193,12 +197,16 @@ export function SoundsSection() {
                     onClick={() => {
                       void handleBrowse(key);
                     }}
-                    disabled={!canPersist || !api?.projects?.pickAudioFile}
+                    disabled={
+                      !canPersist ||
+                      !api?.projects?.pickAudioFile ||
+                      !api?.eventSounds?.importFromLocalPath
+                    }
                   >
                     Browse
                   </Button>
                 ) : null}
-                {soundConfig.filePath ? (
+                {soundConfig.source ? (
                   <Button
                     variant="ghost"
                     size="sm"

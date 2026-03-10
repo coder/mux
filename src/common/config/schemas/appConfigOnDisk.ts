@@ -30,10 +30,19 @@ export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 
 export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
 
-export const EventSoundConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  filePath: z.string().nullable().default(null),
-});
+export const EventSoundSourceSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("managed"),
+    assetId: z.string().min(1),
+  }),
+]);
+
+export const EventSoundConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    source: EventSoundSourceSchema.nullable().default(null),
+  })
+  .strict();
 
 export const EventSoundSettingsSchema = z.record(z.string(), EventSoundConfigSchema).optional();
 
@@ -81,6 +90,7 @@ export type FeatureFlagOverride = z.infer<typeof FeatureFlagOverrideSchema>;
 export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
 
 export type EventSoundConfig = z.infer<typeof EventSoundConfigSchema>;
+export type EventSoundSource = z.infer<typeof EventSoundSourceSchema>;
 export type EventSoundSettings = z.infer<typeof EventSoundSettingsSchema>;
 
 export type AppConfigOnDisk = z.infer<typeof AppConfigOnDiskSchema>;

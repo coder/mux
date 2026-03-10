@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
+import type { EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
@@ -192,10 +193,16 @@ describe("Config", () => {
           eventSoundSettings: {
             agent_review_ready: {
               enabled: true,
-              filePath: "/tmp/review-ready.wav",
+              source: {
+                kind: "managed",
+                assetId: "11111111-1111-1111-1111-111111111111.wav",
+              },
             },
             future_event: {
-              filePath: "/tmp/future-event.wav",
+              source: {
+                kind: "managed",
+                assetId: "22222222-2222-2222-2222-222222222222.wav",
+              },
             },
           },
         })
@@ -205,24 +212,33 @@ describe("Config", () => {
       expect(loaded.eventSoundSettings).toEqual({
         agent_review_ready: {
           enabled: true,
-          filePath: "/tmp/review-ready.wav",
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
         },
         future_event: {
           enabled: false,
-          filePath: "/tmp/future-event.wav",
+          source: {
+            kind: "managed",
+            assetId: "22222222-2222-2222-2222-222222222222.wav",
+          },
         },
       });
     });
 
     it("round-trips eventSoundSettings through editConfig", async () => {
-      const eventSoundSettings = {
+      const eventSoundSettings: EventSoundSettings = {
         agent_review_ready: {
           enabled: true,
-          filePath: "/tmp/review-ready.wav",
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
         },
         future_event: {
           enabled: false,
-          filePath: null,
+          source: null,
         },
       };
 

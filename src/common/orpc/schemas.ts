@@ -209,6 +209,7 @@ export {
   CoderWorkspaceSchema,
   CoderWorkspaceStatusSchema,
   config,
+  eventSounds,
   devtools,
   uiLayouts,
   debug,

@@ -33,6 +33,7 @@ import type { CoderService } from "@/node/services/coderService";
 import type { ServerAuthService } from "@/node/services/serverAuthService";
 import type { SshPromptService } from "@/node/services/sshPromptService";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
+import type { EventSoundAssetService } from "@/node/services/eventSoundAssetService";
 
 export interface ORPCContext {
   config: Config;
@@ -69,5 +70,6 @@ export interface ORPCContext {
   serverAuthService: ServerAuthService;
   sshPromptService: SshPromptService;
   analyticsService: AnalyticsService;
+  eventSoundAssetService: EventSoundAssetService;
   headers?: IncomingHttpHeaders;
 }

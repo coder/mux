@@ -85,7 +85,7 @@ describe("AppConfigOnDiskSchema", () => {
       expect(result.data.eventSoundSettings).toEqual({
         agent_review_ready: {
           enabled: true,
-          filePath: null,
+          source: null,
         },
       });
     }
@@ -95,7 +95,10 @@ describe("AppConfigOnDiskSchema", () => {
     const result = AppConfigOnDiskSchema.safeParse({
       eventSoundSettings: {
         future_event: {
-          filePath: "/tmp/future.wav",
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
         },
       },
     });
@@ -105,10 +108,40 @@ describe("AppConfigOnDiskSchema", () => {
       expect(result.data.eventSoundSettings).toEqual({
         future_event: {
           enabled: false,
-          filePath: "/tmp/future.wav",
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
         },
       });
     }
+  });
+
+  it("rejects legacy eventSoundSettings filePath entries", () => {
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        eventSoundSettings: {
+          agent_review_ready: {
+            filePath: "/tmp/legacy.wav",
+          },
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects unknown event sound source kinds", () => {
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        eventSoundSettings: {
+          agent_review_ready: {
+            source: {
+              kind: "external",
+              assetId: "anything",
+            },
+          },
+        },
+      }).success
+    ).toBe(false);
   });
 
   it("preserves unknown fields via passthrough", () => {
