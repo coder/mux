@@ -1,30 +1,69 @@
 import type { ProjectConfig } from "@/node/config";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { GlobalWindow } from "happy-dom";
-import type { ProjectContext } from "./ProjectContext";
-import { ProjectProvider, useProjectContext } from "./ProjectContext";
+import type { APIClient } from "./API";
 import type { RecursivePartial } from "@/browser/testUtils";
 
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import { APIProvider, type APIClient } from "@/browser/contexts/API";
 
 // Keep the client local to each test instead of using bun's process-global
 // mock.module registry for API, which leaks across context suites.
 let currentClientMock: RecursivePartial<APIClient> = {};
+
+let APIProvider!: typeof import("./API").APIProvider;
+let ProjectProvider!: typeof import("./ProjectContext").ProjectProvider;
+let useProjectContext!: typeof import("./ProjectContext").useProjectContext;
+let isolatedModuleDir: string | null = null;
+
+const contextsDir = dirname(fileURLToPath(import.meta.url));
+
+// Import unique temp copies of the real modules so leaked Bun mock.module registrations and
+// module cache entries from earlier suites cannot replace the API or ProjectContext implementations.
+async function importIsolatedProjectModules() {
+  const tempDir = await mkdtemp(join(contextsDir, ".project-context-test-"));
+  const isolatedApiPath = join(tempDir, "API.real.tsx");
+  const isolatedProjectContextPath = join(tempDir, "ProjectContext.real.tsx");
+
+  await copyFile(join(contextsDir, "API.tsx"), isolatedApiPath);
+
+  const projectContextSource = await readFile(join(contextsDir, "ProjectContext.tsx"), "utf8");
+  const isolatedProjectContextSource = projectContextSource.replace(
+    'from "@/browser/contexts/API";',
+    'from "./API.real.tsx";'
+  );
+
+  if (isolatedProjectContextSource === projectContextSource) {
+    throw new Error("Failed to rewrite ProjectContext API import for the isolated test copy");
+  }
+
+  await writeFile(isolatedProjectContextPath, isolatedProjectContextSource);
+
+  ({ APIProvider } = await import(pathToFileURL(isolatedApiPath).href));
+  ({ ProjectProvider, useProjectContext } = await import(
+    pathToFileURL(isolatedProjectContextPath).href
+  ));
+
+  return tempDir;
+}
 
 describe("ProjectContext", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
   let originalLocalStorage: typeof globalThis.localStorage;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    isolatedModuleDir = await importIsolatedProjectModules();
+
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
     originalLocalStorage = globalThis.localStorage;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
     mock.restore();
 
@@ -33,6 +72,11 @@ describe("ProjectContext", () => {
     globalThis.localStorage = originalLocalStorage;
 
     currentClientMock = {};
+
+    if (isolatedModuleDir) {
+      await rm(isolatedModuleDir, { recursive: true, force: true });
+      isolatedModuleDir = null;
+    }
   });
 
   test("loads projects on mount and supports add/remove mutations", async () => {
@@ -551,7 +595,7 @@ describe("ProjectContext", () => {
 });
 
 async function setup() {
-  const contextRef = { current: null as ProjectContext | null };
+  const contextRef = { current: null as import("./ProjectContext").ProjectContext | null };
   function ContextCapture() {
     contextRef.current = useProjectContext();
     return null;
