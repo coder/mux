@@ -734,10 +734,13 @@ export class MCPServerManager {
    * Get all servers from config (both enabled and disabled) + inline servers.
    * Returns full MCPServerInfo to preserve disabled state.
    */
-  private async getAllServers(projectPath: string): Promise<Record<string, MCPServerInfo>> {
+  private async getAllServers(
+    projectPath: string,
+    trusted = false
+  ): Promise<Record<string, MCPServerInfo>> {
     const configServers = this.ignoreConfigFile
       ? {}
-      : await this.configService.listServers(projectPath);
+      : await this.configService.listServers(projectPath, trusted);
     // Inline servers override config file servers (always enabled)
     const inlineAsInfo: Record<string, MCPServerInfo> = {};
     for (const [name, command] of Object.entries(this.inlineServers)) {
@@ -758,8 +761,12 @@ export class MCPServerManager {
    * @param projectPath - Project path to get servers for
    * @param overrides - Optional workspace-level overrides
    */
-  async listServers(projectPath: string, overrides?: WorkspaceMCPOverrides): Promise<MCPServerMap> {
-    const allServers = await this.getAllServers(projectPath);
+  async listServers(
+    projectPath: string,
+    overrides?: WorkspaceMCPOverrides,
+    trusted = false
+  ): Promise<MCPServerMap> {
+    const allServers = await this.getAllServers(projectPath, trusted);
     const enabled = this.applyServerOverrides(allServers, overrides);
     return this.filterServersByPolicy(enabled);
   }
@@ -886,15 +893,25 @@ export class MCPServerManager {
     projectPath: string;
     runtime: Runtime;
     workspacePath: string;
+    /** Whether repo-local MCP config is allowed for this project. */
+    trusted?: boolean;
     /** Per-workspace MCP overrides (disabled servers, tool allowlists) */
     overrides?: WorkspaceMCPOverrides;
     /** Project secrets, used for resolving {secret: "KEY"} header references. */
     projectSecrets?: Record<string, string>;
   }): Promise<MCPToolsForWorkspaceResult> {
-    const { workspaceId, projectPath, runtime, workspacePath, overrides, projectSecrets } = options;
+    const {
+      workspaceId,
+      projectPath,
+      runtime,
+      workspacePath,
+      trusted = false,
+      overrides,
+      projectSecrets,
+    } = options;
 
     // Fetch full server info for project-level allowlists and server filtering
-    const fullServerInfo = await this.getAllServers(projectPath);
+    const fullServerInfo = await this.getAllServers(projectPath, trusted);
 
     // Apply server-level overrides (enabled/disabled) before caching
     const enabledServers = this.filterServersByPolicy(
@@ -1252,6 +1269,8 @@ export class MCPServerManager {
    */
   async test(options: {
     projectPath: string;
+    /** Whether repo-local MCP config is allowed for this project. */
+    trusted?: boolean;
     name?: string;
     command?: string;
     transport?: MCPServerTransport;
@@ -1262,11 +1281,20 @@ export class MCPServerManager {
     const isTransportAllowed = (t: MCPServerTransport): boolean => {
       return !this.policyService?.isEnforced() || this.policyService.isMcpTransportAllowed(t);
     };
-    const { projectPath, name, command, transport, url, headers, projectSecrets } = options;
+    const {
+      projectPath,
+      trusted = false,
+      name,
+      command,
+      transport,
+      url,
+      headers,
+      projectSecrets,
+    } = options;
     const trimmedName = name?.trim();
 
     if (trimmedName && !command?.trim() && !url?.trim()) {
-      const servers = await this.configService.listServers(projectPath);
+      const servers = await this.configService.listServers(projectPath, trusted);
       const server = servers[trimmedName];
       if (!server) {
         return { success: false, error: `Server "${trimmedName}" not found in configuration` };

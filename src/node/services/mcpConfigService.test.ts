@@ -55,12 +55,39 @@ describe("MCPConfigService", () => {
       "utf-8"
     );
 
-    const merged = await configService.listServers(projectPath);
+    const merged = await configService.listServers(projectPath, true);
 
     expect(merged).toEqual({
       shared: { transport: "stdio", command: "repo-shared", disabled: false },
       "global-only": { transport: "stdio", command: "global-only", disabled: false },
       "repo-only": { transport: "stdio", command: "repo-only", disabled: true },
+    });
+  });
+
+  test("listServers ignores repo overrides for untrusted projects", async () => {
+    await configService.addServer("global-only", {
+      transport: "stdio",
+      command: "global-only",
+    });
+
+    const projectPath = path.join(tempDir, "repo-untrusted");
+    await fs.mkdir(path.join(projectPath, ".mux"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectPath, ".mux", "mcp.jsonc"),
+      JSON.stringify(
+        {
+          servers: {
+            "repo-only": "repo-only",
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    expect(await configService.listServers(projectPath, false)).toEqual({
+      "global-only": { transport: "stdio", command: "global-only", disabled: false },
     });
   });
 });

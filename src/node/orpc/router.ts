@@ -83,6 +83,7 @@ import {
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const RAW_QUERY_USER_ERROR_PATTERNS = [
   /^parser error:/i,
@@ -152,6 +153,10 @@ function isPathInsideDir(dirPath: string, filePath: string): boolean {
   const relative = path.relative(resolvedDir, resolvedFile);
 
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {
+  return isProjectTrusted(context.config, projectPath);
 }
 
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
@@ -1713,7 +1718,10 @@ export const router = (authToken?: string) => {
         .input(schemas.mcp.list.input)
         .output(schemas.mcp.list.output)
         .handler(async ({ context, input }) => {
-          const servers = await context.mcpConfigService.listServers(input.projectPath);
+          const servers = await context.mcpConfigService.listServers(
+            input.projectPath,
+            isTrustedProjectPath(context, input.projectPath)
+          );
 
           if (!context.policyService.isEnforced()) {
             return servers;
@@ -1853,7 +1861,8 @@ export const router = (authToken?: string) => {
           const configuredTransport = input.name
             ? (
                 await context.mcpConfigService.listServers(
-                  projectPathProvided ? resolvedProjectPath : undefined
+                  projectPathProvided ? resolvedProjectPath : undefined,
+                  projectPathProvided ? isTrustedProjectPath(context, resolvedProjectPath) : false
                 )
               )[input.name]?.transport
             : undefined;
@@ -2201,7 +2210,10 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcp.list.input)
           .output(schemas.projects.mcp.list.output)
           .handler(async ({ context, input }) => {
-            const servers = await context.mcpConfigService.listServers(input.projectPath);
+            const servers = await context.mcpConfigService.listServers(
+              input.projectPath,
+              isTrustedProjectPath(context, input.projectPath)
+            );
 
             if (!context.policyService.isEnforced()) {
               return servers;
@@ -2329,8 +2341,12 @@ export const router = (authToken?: string) => {
             );
 
             const configuredTransport = input.name
-              ? (await context.mcpConfigService.listServers(input.projectPath))[input.name]
-                  ?.transport
+              ? (
+                  await context.mcpConfigService.listServers(
+                    input.projectPath,
+                    isTrustedProjectPath(context, input.projectPath)
+                  )
+                )[input.name]?.transport
               : undefined;
 
             const transport =
@@ -2344,6 +2360,7 @@ export const router = (authToken?: string) => {
 
             const result = await context.mcpServerManager.test({
               projectPath: input.projectPath,
+              trusted: isTrustedProjectPath(context, input.projectPath),
               name: input.name,
               command: input.command,
               transport: input.transport,
@@ -2547,7 +2564,10 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcpOauth.getAuthStatus.input)
           .output(schemas.projects.mcpOauth.getAuthStatus.output)
           .handler(async ({ context, input }) => {
-            const servers = await context.mcpConfigService.listServers(input.projectPath);
+            const servers = await context.mcpConfigService.listServers(
+              input.projectPath,
+              isTrustedProjectPath(context, input.projectPath)
+            );
             const server = servers[input.serverName];
 
             if (!server || server.transport === "stdio") {
@@ -2560,7 +2580,10 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcpOauth.logout.input)
           .output(schemas.projects.mcpOauth.logout.output)
           .handler(async ({ context, input }) => {
-            const servers = await context.mcpConfigService.listServers(input.projectPath);
+            const servers = await context.mcpConfigService.listServers(
+              input.projectPath,
+              isTrustedProjectPath(context, input.projectPath)
+            );
             const server = servers[input.serverName];
 
             if (!server || server.transport === "stdio") {
