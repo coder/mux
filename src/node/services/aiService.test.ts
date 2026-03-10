@@ -1558,7 +1558,8 @@ describe("AIService.streamMessage model parameter overrides", () => {
 
   function createHarness(
     muxHomePath: string,
-    metadata: WorkspaceMetadata
+    metadata: WorkspaceMetadata,
+    options?: { routeProvider?: ProviderName }
   ): ModelParameterOverridesHarness {
     const config = new Config(muxHomePath);
     const historyService = new HistoryService(config);
@@ -1634,6 +1635,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
         canonicalProviderName: "anthropic",
         canonicalModelId: "claude-sonnet-4-5",
         routedThroughGateway: false,
+        ...(options?.routeProvider != null ? { routeProvider: options.routeProvider } : {}),
       },
     };
     spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
@@ -1776,6 +1778,70 @@ describe("AIService.streamMessage model parameter overrides", () => {
       anthropic: {
         custom_knob: 40,
         thinking: { type: "enabled" },
+      },
+    });
+  });
+
+  it("merges routed OpenAI provider extras under the active route namespace", async () => {
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-routed-openai");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-routed-openai";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
+
+    const providerModelFactory = Reflect.get(
+      harness.service,
+      "providerModelFactory"
+    ) as ProviderModelFactory;
+    const fakeModel = Object.create(null) as LanguageModel;
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: "openrouter:openai/gpt-5.2",
+        canonicalModelString: "openai:gpt-5.2",
+        canonicalProviderName: "openai",
+        canonicalModelId: "gpt-5.2",
+        routedThroughGateway: false,
+        routeProvider: "openrouter",
+      },
+    });
+
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
+      openai: {
+        modelParameters: {
+          "*": {
+            reasoning: { max_tokens: 4096 },
+          },
+        },
+      },
+    });
+
+    spyOn(providerOptionsModule, "buildProviderOptions").mockReturnValue({
+      openrouter: {
+        reasoning: {
+          enabled: true,
+          effort: "medium",
+          exclude: false,
+        },
+      },
+    });
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(
+      harness,
+      workspaceId,
+      "openai:gpt-5.2"
+    );
+    expect(providerOptionsFromStartStreamCall(startStreamArgs)).toEqual({
+      openrouter: {
+        reasoning: {
+          max_tokens: 4096,
+          enabled: true,
+          effort: "medium",
+          exclude: false,
+        },
       },
     });
   });

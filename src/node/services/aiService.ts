@@ -53,7 +53,11 @@ import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
-import { buildProviderOptions, buildRequestHeaders } from "@/common/utils/ai/providerOptions";
+import {
+  buildProviderOptions,
+  buildRequestHeaders,
+  resolveProviderOptionsNamespaceKey,
+} from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
@@ -1167,13 +1171,17 @@ export class AIService extends EventEmitter {
       // Recursive merge within the provider namespace preserves non-conflicting nested
       // subfields (e.g., user reasoning.max_tokens alongside Mux reasoning.enabled).
       // Mux-built values win on leaf conflicts for safety of thinking/reasoning/cache.
+      const providerOptionsNamespaceKey = resolveProviderOptionsNamespaceKey(
+        canonicalProviderName,
+        routeProvider
+      );
       const muxProviderNamespace = (providerOptions as Record<string, unknown>)?.[
-        canonicalProviderName
+        providerOptionsNamespaceKey
       ];
       const mergedProviderOptions = resolvedOverrides.providerExtras
         ? {
             ...providerOptions,
-            [canonicalProviderName]: isPlainObject(muxProviderNamespace)
+            [providerOptionsNamespaceKey]: isPlainObject(muxProviderNamespace)
               ? mergeProviderExtrasUnderMux(resolvedOverrides.providerExtras, muxProviderNamespace)
               : resolvedOverrides.providerExtras,
           }

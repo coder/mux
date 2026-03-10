@@ -11,6 +11,7 @@ import {
   buildRequestHeaders,
   isAnthropic1MEffectivelyEnabled,
   preserveAnthropic1MContextForFollowUp,
+  resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
@@ -48,6 +49,28 @@ function createMockProvidersConfig(mappings: Record<string, string>): ProvidersC
 
   return config;
 }
+
+describe("resolveProviderOptionsNamespaceKey", () => {
+  test("returns the canonical provider for direct routing", () => {
+    expect(resolveProviderOptionsNamespaceKey("openai")).toBe("openai");
+  });
+
+  test("returns the canonical provider for same-provider routing", () => {
+    expect(resolveProviderOptionsNamespaceKey("openai", "openai")).toBe("openai");
+  });
+
+  test("returns the canonical provider for passthrough gateways", () => {
+    expect(resolveProviderOptionsNamespaceKey("openai", "mux-gateway")).toBe("openai");
+  });
+
+  test("returns the route provider for non-passthrough OpenRouter routing", () => {
+    expect(resolveProviderOptionsNamespaceKey("openai", "openrouter")).toBe("openrouter");
+  });
+
+  test("returns the route provider for non-passthrough Copilot routing", () => {
+    expect(resolveProviderOptionsNamespaceKey("openai", "github-copilot")).toBe("github-copilot");
+  });
+});
 
 describe("buildProviderOptions - Anthropic", () => {
   describe("Opus 4.5 (effort parameter)", () => {
@@ -585,6 +608,63 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai).toBeDefined();
       expect(openai!.reasoningEffort).toBe("medium");
       expect("openrouter" in result).toBe(false);
+    });
+
+    test("uses the resolved gateway namespace for Copilot-routed OpenAI reasoning controls", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "medium",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "github-copilot"
+      );
+
+      expect(result).toEqual({
+        "github-copilot": {
+          reasoningEffort: "medium",
+        },
+      });
+    });
+
+    test("returns no Copilot-routed OpenAI provider options when thinking is off", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "github-copilot"
+      );
+
+      expect(result).toEqual({});
+    });
+
+    test("omits Responses-only OpenAI fields for Copilot-routed OpenAI models", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "medium",
+        undefined,
+        undefined,
+        undefined,
+        "workspace-copilot",
+        "auto",
+        undefined,
+        "github-copilot"
+      ) as Record<string, unknown>;
+      const copilotOptions = result["github-copilot"] as Record<string, unknown> | undefined;
+
+      expect(copilotOptions).toEqual({ reasoningEffort: "medium" });
+      expect(copilotOptions?.truncation).toBeUndefined();
+      expect(copilotOptions?.reasoningSummary).toBeUndefined();
+      expect(copilotOptions?.include).toBeUndefined();
+      expect(copilotOptions?.promptCacheKey).toBeUndefined();
     });
   });
 

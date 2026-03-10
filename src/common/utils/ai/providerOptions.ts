@@ -38,6 +38,11 @@ interface OpenRouterReasoningOptions {
   };
 }
 
+type OpenAICompatibleGatewayProviderOptions = Pick<
+  OpenAIResponsesProviderOptions,
+  "reasoningEffort"
+>;
+
 /**
  * Provider-specific options structure for AI SDK
  */
@@ -47,6 +52,7 @@ type ProviderOptions =
   | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
   | { xai: XaiProviderOptions }
+  | { "github-copilot": OpenAICompatibleGatewayProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
 const OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS = new Set<string>([
@@ -57,6 +63,31 @@ const OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS = new Set<string>([
 
 function supportsOpenAIReasoningSummary(modelName: string): boolean {
   return !OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS.has(modelName);
+}
+
+export function resolveProviderOptionsNamespaceKey(
+  canonicalProviderName: string,
+  routeProvider?: ProviderName
+): string {
+  const routeDefinition = routeProvider ? PROVIDER_DEFINITIONS[routeProvider] : undefined;
+  if (
+    !routeProvider ||
+    routeProvider === canonicalProviderName ||
+    (routeDefinition != null &&
+      "passthrough" in routeDefinition &&
+      routeDefinition.passthrough === true)
+  ) {
+    return canonicalProviderName;
+  }
+
+  return routeProvider;
+}
+
+function createNamespacedProviderOptions<T extends object>(
+  namespaceKey: string,
+  options: T
+): ProviderOptions {
+  return { [namespaceKey]: options } as ProviderOptions;
 }
 
 function resolveAnthropic1MCapabilityModel(
@@ -196,14 +227,17 @@ export function buildProviderOptions(
   const normalizedModel = normalizeToCanonical(modelString);
   const [origin, modelName] = normalizedModel.split(":", 2);
 
-  // SDK format selection: passthrough gateways use origin format,
-  // transforming gateways use their own format
-  const gwDef = routeProvider ? PROVIDER_DEFINITIONS[routeProvider] : undefined;
-  const routeUsesOriginFormat =
-    !routeProvider ||
-    routeProvider === origin ||
-    (gwDef != null && "passthrough" in gwDef && gwDef.passthrough === true);
-  const formatProvider = routeUsesOriginFormat ? origin : routeProvider;
+  if (!origin || !modelName) {
+    log.debug("buildProviderOptions: No origin or model name found, returning empty");
+    return {};
+  }
+
+  const providerOptionsNamespaceKey = resolveProviderOptionsNamespaceKey(origin, routeProvider);
+
+  // SDK payload-family selection: passthrough gateways use origin payloads,
+  // while transforming gateways use the route provider's payload schema.
+  const formatProvider =
+    providerOptionsNamespaceKey === origin ? origin : (routeProvider ?? origin);
 
   // Resolve aliases to their base model for capability detection while keeping
   // the original modelString for provider routing and metadata lookups.
@@ -215,17 +249,13 @@ export function buildProviderOptions(
     modelString,
     origin,
     routeProvider,
+    providerOptionsNamespaceKey,
     formatProvider,
     modelName,
     capabilityModel,
     capModelName,
     thinkingLevel,
   });
-
-  if (!origin || !modelName) {
-    log.debug("buildProviderOptions: No origin or model name found, returning empty");
-    return {};
-  }
 
   // Build Anthropic-specific options
   if (formatProvider === "anthropic") {
@@ -261,15 +291,13 @@ export function buildProviderOptions(
         thinkingLevel: effectiveThinking,
       });
 
-      return {
-        anthropic: {
-          disableParallelToolUse: false,
-          sendReasoning: true,
-          ...(thinking && { thinking }),
-          ...(cacheControl && { cacheControl }),
-          effort: effortLevel,
-        },
-      };
+      return createNamespacedProviderOptions(providerOptionsNamespaceKey, {
+        disableParallelToolUse: false,
+        sendReasoning: true,
+        ...(thinking && { thinking }),
+        ...(cacheControl && { cacheControl }),
+        effort: effortLevel,
+      });
     }
 
     // Other Anthropic models: Use thinking parameter with budgetTokens
@@ -279,20 +307,18 @@ export function buildProviderOptions(
       thinkingLevel: effectiveThinking,
     });
 
-    const options: ProviderOptions = {
-      anthropic: {
-        disableParallelToolUse: false, // Always enable concurrent tool execution
-        sendReasoning: true, // Include reasoning traces in requests sent to the model
-        ...(cacheControl && { cacheControl }),
-        // Conditionally add thinking configuration (non-Opus 4.5 models)
-        ...(budgetTokens > 0 && {
-          thinking: {
-            type: "enabled",
-            budgetTokens,
-          },
-        }),
-      },
-    };
+    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
+      disableParallelToolUse: false, // Always enable concurrent tool execution
+      sendReasoning: true, // Include reasoning traces in requests sent to the model
+      ...(cacheControl && { cacheControl }),
+      // Conditionally add thinking configuration (non-Opus 4.5 models)
+      ...(budgetTokens > 0 && {
+        thinking: {
+          type: "enabled",
+          budgetTokens,
+        },
+      }),
+    });
     log.debug("buildProviderOptions: Returning Anthropic options", options);
     return options;
   }
@@ -328,34 +354,32 @@ export function buildProviderOptions(
       wireFormat,
     });
 
-    const options: ProviderOptions = {
-      openai: {
-        parallelToolCalls: true, // Always enable concurrent tool execution
-        serviceTier,
-        ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
-        ...(isResponses && {
-          // Default to disabled; allow auto truncation for compaction to avoid context errors
-          truncation: truncationMode,
-          // Stable prompt cache key to improve OpenAI cache hit rates
-          // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
-          ...(promptCacheKey && { promptCacheKey }),
-        }),
-        // Conditionally add reasoning configuration
-        ...(reasoningEffort && {
-          reasoningEffort,
-          ...(isResponses &&
-            shouldSendReasoningSummary && {
-              reasoningSummary: "detailed", // Enable detailed reasoning summaries when the model supports it
-            }),
-          ...(isResponses && {
-            // Include reasoning encrypted content to preserve reasoning context across conversation steps
-            // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls
-            // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
-            include: ["reasoning.encrypted_content"],
+    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
+      parallelToolCalls: true, // Always enable concurrent tool execution
+      serviceTier,
+      ...(store != null && { store }), // ZDR: pass store flag through to OpenAI SDK
+      ...(isResponses && {
+        // Default to disabled; allow auto truncation for compaction to avoid context errors
+        truncation: truncationMode,
+        // Stable prompt cache key to improve OpenAI cache hit rates
+        // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
+        ...(promptCacheKey && { promptCacheKey }),
+      }),
+      // Conditionally add reasoning configuration
+      ...(reasoningEffort && {
+        reasoningEffort,
+        ...(isResponses &&
+          shouldSendReasoningSummary && {
+            reasoningSummary: "detailed", // Enable detailed reasoning summaries when the model supports it
           }),
+        ...(isResponses && {
+          // Include reasoning encrypted content to preserve reasoning context across conversation steps
+          // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls
+          // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
+          include: ["reasoning.encrypted_content"],
         }),
-      },
-    };
+      }),
+    });
     log.info("buildProviderOptions: Returning OpenAI options", options);
     return options;
   }
@@ -387,11 +411,9 @@ export function buildProviderOptions(
       }
     }
 
-    const options: ProviderOptions = {
-      google: {
-        thinkingConfig,
-      },
-    };
+    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
+      thinkingConfig,
+    });
     log.debug("buildProviderOptions: Google options", options);
     return options;
   }
@@ -407,16 +429,14 @@ export function buildProviderOptions(
 
     // Only add reasoning config if thinking is enabled
     if (reasoningEffort) {
-      const options: ProviderOptions = {
-        openrouter: {
-          reasoning: {
-            enabled: true,
-            effort: reasoningEffort,
-            // Don't exclude reasoning content - we want to display it in the UI
-            exclude: false,
-          },
+      const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
+        reasoning: {
+          enabled: true,
+          effort: reasoningEffort,
+          // Don't exclude reasoning content - we want to display it in the UI
+          exclude: false,
         },
-      };
+      });
       log.debug("buildProviderOptions: Returning OpenRouter options", options);
       return options;
     }
@@ -435,13 +455,33 @@ export function buildProviderOptions(
       returnCitations: true,
     };
 
-    const options: ProviderOptions = {
-      xai: {
-        ...overrides,
-        searchParameters: overrides.searchParameters ?? defaultSearchParameters,
-      },
-    };
+    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
+      ...overrides,
+      searchParameters: overrides.searchParameters ?? defaultSearchParameters,
+    });
     log.debug("buildProviderOptions: Returning xAI options", options);
+    return options;
+  }
+
+  if (origin === "openai" && formatProvider !== origin) {
+    const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
+    if (!reasoningEffort) {
+      log.debug(
+        "buildProviderOptions: OpenAI-compatible gateway (thinking off, no provider options)",
+        {
+          formatProvider,
+          origin,
+          routeProvider,
+          providerOptionsNamespaceKey,
+        }
+      );
+      return {};
+    }
+
+    const options = createNamespacedProviderOptions(providerOptionsNamespaceKey, {
+      reasoningEffort,
+    });
+    log.debug("buildProviderOptions: Returning OpenAI-compatible gateway options", options);
     return options;
   }
 
@@ -450,6 +490,7 @@ export function buildProviderOptions(
     formatProvider,
     origin,
     routeProvider,
+    providerOptionsNamespaceKey,
   });
   return {};
 }
@@ -507,11 +548,8 @@ export function buildRequestHeaders(
   const [origin] = normalized.split(":", 2);
 
   // 1M context header — only when origin supports it AND route is passthrough (or direct)
-  const gwDef = routeProvider ? PROVIDER_DEFINITIONS[routeProvider] : undefined;
   const routePassesHeaders =
-    !routeProvider ||
-    routeProvider === origin ||
-    (gwDef != null && "passthrough" in gwDef && gwDef.passthrough === true);
+    origin != null && resolveProviderOptionsNamespaceKey(origin, routeProvider) === origin;
 
   if (
     origin === "anthropic" &&
