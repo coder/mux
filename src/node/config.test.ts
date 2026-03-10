@@ -357,47 +357,119 @@ describe("Config", () => {
   });
 
   describe("legacy gateway migration preserves downgrade compatibility", () => {
-    it("derives routePriority and preserves legacy fields on disk", () => {
-      const configFile = path.join(tempDir, "config.json");
-      fs.writeFileSync(
-        configFile,
-        JSON.stringify({
-          muxGatewayEnabled: true,
-          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
-        })
-      );
+    const writeRawConfig = (value: Record<string, unknown>) => {
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify(value));
+    };
 
-      const loaded = config.loadConfigOrDefault();
-      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
+    const writeProvidersConfig = (value: Record<string, unknown>) => {
+      fs.writeFileSync(path.join(tempDir, "providers.jsonc"), JSON.stringify(value, null, 2));
+    };
 
-      const raw = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+    const readRawConfig = () =>
+      JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
         muxGatewayEnabled?: boolean;
         muxGatewayModels?: string[];
         routePriority?: string[];
+        routeOverrides?: Record<string, string>;
       };
-      expect(raw).toMatchObject({
+
+    it("translates a single legacy allowlisted model into a mux-gateway routeOverride", () => {
+      writeRawConfig({
         muxGatewayEnabled: true,
         muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
-        routePriority: ["mux-gateway", "direct"],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-sonnet-4-6": "mux-gateway",
       });
     });
 
+    it("translates multiple legacy models and merges them with existing routeOverrides", () => {
+      writeRawConfig({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic:claude-sonnet-4-6", "openrouter:anthropic/claude-opus-4-6"],
+        routeOverrides: {
+          "openai:gpt-4o": "direct",
+        },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "openai:gpt-4o": "direct",
+        "anthropic:claude-sonnet-4-6": "mux-gateway",
+        "anthropic:claude-opus-4-6": "mux-gateway",
+      });
+    });
+
+    it("keeps existing routeOverrides when a legacy model normalizes to the same canonical key", () => {
+      writeRawConfig({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["openrouter:anthropic/claude-opus-4-6"],
+        routeOverrides: {
+          "anthropic:claude-opus-4-6": "openrouter",
+        },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-opus-4-6": "openrouter",
+      });
+    });
+
+    it("synthesizes direct-only priority when the legacy allowlist is empty", () => {
+      writeRawConfig({
+        muxGatewayEnabled: true,
+        muxGatewayModels: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["direct"]);
+      expect(loaded.routeOverrides).toBeUndefined();
+    });
+
     it("synthesizes direct-only priority when the legacy gateway flag is disabled", () => {
-      const configFile = path.join(tempDir, "config.json");
-      fs.writeFileSync(
-        configFile,
-        JSON.stringify({
-          muxGatewayEnabled: false,
-        })
-      );
+      writeRawConfig({
+        muxGatewayEnabled: false,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["direct"]);
+      expect(loaded.routeOverrides).toBeUndefined();
+    });
+
+    it("preserves legacy fields on disk alongside synthesized modern routing state", () => {
+      writeRawConfig({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+      });
+      writeProvidersConfig({
+        "mux-gateway": { couponCode: "test-coupon" },
+      });
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.routePriority).toEqual(["direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-sonnet-4-6": "mux-gateway",
+      });
 
-      const raw = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
-        muxGatewayEnabled?: boolean;
-      };
-      expect(raw).toHaveProperty("muxGatewayEnabled", false);
+      expect(readRawConfig()).toMatchObject({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        routePriority: ["direct"],
+        routeOverrides: {
+          "anthropic:claude-sonnet-4-6": "mux-gateway",
+        },
+      });
     });
 
     it("does not rewrite configs that already include routePriority", () => {
@@ -406,8 +478,11 @@ describe("Config", () => {
         configFile,
         JSON.stringify({
           muxGatewayEnabled: true,
-          muxGatewayModels: ["m"],
-          routePriority: ["mux-gateway", "direct"],
+          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+          routePriority: ["openrouter", "direct"],
+          routeOverrides: {
+            "openai:gpt-4o": "direct",
+          },
         })
       );
 
@@ -416,7 +491,10 @@ describe("Config", () => {
       const beforeMtimeMs = fs.statSync(configFile).mtimeMs;
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
+      expect(loaded.routePriority).toEqual(["openrouter", "direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "openai:gpt-4o": "direct",
+      });
 
       const afterMtimeMs = fs.statSync(configFile).mtimeMs;
       expect(afterMtimeMs).toBe(beforeMtimeMs);

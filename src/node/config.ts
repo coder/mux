@@ -367,18 +367,51 @@ export class Config {
           return modified;
         };
 
-        // Migrate legacy gateway settings to the new route priority system.
+        const normalizeLegacyGatewayModel = (value: string): string | undefined => {
+          const trimmed = value.trim();
+          if (!trimmed) {
+            return undefined;
+          }
+
+          const legacyModelString = trimmed.includes(":") ? trimmed : trimmed.replace("/", ":");
+          const canonicalModel = normalizeToCanonical(legacyModelString);
+          return isValidModelFormat(canonicalModel) ? canonicalModel : undefined;
+        };
+
+        let synthesizedLegacyRoutingState = false;
+
+        // Migrate legacy gateway settings to the new route-based system.
         // Legacy keys are intentionally preserved on disk for downgrade compatibility —
         // older versions still read muxGatewayEnabled / muxGatewayModels directly.
-        if (parsed.muxGatewayModels != null || parsed.muxGatewayEnabled != null) {
-          if (!Array.isArray(parsed.routePriority)) {
-            const priority: string[] = [];
-            if (parsed.muxGatewayEnabled !== false) {
-              priority.push("mux-gateway");
+        if (
+          (parsed.muxGatewayModels != null || parsed.muxGatewayEnabled != null) &&
+          !Array.isArray(parsed.routePriority)
+        ) {
+          parsed.routePriority = ["direct"];
+          synthesizedLegacyRoutingState = true;
+          configModified = true;
+
+          if (parsed.muxGatewayEnabled !== false) {
+            const legacyModels = parseOptionalStringArray(parsed.muxGatewayModels) ?? [];
+            if (legacyModels.length > 0) {
+              const mergedRouteOverrides =
+                normalizeRouteOverridesRecord(parsed.routeOverrides) ?? {};
+              let routeOverridesModified = false;
+
+              for (const legacyModel of legacyModels) {
+                const canonicalModel = normalizeLegacyGatewayModel(legacyModel);
+                if (!canonicalModel || Object.hasOwn(mergedRouteOverrides, canonicalModel)) {
+                  continue;
+                }
+
+                mergedRouteOverrides[canonicalModel] = "mux-gateway";
+                routeOverridesModified = true;
+              }
+
+              if (routeOverridesModified) {
+                parsed.routeOverrides = mergedRouteOverrides;
+              }
             }
-            priority.push("direct");
-            parsed.routePriority = priority;
-            configModified = true;
           }
         }
 
@@ -392,8 +425,8 @@ export class Config {
             parsed.routePriority = seeded;
             configModified = true;
           }
-        } else {
-          // routePriority exists but might be missing newly-configured gateways.
+        } else if (!synthesizedLegacyRoutingState) {
+          // Legacy allowlists intentionally keep direct as the global default.
           const providersConfig = this.loadProvidersConfig() ?? {};
           let modified = false;
 
