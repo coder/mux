@@ -1493,6 +1493,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   }
 
                                   const siblings = visibleChildrenByParent.get(parentId) ?? [];
+                                  const siblingIndex = siblings.findIndex(
+                                    (sibling) => sibling.id === workspace.id
+                                  );
                                   let connectorPosition: AgentRowRenderMeta["connectorPosition"] =
                                     "single";
                                   if (siblings.length > 1) {
@@ -1502,9 +1505,30 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         : "middle";
                                   }
 
+                                  let lastRunningSiblingIndex = -1;
+                                  for (let index = siblings.length - 1; index >= 0; index -= 1) {
+                                    if (siblings[index]?.taskStatus === "running") {
+                                      lastRunningSiblingIndex = index;
+                                      break;
+                                    }
+                                  }
+
+                                  const connectorStartsAtParent = siblingIndex === 0;
+                                  const sharedTrunkActiveThroughRow =
+                                    siblingIndex >= 0 &&
+                                    lastRunningSiblingIndex >= 0 &&
+                                    siblingIndex <= lastRunningSiblingIndex;
+                                  const sharedTrunkActiveBelowRow =
+                                    siblingIndex >= 0 &&
+                                    lastRunningSiblingIndex >= 0 &&
+                                    siblingIndex < lastRunningSiblingIndex;
+
                                   rowMetaByVisibleWorkspaceId.set(workspace.id, {
                                     ...baseRowMeta,
                                     connectorPosition,
+                                    connectorStartsAtParent,
+                                    sharedTrunkActiveThroughRow,
+                                    sharedTrunkActiveBelowRow,
                                   });
                                 }
 

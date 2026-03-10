@@ -3,9 +3,12 @@ import { cn } from "@/common/lib/utils";
 
 interface SubAgentListItemProps {
   connectorPosition: "single" | "middle" | "last";
+  connectorStartsAtParent: boolean;
+  sharedTrunkActiveThroughRow: boolean;
+  sharedTrunkActiveBelowRow: boolean;
   indentLeft: number;
   isSelected: boolean;
-  isActive: boolean;
+  isElbowActive: boolean;
   children: React.ReactNode;
 }
 
@@ -46,10 +49,12 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
           <span
             className={cn(
               connectorFillClass,
-              // Extend upward by half a row so the branch meets the parent row's
-              // status-dot center, then stop before the rounded elbow begins.
-              "absolute -top-1/2 left-[6px] w-px",
-              props.isActive && "subagent-connector-active"
+              // First siblings extend from the parent row center, while
+              // subsequent siblings continue from the previous row boundary to
+              // avoid overlapping duplicate trunk segments.
+              "absolute left-[6px] w-px",
+              props.connectorStartsAtParent ? "-top-1/2" : "top-0",
+              props.sharedTrunkActiveThroughRow && "subagent-connector-active"
             )}
             style={{ bottom: `calc(50% + ${connectorTurnSizePx}px)` }}
           />
@@ -59,12 +64,12 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
             className={cn(
               connectorFillClass,
               "absolute bottom-0 left-[6px] w-px",
-              props.isActive && "subagent-connector-active"
+              props.sharedTrunkActiveBelowRow && "subagent-connector-active"
             )}
             style={{ top: `calc(50% - ${connectorTurnSizePx}px)` }}
           />
         )}
-        {props.isActive ? (
+        {props.isElbowActive ? (
           <svg
             aria-hidden
             className="absolute top-1/2 left-[6px] h-[6px] w-[10px] -translate-y-full"

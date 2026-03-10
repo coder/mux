@@ -117,6 +117,12 @@ export interface AgentRowRenderMeta {
   depth: number;
   rowKind: "primary" | "subagent";
   connectorPosition: "single" | "middle" | "last";
+  // Sub-agent trunks should render as a single continuous line, so each row
+  // receives explicit geometry/animation flags derived from its visible sibling
+  // order and the lowest running child in that sibling group.
+  connectorStartsAtParent: boolean;
+  sharedTrunkActiveThroughRow: boolean;
+  sharedTrunkActiveBelowRow: boolean;
   hasHiddenCompletedChildren: boolean;
   visibleCompletedChildrenCount: number;
 }
@@ -222,10 +228,34 @@ export function computeAgentRowRenderMeta(
     const rowKind = workspace.parentWorkspaceId ? "subagent" : "primary";
 
     let connectorPosition: AgentRowRenderMeta["connectorPosition"] = "single";
+    let connectorStartsAtParent = false;
+    let sharedTrunkActiveThroughRow = false;
+    let sharedTrunkActiveBelowRow = false;
+
     if (workspace.parentWorkspaceId) {
       const siblings = visibleChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+      const siblingIndex = siblings.findIndex((sibling) => sibling.id === workspace.id);
       if (siblings.length > 1) {
         connectorPosition = siblings[siblings.length - 1]?.id === workspace.id ? "last" : "middle";
+      }
+
+      if (siblingIndex >= 0) {
+        connectorStartsAtParent = siblingIndex === 0;
+
+        let lastRunningSiblingIndex = -1;
+        for (let index = siblings.length - 1; index >= 0; index -= 1) {
+          if (siblings[index]?.taskStatus === "running") {
+            lastRunningSiblingIndex = index;
+            break;
+          }
+        }
+
+        // Animate one shared trunk from the parent down through the lowest
+        // running child, even when intermediate children are not running.
+        if (lastRunningSiblingIndex >= 0) {
+          sharedTrunkActiveThroughRow = siblingIndex <= lastRunningSiblingIndex;
+          sharedTrunkActiveBelowRow = siblingIndex < lastRunningSiblingIndex;
+        }
       }
     }
 
@@ -241,6 +271,9 @@ export function computeAgentRowRenderMeta(
       depth: depthByWorkspaceId[workspace.id] ?? 0,
       rowKind,
       connectorPosition,
+      connectorStartsAtParent,
+      sharedTrunkActiveThroughRow,
+      sharedTrunkActiveBelowRow,
       hasHiddenCompletedChildren: visibleCompletedChildrenCount < completedChildren.length,
       visibleCompletedChildrenCount,
     });

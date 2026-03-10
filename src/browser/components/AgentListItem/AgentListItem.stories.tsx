@@ -310,16 +310,26 @@ function renderDraftState() {
 const SUB_AGENT_ROW_META_BASE = {
   depth: 1,
   rowKind: "subagent",
+  connectorStartsAtParent: true,
+  sharedTrunkActiveThroughRow: false,
+  sharedTrunkActiveBelowRow: false,
   hasHiddenCompletedChildren: false,
   visibleCompletedChildrenCount: 0,
 } as const satisfies Omit<AgentRowRenderMeta, "connectorPosition">;
 
 function createSubAgentRowRenderMeta(
-  connectorPosition: AgentRowRenderMeta["connectorPosition"]
+  connectorPosition: AgentRowRenderMeta["connectorPosition"],
+  overrides?: Partial<
+    Pick<
+      AgentRowRenderMeta,
+      "connectorStartsAtParent" | "sharedTrunkActiveThroughRow" | "sharedTrunkActiveBelowRow"
+    >
+  >
 ): AgentRowRenderMeta {
   return {
     ...SUB_AGENT_ROW_META_BASE,
     connectorPosition,
+    ...overrides,
   };
 }
 
@@ -405,6 +415,9 @@ const PRIMARY_ROW_META_WITH_HIDDEN_COMPLETED_CHILDREN = {
   depth: 0,
   rowKind: "primary",
   connectorPosition: "single",
+  connectorStartsAtParent: false,
+  sharedTrunkActiveThroughRow: false,
+  sharedTrunkActiveBelowRow: false,
   hasHiddenCompletedChildren: true,
   visibleCompletedChildrenCount: 0,
 } as const satisfies AgentRowRenderMeta;
@@ -426,7 +439,11 @@ export const SubAgentRunning: Story = {
   render: () =>
     renderWorkspaceWithRowMeta({
       workspaceIndex: 2,
-      rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+      rowRenderMeta: createSubAgentRowRenderMeta("middle", {
+        connectorStartsAtParent: true,
+        sharedTrunkActiveThroughRow: true,
+        sharedTrunkActiveBelowRow: true,
+      }),
       metadataOverride: {
         taskStatus: "running",
       },

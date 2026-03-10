@@ -663,6 +663,48 @@ describe("sub-agent row render metadata", () => {
     expect(metadataByWorkspaceId.get("parent")?.rowKind).toBe("primary");
   });
 
+  it("animates the shared trunk through the lowest running child", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("child-1", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("child-2", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("child-3", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("child-4", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+    ];
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+
+    expect(metadataByWorkspaceId.get("child-1")?.connectorStartsAtParent).toBe(true);
+    expect(metadataByWorkspaceId.get("child-2")?.connectorStartsAtParent).toBe(false);
+
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-3")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-4")?.sharedTrunkActiveThroughRow).toBe(false);
+
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveBelowRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveBelowRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-3")?.sharedTrunkActiveBelowRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-4")?.sharedTrunkActiveBelowRow).toBe(false);
+  });
+
+  it("does not animate shared trunk segments when no children are running", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("child-1", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("child-2", { parentWorkspaceId: "parent", taskStatus: "awaiting_report" }),
+    ];
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveThroughRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveThroughRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveBelowRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveBelowRow).toBe(false);
+  });
+
   it("assigns single connector position for an only child", () => {
     const flattened = [
       createWorkspace("parent"),
