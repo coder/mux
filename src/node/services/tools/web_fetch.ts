@@ -267,15 +267,44 @@ function buildResolveHostnameCommand(hostname: string): string {
   const runResolver = (pythonExecutable: string) =>
     `${pythonExecutable} -c ${shellQuote(resolverScript)} ${shellQuote(hostname)}`;
 
-  return [
-    "if command -v python3 >/dev/null 2>&1; then",
-    `  ${runResolver("python3")}`,
-    "elif command -v python >/dev/null 2>&1; then",
-    `  ${runResolver("python")}`,
-    "else",
-    "  exit 1",
-    "fi",
-  ].join("\n");
+  // Minimal SSH/Docker runtimes often omit Python, so keep fail-closed DNS
+  // validation by falling back to common libc / BusyBox resolver utilities.
+  return `
+if command -v python3 >/dev/null 2>&1; then
+  ${runResolver("python3")}
+elif command -v python >/dev/null 2>&1; then
+  ${runResolver("python")}
+else
+  hostname=${shellQuote(hostname)}
+  dedupe_addresses() { awk 'NF && !seen[$0]++'; }
+  resolve_with_getent() {
+    command -v getent >/dev/null 2>&1 || return 1
+    addresses="$({ getent ahosts "$hostname" 2>/dev/null || getent hosts "$hostname" 2>/dev/null; } | awk '{print $1}' | dedupe_addresses)"
+    [ -n "$addresses" ] || return 1
+    printf '%s\n' "$addresses"
+  }
+  resolve_with_nslookup() {
+    command -v nslookup >/dev/null 2>&1 || return 1
+    addresses="$(nslookup "$hostname" 2>/dev/null | awk 'BEGIN { in_answer = 0 } /^Name:/ { in_answer = 1; next } in_answer && /^Address([[:space:]]+[0-9]+)?:/ { line = $0; sub(/^[^:]*:[[:space:]]*/, "", line); count = split(line, fields, /[[:space:]]+/); for (i = 1; i <= count; i += 1) { if (fields[i] ~ /^([0-9]{1,3}\\.){3}[0-9]{1,3}$/ || fields[i] ~ /:/) { print fields[i]; break } } }' | dedupe_addresses)"
+    [ -n "$addresses" ] || return 1
+    printf '%s\n' "$addresses"
+  }
+  resolve_with_host() {
+    command -v host >/dev/null 2>&1 || return 1
+    addresses="$(host "$hostname" 2>/dev/null | awk '/ has address / { print $NF } / has IPv6 address / { print $NF }' | dedupe_addresses)"
+    [ -n "$addresses" ] || return 1
+    printf '%s\n' "$addresses"
+  }
+  if resolve_with_getent; then
+    :
+  elif resolve_with_nslookup; then
+    :
+  elif resolve_with_host; then
+    :
+  else
+    exit 1
+  fi
+fi`.trim();
 }
 
 function parseResolvedAddresses(output: string): string[] {
@@ -284,18 +313,28 @@ function parseResolvedAddresses(output: string): string[] {
     throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
   }
 
-  let parsedOutput: unknown;
+  let rawAddresses: unknown[];
   try {
-    parsedOutput = JSON.parse(trimmedOutput);
-  } catch {
+    const parsedOutput: unknown = JSON.parse(trimmedOutput);
+    if (!Array.isArray(parsedOutput)) {
+      throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
+    }
+    rawAddresses = parsedOutput;
+  } catch (error) {
+    if (error instanceof WebFetchValidationError) {
+      throw error;
+    }
+
+    // Shell fallbacks in minimal runtimes emit newline-delimited addresses so
+    // runtime DNS validation still works even when no JSON-capable interpreter exists.
+    rawAddresses = trimmedOutput.split(/\r?\n/);
+  }
+
+  if (rawAddresses.length === 0) {
     throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
   }
 
-  if (!Array.isArray(parsedOutput) || parsedOutput.length === 0) {
-    throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
-  }
-
-  const resolvedAddresses = parsedOutput.map((value) => {
+  const resolvedAddresses = rawAddresses.map((value) => {
     if (typeof value !== "string") {
       throw new WebFetchValidationError(WEB_FETCH_RESOLVE_ERROR);
     }

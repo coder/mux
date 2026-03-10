@@ -197,11 +197,11 @@ describe("web_fetch tool", () => {
     expect(execSpy).not.toHaveBeenCalled();
   });
 
-  it("rejects hostnames whose runtime resolution returns private addresses", async () => {
+  it("rejects hostnames whose fallback runtime resolution returns private addresses", async () => {
     using testEnv = createTestWebFetchTool();
 
     const execSpy = spyOn(runtimeHelpers, "execBuffered").mockResolvedValue(
-      createExecResult({ stdout: '["10.0.0.5"]' })
+      createExecResult({ stdout: "10.0.0.5\n" })
     );
 
     const result = (await testEnv.tool.execute!(
@@ -216,6 +216,8 @@ describe("web_fetch tool", () => {
     }
     expect(execSpy).toHaveBeenCalledTimes(1);
     expect(isRuntimeResolveCommand(execSpy.mock.calls[0]?.[1] ?? "")).toBe(true);
+    expect(execSpy.mock.calls[0]?.[1]).toContain("command -v getent");
+    expect(execSpy.mock.calls[0]?.[1]).toContain("command -v nslookup");
     expect(execSpy.mock.calls.some(([, command]) => isCurlCommand(command))).toBe(false);
   });
 
@@ -251,14 +253,16 @@ describe("web_fetch tool", () => {
     expect(execSpy.mock.calls.some(([, command]) => isCurlCommand(command))).toBe(false);
   });
 
-  it("validates public hostnames through the runtime before fetching", async () => {
+  it("validates public hostnames through fallback runtime resolvers before fetching", async () => {
     using testEnv = createTestWebFetchTool();
 
     const execSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
       (_runtime, command) => {
         if (isRuntimeResolveCommand(command)) {
           expect(command).toContain("public.example");
-          return Promise.resolve(createExecResult({ stdout: '["93.184.216.34"]' }));
+          expect(command).toContain("command -v getent");
+          expect(command).toContain("command -v nslookup");
+          return Promise.resolve(createExecResult({ stdout: "93.184.216.34\n" }));
         }
 
         expect(isCurlCommand(command)).toBe(true);
