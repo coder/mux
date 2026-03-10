@@ -117,6 +117,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });
@@ -214,6 +215,7 @@ describe("useModelsFromSettings provider availability gating", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });

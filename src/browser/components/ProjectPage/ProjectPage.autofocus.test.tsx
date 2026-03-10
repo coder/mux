@@ -96,6 +96,7 @@ describe("ProjectPage", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     cleanupDom?.();
     cleanupDom = null;
     focusMock = null;

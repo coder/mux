@@ -495,8 +495,7 @@ describe("useCreationWorkspace", () => {
 
   afterEach(() => {
     cleanup();
-    restorePersistedStateMocks?.();
-    restorePersistedStateMocks = null;
+    mock.restore();
     // Reset global window/document/localStorage between tests
     // @ts-expect-error - test cleanup
     globalThis.window = undefined;

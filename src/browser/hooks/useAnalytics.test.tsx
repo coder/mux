@@ -7,6 +7,7 @@ import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { OrpcServer } from "@/node/orpc/server";
 import type { ORPCContext } from "@/node/orpc/context";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import type { SavedQuery } from "@/common/types/savedQueries";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import {
@@ -61,13 +62,28 @@ interface AnalyticsServiceCalls {
 let currentApiClient: RouterClient<AppRouter> | null = null;
 let analyticsServiceCalls: AnalyticsServiceCalls | null = null;
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({ api: currentApiClient }),
-}));
+async function importCreateOrpcServer() {
+  void mock.module("@/version", () => ({
+    VERSION: "test-version",
+  }));
 
-void mock.module("@/version", () => ({
-  VERSION: "test-version",
-}));
+  const { createOrpcServer } = await import("@/node/orpc/server");
+  mock.restore();
+  return createOrpcServer;
+}
+
+function renderAnalyticsHook<TResult>(callback: () => TResult) {
+  const apiClient = currentApiClient;
+  if (!apiClient) {
+    throw new Error("Expected analytics API client to be initialized");
+  }
+
+  return renderHook(callback, {
+    wrapper: (props: { children: React.ReactNode }) => (
+      <APIProvider client={apiClient as unknown as APIClient}>{props.children}</APIProvider>
+    ),
+  });
+}
 
 function createHttpClient(baseUrl: string): RouterClient<AppRouter> {
   const link = new HTTPRPCLink({
@@ -192,8 +208,7 @@ describe("useAnalytics hooks", () => {
       analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
     };
 
-    // eslint-disable-next-line no-restricted-syntax -- test-only dynamic import avoids browser/node boundary lint
-    const { createOrpcServer } = await import("@/node/orpc/server");
+    const createOrpcServer = await importCreateOrpcServer();
 
     server = await createOrpcServer({
       host: "127.0.0.1",
@@ -207,6 +222,7 @@ describe("useAnalytics hooks", () => {
 
   afterEach(async () => {
     cleanup();
+    mock.restore();
     currentApiClient = null;
     analyticsServiceCalls = null;
     await server?.close();
@@ -225,7 +241,7 @@ describe("useAnalytics hooks", () => {
     // Regression guard: analytics namespace can be a callable proxy function.
     expect(typeof (apiClient as { analytics: unknown }).analytics).toBe("function");
 
-    const { result } = renderHook(() => useAnalyticsSummary());
+    const { result } = renderAnalyticsHook(() => useAnalyticsSummary());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -238,7 +254,7 @@ describe("useAnalytics hooks", () => {
     const from = new Date("2026-01-05T00:00:00.000Z");
     const to = new Date("2026-01-20T00:00:00.000Z");
 
-    const { result } = renderHook(() => useAnalyticsSummary("/tmp/project", { from, to }));
+    const { result } = renderAnalyticsHook(() => useAnalyticsSummary("/tmp/project", { from, to }));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -260,7 +276,7 @@ describe("useAnalytics hooks", () => {
     const from = new Date("2026-01-07T00:00:00.000Z");
     const to = new Date("2026-01-27T00:00:00.000Z");
 
-    const { result } = renderHook(() => useAnalyticsSpendByModel("/tmp/project", { from, to }));
+    const { result } = renderAnalyticsHook(() => useAnalyticsSpendByModel("/tmp/project", { from, to }));
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -282,7 +298,7 @@ describe("useAnalytics hooks", () => {
     const from = new Date("2026-01-09T00:00:00.000Z");
     const to = new Date("2026-01-30T00:00:00.000Z");
 
-    const { result } = renderHook(() =>
+    const { result } = renderAnalyticsHook(() =>
       useAnalyticsProviderCacheHitRatio("/tmp/project", { from, to })
     );
 
@@ -306,7 +322,7 @@ describe("useAnalytics hooks", () => {
     const getSavedQueriesMock = mock(() => Promise.resolve({ queries: savedQueriesFixture }));
     currentApiClient = createFakeAnalyticsApiClient({ getSavedQueries: getSavedQueriesMock });
 
-    const { result } = renderHook(() => useSavedQueries());
+    const { result } = renderAnalyticsHook(() => useSavedQueries());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -318,7 +334,7 @@ describe("useAnalytics hooks", () => {
     const getSavedQueriesMock = mock(() => Promise.resolve({ queries: savedQueriesFixture }));
     currentApiClient = createFakeAnalyticsApiClient({ getSavedQueries: getSavedQueriesMock });
 
-    const { result } = renderHook(() => useSavedQueries({ skipLoad: true }));
+    const { result } = renderAnalyticsHook(() => useSavedQueries({ skipLoad: true }));
 
     expect(result.current.loading).toBe(false);
     expect(getSavedQueriesMock).toHaveBeenCalledTimes(0);
@@ -351,7 +367,7 @@ describe("useAnalytics hooks", () => {
       updateSavedQuery: updateSavedQueryMock,
     });
 
-    const { result } = renderHook(() => useSavedQueries());
+    const { result } = renderAnalyticsHook(() => useSavedQueries());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.queries).toEqual(savedQueriesFixture);
@@ -378,8 +394,7 @@ describe("useAnalytics hooks", () => {
       analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
     };
 
-    // eslint-disable-next-line no-restricted-syntax -- test-only dynamic import avoids browser/node boundary lint
-    const { createOrpcServer } = await import("@/node/orpc/server");
+    const createOrpcServer = await importCreateOrpcServer();
 
     server = await createOrpcServer({
       host: "127.0.0.1",
@@ -389,7 +404,7 @@ describe("useAnalytics hooks", () => {
     });
     currentApiClient = createHttpClient(server.baseUrl);
 
-    const { result } = renderHook(() => useAnalyticsRawQuery());
+    const { result } = renderAnalyticsHook(() => useAnalyticsRawQuery());
 
     await act(async () => {
       await result.current.executeQuery("SELECT sum(total_tokens) FROM events;");
@@ -412,8 +427,7 @@ describe("useAnalytics hooks", () => {
       analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
     };
 
-    // eslint-disable-next-line no-restricted-syntax -- test-only dynamic import avoids browser/node boundary lint
-    const { createOrpcServer } = await import("@/node/orpc/server");
+    const createOrpcServer = await importCreateOrpcServer();
 
     server = await createOrpcServer({
       host: "127.0.0.1",
@@ -423,7 +437,7 @@ describe("useAnalytics hooks", () => {
     });
     currentApiClient = createHttpClient(server.baseUrl);
 
-    const { result } = renderHook(() => useAnalyticsRawQuery());
+    const { result } = renderAnalyticsHook(() => useAnalyticsRawQuery());
 
     await act(async () => {
       await result.current.executeQuery("SELECT 1");

@@ -48,6 +48,7 @@ const createWorkspaceMetadata = (
 describe("WorkspaceContext", () => {
   afterEach(() => {
     cleanup();
+    mock.restore();
 
     // Reset global workspace store to avoid cross-test leakage
     getWorkspaceStoreRaw().dispose();
