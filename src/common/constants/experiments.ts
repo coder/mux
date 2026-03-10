@@ -95,7 +95,8 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description: "Enable workspaces that can span multiple projects instead of a single project",
     enabledByDefault: false,
     userOverridable: true,
-    showInSettings: false,
+    // Keep this visible so users can opt into the still-default-off experiment from Settings.
+    showInSettings: true,
   },
 };
 
