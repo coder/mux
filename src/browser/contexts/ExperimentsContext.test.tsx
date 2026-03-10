@@ -1,15 +1,53 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { GlobalWindow } from "happy-dom";
-import { ExperimentsProvider, useExperiment, useExperimentValue } from "./ExperimentsContext";
-import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ExperimentValue } from "@/common/orpc/types";
-import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import type { APIClient } from "./API";
 import type { RecursivePartial } from "@/browser/testUtils";
 
 // Keep the API client local to each render so this suite does not leak a process-global
 // mock.module override into ProjectContext and other later context tests.
 let currentClientMock: RecursivePartial<APIClient> = {};
+
+let APIProvider!: typeof import("./API").APIProvider;
+let ExperimentsProvider!: typeof import("./ExperimentsContext").ExperimentsProvider;
+let useExperimentValue!: typeof import("./ExperimentsContext").useExperimentValue;
+let isolatedModuleDir: string | null = null;
+
+const contextsDir = dirname(fileURLToPath(import.meta.url));
+
+// Import unique temp copies of the real modules so leaked Bun mock.module registrations and
+// module cache entries from earlier suites cannot replace the API/Experiments implementations.
+async function importIsolatedExperimentModules() {
+  const tempDir = await mkdtemp(join(contextsDir, ".experiments-context-test-"));
+  const isolatedApiPath = join(tempDir, "API.real.tsx");
+  const isolatedExperimentsPath = join(tempDir, "ExperimentsContext.real.tsx");
+
+  await copyFile(join(contextsDir, "API.tsx"), isolatedApiPath);
+
+  const experimentsSource = await readFile(join(contextsDir, "ExperimentsContext.tsx"), "utf8");
+  const isolatedExperimentsSource = experimentsSource.replace(
+    'from "@/browser/contexts/API";',
+    'from "./API.real.tsx";'
+  );
+
+  if (isolatedExperimentsSource === experimentsSource) {
+    throw new Error("Failed to rewrite ExperimentsContext API import for the isolated test copy");
+  }
+
+  await writeFile(isolatedExperimentsPath, isolatedExperimentsSource);
+
+  ({ APIProvider } = await import(pathToFileURL(isolatedApiPath).href));
+  ({ ExperimentsProvider, useExperimentValue } = await import(
+    pathToFileURL(isolatedExperimentsPath).href
+  ));
+
+  return tempDir;
+}
 
 let originalWindow: typeof globalThis.window;
 let originalDocument: typeof globalThis.document;
@@ -23,7 +61,9 @@ let originalSetInterval: typeof globalThis.setInterval;
 let originalClearInterval: typeof globalThis.clearInterval;
 
 describe("ExperimentsProvider", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    isolatedModuleDir = await importIsolatedExperimentModules();
+
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
     originalLocalStorage = globalThis.localStorage;
@@ -54,7 +94,7 @@ describe("ExperimentsProvider", () => {
     globalThis.localStorage.clear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
     mock.restore();
     globalThis.window = originalWindow;
@@ -68,6 +108,11 @@ describe("ExperimentsProvider", () => {
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
     currentClientMock = {};
+
+    if (isolatedModuleDir) {
+      await rm(isolatedModuleDir, { recursive: true, force: true });
+      isolatedModuleDir = null;
+    }
   });
 
   test("polls getAll until remote variants are available", async () => {
