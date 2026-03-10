@@ -49,12 +49,6 @@ const BASE_SECTIONS: SettingsSection[] = [
     component: GeneralSection,
   },
   {
-    id: "sounds",
-    label: "Sounds",
-    icon: <Volume2 className="h-4 w-4" />,
-    component: SoundsSection,
-  },
-  {
     id: "tasks",
     label: "Agents",
     icon: <Bot className="h-4 w-4" />,
@@ -107,6 +101,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Runtimes",
     icon: <Container className="h-4 w-4" />,
     component: RuntimesSection,
+  },
+  {
+    id: "sounds",
+    label: "Sounds",
+    icon: <Volume2 className="h-4 w-4" />,
+    component: SoundsSection,
   },
   {
     id: "experiments",
