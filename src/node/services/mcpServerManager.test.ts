@@ -1155,6 +1155,66 @@ describe("MCPServerManager", () => {
     expect(Object.keys(toolsResult.tools)).not.toContain("serverb_tool");
   });
 
+  test("getToolsForWorkspace filters disabled-server failures from leased stats", async () => {
+    const workspaceId = "ws-disable-failed-while-leased";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
+        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+      })
+    );
+
+    const dummyToolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+
+    const startServersMock = mock(() =>
+      Promise.resolve(
+        new Map([
+          [
+            "serverA",
+            {
+              name: "serverA",
+              resolvedTransport: "stdio",
+              autoFallbackUsed: false,
+              tools: { tool: dummyToolA },
+              isClosed: false,
+              close: mock(() => Promise.resolve(undefined)),
+            },
+          ],
+        ])
+      )
+    );
+
+    access.startServers = startServersMock;
+
+    const initial = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    expect(initial.stats.failedServerCount).toBe(1);
+
+    manager.acquireLease(workspaceId);
+
+    const leased = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+      overrides: {
+        disabledServers: ["serverB"],
+      },
+    });
+
+    expect(startServersMock).toHaveBeenCalledTimes(1);
+    expect(leased.stats.failedServerCount).toBe(0);
+    expect(Object.keys(leased.tools)).toEqual(["servera_tool"]);
+  });
+
   test("getToolsForWorkspace only exposes repo-defined servers for trusted projects", async () => {
     const projectPath = "/tmp/project";
     const workspacePath = "/tmp/workspace";

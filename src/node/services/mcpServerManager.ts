@@ -1190,6 +1190,11 @@ export class MCPServerManager {
       const instancesForTools = new Map(
         [...existing.instances].filter(([serverName]) => enabledServers[serverName] !== undefined)
       );
+      const leasedStats: MCPWorkspaceStats = {
+        ...existing.stats,
+        failedServerCount: Math.max(0, enabledEntries.length - instancesForTools.size),
+      };
+      existing.stats = leasedStats;
 
       return {
         tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
