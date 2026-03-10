@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/browser/components/Button/Button";
 import { Switch } from "@/browser/components/Switch/Switch";
 import { useAPI } from "@/browser/contexts/API";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   ALLOWED_AUDIO_EXTENSIONS,
@@ -12,9 +13,6 @@ import {
   type EventSoundKey,
 } from "@/common/config/eventSoundTypes";
 import type { EventSoundConfig, EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
-
-// Browser mode doesn't expose the native file picker bridge from preload.
-const isDesktopMode = typeof window !== "undefined" && Boolean(window.api);
 
 const AUDIO_UPLOAD_ACCEPT = [
   "audio/*",
@@ -231,6 +229,10 @@ export function SoundsSection() {
   };
 
   const canPersist = Boolean(api?.config?.updateEventSoundSettings);
+  const canUseDesktopBrowse =
+    isDesktopMode() &&
+    Boolean(api?.projects?.pickAudioFile) &&
+    Boolean(api?.eventSounds?.importFromLocalPath);
 
   return (
     <div className="space-y-4">
@@ -283,18 +285,14 @@ export function SoundsSection() {
               </div>
 
               <div className="flex items-center justify-end gap-2">
-                {isDesktopMode ? (
+                {canUseDesktopBrowse ? (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => {
                       void handleBrowse(key);
                     }}
-                    disabled={
-                      !canPersist ||
-                      !api?.projects?.pickAudioFile ||
-                      !api?.eventSounds?.importFromLocalPath
-                    }
+                    disabled={!canPersist || !canUseDesktopBrowse}
                   >
                     Browse
                   </Button>
