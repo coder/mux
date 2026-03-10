@@ -889,6 +889,29 @@ describe("WorkspaceContext", () => {
     });
   });
 
+  test("launch project opens project creation when no workspace exists yet", async () => {
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+      },
+      projects: {
+        list: () => Promise.resolve([["/launch-project", { workspaces: [] }]]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
+    await waitFor(() => {
+      expect(ctx().pendingNewWorkspaceProject).toBe("/launch-project");
+    });
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
   test("launch project does not override existing selection", async () => {
     createMockAPI({
       workspace: {
