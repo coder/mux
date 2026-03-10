@@ -52,6 +52,16 @@ class MCPDeadlineError extends Error {
   }
 }
 
+class MCPStartupTimeoutError extends Error {
+  constructor(serverName: string, timeoutMs: number) {
+    super(`MCP server '${serverName}' timed out after ${timeoutMs}ms`);
+    this.name = "MCPStartupTimeoutError";
+  }
+}
+
+function isMCPStartupTimeoutError(error: unknown): error is MCPStartupTimeoutError {
+  return error instanceof MCPStartupTimeoutError;
+}
 /**
  * Run an MCP tool call with unified timeout + abort lifecycle.
  * All cleanup (timer, abort listener) happens in one `finally` block,
@@ -557,6 +567,7 @@ interface WorkspaceServers {
   configSignature: string;
   instances: Map<string, MCPServerInstance>;
   stats: MCPWorkspaceStats;
+  timedOutServerNames: string[];
   lastActivity: number;
 }
 
@@ -664,6 +675,54 @@ export class MCPServerManager {
         void this.stopServers(workspaceId);
       }
     }
+  }
+
+  private createWorkspaceStats(
+    enabledServerCount: number,
+    instances: Map<string, MCPServerInstance>,
+    failedServerNames: string[]
+  ): MCPWorkspaceStats {
+    const resolvedTransports = new Set<ResolvedTransport>();
+    for (const instance of instances.values()) {
+      resolvedTransports.add(instance.resolvedTransport);
+    }
+
+    const hasStdio = resolvedTransports.has("stdio");
+    const hasHttp = resolvedTransports.has("http");
+    const hasSse = resolvedTransports.has("sse");
+
+    const transportMode: MCPTransportMode =
+      instances.size === 0
+        ? "none"
+        : resolvedTransports.size === 1 && hasStdio
+          ? "stdio_only"
+          : resolvedTransports.size === 1 && hasHttp
+            ? "http_only"
+            : resolvedTransports.size === 1 && hasSse
+              ? "sse_only"
+              : "mixed";
+
+    return {
+      enabledServerCount,
+      startedServerCount: instances.size,
+      failedServerCount: failedServerNames.length,
+      autoFallbackCount: [...instances.values()].filter((instance) => instance.autoFallbackUsed)
+        .length,
+      failedServerNames,
+      hasStdio,
+      hasHttp,
+      hasSse,
+      transportMode,
+    };
+  }
+
+  private getTimedOutServerNamesToRetry(
+    entry: WorkspaceServers,
+    enabledServers: MCPServerMap
+  ): string[] {
+    return entry.timedOutServerNames.filter(
+      (serverName) => enabledServers[serverName] !== undefined && !entry.instances.has(serverName)
+    );
   }
 
   /**
@@ -838,6 +897,8 @@ export class MCPServerManager {
     );
     const enabledEntries = Object.entries(enabledServers).sort(([a], [b]) => a.localeCompare(b));
 
+    const enabledServerNames = new Set(enabledEntries.map(([name]) => name));
+
     // Signature is based on *start config* only (not tool allowlists), so changing allowlists
     // does not force a server restart.
     const signatureEntries: Record<string, unknown> = {};
@@ -883,6 +944,9 @@ export class MCPServerManager {
     const signature = JSON.stringify(signatureEntries);
 
     const existing = this.workspaceServers.get(workspaceId);
+    if (existing && existing.timedOutServerNames === undefined) {
+      existing.timedOutServerNames = [];
+    }
     const leaseCount = this.getLeaseCount(workspaceId);
 
     const hasClosedInstance =
@@ -890,6 +954,67 @@ export class MCPServerManager {
 
     if (existing?.configSignature === signature && !hasClosedInstance) {
       existing.lastActivity = Date.now();
+
+      const timedOutServerNamesToRetry = this.getTimedOutServerNamesToRetry(
+        existing,
+        enabledServers
+      );
+      if (timedOutServerNamesToRetry.length > 0) {
+        log.info("[MCP] Retrying timed-out servers", {
+          workspaceId,
+          timedOutServerNames: timedOutServerNamesToRetry,
+        });
+
+        const serversToRetry: MCPServerMap = {};
+        for (const serverName of timedOutServerNamesToRetry) {
+          const info = enabledServers[serverName];
+          if (info) {
+            serversToRetry[serverName] = info;
+          }
+        }
+
+        const retryingServerNames = new Set(timedOutServerNamesToRetry);
+        const {
+          instances: retriedInstances,
+          failedServerNames: retryFailedNames,
+          timedOutServerNames: retryTimedOutNames = [],
+        } = await this.startServers(
+          serversToRetry,
+          runtime,
+          projectPath,
+          workspacePath,
+          projectSecrets,
+          () => this.markActivity(workspaceId)
+        );
+
+        for (const [serverName, instance] of retriedInstances) {
+          existing.instances.set(serverName, instance);
+        }
+
+        existing.timedOutServerNames = [
+          ...existing.timedOutServerNames.filter(
+            (serverName) =>
+              enabledServerNames.has(serverName) &&
+              !retryingServerNames.has(serverName) &&
+              !existing.instances.has(serverName)
+          ),
+          ...retryTimedOutNames,
+        ];
+
+        const failedServerNames = [
+          ...existing.stats.failedServerNames.filter(
+            (serverName) =>
+              enabledServerNames.has(serverName) && !retryingServerNames.has(serverName)
+          ),
+          ...retryFailedNames,
+        ];
+        existing.stats = this.createWorkspaceStats(
+          enabledEntries.length,
+          existing.instances,
+          failedServerNames
+        );
+      }
+
       log.debug("[MCP] Using cached servers", {
         workspaceId,
         serverCount: enabledEntries.length,
@@ -902,6 +1027,7 @@ export class MCPServerManager {
     }
 
     let restartFailedNames: string[] = [];
+    let restartTimedOutNames: string[] = [];
 
     // If a stream is actively running, avoid closing MCP clients out from under it.
     //
@@ -948,16 +1074,20 @@ export class MCPServerManager {
           }
         }
 
-        const { instances: restartedInstances, failedServerNames: failedNames } =
-          await this.startServers(
-            serversToRestart,
-            runtime,
-            projectPath,
-            workspacePath,
-            projectSecrets,
-            () => this.markActivity(workspaceId)
-          );
+        const {
+          instances: restartedInstances,
+          failedServerNames: failedNames,
+          timedOutServerNames: timedOutNames = [],
+        } = await this.startServers(
+          serversToRestart,
+          runtime,
+          projectPath,
+          workspacePath,
+          projectSecrets,
+          () => this.markActivity(workspaceId)
+        );
         restartFailedNames = failedNames;
+        restartTimedOutNames = timedOutNames;
 
         for (const [serverName, instance] of restartedInstances) {
           existing.instances.set(serverName, instance);
@@ -970,7 +1100,13 @@ export class MCPServerManager {
 
       // Recompute failure stats from the currently enabled server set so stale failures
       // from newly-disabled servers do not trigger warnings while a lease is active.
-      const enabledServerNames = new Set(Object.keys(enabledServers));
+      existing.timedOutServerNames = [
+        ...existing.timedOutServerNames.filter(
+          (serverName) => enabledServerNames.has(serverName) && !existing.instances.has(serverName)
+        ),
+        ...restartTimedOutNames,
+      ];
+
       const failedServerNames = [
         ...existing.stats.failedServerNames.filter((serverName) =>
           enabledServerNames.has(serverName)
@@ -1011,7 +1147,11 @@ export class MCPServerManager {
 
     await this.stopServers(workspaceId);
 
-    const { instances, failedServerNames: startFailedNames } = await this.startServers(
+    const {
+      instances,
+      failedServerNames: startFailedNames,
+      timedOutServerNames: startTimedOutNames = [],
+    } = await this.startServers(
       enabledServers,
       runtime,
       projectPath,
@@ -1021,43 +1161,13 @@ export class MCPServerManager {
     );
 
     const allFailedNames = [...restartFailedNames, ...startFailedNames];
-
-    const resolvedTransports = new Set<ResolvedTransport>();
-    for (const instance of instances.values()) {
-      resolvedTransports.add(instance.resolvedTransport);
-    }
-
-    const hasStdio = resolvedTransports.has("stdio");
-    const hasHttp = resolvedTransports.has("http");
-    const hasSse = resolvedTransports.has("sse");
-
-    const transportMode: MCPTransportMode =
-      instances.size === 0
-        ? "none"
-        : resolvedTransports.size === 1 && hasStdio
-          ? "stdio_only"
-          : resolvedTransports.size === 1 && hasHttp
-            ? "http_only"
-            : resolvedTransports.size === 1 && hasSse
-              ? "sse_only"
-              : "mixed";
-
-    const stats: MCPWorkspaceStats = {
-      enabledServerCount: enabledEntries.length,
-      startedServerCount: instances.size,
-      failedServerCount: allFailedNames.length,
-      autoFallbackCount: [...instances.values()].filter((i) => i.autoFallbackUsed).length,
-      failedServerNames: allFailedNames,
-      hasStdio,
-      hasHttp,
-      hasSse,
-      transportMode,
-    };
+    const stats = this.createWorkspaceStats(enabledEntries.length, instances, allFailedNames);
 
     this.workspaceServers.set(workspaceId, {
       configSignature: signature,
       instances,
       stats,
+      timedOutServerNames: startTimedOutNames,
       lastActivity: Date.now(),
     });
 
@@ -1281,9 +1391,14 @@ export class MCPServerManager {
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void
-  ): Promise<{ instances: Map<string, MCPServerInstance>; failedServerNames: string[] }> {
+  ): Promise<{
+    instances: Map<string, MCPServerInstance>;
+    failedServerNames: string[];
+    timedOutServerNames: string[];
+  }> {
     const instances = new Map<string, MCPServerInstance>();
     const failedServerNames: string[] = [];
+    const timedOutServerNames: string[] = [];
     const entries = Object.entries(servers);
 
     for (const [name, info] of entries) {
@@ -1304,10 +1419,13 @@ export class MCPServerManager {
         const message = getErrorMessage(error);
         log.error("Failed to start MCP server", { name, error: message });
         failedServerNames.push(name);
+        if (isMCPStartupTimeoutError(error)) {
+          timedOutServerNames.push(name);
+        }
       }
     }
 
-    return { instances, failedServerNames };
+    return { instances, failedServerNames, timedOutServerNames };
   }
 
   private async startSingleServer(
@@ -1358,9 +1476,7 @@ export class MCPServerManager {
         // Abort in-flight startup so stdio processes and partial MCP clients are cleaned up.
         abortController.abort();
 
-        const timeoutError = new Error(
-          `MCP server '${name}' timed out after ${MCP_STARTUP_TIMEOUT_MS}ms`
-        );
+        const timeoutError = new MCPStartupTimeoutError(name, MCP_STARTUP_TIMEOUT_MS);
         if (!abortCleanupPromise) {
           reject(timeoutError);
           return;

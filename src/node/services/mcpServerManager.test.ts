@@ -18,6 +18,7 @@ interface MCPServerManagerTestAccess {
   startServers: (...args: unknown[]) => Promise<{
     instances: Map<string, unknown>;
     failedServerNames: string[];
+    timedOutServerNames?: string[];
   }>;
   startSingleServer: (...args: unknown[]) => Promise<unknown>;
   startSingleServerImpl: (...args: unknown[]) => Promise<unknown>;
@@ -291,6 +292,55 @@ describe("MCPServerManager", () => {
     }
   });
 
+  test("startServers only marks startup timeouts as retryable", async () => {
+    const never = Promise.withResolvers<unknown>();
+    access.startSingleServerImpl = mock((name: unknown) => {
+      if (name === "slow-server") {
+        return never.promise;
+      }
+
+      if (name === "broken-server") {
+        return Promise.reject(new Error("invalid MCP server config"));
+      }
+
+      return Promise.resolve({
+        name: String(name),
+        resolvedTransport: "stdio",
+        autoFallbackUsed: false,
+        tools: {},
+        isClosed: false,
+        close: mock(() => Promise.resolve(undefined)),
+      });
+    });
+
+    const originalSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+    setTimeoutSpy.mockImplementation(((
+      callback: Parameters<typeof setTimeout>[0],
+      delay?: Parameters<typeof setTimeout>[1],
+      ...args: unknown[]
+    ) => originalSetTimeout(callback, delay === 60_000 ? 1 : delay, ...args)) as typeof setTimeout);
+
+    try {
+      const result = await access.startServers(
+        {
+          "slow-server": { transport: "stdio", command: "slow", disabled: false },
+          "broken-server": { transport: "stdio", command: "broken", disabled: false },
+        },
+        {} as Runtime,
+        "/tmp/project",
+        "/tmp/workspace",
+        undefined,
+        () => undefined
+      );
+
+      expect(result.failedServerNames).toEqual(["slow-server", "broken-server"]);
+      expect(result.timedOutServerNames).toEqual(["slow-server"]);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   test("startSingleServerImpl closes spawned stdio stream when aborted after exec", async () => {
     const controller = new AbortController();
     const stdinClose = mock(() => Promise.resolve(undefined));
@@ -463,6 +513,99 @@ describe("MCPServerManager", () => {
 
     expect(result.stats.failedServerCount).toBe(1);
     expect(result.stats.failedServerNames).toContain("broken-server");
+  });
+
+  test("getToolsForWorkspace retries timed-out servers from cached workspace state", async () => {
+    const workspaceId = "ws-timeout-retry";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        serverA: { transport: "stdio", command: "cmd-a", disabled: false },
+        serverB: { transport: "stdio", command: "cmd-b", disabled: false },
+      })
+    );
+
+    const toolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+    const toolB = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
+
+    const startServersMock = mock((servers: unknown) => {
+      const serverMap = servers as Record<string, unknown>;
+      if (startServersMock.mock.calls.length === 1) {
+        expect(Object.keys(serverMap)).toEqual(["serverA", "serverB"]);
+        return Promise.resolve({
+          instances: new Map([
+            [
+              "serverA",
+              {
+                name: "serverA",
+                resolvedTransport: "stdio",
+                autoFallbackUsed: false,
+                tools: { toolA },
+                isClosed: false,
+                close: mock(() => Promise.resolve(undefined)),
+              },
+            ],
+          ]),
+          failedServerNames: ["serverB"],
+          timedOutServerNames: ["serverB"],
+        });
+      }
+
+      expect(Object.keys(serverMap)).toEqual(["serverB"]);
+      return Promise.resolve({
+        instances: new Map([
+          [
+            "serverB",
+            {
+              name: "serverB",
+              resolvedTransport: "stdio",
+              autoFallbackUsed: false,
+              tools: { toolB },
+              isClosed: false,
+              close: mock(() => Promise.resolve(undefined)),
+            },
+          ],
+        ]),
+        failedServerNames: [],
+        timedOutServerNames: [],
+      });
+    });
+
+    access.startServers = startServersMock;
+
+    const initial = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    expect(initial.stats.failedServerCount).toBe(1);
+    expect(initial.stats.failedServerNames).toEqual(["serverB"]);
+    expect(initial.stats.startedServerCount).toBe(1);
+    expect(Object.keys(initial.tools)).toEqual(["servera_toola"]);
+
+    const retried = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    expect(startServersMock).toHaveBeenCalledTimes(2);
+    expect(retried.stats.failedServerCount).toBe(0);
+    expect(retried.stats.failedServerNames).toEqual([]);
+    expect(retried.stats.startedServerCount).toBe(2);
+    const retriedToolNames = Object.keys(retried.tools);
+    expect(retriedToolNames).toContain("servera_toola");
+    expect(retriedToolNames).toContain("serverb_toolb");
+
+    const cached = access.workspaceServers.get(workspaceId) as {
+      timedOutServerNames?: string[];
+    };
+    expect(cached.timedOutServerNames).toEqual([]);
   });
 
   test("getToolsForWorkspace defers restarts while leased and applies them on next request", async () => {
