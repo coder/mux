@@ -2,6 +2,14 @@ import React, { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, render, waitFor } from "@testing-library/react";
+import * as APIModule from "@/browser/contexts/API";
+import * as PersistedStateModule from "@/browser/hooks/usePersistedState";
+import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import * as TooltipModule from "@/browser/components/Tooltip/Tooltip";
+import * as FileIconModule from "@/browser/components/FileIcon/FileIcon";
+import * as FileExplorerModule from "@/browser/utils/fileExplorer";
+
+import { ExplorerTab } from "./ExplorerTab";
 
 interface ExecuteBashInput {
   workspaceId: string;
@@ -31,66 +39,80 @@ interface MockApiClient {
 
 let mockApi: MockApiClient | null = null;
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
+function installExplorerTabTestDoubles() {
+  spyOn(APIModule, "useAPI").mockImplementation(() => ({
     api: mockApi,
     status: mockApi ? ("connected" as const) : ("error" as const),
     error: mockApi ? null : "API unavailable",
     authenticate: () => undefined,
     retry: () => undefined,
-  }),
-}));
+  }));
 
-void mock.module("@/browser/hooks/usePersistedState", () => ({
-  readPersistedState: <T,>(_key: string, defaultValue: T) => defaultValue,
-  updatePersistedState: () => undefined,
-  usePersistedState: <T,>(_key: string, initialValue: T) => React.useState(initialValue),
-}));
+  spyOn(PersistedStateModule, "readPersistedState").mockImplementation(
+    (<T,>(_key: string, defaultValue: T) =>
+      defaultValue) as typeof PersistedStateModule.readPersistedState
+  );
+  spyOn(PersistedStateModule, "updatePersistedState").mockImplementation(
+    ((_: string, __: unknown, ___?: unknown) =>
+      undefined) as typeof PersistedStateModule.updatePersistedState
+  );
+  spyOn(PersistedStateModule, "usePersistedState").mockImplementation((<T,>(
+    _key: string,
+    initialValue: T
+  ) => React.useState(initialValue)) as typeof PersistedStateModule.usePersistedState);
 
-void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  workspaceStore: {
-    subscribeFileModifyingTool: () => () => undefined,
-  },
-}));
+  spyOn(WorkspaceStoreModule.workspaceStore, "subscribeFileModifyingTool").mockImplementation(
+    () => () => undefined
+  );
 
-void mock.module("@/browser/components/Tooltip/Tooltip", () => ({
-  Tooltip: (props: { children: ReactNode }) => <>{props.children}</>,
-  TooltipTrigger: (props: { children: ReactNode; asChild?: boolean }) => <>{props.children}</>,
-  TooltipContent: (props: { children: ReactNode; side?: string }) => <>{props.children}</>,
-}));
+  spyOn(TooltipModule, "Tooltip").mockImplementation(((props: { children: ReactNode }) => (
+    <>{props.children}</>
+  )) as unknown as typeof TooltipModule.Tooltip);
+  spyOn(TooltipModule, "TooltipTrigger").mockImplementation(((props: {
+    children: ReactNode;
+    asChild?: boolean;
+  }) => <>{props.children}</>) as unknown as typeof TooltipModule.TooltipTrigger);
+  spyOn(TooltipModule, "TooltipContent").mockImplementation(((props: {
+    children: ReactNode;
+    side?: string;
+  }) => <>{props.children}</>) as unknown as typeof TooltipModule.TooltipContent);
 
-void mock.module("@/browser/components/FileIcon/FileIcon", () => ({
-  FileIcon: (_props: { fileName: string; style?: React.CSSProperties; className?: string }) => (
-    <div data-testid="file-icon" />
-  ),
-}));
+  spyOn(FileIconModule, "FileIcon").mockImplementation(((_props: {
+    fileName: string;
+    style?: React.CSSProperties;
+    className?: string;
+  }) => <div data-testid="file-icon" />) as unknown as typeof FileIconModule.FileIcon);
 
-void mock.module("@/browser/utils/fileExplorer", () => ({
-  validateRelativePath: () => null,
-  buildListDirScript: (relativePath: string) =>
-    relativePath ? `LIST ${relativePath}` : "LIST ROOT",
-  buildGitIgnoredScript: () => "GIT IGNORED ROOT",
-  buildGitCheckIgnoreScript: (paths: string[]) => `GIT CHECK ${paths.join(",")}`,
-  parseLsOutput: (_output: string, relativePath: string) =>
-    relativePath === ""
-      ? [
-          {
-            name: "ignored-dir",
-            path: "ignored-dir",
-            isDirectory: true,
-            children: [],
-          },
-        ]
-      : [],
-  parseGitStatus: () => ({
+  spyOn(FileExplorerModule, "validateRelativePath").mockImplementation(() => undefined);
+  spyOn(FileExplorerModule, "buildListDirScript").mockImplementation((relativePath: string) =>
+    relativePath ? `LIST ${relativePath}` : "LIST ROOT"
+  );
+  spyOn(FileExplorerModule, "buildGitIgnoredScript").mockImplementation(() => "GIT IGNORED ROOT");
+  spyOn(FileExplorerModule, "buildGitCheckIgnoreScript").mockImplementation(
+    (paths: string[]) => `GIT CHECK ${paths.join(",")}`
+  );
+  spyOn(FileExplorerModule, "parseLsOutput").mockImplementation(
+    (_output: string, relativePath: string) =>
+      relativePath === ""
+        ? [
+            {
+              name: "ignored-dir",
+              path: "ignored-dir",
+              isDirectory: true,
+              children: [],
+            },
+          ]
+        : []
+  );
+  spyOn(FileExplorerModule, "parseGitStatus").mockImplementation(() => ({
     ignored: new Set<string>(),
     modified: new Set<string>(),
     untracked: new Set<string>(),
-  }),
-  parseGitCheckIgnoreOutput: () => new Set(["ignored-dir"]),
-}));
-
-import { ExplorerTab } from "./ExplorerTab";
+  }));
+  spyOn(FileExplorerModule, "parseGitCheckIgnoreOutput").mockImplementation(
+    () => new Set(["ignored-dir"])
+  );
+}
 
 describe("ExplorerTab", () => {
   let originalWindow: typeof globalThis.window;
@@ -101,6 +123,7 @@ describe("ExplorerTab", () => {
     originalDocument = globalThis.document;
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
+    installExplorerTabTestDoubles();
     const realUseState = React.useState;
     const eagerUseState = ((...args: [unknown?]) => {
       const [value, setValue] = args.length === 0 ? realUseState<unknown>() : realUseState(args[0]);
