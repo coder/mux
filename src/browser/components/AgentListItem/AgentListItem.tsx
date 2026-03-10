@@ -3,11 +3,13 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
+import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
@@ -795,6 +797,17 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     linkSharingEnabled={linkSharingEnabled === true}
                     isMuxHelpChat={isMuxHelpChat}
                   />
+                  {!isSelected && !isUnread && (
+                    <PositionedMenuItem
+                      icon={<EyeOff />}
+                      label="Mark unread"
+                      onClick={() => {
+                        // Reset the read marker to epoch so existing activity is treated as unseen.
+                        updatePersistedState(getWorkspaceLastReadKey(workspaceId), 0);
+                        ctxMenu.close();
+                      }}
+                    />
+                  )}
                   {canToggleCompletedChildren && (
                     <PositionedMenuItem
                       icon={isCompletedChildrenExpanded ? <EyeOff /> : <Eye />}
