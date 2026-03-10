@@ -887,9 +887,9 @@ describe("WorkspaceService multi-project lifecycle", () => {
     );
 
     expect((await workspaceService.list()).map((metadata) => metadata.id)).toEqual(["ws-single"]);
-    expect(await workspaceService.getInfo(singleProjectMetadata.id)).toEqual(
-      expect.objectContaining({ id: singleProjectMetadata.id })
-    );
+    const singleProjectInfo = await workspaceService.getInfo(singleProjectMetadata.id);
+    assert(singleProjectInfo, "Expected single-project metadata when the experiment is disabled");
+    expect(singleProjectInfo.id).toBe(singleProjectMetadata.id);
     expect(await workspaceService.getInfo(multiProjectMetadata.id)).toBeNull();
   });
 
@@ -940,12 +940,10 @@ describe("WorkspaceService multi-project lifecycle", () => {
       "ws-single",
       "ws-multi",
     ]);
-    expect(await workspaceService.getInfo(multiProjectMetadata.id)).toEqual(
-      expect.objectContaining({
-        id: multiProjectMetadata.id,
-        projects: multiProjectMetadata.projects,
-      })
-    );
+    const multiProjectInfo = await workspaceService.getInfo(multiProjectMetadata.id);
+    assert(multiProjectInfo, "Expected multi-project metadata when the experiment is enabled");
+    expect(multiProjectInfo.id).toBe(multiProjectMetadata.id);
+    expect(multiProjectInfo.projects).toEqual(multiProjectMetadata.projects);
   });
 
   test("createMultiProject rejects when the experiment is disabled", async () => {

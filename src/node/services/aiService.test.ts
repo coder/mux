@@ -40,9 +40,10 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
-import type { ExperimentsService } from "./experimentsService";
+import { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
 import type { MCPServerManager } from "./mcpServerManager";
+import { TelemetryService } from "@/node/services/telemetryService";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
@@ -1847,12 +1848,15 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     const historyService = new HistoryService(config);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    const experimentsService = {
-      isExperimentEnabled: (experimentId: string) =>
-        experimentId === EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
-          ? multiProjectExperimentEnabled
-          : false,
-    } as Pick<ExperimentsService, "isExperimentEnabled"> as ExperimentsService;
+    const experimentsService = new ExperimentsService({
+      telemetryService: new TelemetryService(muxHomePath),
+      muxHome: muxHomePath,
+    });
+    spyOn(experimentsService, "isExperimentEnabled").mockImplementation((experimentId) =>
+      experimentId === EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+        ? multiProjectExperimentEnabled
+        : false
+    );
     const service = new AIService(
       config,
       historyService,
