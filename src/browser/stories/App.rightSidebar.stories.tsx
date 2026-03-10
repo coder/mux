@@ -601,8 +601,9 @@ export const ReviewTabSortByLastEdit: AppStory = {
     // Ensure the Review tab is active. Storybook can reuse a long-lived AppLoader
     // instance between stories, so persisted state might not apply until interaction.
     const expandButtons = canvas.queryAllByRole("button", { name: "Toggle sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    const expandButton = expandButtons[expandButtons.length - 1];
+    if (expandButton && expandButton.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(expandButton);
     }
 
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
@@ -677,8 +678,9 @@ export const ReviewTabSortByFileOrder: AppStory = {
 
     // Ensure Review tab is active (Storybook may reuse the same App instance).
     const expandButtons = canvas.queryAllByRole("button", { name: "Toggle sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    const expandButton = expandButtons[expandButtons.length - 1];
+    if (expandButton && expandButton.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(expandButton);
     }
 
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
@@ -778,8 +780,9 @@ export const DiffPaddingAlignment: AppStory = {
 
     // Ensure Review tab is active.
     const expandButtons = canvas.queryAllByRole("button", { name: "Toggle sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    const expandButton = expandButtons[expandButtons.length - 1];
+    if (expandButton && expandButton.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(expandButton);
     }
 
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
@@ -862,8 +865,9 @@ export const DiffPaddingAlignmentModification: AppStory = {
 
     // Ensure Review tab is active.
     const expandButtons = canvas.queryAllByRole("button", { name: "Toggle sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    const expandButton = expandButtons[expandButtons.length - 1];
+    if (expandButton && expandButton.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(expandButton);
     }
 
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
@@ -1048,8 +1052,9 @@ export const ReviewTabWithFileFilter: AppStory = {
 
     // Ensure Review tab is active.
     const expandButtons = canvas.queryAllByRole("button", { name: "Toggle sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    const expandButton = expandButtons[expandButtons.length - 1];
+    if (expandButton && expandButton.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(expandButton);
     }
 
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
@@ -1153,8 +1158,9 @@ export const ReviewTabWithUntrackedFiles: AppStory = {
 
     // Ensure Review tab is active
     const expandButtons = canvas.queryAllByRole("button", { name: "Toggle sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
+    const expandButton = expandButtons[expandButtons.length - 1];
+    if (expandButton && expandButton.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(expandButton);
     }
 
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });

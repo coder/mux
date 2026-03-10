@@ -46,7 +46,9 @@ async function openFirstProjectCreationView(storyRoot: HTMLElement): Promise<voi
       // and mobile (transform-based) collapse modes.
       if (document.documentElement.dataset.leftSidebarCollapsed === "true") {
         const expandBtn = storyRoot.querySelector<HTMLElement>("[aria-label='Toggle sidebar']");
-        if (expandBtn) expandBtn.click();
+        if (expandBtn?.getAttribute("aria-expanded") === "false") {
+          expandBtn.click();
+        }
         throw new Error("Sidebar collapsed – expanding…");
       }
 
@@ -596,7 +598,7 @@ export const CreateWorkspaceWithSections: AppStory = {
       const sidebarIsExpanded = sidebar && sidebar.getBoundingClientRect().width > 40;
       if (sidebarIsExpanded) {
         const collapseBtn = sidebar.querySelector<HTMLElement>("[aria-label='Toggle sidebar']");
-        if (collapseBtn) {
+        if (collapseBtn?.getAttribute("aria-expanded") === "true") {
           await userEvent.click(collapseBtn);
         }
       }
