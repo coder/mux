@@ -19,6 +19,7 @@ import {
 import { HistoryService } from "./historyService";
 import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { Config } from "@/node/config";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -39,6 +40,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
+import type { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
 import type { MCPServerManager } from "./mcpServerManager";
 import * as agentResolution from "./agentResolution";
@@ -1836,12 +1838,35 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     };
   }
 
-  function createHarness(muxHomePath: string, metadata: WorkspaceMetadata): TrustGatingHarness {
+  function createHarness(
+    muxHomePath: string,
+    metadata: WorkspaceMetadata,
+    multiProjectExperimentEnabled = true
+  ): TrustGatingHarness {
     const config = new Config(muxHomePath);
     const historyService = new HistoryService(config);
     const initStateManager = new InitStateManager(config);
     const providerService = new ProviderService(config);
-    const service = new AIService(config, historyService, initStateManager, providerService);
+    const experimentsService = {
+      isExperimentEnabled: (experimentId: string) =>
+        experimentId === EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+          ? multiProjectExperimentEnabled
+          : false,
+    } as Pick<ExperimentsService, "isExperimentEnabled"> as ExperimentsService;
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      experimentsService
+    );
 
     const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
       success: true,
@@ -2004,6 +2029,34 @@ describe("AIService.streamMessage multi-project trust gating", () => {
 
     expect(harness.getToolsForModelSpy).toHaveBeenCalledTimes(1);
     expect(trustedFromFirstGetToolsCall(harness.getToolsForModelSpy)).toBe(false);
+  });
+
+  it("fails closed before tool setup when the multi-project experiment is disabled", async () => {
+    using muxHome = new DisposableTempDir("ai-service-multi-project-experiment-disabled");
+    const projectAPath = path.join(muxHome.path, "project-a");
+    const projectBPath = path.join(muxHome.path, "project-b");
+    await fs.mkdir(projectAPath, { recursive: true });
+    await fs.mkdir(projectBPath, { recursive: true });
+
+    const workspaceId = "workspace-multi-project-disabled";
+    const metadata = createTrustMetadata(workspaceId, [projectAPath, projectBPath]);
+    const harness = createHarness(muxHome.path, metadata, false);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: {
+        type: "unknown",
+        raw: `Workspace ${workspaceId} reached multi-project AI runtime execution while ${EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES} is disabled`,
+      },
+    });
+    expect(harness.getToolsForModelSpy).not.toHaveBeenCalled();
   });
 });
 

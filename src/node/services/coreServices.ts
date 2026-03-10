@@ -76,7 +76,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.policyService,
     opts.telemetryService,
     opts.devToolsService,
-    opts.opResolver
+    opts.opResolver,
+    opts.experimentsService
   );
 
   // MCP: allow callers to override which Config provides server definitions

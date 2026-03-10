@@ -88,6 +88,7 @@ async function runOrchestrateFork(params: {
   config?: Config;
   trusted?: boolean;
   preferredTrunkBranch?: string;
+  multiProjectExperimentEnabled?: boolean;
 }): Promise<Awaited<ReturnType<typeof orchestrateFork>>> {
   return orchestrateFork({
     sourceRuntime: createProjectRuntimeMocks().runtime,
@@ -107,6 +108,7 @@ async function runOrchestrateFork(params: {
     allowCreateFallback: true,
     trusted: params.trusted,
     preferredTrunkBranch: params.preferredTrunkBranch,
+    multiProjectExperimentEnabled: params.multiProjectExperimentEnabled ?? true,
   });
 }
 
@@ -186,6 +188,22 @@ describe("orchestrateFork (multi-project)", () => {
     detectDefaultTrunkBranchMock = spyOn(gitModule, "detectDefaultTrunkBranch").mockResolvedValue(
       "main"
     );
+  });
+
+  it("fails closed before any project fork work when the multi-project experiment is disabled", async () => {
+    const result = await runOrchestrateFork({
+      parentMetadata: createParentMetadata(),
+      multiProjectExperimentEnabled: false,
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Workspace workspace-parent reached multi-project fork orchestration while multi-project-workspaces is disabled",
+    });
+    expect(createRuntimeMock).not.toHaveBeenCalled();
+    expect(createContainerMock).not.toHaveBeenCalled();
+    expect(removeContainerMock).not.toHaveBeenCalled();
   });
 
   it("persists the primary git-root checkout while keeping runtime execution on the child container", async () => {
@@ -585,6 +603,7 @@ describe("orchestrateFork (multi-project)", () => {
       sourceRuntimeConfig: SOURCE_RUNTIME_CONFIG,
       parentMetadata: createParentMetadata(),
       allowCreateFallback: false,
+      multiProjectExperimentEnabled: true,
     });
 
     expect(result).toEqual({

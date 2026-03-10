@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { type RuntimeConfig, getSrcBaseDir } from "@/common/types/runtime";
 import { type ProjectRef, type WorkspaceMetadata } from "@/common/types/workspace";
 import { Err, Ok, type Result } from "@/common/types/result";
@@ -52,6 +53,11 @@ interface OrchestrateForkParams {
   abortSignal?: AbortSignal;
   /** Whether the project is trusted — when false, git hooks are disabled */
   trusted?: boolean;
+  /**
+   * Callers must resolve the experiment gate before we enter any multi-project-only fork logic.
+   * Undefined means the caller forgot to thread the gate and should crash loudly in tests/dev.
+   */
+  multiProjectExperimentEnabled?: boolean;
 }
 
 interface OrchestrateForkSuccess {
@@ -194,6 +200,10 @@ function isErrnoWithCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
+function getMultiProjectForkDisabledMessage(sourceWorkspaceId: string): string {
+  return `Workspace ${sourceWorkspaceId} reached multi-project fork orchestration while ${EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES} is disabled`;
+}
+
 export async function orchestrateFork(
   params: OrchestrateForkParams
 ): Promise<Result<OrchestrateForkSuccess>> {
@@ -212,6 +222,14 @@ export async function orchestrateFork(
   } = params;
 
   if (parentMetadata && isMultiProject(parentMetadata)) {
+    assert(
+      params.multiProjectExperimentEnabled != null,
+      "orchestrateFork multi-project branch requires an explicit experiment gate state"
+    );
+    if (!params.multiProjectExperimentEnabled) {
+      return Err(getMultiProjectForkDisabledMessage(sourceWorkspaceId));
+    }
+
     const projects = getProjects(parentMetadata);
     assert(projects.length > 1, "Multi-project fork requires at least two projects");
 

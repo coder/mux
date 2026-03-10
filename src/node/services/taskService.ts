@@ -43,6 +43,7 @@ import {
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -1171,6 +1172,9 @@ export class TaskService {
       trusted:
         this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(parentMeta.projectPath))
           ?.trusted ?? false,
+      multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
+        EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+      ),
     });
 
     if (forkResult.success && forkResult.data.sourceRuntimeConfigUpdate) {
@@ -2519,6 +2523,9 @@ export class TaskService {
             this.config
               .loadConfigOrDefault()
               .projects.get(stripTrailingSlashes(taskEntry.projectPath))?.trusted ?? false,
+          multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
+            EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+          ),
         });
 
         if (

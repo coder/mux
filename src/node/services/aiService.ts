@@ -12,6 +12,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 import type { MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
@@ -52,6 +53,7 @@ import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggreg
 import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
 
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
@@ -207,6 +209,7 @@ export class AIService extends EventEmitter {
   private readonly providerService: ProviderService;
   private readonly providerModelFactory: ProviderModelFactory;
   private readonly devToolsService?: DevToolsService;
+  private readonly experimentsService?: ExperimentsService;
 
   // Tracks in-flight stream startup (before StreamManager emits stream-start).
   // This enables user interrupts (Esc/Ctrl+C) during the UI "starting..." phase.
@@ -246,7 +249,8 @@ export class AIService extends EventEmitter {
     policyService?: PolicyService,
     telemetryService?: TelemetryService,
     devToolsService?: DevToolsService,
-    opResolver?: ExternalSecretResolver
+    opResolver?: ExternalSecretResolver,
+    experimentsService?: ExperimentsService
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -262,6 +266,7 @@ export class AIService extends EventEmitter {
     this.policyService = policyService;
     this.telemetryService = telemetryService;
     this.opResolver = opResolver;
+    this.experimentsService = experimentsService;
     this.providerService = providerService;
     this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
       this.providerService.getConfig()
@@ -607,6 +612,38 @@ export class AIService extends EventEmitter {
     return wrappedTools;
   }
 
+  private getMultiProjectExecutionDisabledMessage(workspaceId: string): string {
+    return `Workspace ${workspaceId} reached multi-project AI runtime execution while ${EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES} is disabled`;
+  }
+
+  private ensureMultiProjectRuntimeExecutionEnabled(
+    workspaceId: string,
+    metadata: WorkspaceMetadata
+  ): Result<void, SendMessageError> {
+    if (!isMultiProject(metadata)) {
+      return Ok(undefined);
+    }
+
+    // Multi-project execution should already be gated before streamMessage reaches backend runtime
+    // orchestration. If stale workspace ids or future callsites bypass those checks, fail closed
+    // before constructing MultiProjectRuntime or loading shared-project secrets/tools.
+    if (!this.experimentsService) {
+      return Err({
+        type: "unknown",
+        raw: "AIService multi-project execution requires ExperimentsService to enforce the runtime gate",
+      });
+    }
+
+    if (!this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)) {
+      return Err({
+        type: "unknown",
+        raw: this.getMultiProjectExecutionDisabledMessage(workspaceId),
+      });
+    }
+
+    return Ok(undefined);
+  }
+
   /** Stream a message conversation to the AI model. */
   async streamMessage(opts: StreamMessageOptions): Promise<Result<void, SendMessageError>> {
     const {
@@ -759,6 +796,14 @@ export class AIService extends EventEmitter {
 
       if (!this.config.findWorkspace(workspaceId)) {
         return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
+      }
+
+      const multiProjectExecutionGate = this.ensureMultiProjectRuntimeExecutionEnabled(
+        workspaceId,
+        metadata
+      );
+      if (!multiProjectExecutionGate.success) {
+        return multiProjectExecutionGate;
       }
 
       const runtime = isMultiProject(metadata)

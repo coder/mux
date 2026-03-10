@@ -1059,6 +1059,10 @@ export class WorkspaceService extends EventEmitter {
     this.taskService = taskService;
   }
 
+  isExperimentEnabled(experimentId: (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS]): boolean {
+    return this.experimentsService?.isExperimentEnabled(experimentId) === true;
+  }
+
   /**
    * DEBUG ONLY: Trigger an artificial stream error for testing.
    * This is used by integration tests to simulate network errors mid-stream.
@@ -3874,6 +3878,9 @@ export class WorkspaceService extends EventEmitter {
           allowCreateFallback: false,
           abortSignal: initAbortController.signal,
           trusted: projectConfig.trusted ?? false,
+          multiProjectExperimentEnabled: this.isExperimentEnabled(
+            EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+          ),
         });
       } catch (error) {
         // Guarantee init lifecycle cleanup when orchestrateFork rejects.
