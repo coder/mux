@@ -3,6 +3,8 @@
  *
  * Validates that:
  * - Completed child sub-agents (taskStatus=reported) are hidden by default.
+ * - Completed parent rows show a decorative chevron in the leading slot once the
+ *   unread dot has cleared, so there is still a visible expansion affordance.
  * - Double-clicking the parent row reveals completed children.
  * - Keyboard users can still expand/collapse completed children from the row.
  * - Double-clicking a workspace without completed children still enters rename mode.
@@ -31,6 +33,20 @@ import { renderApp, type RenderedApp } from "../renderReviewPanel";
 function getWorkspaceRow(container: HTMLElement, workspaceId: string): HTMLElement | null {
   return container.querySelector(
     `[data-workspace-id="${workspaceId}"][role="button"]`
+  ) as HTMLElement | null;
+}
+
+function getCompletedChildrenChevron(
+  container: HTMLElement,
+  workspaceId: string,
+  state?: "collapsed" | "expanded"
+): HTMLElement | null {
+  const attributeSelector =
+    state == null
+      ? "[data-completed-children-chevron]"
+      : `[data-completed-children-chevron="${state}"]`;
+  return container.querySelector(
+    `[data-workspace-id="${workspaceId}"][role="button"] ${attributeSelector}`
   ) as HTMLElement | null;
 }
 
@@ -188,6 +204,9 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
           `button[aria-label="Collapse completed sub-agents for ${parentDisplayTitle}"]`
         )
       ).toBeNull();
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
+      ).not.toBeNull();
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
       expect(parentRow.getAttribute("aria-keyshortcuts")).toBe("ArrowRight ArrowLeft");
 
@@ -211,6 +230,9 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("true");
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "expanded")
+      ).not.toBeNull();
 
       const parentActionsButton = renderedView.container.querySelector(
         `button[aria-label="Workspace actions for ${parentDisplayTitle}"]`
@@ -255,6 +277,9 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
+      ).not.toBeNull();
 
       fireEvent.keyDown(parentRow, { key: "ArrowRight" });
 
@@ -277,6 +302,9 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("true");
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "expanded")
+      ).not.toBeNull();
 
       // Scenario 4: double-clicking the parent again hides both completed children.
       fireEvent.doubleClick(parentRow);
@@ -298,6 +326,9 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
+      ).not.toBeNull();
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);
@@ -359,6 +390,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
       expect(row.getAttribute("aria-expanded")).toBeNull();
+      expect(getCompletedChildrenChevron(renderedView.container, workspace.id)).toBeNull();
 
       fireEvent.doubleClick(row);
 
@@ -482,6 +514,9 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
           `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
         )
       ).toBeNull();
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
+      ).not.toBeNull();
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
       fireEvent.doubleClick(parentRow);
 
@@ -495,6 +530,9 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("true");
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "expanded")
+      ).not.toBeNull();
 
       const ageTierExpandButton = renderedView.container.querySelector(
         'button[aria-label^="Expand workspaces older than "]'

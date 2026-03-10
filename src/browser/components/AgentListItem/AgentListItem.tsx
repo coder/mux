@@ -26,6 +26,7 @@ import {
   Sparkles,
   PenLine,
   MessageCircleQuestionMark,
+  ChevronRight,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -148,10 +149,25 @@ function getVisualState(opts: {
   return opts.isUnread ? "idle" : "seen";
 }
 
-function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
+function StatusDot(props: {
+  state: VisualState;
+  isDraft?: boolean;
+  completedChildrenChevronState?: "collapsed" | "expanded";
+}) {
   const shouldHideDot = !props.isDraft && (props.state === "seen" || props.state === "hidden");
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
+  ) : props.completedChildrenChevronState ? (
+    <ChevronRight
+      aria-hidden="true"
+      className={cn(
+        // When a completed parent row has no unread dot, reuse that leading slot
+        // for the expansion chevron so hidden reported children still advertise
+        // themselves without stealing title space from the workspace name.
+        "text-muted h-3 w-3 transition-transform duration-200 ease-in-out",
+        props.completedChildrenChevronState === "expanded" && "rotate-90"
+      )}
+    />
   ) : shouldHideDot ? (
     <span className="block h-3 w-3 opacity-0" />
   ) : (
@@ -172,9 +188,11 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
     // Keep the dot centered relative to the full row height so multi-line rows
     // (for example while streaming) do not pin the icon to the title line.
     <div
-      // Keep the status dot above sub-agent connector overlays so branch lines do
-      // not draw across the dot when rows are nested.
+      // Keep the leading indicator above sub-agent connector overlays so branch
+      // lines do not draw across either the status dot or completed-child chevron
+      // when rows are nested.
       className="relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
+      data-completed-children-chevron={props.completedChildrenChevronState}
     >
       {dot}
     </div>
@@ -497,6 +515,12 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
   const canToggleCompletedChildren = hasCompletedChildren && onToggleCompletedChildren != null;
   const isCompletedChildrenExpanded = completedChildrenExpanded === true;
+  const completedChildrenChevronState =
+    canToggleCompletedChildren && !hasSecondaryRow && visualState === "seen"
+      ? isCompletedChildrenExpanded
+        ? "expanded"
+        : "collapsed"
+      : undefined;
   const toggleCompletedChildren = () => {
     if (!canToggleCompletedChildren) {
       return false;
@@ -636,7 +660,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        <StatusDot state={visualState} />
+        <StatusDot
+          state={visualState}
+          completedChildrenChevronState={completedChildrenChevronState}
+        />
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
         {isInitializing ? (
