@@ -76,6 +76,25 @@ function hasLocalOverride(experimentId: ExperimentId): boolean {
   return getExperimentOverrideSnapshot(experimentId) !== undefined;
 }
 
+function getExplicitLocalExperimentOverrides(): Partial<Record<ExperimentId, boolean>> {
+  const overrides: Partial<Record<ExperimentId, boolean>> = {};
+
+  for (const experimentId of Object.keys(EXPERIMENTS) as ExperimentId[]) {
+    if (!EXPERIMENTS[experimentId].userOverridable) {
+      continue;
+    }
+
+    const override = getExperimentOverrideSnapshot(experimentId);
+    if (override === undefined) {
+      continue;
+    }
+
+    overrides[experimentId] = override;
+  }
+
+  return overrides;
+}
+
 /**
  * Convert PostHog experiment variant to boolean enabled state.
  * For experiments with control/test variants, "test" means enabled.
@@ -145,10 +164,6 @@ const ExperimentsContext = createContext<ExperimentsContextValue | null>(null);
  * Must wrap the app to enable useExperimentValue hook.
  */
 export function ExperimentsProvider(props: { children: React.ReactNode }) {
-  const setExperiment = useCallback((experimentId: ExperimentId, enabled: boolean) => {
-    setExperimentState(experimentId, enabled);
-  }, []);
-
   const apiState = useAPI();
   const [remoteExperiments, setRemoteExperiments] = useState<Partial<
     Record<ExperimentId, ExperimentValue>
@@ -181,6 +196,62 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
     }
 
     await loadRemoteExperiments();
+  }, [apiState.status, apiState.api, loadRemoteExperiments]);
+
+  const persistBackendOverride = useCallback(
+    async (experimentId: ExperimentId, enabled: boolean | undefined) => {
+      if (
+        apiState.status !== "connected" ||
+        !apiState.api ||
+        enabled === undefined ||
+        !EXPERIMENTS[experimentId].userOverridable
+      ) {
+        return;
+      }
+
+      try {
+        await apiState.api.experiments.setOverride({ experimentId, enabled });
+        await loadRemoteExperiments();
+      } catch {
+        // Best effort
+      }
+    },
+    [apiState.status, apiState.api, loadRemoteExperiments]
+  );
+
+  const setExperiment = useCallback(
+    (experimentId: ExperimentId, enabled: boolean) => {
+      setExperimentState(experimentId, enabled);
+      void persistBackendOverride(experimentId, enabled);
+    },
+    [persistBackendOverride]
+  );
+
+  useEffect(() => {
+    if (apiState.status !== "connected" || !apiState.api) {
+      return;
+    }
+
+    const localOverrides = getExplicitLocalExperimentOverrides();
+    const syncLocalOverrides = async () => {
+      const entries = Object.entries(localOverrides) as Array<[ExperimentId, boolean]>;
+      if (entries.length === 0) {
+        return;
+      }
+
+      try {
+        await Promise.all(
+          entries.map(async ([experimentId, enabled]) => {
+            await apiState.api.experiments.setOverride({ experimentId, enabled });
+          })
+        );
+        await loadRemoteExperiments();
+      } catch {
+        // Best effort
+      }
+    };
+
+    void syncLocalOverrides();
   }, [apiState.status, apiState.api, loadRemoteExperiments]);
 
   // On cold start, experiments.getAll can return { source: "cache", value: null } while
@@ -259,7 +330,7 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
  *
  * Resolution priority:
  * - If userOverridable && user has explicitly set a local value → use local
- * - If remote PostHog assignment exists → use remote
+ * - If backend has an override or remote assignment → use backend value
  * - Otherwise → use local (which may be default)
  *
  * @param experimentId - The experiment to subscribe to

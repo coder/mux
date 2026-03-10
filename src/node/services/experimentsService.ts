@@ -21,6 +21,7 @@ interface CachedVariant {
 interface ExperimentsCacheFile {
   version: 1;
   experiments: Record<string, { value: string | boolean; fetchedAtMs: number }>;
+  overrides?: Record<string, boolean>;
 }
 
 const CACHE_FILE_NAME = "feature_flags.json";
@@ -49,6 +50,7 @@ export class ExperimentsService {
   private readonly cacheTtlMs: number;
 
   private readonly cachedVariants = new Map<ExperimentId, CachedVariant>();
+  private readonly overrides = new Map<ExperimentId, boolean>();
   private readonly refreshInFlight = new Map<ExperimentId, Promise<void>>();
 
   private cacheLoaded = false;
@@ -76,6 +78,12 @@ export class ExperimentsService {
     // are present even before a background refresh completes.
     for (const [experimentId, cached] of this.cachedVariants) {
       this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), cached.value);
+    }
+
+    // Renderer overrides must win over cached/remote assignments so server-side gates
+    // and telemetry reflect the same explicit user choice on fresh launches.
+    for (const [experimentId, enabled] of this.overrides) {
+      this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), enabled);
     }
 
     // Refresh in background (best effort). We only refresh values that are stale or missing
@@ -108,8 +116,46 @@ export class ExperimentsService {
     return result as Record<ExperimentId, ExperimentValue>;
   }
 
+  async setOverride(
+    experimentId: ExperimentId,
+    enabled: boolean | null | undefined
+  ): Promise<void> {
+    await this.ensureInitialized();
+    assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
+    assert(
+      EXPERIMENTS[experimentId].userOverridable === true,
+      `Experiment ${experimentId} does not support user overrides`
+    );
+    assert(
+      enabled == null || typeof enabled === "boolean",
+      `Experiment override for ${experimentId} must be boolean | null | undefined`
+    );
+
+    if (enabled == null) {
+      this.overrides.delete(experimentId);
+      const cached = this.cachedVariants.get(experimentId);
+      this.telemetryService.setFeatureFlagVariant(
+        this.getFlagKey(experimentId),
+        cached?.value ?? null
+      );
+    } else {
+      this.overrides.set(experimentId, enabled);
+      this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), enabled);
+    }
+
+    await this.writeCacheToDisk();
+  }
+
   getExperimentValue(experimentId: ExperimentId): ExperimentValue {
     assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
+
+    const override = this.overrides.get(experimentId);
+    if (override !== undefined) {
+      if (this.isRemoteEvaluationEnabled()) {
+        this.maybeRefreshInBackground(experimentId);
+      }
+      return { value: override, source: "override" };
+    }
 
     if (!this.isRemoteEvaluationEnabled()) {
       return { value: null, source: "disabled" };
@@ -204,7 +250,9 @@ export class ExperimentsService {
       };
 
       this.cachedVariants.set(experimentId, cached);
-      this.telemetryService.setFeatureFlagVariant(flagKey, value);
+      if (!this.overrides.has(experimentId)) {
+        this.telemetryService.setFeatureFlagVariant(flagKey, value);
+      }
 
       await this.writeCacheToDisk();
     } catch (error) {
@@ -253,6 +301,7 @@ export class ExperimentsService {
 
       const version = parsed.version;
       const experiments = parsed.experiments;
+      const overrides = parsed.overrides;
 
       if (version !== CACHE_FILE_VERSION || !isRecord(experiments)) {
         return;
@@ -280,6 +329,18 @@ export class ExperimentsService {
           source: "cache",
         });
       }
+
+      if (!isRecord(overrides)) {
+        return;
+      }
+
+      for (const [key, value] of Object.entries(overrides)) {
+        if (!(key in EXPERIMENTS) || typeof value !== "boolean") {
+          continue;
+        }
+
+        this.overrides.set(key as ExperimentId, value);
+      }
     } catch {
       // Ignore missing/corrupt cache
     }
@@ -295,9 +356,15 @@ export class ExperimentsService {
         };
       }
 
+      const overrides: NonNullable<ExperimentsCacheFile["overrides"]> = {};
+      for (const [experimentId, enabled] of this.overrides) {
+        overrides[experimentId] = enabled;
+      }
+
       const payload: ExperimentsCacheFile = {
         version: CACHE_FILE_VERSION,
         experiments,
+        overrides,
       };
 
       await fs.mkdir(this.muxHome, { recursive: true });

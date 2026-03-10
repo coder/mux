@@ -103,6 +103,60 @@ describe("ExperimentsService", () => {
     expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.SYSTEM_1, "test");
   });
 
+  test("persists backend overrides and applies them before remote gating", async () => {
+    const setFeatureFlagVariant = mock(() => undefined);
+    const telemetryService = {
+      getPostHogClient: mock(() => null),
+      getDistinctId: mock(() => null),
+      setFeatureFlagVariant,
+    } as unknown as TelemetryService;
+
+    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    await service.initialize();
+    await service.setOverride(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES, true);
+
+    expect(service.getExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toEqual({
+      value: true,
+      source: "override",
+    });
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toBe(true);
+    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
+      EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
+      true
+    );
+
+    const cacheFilePath = path.join(tempDir, "feature_flags.json");
+    const disk = JSON.parse(await fs.readFile(cacheFilePath, "utf-8")) as {
+      overrides?: Record<string, unknown>;
+    };
+    expect(disk.overrides).toEqual({
+      [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true,
+    });
+
+    const reloadedSetFeatureFlagVariant = mock(() => undefined);
+    const reloadedTelemetryService = {
+      getPostHogClient: mock(() => null),
+      getDistinctId: mock(() => null),
+      setFeatureFlagVariant: reloadedSetFeatureFlagVariant,
+    } as unknown as TelemetryService;
+
+    const reloadedService = new ExperimentsService({
+      telemetryService: reloadedTelemetryService,
+      muxHome: tempDir,
+    });
+    await reloadedService.initialize();
+
+    expect(reloadedService.getExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toEqual({
+      value: true,
+      source: "override",
+    });
+    expect(reloadedService.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toBe(true);
+    expect(reloadedSetFeatureFlagVariant).toHaveBeenCalledWith(
+      EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
+      true
+    );
+  });
+
   test("returns disabled when telemetry is disabled", async () => {
     const telemetryService = {
       getPostHogClient: mock(() => null),

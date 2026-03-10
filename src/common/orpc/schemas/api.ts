@@ -1,6 +1,7 @@
 import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import {
   NameGenerationErrorSchema,
@@ -86,13 +87,20 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 // Experiments
 export const ExperimentValueSchema = z.object({
   value: z.union([z.string(), z.boolean(), z.null()]),
-  source: z.enum(["posthog", "cache", "disabled"]),
+  source: z.enum(["posthog", "cache", "override", "disabled"]),
 });
 
 export const experiments = {
   getAll: {
     input: z.void(),
     output: z.record(z.string(), ExperimentValueSchema),
+  },
+  setOverride: {
+    input: z.object({
+      experimentId: z.enum(EXPERIMENT_IDS),
+      enabled: z.boolean().nullish(),
+    }),
+    output: z.void(),
   },
   reload: {
     input: z.void(),
