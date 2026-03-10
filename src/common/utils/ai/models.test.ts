@@ -15,8 +15,8 @@ describe("normalizeToCanonical", () => {
     expect(normalizeToCanonical("mux-gateway:google/gemini-2.5-pro")).toBe("google:gemini-2.5-pro");
   });
 
-  it("should convert github-copilot:model to openai:model", () => {
-    expect(normalizeToCanonical("github-copilot:gpt-5.4")).toBe("openai:gpt-5.4");
+  it("should keep github-copilot:model identities unchanged", () => {
+    expect(normalizeToCanonical("github-copilot:gpt-5.4")).toBe("github-copilot:gpt-5.4");
   });
 
   it("should return non-gateway strings unchanged", () => {

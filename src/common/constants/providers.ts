@@ -133,12 +133,10 @@ export const PROVIDER_DEFINITIONS = {
     kind: "gateway",
     routes: ["openai"],
     passthrough: false,
-    // Copilot's OpenAI-compatible API accepts raw upstream model IDs (no prefix needed)
+    // Copilot's OpenAI-compatible API accepts raw upstream model IDs for routed OpenAI traffic.
+    // Intentionally omit fromGatewayModelId: github-copilot:* model strings are canonical identities
+    // with Copilot-specific pricing/capabilities, including non-OpenAI families like Claude.
     toGatewayModelId: (_origin, modelId) => modelId,
-    fromGatewayModelId: (gatewayModelId) => ({
-      origin: "openai" as const,
-      modelId: gatewayModelId,
-    }),
   },
   bedrock: {
     displayName: "Bedrock",
