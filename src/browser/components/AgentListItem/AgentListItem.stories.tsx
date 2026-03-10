@@ -330,8 +330,12 @@ function renderWorkspaceWithRowMeta(options: {
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
   activeWorkspaceId?: string;
+  metadataOverride?: Partial<(typeof STORY_WORKSPACES)[number]>;
 }) {
-  const workspace = STORY_WORKSPACES[options.workspaceIndex];
+  const workspace = {
+    ...STORY_WORKSPACES[options.workspaceIndex],
+    ...options.metadataOverride,
+  };
   return (
     <StoryScaffold activeWorkspaceId={options.activeWorkspaceId}>
       <AgentListItem
@@ -414,6 +418,19 @@ export const SubAgentMiddle: Story = {
     renderWorkspaceWithRowMeta({
       workspaceIndex: 2,
       rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+    }),
+};
+
+export const SubAgentRunning: Story = {
+  args: undefined as never,
+  name: "Sub Agent Running",
+  render: () =>
+    renderWorkspaceWithRowMeta({
+      workspaceIndex: 2,
+      rowRenderMeta: createSubAgentRowRenderMeta("middle"),
+      metadataOverride: {
+        taskStatus: "running",
+      },
     }),
 };
 
