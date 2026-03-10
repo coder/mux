@@ -180,6 +180,9 @@ describe("web_fetch tool", () => {
     "http://[::ffff:127.0.0.1]/page",
     "http://[::ffff:192.168.1.1]/page",
     "http://[::ffff:169.254.169.254]/latest/meta-data",
+    "http://[::127.0.0.1]/page",
+    "http://[::192.168.1.1]/page",
+    "http://[::169.254.169.254]/latest/meta-data",
   ])("rejects blocked internal targets: %s", async (url: string) => {
     using testEnv = createTestWebFetchTool();
 

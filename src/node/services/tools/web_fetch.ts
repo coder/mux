@@ -75,7 +75,7 @@ function parseIpv4Octets(address: string): number[] | null {
   return octets;
 }
 
-function parseIpv6Segments(address: string): number[] | null {
+function normalizeIpv6Address(address: string): string {
   let normalized = address.trim().toLowerCase();
   const zoneIndex = normalized.indexOf("%");
   if (zoneIndex !== -1) {
@@ -84,6 +84,11 @@ function parseIpv6Segments(address: string): number[] | null {
   if (normalized.startsWith("[") && normalized.endsWith("]")) {
     normalized = normalized.slice(1, -1);
   }
+  return normalized;
+}
+
+function parseIpv6Segments(address: string): number[] | null {
+  let normalized = normalizeIpv6Address(address);
   if (net.isIP(normalized) !== 6) {
     return null;
   }
@@ -137,11 +142,14 @@ function parseIpv6Segments(address: string): number[] | null {
   return segments;
 }
 
-function ipv4FromMappedIpv6Segments(segments: number[]): string | null {
+// URL parsing canonicalizes dotted IPv4 tails (for example ::127.0.0.1 becomes ::7f00:1),
+// so block checks need to recognize both deprecated IPv4-compatible ::/96 and
+// IPv4-mapped ::ffff:0:0/96 forms from their normalized IPv6 segments.
+function ipv4FromEmbeddedIpv6Segments(segments: number[]): string | null {
   if (
     segments.length !== 8 ||
     !segments.slice(0, 5).every((segment) => segment === 0) ||
-    segments[5] !== 0xffff
+    (segments[5] !== 0 && segments[5] !== 0xffff)
   ) {
     return null;
   }
@@ -187,9 +195,9 @@ function isBlockedIpv6Address(address: string): boolean {
     return false;
   }
 
-  const mappedIpv4 = ipv4FromMappedIpv6Segments(segments);
-  if (mappedIpv4) {
-    return isBlockedIpAddress(mappedIpv4);
+  const embeddedIpv4 = ipv4FromEmbeddedIpv6Segments(segments);
+  if (embeddedIpv4) {
+    return isBlockedIpAddress(embeddedIpv4);
   }
 
   if (segments.every((segment) => segment === 0)) {
