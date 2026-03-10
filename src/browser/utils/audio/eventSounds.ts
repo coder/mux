@@ -1,8 +1,30 @@
+import { getStoredAuthToken } from "@/browser/components/AuthTokenModal/AuthTokenModal";
+import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import type { EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
 import type { EventSoundKey } from "@/common/config/eventSoundTypes";
 
+function getServerAuthToken(): string | null {
+  const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
+  return urlToken?.length ? urlToken : getStoredAuthToken();
+}
+
 function toManagedPlaybackPath(assetId: string): string {
-  return `/assets/event-sounds/${encodeURIComponent(assetId)}`;
+  // Browser mode can run behind a path-based app proxy (for example Coder),
+  // so resolve against the backend base URL instead of assuming "/".
+  const backendBaseUrl = getBrowserBackendBaseUrl();
+  const playbackUrl = new URL(
+    `/assets/event-sounds/${encodeURIComponent(assetId)}`,
+    `${backendBaseUrl}/`
+  );
+
+  // <audio> cannot attach Authorization headers, so pass the server token as
+  // a query param when token-auth is in use.
+  const authToken = getServerAuthToken();
+  if (authToken) {
+    playbackUrl.searchParams.set("token", authToken);
+  }
+
+  return playbackUrl.toString();
 }
 
 /**

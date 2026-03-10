@@ -360,18 +360,26 @@ describe("createOrpcServer", () => {
         host: "127.0.0.1",
         port: 0,
         context: stubContext as ORPCContext,
+        authToken: "test-token",
       });
 
-      const invalidIdResponse = await fetch(`${server.baseUrl}/assets/event-sounds/not-a-valid-id`);
+      const unauthenticatedResponse = await fetch(
+        `${server.baseUrl}/assets/event-sounds/${servedAssetId}`
+      );
+      expect(unauthenticatedResponse.status).toBe(401);
+
+      const invalidIdResponse = await fetch(
+        `${server.baseUrl}/assets/event-sounds/not-a-valid-id?token=test-token`
+      );
       expect(invalidIdResponse.status).toBe(400);
 
       const missingAssetResponse = await fetch(
-        `${server.baseUrl}/assets/event-sounds/${missingAssetId}`
+        `${server.baseUrl}/assets/event-sounds/${missingAssetId}?token=test-token`
       );
       expect(missingAssetResponse.status).toBe(404);
 
       const servedAssetResponse = await fetch(
-        `${server.baseUrl}/assets/event-sounds/${servedAssetId}`
+        `${server.baseUrl}/assets/event-sounds/${servedAssetId}?token=test-token`
       );
       expect(servedAssetResponse.status).toBe(200);
       expect(await servedAssetResponse.text()).toBe(assetBody);
