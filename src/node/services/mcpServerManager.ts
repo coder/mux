@@ -1002,6 +1002,33 @@ export class MCPServerManager {
             () => this.markActivity(workspaceId)
           );
 
+          // Config changes can replace the workspace cache entry while this retry is still
+          // starting. If that happened, discard these clients so we do not leak stale tools
+          // or lose track of them for cleanup.
+          const currentEntry = this.workspaceServers.get(workspaceId);
+          if (currentEntry !== existing) {
+            log.info(
+              "[MCP] Discarding timed-out retry results for replaced workspace cache entry",
+              {
+                workspaceId,
+                serverNames: [...retriedInstances.keys()],
+              }
+            );
+
+            for (const instance of retriedInstances.values()) {
+              try {
+                await instance.close();
+              } catch (error) {
+                log.warn("Failed to stop stale retried MCP server", {
+                  error,
+                  name: instance.name,
+                });
+              }
+            }
+
+            return this.getToolsForWorkspace(options);
+          }
+
           for (const [serverName, instance] of retriedInstances) {
             existing.instances.set(serverName, instance);
           }

@@ -709,6 +709,132 @@ describe("MCPServerManager", () => {
     expect(cached.retryingTimedOutServerNames?.size).toBe(0);
   });
 
+  test("getToolsForWorkspace closes timed-out retry results when cache entry is replaced mid-retry", async () => {
+    const workspaceId = "ws-timeout-retry-replaced";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    let command = "cmd-1";
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        slow: { transport: "stdio", command, disabled: false },
+      })
+    );
+
+    const retryStarted = Promise.withResolvers<void>();
+    const retryFinished = Promise.withResolvers<{
+      instances: Map<string, unknown>;
+      failedServerNames: string[];
+      timedOutServerNames: string[];
+    }>();
+    let startServersCallCount = 0;
+
+    const retriedClose = mock(() => Promise.resolve(undefined));
+    const replacementClose = mock(() => Promise.resolve(undefined));
+    const retriedInstance = {
+      name: "slow",
+      resolvedTransport: "stdio",
+      autoFallbackUsed: false,
+      tools: { retry: { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool },
+      isClosed: false,
+      close: retriedClose,
+    };
+    const replacementInstance = {
+      name: "slow",
+      resolvedTransport: "stdio",
+      autoFallbackUsed: false,
+      tools: { active: { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool },
+      isClosed: false,
+      close: replacementClose,
+    };
+
+    const startServersMock = mock((servers: unknown) => {
+      startServersCallCount += 1;
+      const serverMap = servers as Record<string, { command?: string }>;
+
+      if (startServersCallCount === 1) {
+        expect(Object.keys(serverMap)).toEqual(["slow"]);
+        expect(serverMap.slow?.command).toBe("cmd-1");
+        retryStarted.resolve();
+        return retryFinished.promise;
+      }
+
+      expect(Object.keys(serverMap)).toEqual(["slow"]);
+      expect(serverMap.slow?.command).toBe("cmd-2");
+      return Promise.resolve({
+        instances: new Map([["slow", replacementInstance]]),
+        failedServerNames: [],
+        timedOutServerNames: [],
+      });
+    });
+    access.startServers = startServersMock;
+
+    const staleEntry = {
+      configSignature: JSON.stringify({
+        slow: { transport: "stdio", command: "cmd-1" },
+      }),
+      instances: new Map(),
+      stats: {
+        enabledServerCount: 1,
+        startedServerCount: 0,
+        failedServerCount: 1,
+        autoFallbackCount: 0,
+        failedServerNames: ["slow"],
+        hasStdio: false,
+        hasHttp: false,
+        hasSse: false,
+        transportMode: "none",
+      },
+      timedOutServerNames: ["slow"],
+      retryingTimedOutServerNames: new Set<string>(),
+      lastActivity: Date.now(),
+    };
+    access.workspaceServers.set(workspaceId, staleEntry);
+
+    const retryPromise = manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+    await retryStarted.promise;
+
+    expect(staleEntry.retryingTimedOutServerNames.has("slow")).toBe(true);
+
+    command = "cmd-2";
+    const replacementResult = await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    expect(Object.keys(replacementResult.tools)).toEqual(["slow_active"]);
+
+    retryFinished.resolve({
+      instances: new Map([["slow", retriedInstance]]),
+      failedServerNames: [],
+      timedOutServerNames: [],
+    });
+
+    const retriedResult = await retryPromise;
+
+    expect(startServersMock).toHaveBeenCalledTimes(2);
+    expect(retriedClose).toHaveBeenCalledTimes(1);
+    expect(replacementClose).toHaveBeenCalledTimes(0);
+    expect(Object.keys(retriedResult.tools)).toEqual(["slow_active"]);
+
+    const activeEntry = access.workspaceServers.get(workspaceId) as {
+      instances: Map<string, typeof replacementInstance>;
+      retryingTimedOutServerNames?: Set<string>;
+    };
+    expect(activeEntry).not.toBe(staleEntry);
+    expect(activeEntry.instances.get("slow")).toBe(replacementInstance);
+    expect(activeEntry.retryingTimedOutServerNames?.size).toBe(0);
+    expect(staleEntry.instances.size).toBe(0);
+    expect(staleEntry.retryingTimedOutServerNames.size).toBe(0);
+  });
+
   test("getToolsForWorkspace defers restarts while leased and applies them on next request", async () => {
     const workspaceId = "ws-defer";
     const projectPath = "/tmp/project";
