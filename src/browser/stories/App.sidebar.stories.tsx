@@ -22,7 +22,6 @@ import {
   expandProjects,
   setWorkspaceDrafts,
 } from "./storyHelpers";
-import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { within, userEvent, waitFor } from "@storybook/test";
 
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
@@ -512,21 +511,14 @@ export const LongWorkspaceNames: AppStory = {
 };
 
 /**
- * Git status indicator variations in the sidebar.
- * Sidebar rows are intentionally commit-divergence only (no +/- line deltas)
- * to keep dense agent lists scannable.
- * - Clean: no changes
- * - Ahead: local commits
- * - Behind: only behind remote
- * - Dirty: uncommitted changes
- * - Diverged: ahead, behind, and dirty
+ * Sidebar rows should not render git status indicators.
+ * This story seeds diverse git states to ensure rows remain visually stable
+ * even when workspace git data changes.
  */
 export const GitStatusVariations: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, JSON.stringify("line-delta"));
-
         const workspaces = [
           createWorkspace({
             id: "ws-clean",
@@ -567,7 +559,6 @@ export const GitStatusVariations: AppStory = {
           }),
         ];
 
-        // Line deltas show in line-delta mode; ahead/behind show in divergence mode
         const gitStatus = new Map<string, GitStatusFixture>([
           ["ws-clean", {}],
           [
@@ -599,32 +590,14 @@ export const GitStatusVariations: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    // Wait for commit divergence indicators to render in the sidebar row.
     await waitFor(() => {
       const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]');
       if (!row) throw new Error("ws-diverged row not found");
-      within(row).getByText("↑3");
-      within(row).getByText("↓2");
     });
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
-    const ahead = within(row).getByText("↑3");
-
-    // Click to open the divergence details dialog.
-    await userEvent.click(ahead);
-
-    await waitFor(() => {
-      within(document.body).getByText("Git divergence details");
-    });
-
-    const dialog = within(document.body).getByRole("dialog", {
-      name: "Git divergence details",
-    });
-
-    // Sidebar indicators are commit-only; line-delta mode is intentionally unavailable here.
-    within(dialog).getByText("Commits");
-    if (within(dialog).queryByText("Lines") !== null) {
-      throw new Error("Sidebar divergence dialog should not show line-delta toggle");
+    if (within(row).queryByLabelText("View git divergence details") !== null) {
+      throw new Error("Sidebar rows should not render git divergence indicators");
     }
   },
 };

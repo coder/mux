@@ -17,11 +17,6 @@ interface GitStatusIndicatorProps {
   tooltipPosition?: "right" | "bottom";
   /** When true, shows blue pulsing styling to indicate agent is working */
   isWorking?: boolean;
-  /**
-   * When false, hide line-delta (+/-) counts and lock the indicator to commit divergence.
-   * Useful in dense lists (for example the left sidebar agent rows) where +/− noise hurts scanability.
-   */
-  showLineDelta?: boolean;
 }
 
 /**
@@ -35,7 +30,6 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
   projectPath,
   tooltipPosition = "right",
   isWorking = false,
-  showLineDelta = true,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const trimmedWorkspaceId = workspaceId.trim();
@@ -46,7 +40,6 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
     "line-delta",
     { listener: true }
   );
-  const effectiveMode: GitStatusIndicatorMode = showLineDelta ? mode : "divergence";
 
   // Per-project default base (fallback for new workspaces)
   const [projectDefaultBase] = usePersistedState<string>(
@@ -72,12 +65,9 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
 
   const handleModeChange = useCallback(
     (nextMode: GitStatusIndicatorMode) => {
-      if (!showLineDelta) {
-        return;
-      }
       setMode(nextMode);
     },
-    [setMode, showLineDelta]
+    [setMode]
   );
 
   console.assert(
@@ -94,8 +84,7 @@ export const GitStatusIndicator: React.FC<GitStatusIndicatorProps> = ({
 
   return (
     <GitStatusIndicatorView
-      mode={effectiveMode}
-      allowLineDelta={showLineDelta}
+      mode={mode}
       gitStatus={gitStatus}
       tooltipPosition={tooltipPosition}
       branchHeaders={branchHeaders}

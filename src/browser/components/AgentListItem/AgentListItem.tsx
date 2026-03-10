@@ -2,7 +2,6 @@ import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
-import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
@@ -11,7 +10,6 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
-import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
 import { SubAgentListItem } from "./SubAgentListItem";
 
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -341,7 +339,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const isDisabled = isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
-  const gitStatus = useGitStatus(workspaceId);
 
   // Get title edit context — manages inline title editing state across the sidebar
   const {
@@ -634,7 +631,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
         data-section-id={sectionId ?? ""}
-        data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
         <StatusDot state={visualState} />
 
@@ -781,7 +777,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           <div
             className={cn(
               // Keep the title column shrinkable on narrow/mobile viewports so the
-              // right-side git indicator never forces horizontal sidebar scrolling.
+              // right-side status badges never force horizontal sidebar scrolling.
               "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5"
             )}
           >
@@ -828,16 +824,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     </TooltipContent>
                   </Tooltip>
                 )}
-                <GitStatusIndicator
-                  gitStatus={gitStatus}
-                  workspaceId={workspaceId}
-                  projectPath={projectPath}
-                  tooltipPosition="right"
-                  isWorking={isWorking}
-                  // Keep agent rows focused on commit-level progress; users asked to
-                  // remove the green/red +/- line counts from the left sidebar.
-                  showLineDelta={false}
-                />
               </div>
             )}
           </div>
