@@ -62,7 +62,7 @@ import type { MuxDeepLinkPayload } from "../common/types/deepLink";
 import type { UpdateStatus } from "../common/orpc/types";
 import { parseMuxDeepLink } from "../common/utils/deepLink";
 
-import { normalizeLocalhostProxyUrl } from "../common/utils/localhostProxyUrl";
+import { normalizeAndValidateExternalUrl } from "./utils/normalizeAndValidateExternalUrl";
 import assert from "../common/utils/assert";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { loadTokenizerModules } from "../node/utils/main/tokenizer";
@@ -882,15 +882,19 @@ function createWindow() {
     console.timeEnd("main window startup");
   });
 
-  const normalizeExternalUrl = (url: string): string =>
-    normalizeLocalhostProxyUrl({
+  const openExternalUrl = (url: string): void => {
+    const externalUrl = normalizeAndValidateExternalUrl({
       url,
       localhostProxyTemplate,
     });
+    if (externalUrl != null) {
+      void shell.openExternal(externalUrl);
+    }
+  };
 
   // Open all external links in default browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(normalizeExternalUrl(url));
+    openExternalUrl(url);
     return { action: "deny" };
   });
 
@@ -900,7 +904,7 @@ function createWindow() {
     // Prevent navigation away from app origin, open externally instead.
     if (targetOrigin !== currentOrigin) {
       event.preventDefault();
-      void shell.openExternal(normalizeExternalUrl(url));
+      openExternalUrl(url);
     }
   });
 
