@@ -1,9 +1,8 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
-import * as actualAgentContext from "../../contexts/AgentContext";
 import { installDom } from "../../../../tests/ui/dom";
 
 let cleanupDom: (() => void) | null = null;
@@ -31,15 +30,6 @@ function registerProjectPageMocks() {
     }),
   }));
 
-  // ProjectPage wraps creation mode in AgentProvider, but this autofocus test only
-  // needs the ChatInput lifecycle. Keep the provider inert so WorkspaceProvider
-  // wiring changes do not affect this narrow focus assertion, while re-exporting
-  // the real module surface so later suites do not inherit a partial mock.
-  void mock.module("@/browser/contexts/AgentContext", () => ({
-    ...actualAgentContext,
-    AgentProvider: (props: { children: ReactNode }) => props.children,
-  }));
-
   // Mock useProvidersConfig to return a configured provider so ChatInput renders
   void mock.module("@/browser/hooks/useProvidersConfig", () => ({
     useProvidersConfig: () => ({
@@ -54,14 +44,43 @@ function registerProjectPageMocks() {
     ConfiguredProvidersBar: () => <div data-testid="ConfiguredProvidersBarMock" />,
   }));
 
-  // Mock ProjectContext to provide trust data without requiring a full provider.
-  // Must include all fields consumed by downstream hooks (e.g., useDraftWorkspaceSettings
-  // reads userProjects) since bun test may share mock scope across files.
+  // Mock ProjectContext to provide the minimal routing/project surface used by the
+  // real WorkspaceProvider/AgentProvider stack without wiring the full app shell.
   void mock.module("@/browser/contexts/ProjectContext", () => ({
     useProjectContext: () => ({
       userProjects: new Map(),
+      systemProjectPath: null,
+      resolveProjectPath: () => null,
+      resolveNewChatProjectPath: () => null,
       getProjectConfig: () => undefined,
+      loading: false,
       refreshProjects: () => Promise.resolve(),
+      addProject: () => undefined,
+      removeProject: () => Promise.resolve({ success: true }),
+      isProjectCreateModalOpen: false,
+      openProjectCreateModal: () => undefined,
+      closeProjectCreateModal: () => undefined,
+      workspaceModalState: {
+        isOpen: false,
+        projectPath: null,
+        projectName: "",
+        branches: [],
+        defaultTrunkBranch: undefined,
+        loadErrorMessage: null,
+        isLoading: false,
+      },
+      openWorkspaceModal: () => Promise.resolve(),
+      closeWorkspaceModal: () => undefined,
+      getBranchesForProject: () => Promise.resolve({ branches: [], trunkBranch: null }),
+      getSecrets: () => Promise.resolve([]),
+      updateSecrets: () => Promise.resolve(),
+      createSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      updateSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      removeSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      reorderSections: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      assignWorkspaceToSection: () =>
+        Promise.resolve({ ok: false, error: "not implemented in test" }),
+      hasAnyProject: false,
     }),
   }));
 
@@ -117,7 +136,10 @@ describe("ProjectPage", () => {
   });
 
   test("auto-focuses the creation input only once even if ChatInput re-initializes", async () => {
-    const { ProjectPage } = await import("../ProjectPage/ProjectPage");
+    const [{ ProjectPage }, { WorkspaceProvider }] = await Promise.all([
+      import("../ProjectPage/ProjectPage"),
+      import("@/browser/contexts/WorkspaceContext"),
+    ]);
 
     const baseProps = {
       projectPath: "/projects/demo",
@@ -130,7 +152,9 @@ describe("ProjectPage", () => {
     const { rerender } = render(
       <RouterProvider>
         <SettingsProvider>
-          <ProjectPage {...baseProps} />
+          <WorkspaceProvider>
+            <ProjectPage {...baseProps} />
+          </WorkspaceProvider>
         </SettingsProvider>
       </RouterProvider>
     );
@@ -142,7 +166,9 @@ describe("ProjectPage", () => {
     rerender(
       <RouterProvider>
         <SettingsProvider>
-          <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+          <WorkspaceProvider>
+            <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+          </WorkspaceProvider>
         </SettingsProvider>
       </RouterProvider>
     );
