@@ -252,20 +252,22 @@ describe("web_fetch tool", () => {
     using testEnv = createTestWebFetchTool();
 
     const execSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
-      async (_runtime, command) => {
+      (_runtime, command) => {
         if (isRuntimeResolveCommand(command)) {
           expect(command).toContain("public.example");
-          return createExecResult({ stdout: '["93.184.216.34"]' });
+          return Promise.resolve(createExecResult({ stdout: '["93.184.216.34"]' }));
         }
 
         expect(isCurlCommand(command)).toBe(true);
         expect(command).toContain("https://public.example/article");
-        return createExecResult({
-          stdout:
-            "HTTP/1.1 200 OK\r\n" +
-            "Content-Type: text/html; charset=utf-8\r\n\r\n" +
-            "<!DOCTYPE html><html><head><title>Runtime Resolved</title></head><body><article><h1>Resolved</h1><p>Fetched after runtime validation.</p></article></body></html>",
-        });
+        return Promise.resolve(
+          createExecResult({
+            stdout:
+              "HTTP/1.1 200 OK\r\n" +
+              "Content-Type: text/html; charset=utf-8\r\n\r\n" +
+              "<!DOCTYPE html><html><head><title>Runtime Resolved</title></head><body><article><h1>Resolved</h1><p>Fetched after runtime validation.</p></article></body></html>",
+          })
+        );
       }
     );
 
@@ -288,20 +290,22 @@ describe("web_fetch tool", () => {
     using testEnv = createTestWebFetchTool();
 
     const execSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
-      async (_runtime, command) => {
+      (_runtime, command) => {
         if (isRuntimeResolveCommand(command) && command.includes("public.example")) {
-          return createExecResult({ stdout: '["93.184.216.34"]' });
+          return Promise.resolve(createExecResult({ stdout: '["93.184.216.34"]' }));
         }
         if (isCurlCommand(command)) {
-          return createExecResult({
-            stdout:
-              "HTTP/1.1 302 Found\r\n" +
-              "Location: https://redirect.example/private\r\n" +
-              "Content-Type: text/plain\r\n\r\n",
-          });
+          return Promise.resolve(
+            createExecResult({
+              stdout:
+                "HTTP/1.1 302 Found\r\n" +
+                "Location: https://redirect.example/private\r\n" +
+                "Content-Type: text/plain\r\n\r\n",
+            })
+          );
         }
         if (isRuntimeResolveCommand(command) && command.includes("redirect.example")) {
-          return createExecResult({ stdout: '["10.0.0.5"]' });
+          return Promise.resolve(createExecResult({ stdout: '["10.0.0.5"]' }));
         }
 
         throw new Error(`Unexpected command: ${command}`);
@@ -328,15 +332,17 @@ describe("web_fetch tool", () => {
     using testEnv = createTestWebFetchTool();
 
     const execSpy = spyOn(runtimeHelpers, "execBuffered").mockImplementation(
-      async (_runtime, command) => {
+      (_runtime, command) => {
         expect(isCurlCommand(command)).toBe(true);
         expect(command).toContain("https://93.184.216.34/article");
-        return createExecResult({
-          stdout:
-            "HTTP/1.1 200 OK\r\n" +
-            "Content-Type: text/html; charset=utf-8\r\n\r\n" +
-            "<!DOCTYPE html><html><head><title>IP Literal</title></head><body><article><h1>Literal</h1><p>No runtime DNS lookup.</p></article></body></html>",
-        });
+        return Promise.resolve(
+          createExecResult({
+            stdout:
+              "HTTP/1.1 200 OK\r\n" +
+              "Content-Type: text/html; charset=utf-8\r\n\r\n" +
+              "<!DOCTYPE html><html><head><title>IP Literal</title></head><body><article><h1>Literal</h1><p>No runtime DNS lookup.</p></article></body></html>",
+          })
+        );
       }
     );
 
