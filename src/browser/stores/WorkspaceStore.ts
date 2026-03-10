@@ -300,13 +300,11 @@ function formatValidationError(error: IteratorValidationFailedError): string {
  * Auto-collapse the pinned TODO panel when a workspace's stream stops.
  * Lives in the store (not the component) because PinnedTodoList is only
  * mounted for the active workspace — background workspaces would miss
- * the transition.
+ * the transition. Callers supply the authoritative hasTodos value: the
+ * live aggregator for active workspaces, the backend snapshot for background ones.
  */
-function collapsePinnedTodoOnStreamStop(
-  workspaceId: string,
-  aggregator: StreamingMessageAggregator
-): void {
-  if (aggregator.getCurrentTodos().length === 0) {
+function collapsePinnedTodoOnStreamStop(workspaceId: string, hasTodos: boolean): void {
+  if (!hasTodos) {
     return;
   }
 
@@ -626,7 +624,7 @@ export class WorkspaceStore {
         }
       }
 
-      collapsePinnedTodoOnStreamStop(workspaceId, aggregator);
+      collapsePinnedTodoOnStreamStop(workspaceId, aggregator.getCurrentTodos().length > 0);
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
@@ -653,7 +651,7 @@ export class WorkspaceStore {
         );
       }
 
-      collapsePinnedTodoOnStreamStop(workspaceId, aggregator);
+      collapsePinnedTodoOnStreamStop(workspaceId, aggregator.getCurrentTodos().length > 0);
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
@@ -2381,9 +2379,8 @@ export class WorkspaceStore {
 
     const stoppedStreamingSnapshot =
       previous?.streaming === true && snapshot?.streaming === false ? snapshot : null;
-    const aggregator = this.aggregators.get(workspaceId);
-    if (stoppedStreamingSnapshot && aggregator) {
-      collapsePinnedTodoOnStreamStop(workspaceId, aggregator);
+    if (stoppedStreamingSnapshot) {
+      collapsePinnedTodoOnStreamStop(workspaceId, stoppedStreamingSnapshot.hasTodos === true);
     }
     const isBackgroundStreamingStop =
       stoppedStreamingSnapshot !== null && workspaceId !== this.activeWorkspaceId;

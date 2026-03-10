@@ -398,7 +398,7 @@ describe("WorkspaceStore", () => {
       expect(collapsed).toBe(true);
     });
 
-    it("persists a collapsed panel when a background activity snapshot stops streaming with todos", async () => {
+    it("background stream-stop with hasTodos: true collapses panel even with empty aggregator", async () => {
       const activeWorkspaceId = "active-workspace-pinned-todo";
       const backgroundWorkspaceId = "background-workspace-pinned-todo";
       const pinnedTodoKey = getPinnedTodoExpandedKey(backgroundWorkspaceId);
@@ -434,6 +434,67 @@ describe("WorkspaceStore", () => {
             ...backgroundStreamingSnapshot,
             recency: initialRecency + 1,
             streaming: false,
+            hasTodos: true,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+
+      releaseBackgroundCompletion();
+
+      const collapsed = await waitUntil(
+        () => localStorageBacking.get(pinnedTodoKey) === JSON.stringify(false)
+      );
+      expect(collapsed).toBe(true);
+    });
+
+    it("background stream-stop with hasTodos: false does not collapse panel even with stale aggregator todos", async () => {
+      const activeWorkspaceId = "active-workspace-pinned-todo-stale";
+      const backgroundWorkspaceId = "background-workspace-pinned-todo-stale";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(backgroundWorkspaceId);
+      const initialRecency = new Date("2024-01-10T00:00:00.000Z").getTime();
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            hasTodos: false,
           },
         };
 
@@ -450,12 +511,18 @@ describe("WorkspaceStore", () => {
       createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
       seedPinnedTodos(store, backgroundWorkspaceId, pinnedTodos);
 
+      const appliedInitialSnapshot = await waitUntil(
+        () => store.getWorkspaceState(backgroundWorkspaceId).canInterrupt
+      );
+      expect(appliedInitialSnapshot).toBe(true);
+
       releaseBackgroundCompletion();
 
-      const collapsed = await waitUntil(
-        () => localStorageBacking.get(pinnedTodoKey) === JSON.stringify(false)
+      const processedSnapshot = await waitUntil(
+        () => !store.getWorkspaceState(backgroundWorkspaceId).canInterrupt
       );
-      expect(collapsed).toBe(true);
+      expect(processedSnapshot).toBe(true);
+      expect(localStorageBacking.has(pinnedTodoKey)).toBe(false);
     });
 
     it("does not persist a collapsed panel when a stream ends without todos", async () => {
