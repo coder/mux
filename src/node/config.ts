@@ -368,6 +368,8 @@ export class Config {
         };
 
         // Migrate legacy gateway settings to the new route priority system.
+        // Legacy keys are intentionally preserved on disk for downgrade compatibility —
+        // older versions still read muxGatewayEnabled / muxGatewayModels directly.
         if (parsed.muxGatewayModels != null || parsed.muxGatewayEnabled != null) {
           if (!Array.isArray(parsed.routePriority)) {
             const priority: string[] = [];
@@ -376,11 +378,8 @@ export class Config {
             }
             priority.push("direct");
             parsed.routePriority = priority;
+            configModified = true;
           }
-
-          delete parsed.muxGatewayEnabled;
-          delete parsed.muxGatewayModels;
-          configModified = true;
         }
 
         // Ensure configured gateways appear in routePriority.

@@ -356,6 +356,73 @@ describe("Config", () => {
     });
   });
 
+  describe("legacy gateway migration preserves downgrade compatibility", () => {
+    it("derives routePriority and preserves legacy fields on disk", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
+
+      const raw = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        muxGatewayEnabled?: boolean;
+        muxGatewayModels?: string[];
+        routePriority?: string[];
+      };
+      expect(raw).toMatchObject({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        routePriority: ["mux-gateway", "direct"],
+      });
+    });
+
+    it("synthesizes direct-only priority when the legacy gateway flag is disabled", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          muxGatewayEnabled: false,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routePriority).toEqual(["direct"]);
+
+      const raw = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        muxGatewayEnabled?: boolean;
+      };
+      expect(raw).toHaveProperty("muxGatewayEnabled", false);
+    });
+
+    it("does not rewrite configs that already include routePriority", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["m"],
+          routePriority: ["mux-gateway", "direct"],
+        })
+      );
+
+      const preservedTime = new Date("2000-01-01T00:00:00.000Z");
+      fs.utimesSync(configFile, preservedTime, preservedTime);
+      const beforeMtimeMs = fs.statSync(configFile).mtimeMs;
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
+
+      const afterMtimeMs = fs.statSync(configFile).mtimeMs;
+      expect(afterMtimeMs).toBe(beforeMtimeMs);
+    });
+  });
+
   describe("routePriority seeding from providers", () => {
     const gatewayEnvKeys = [
       "OPENROUTER_API_KEY",
