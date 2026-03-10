@@ -328,6 +328,26 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Let users start Flow Prompting directly from the keyboard so the ChatInput
+  // hint row can advertise a concrete shortcut instead of only menu navigation.
+  useEffect(() => {
+    if (isMuxHelpChat) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.OPEN_FLOW_PROMPT)) {
+        e.preventDefault();
+        if (flowPrompt.state?.exists) {
+          void flowPrompt.openFlowPrompt();
+        } else {
+          void flowPrompt.enableFlowPrompt();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [flowPrompt, isMuxHelpChat]);
+
   // Keybind for sharing transcript — lives here (not AgentListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
   useEffect(() => {

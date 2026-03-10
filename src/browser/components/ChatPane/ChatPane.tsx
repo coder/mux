@@ -51,6 +51,7 @@ import {
   useWorkspaceStoreRaw,
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { WorkspaceMenuBar } from "../WorkspaceMenuBar/WorkspaceMenuBar";
 import type { DisplayedMessage, QueuedMessage as QueuedMessageData } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -1061,18 +1062,22 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         </div>
       )}
       {flowPrompt.state?.exists ? (
-        // Keep Flow Prompting additive so users can maintain a durable editor-driven prompt
-        // without losing the fast inline chat loop for one-off asks and follow-ups.
-        <FlowPromptComposerCard
-          state={flowPrompt.state}
-          error={flowPrompt.error}
-          onOpen={() => {
-            void flowPrompt.openFlowPrompt();
-          }}
-          onDisable={() => {
-            void flowPrompt.disableFlowPrompt();
-          }}
-        />
+        <div className="mx-auto w-full max-w-4xl">
+          {/*
+            Keep the Flow Prompting banner aligned to the same max-width container as ChatInput
+            so the durable prompt affordance feels like part of the composer instead of a wider page banner.
+          */}
+          <FlowPromptComposerCard
+            state={flowPrompt.state}
+            error={flowPrompt.error}
+            onOpen={() => {
+              void flowPrompt.openFlowPrompt();
+            }}
+            onDisable={() => {
+              void flowPrompt.disableFlowPrompt();
+            }}
+          />
+        </div>
       ) : null}
       <ChatInput
         key={props.workspaceId}
@@ -1095,6 +1100,9 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onEditLastUserMessage={props.onEditLastUserMessage}
         canInterrupt={props.canInterrupt}
         onReady={props.onChatInputReady}
+        showFlowPromptShortcutHint={
+          props.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID && !flowPrompt.state?.exists
+        }
         attachedReviews={reviews.attachedReviews}
         onDetachReview={reviews.detachReview}
         onDetachAllReviews={reviews.detachAllAttached}

@@ -101,6 +101,8 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
       {props.onEnableFlowPrompt && !props.isMuxHelpChat && (
         <WorkspaceActionButton
           label="Enable Flow Prompting"
+          shortcut={formatKeybind(KEYBINDS.OPEN_FLOW_PROMPT)}
+          shortcutClassName={props.shortcutClassName}
           icon={<FileText className="h-3 w-3 shrink-0" />}
           onClick={(e) => {
             e.stopPropagation();
@@ -112,6 +114,8 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
       {props.onOpenFlowPrompt && !props.isMuxHelpChat && (
         <WorkspaceActionButton
           label="Open flow prompt"
+          shortcut={formatKeybind(KEYBINDS.OPEN_FLOW_PROMPT)}
+          shortcutClassName={props.shortcutClassName}
           icon={<FileText className="h-3 w-3 shrink-0" />}
           onClick={(e) => {
             e.stopPropagation();

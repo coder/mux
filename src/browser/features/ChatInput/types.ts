@@ -39,6 +39,8 @@ export interface ChatInputWorkspaceVariant {
   /** Optional explanation displayed when input is disabled */
   disabledReason?: string;
   onReady?: (api: ChatInputAPI) => void;
+  /** When true, surface the Flow Prompting shortcut in the inline hint row. */
+  showFlowPromptShortcutHint?: boolean;
   /** Reviews currently attached to chat (from useReviews hook) */
   attachedReviews?: Review[];
   /** Detach a review from chat input (sets status to pending) */

@@ -16,7 +16,7 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
     : "Keep durable guidance in the file while using chat below for one-off turns.";
 
   return (
-    <div className="border-border-medium bg-background-secondary/80 rounded-lg border px-3 py-2.5">
+    <div className="border-border-medium bg-background-secondary/80 w-full rounded-lg border px-3 py-2.5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="text-foreground flex items-center gap-2 text-sm font-medium">
