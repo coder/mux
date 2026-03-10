@@ -172,6 +172,7 @@ function createWorkspaceServiceMocks(
     getInfo: ReturnType<typeof mock>;
     replaceHistory: ReturnType<typeof mock>;
     updateAgentStatus: ReturnType<typeof mock>;
+    isExperimentEnabled: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -183,6 +184,7 @@ function createWorkspaceServiceMocks(
   getInfo: ReturnType<typeof mock>;
   replaceHistory: ReturnType<typeof mock>;
   updateAgentStatus: ReturnType<typeof mock>;
+  isExperimentEnabled: ReturnType<typeof mock>;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -198,6 +200,7 @@ function createWorkspaceServiceMocks(
     overrides?.replaceHistory ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const updateAgentStatus =
     overrides?.updateAgentStatus ?? mock((): Promise<void> => Promise.resolve());
+  const isExperimentEnabled = overrides?.isExperimentEnabled ?? mock(() => false);
 
   return {
     workspaceService: {
@@ -209,6 +212,7 @@ function createWorkspaceServiceMocks(
       getInfo,
       replaceHistory,
       updateAgentStatus,
+      isExperimentEnabled,
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,
@@ -218,6 +222,7 @@ function createWorkspaceServiceMocks(
     getInfo,
     replaceHistory,
     updateAgentStatus,
+    isExperimentEnabled,
   };
 }
 
