@@ -4,18 +4,12 @@ import { GlobalWindow } from "happy-dom";
 import { ExperimentsProvider, useExperiment, useExperimentValue } from "./ExperimentsContext";
 import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import type { ExperimentValue } from "@/common/orpc/types";
-import type { APIClient } from "@/browser/contexts/API";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import type { RecursivePartial } from "@/browser/testUtils";
 
+// Keep the API client local to each render so this suite does not leak a process-global
+// mock.module override into ProjectContext and other later context tests.
 let currentClientMock: RecursivePartial<APIClient> = {};
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: currentClientMock as APIClient,
-    status: "connected" as const,
-    error: null,
-  }),
-  APIProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
 
 describe("ExperimentsProvider", () => {
   beforeEach(() => {
@@ -26,6 +20,7 @@ describe("ExperimentsProvider", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
     currentClientMock = {};
@@ -61,9 +56,11 @@ describe("ExperimentsProvider", () => {
     }
 
     const { getByTestId } = render(
-      <ExperimentsProvider>
-        <Observer />
-      </ExperimentsProvider>
+      <APIProvider client={currentClientMock as APIClient}>
+        <ExperimentsProvider>
+          <Observer />
+        </ExperimentsProvider>
+      </APIProvider>
     );
 
     expect(getByTestId("enabled").textContent).toBe("false");

@@ -2,13 +2,9 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import React from "react";
-import type { APIClient } from "@/browser/contexts/API";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import type { PolicyGetResponse } from "@/common/orpc/types";
-
-// Idiomatic pattern: mock @/browser/contexts/API at the top of the file
-// before importing PolicyProvider. This ensures our mock takes precedence
-// even when other test files have already mocked the same module (bun module
-// mocks leak between files: https://github.com/oven-sh/bun/issues/12823).
+import { PolicyProvider, usePolicy } from "./PolicyContext";
 
 async function* emptyStream() {
   // no-op
@@ -16,22 +12,16 @@ async function* emptyStream() {
 
 let mockGet: () => Promise<PolicyGetResponse>;
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: {
-      policy: {
-        get: () => mockGet(),
-        onChanged: () => Promise.resolve(emptyStream()),
-      },
-    } as unknown as APIClient,
-    status: "connected" as const,
-    error: null,
-  }),
-  APIProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-// Import AFTER the mock is registered
-import { PolicyProvider, usePolicy } from "./PolicyContext";
+// Keep the API client local to each render so this suite does not leak a process-global
+// mock.module override into ProjectContext and other later context tests.
+function createApiClient(): APIClient {
+  return {
+    policy: {
+      get: () => mockGet(),
+      onChanged: () => Promise.resolve(emptyStream()),
+    },
+  } as unknown as APIClient;
+}
 
 const buildBlockedResponse = (reason: string): PolicyGetResponse => ({
   source: "governor",
@@ -51,7 +41,11 @@ const buildEnforcedResponse = (): PolicyGetResponse => ({
 });
 
 const Wrapper = (props: { children: React.ReactNode }) =>
-  React.createElement(PolicyProvider, null, props.children);
+  React.createElement(
+    APIProvider,
+    { client: createApiClient() },
+    React.createElement(PolicyProvider, null, props.children)
+  );
 Wrapper.displayName = "PolicyContextTestWrapper";
 
 describe("PolicyContext", () => {
@@ -64,6 +58,7 @@ describe("PolicyContext", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
     globalThis.localStorage = undefined as unknown as Storage;
