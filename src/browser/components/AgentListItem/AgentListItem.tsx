@@ -516,7 +516,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const canToggleCompletedChildren = hasCompletedChildren && onToggleCompletedChildren != null;
   const isCompletedChildrenExpanded = completedChildrenExpanded === true;
   const completedChildrenChevronState =
-    canToggleCompletedChildren && !hasSecondaryRow && visualState === "seen"
+    canToggleCompletedChildren && visualState === "seen"
       ? isCompletedChildrenExpanded
         ? "expanded"
         : "collapsed"

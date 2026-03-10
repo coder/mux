@@ -23,6 +23,8 @@ import {
   trustProject,
 } from "../../ipc/helpers";
 
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getStatusStateKey } from "@/common/constants/storage";
 import { detectDefaultTrunkBranch } from "@/node/git";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
@@ -330,6 +332,118 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
       ).not.toBeNull();
     } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("completed parent rows keep the chevron affordance even when a persisted completion status is visible", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+    let statusStateKey: string | null = null;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const parentWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Completed Parent Agent",
+        branchPrefix: "subagent-status-parent",
+      });
+      workspaceIdsToRemove.push(parentWorkspace.id);
+
+      const reportedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Reported Child",
+        branchPrefix: "subagent-status-reported",
+      });
+      workspaceIdsToRemove.push(reportedChild.id);
+
+      const completedAt = new Date().toISOString();
+      await env.config.addWorkspace(repoPath, {
+        ...reportedChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "reported",
+        reportedAt: completedAt,
+      });
+
+      statusStateKey = getStatusStateKey(parentWorkspace.id);
+      updatePersistedState(statusStateKey, {
+        emoji: "✅",
+        message: "Storybook refactor P1 + P4 complete",
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: parentWorkspace });
+      await setupWorkspaceView(view, parentWorkspace, parentWorkspace.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      const parentRow = await waitFor(
+        () => {
+          const row = getWorkspaceRow(renderedView.container, parentWorkspace.id);
+          if (!row) {
+            throw new Error("Parent workspace row not found");
+          }
+          if (!(row.textContent ?? "").includes("Storybook refactor P1 + P4 complete")) {
+            throw new Error("Expected persisted completion status to be visible");
+          }
+          return row;
+        },
+        { timeout: 10_000 }
+      );
+
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "collapsed")
+      ).not.toBeNull();
+      expect(parentRow.getAttribute("aria-expanded")).toBe("false");
+
+      fireEvent.doubleClick(parentRow);
+
+      await waitFor(
+        () => {
+          const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
+          if (!reportedRow) {
+            throw new Error("Expected reported child to be visible after expansion");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      expect(
+        getCompletedChildrenChevron(renderedView.container, parentWorkspace.id, "expanded")
+      ).not.toBeNull();
+      expect(parentRow.getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      if (statusStateKey) {
+        updatePersistedState(statusStateKey, null);
+      }
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);
       } else if (cleanupDom) {
