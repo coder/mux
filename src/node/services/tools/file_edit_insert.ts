@@ -64,7 +64,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
           correctedPath,
           warning: pathWarning,
           resolvedPath,
-        } = resolvePathWithinCwd(path, config.cwd, config.runtime);
+        } = resolvePathWithinCwd(path, config.cwd, config.runtime, config);
         path = correctedPath;
 
         // Validate plan mode access restrictions

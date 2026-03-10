@@ -320,12 +320,22 @@ export function validateAndCorrectPath(
 export function resolvePathWithinCwd(
   filePath: string,
   cwd: string,
-  runtime: Runtime
+  runtime: Runtime,
+  planModeConfig?: Pick<ToolConfiguration, "planFileOnly" | "planFilePath">
 ): { correctedPath: string; resolvedPath: string; warning?: string } {
   const { correctedPath, warning } = validateAndCorrectPath(filePath, cwd, runtime);
-  const cwdValidation = validatePathInCwd(correctedPath, cwd, runtime);
-  if (cwdValidation) {
-    throw new FileToolPathValidationError(cwdValidation.error);
+  const isExactConfiguredPlanFileOutsideCwd =
+    planModeConfig?.planFileOnly === true &&
+    planModeConfig.planFilePath != null &&
+    correctedPath === planModeConfig.planFilePath;
+
+  // In plan mode, the configured plan file may live under mux home instead of the workspace.
+  // Keep the exception narrow by only bypassing cwd enforcement for the exact configured path.
+  if (!isExactConfiguredPlanFileOutsideCwd) {
+    const cwdValidation = validatePathInCwd(correctedPath, cwd, runtime);
+    if (cwdValidation) {
+      throw new FileToolPathValidationError(cwdValidation.error);
+    }
   }
 
   return {

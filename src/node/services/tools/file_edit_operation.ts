@@ -53,7 +53,7 @@ export async function executeFileEditOperation<TMetadata>({
       correctedPath: validatedPath,
       warning: pathWarning,
       resolvedPath,
-    } = resolvePathWithinCwd(filePath, config.cwd, config.runtime);
+    } = resolvePathWithinCwd(filePath, config.cwd, config.runtime, config);
     filePath = validatedPath;
 
     // Validate plan mode access restrictions

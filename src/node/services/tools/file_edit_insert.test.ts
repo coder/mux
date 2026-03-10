@@ -264,7 +264,7 @@ describe("file_edit_insert plan mode enforcement", () => {
     }
   });
 
-  it("rejects creating the plan file when it is outside cwd", async () => {
+  it("allows creating the configured plan file when it is outside cwd", async () => {
     const planFilePath = path.join(testDir, "plan.md");
     const workspaceCwd = path.join(testDir, "workspace");
 
@@ -286,10 +286,8 @@ describe("file_edit_insert plan mode enforcement", () => {
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("restricted to the workspace directory");
-    }
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(planFilePath, "utf-8")).toBe("# My Plan\n\n- Step 1\n- Step 2\n");
   });
 
   it("allows editing any file in exec mode", async () => {

@@ -28,7 +28,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
           correctedPath: validatedPath,
           warning: pathWarning,
           resolvedPath,
-        } = resolvePathWithinCwd(filePath, config.cwd, config.runtime);
+        } = resolvePathWithinCwd(filePath, config.cwd, config.runtime, config);
         filePath = validatedPath;
 
         // Check if file exists using runtime

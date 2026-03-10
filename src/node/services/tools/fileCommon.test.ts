@@ -6,6 +6,7 @@ import {
   validatePathInCwd,
   validateFileSize,
   validateNoRedundantPrefix,
+  resolvePathWithinCwd,
   MAX_FILE_SIZE,
 } from "./fileCommon";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
@@ -192,6 +193,31 @@ describe("fileCommon", () => {
     expect(
       validatePathInCwd("/home/user/mux/project/src/file.ts", "/home/user/mux/project", sshRuntime)
     ).toBeNull();
+  });
+
+  describe("resolvePathWithinCwd", () => {
+    const cwd = "/workspace/project";
+    const runtime = createRuntime({ type: "local", srcBaseDir: cwd });
+    const planFilePath = "/home/user/.mux/plans/plan.md";
+
+    it("allows the configured plan file outside cwd in plan mode", () => {
+      const result = resolvePathWithinCwd(planFilePath, cwd, runtime, {
+        planFileOnly: true,
+        planFilePath,
+      });
+
+      expect(result.correctedPath).toBe(planFilePath);
+      expect(result.resolvedPath).toBe(planFilePath);
+    });
+
+    it("keeps rejecting other outside-cwd paths in plan mode", () => {
+      expect(() =>
+        resolvePathWithinCwd("/home/user/.mux/plans/other.md", cwd, runtime, {
+          planFileOnly: true,
+          planFilePath,
+        })
+      ).toThrow("restricted to the workspace directory");
+    });
   });
 
   describe("validateNoRedundantPrefix", () => {

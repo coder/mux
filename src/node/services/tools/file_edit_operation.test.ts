@@ -172,7 +172,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     expect(readFileMock).not.toHaveBeenCalled();
   });
 
-  test("should reject editing the plan file when it is outside cwd", async () => {
+  test("should allow editing the configured plan file when it is outside cwd", async () => {
     using tempDir = new TestTempDir("plan-mode-test");
 
     const planPath = path.join(tempDir.path, "plan.md");
@@ -193,11 +193,8 @@ describe("executeFileEditOperation plan mode enforcement", () => {
       operation: () => ({ success: true, newContent: "# Updated Plan\n", metadata: {} }),
     });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("restricted to the workspace directory");
-    }
-    expect(await fs.readFile(planPath, "utf-8")).toBe("# Original Plan\n");
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(planPath, "utf-8")).toBe("# Updated Plan\n");
   });
 
   test("should allow editing any file when in exec mode (integration)", async () => {
