@@ -10,6 +10,13 @@ function normalizePath(path: string | null | undefined): string {
   return path?.replaceAll("\\", "/").trim() ?? "";
 }
 
+function matchesRepoRootProjectPath(
+  projectPath: string | null | undefined,
+  normalizedRepoRootProjectPath: string
+): boolean {
+  return normalizePath(projectPath) === normalizedRepoRootProjectPath;
+}
+
 function resolveWorkspaceRelativeProjectMatch(
   workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined,
   workspaceRelativePath: string | null | undefined
@@ -58,8 +65,9 @@ function resolveProjectNameForRepoRoot(
     return undefined;
   }
 
-  return projects.find((candidate) => candidate.projectPath === normalizedRepoRootProjectPath)
-    ?.projectName;
+  return projects.find((candidate) =>
+    matchesRepoRootProjectPath(candidate.projectPath, normalizedRepoRootProjectPath)
+  )?.projectName;
 }
 
 /**
@@ -89,7 +97,8 @@ export function normalizeRepoRootFilePath(
     return normalizePath(workspaceRelativePath);
   }
 
-  return match.projectPath === normalizedRepoRootProjectPath && match.repoRelativePath
+  return matchesRepoRootProjectPath(match.projectPath, normalizedRepoRootProjectPath) &&
+    match.repoRelativePath
     ? match.repoRelativePath
     : match.normalizedPath;
 }
@@ -105,12 +114,23 @@ export function reprojectRepoRootFilePath(
   repoRootProjectPath?: string | null
 ): string {
   const normalizedPath = normalizePath(repoRelativePath);
-  const projectName = resolveProjectNameForRepoRoot(workspaceMetadata, repoRootProjectPath);
+  const normalizedRepoRootProjectPath = normalizePath(repoRootProjectPath);
+  const projectName = resolveProjectNameForRepoRoot(
+    workspaceMetadata,
+    normalizedRepoRootProjectPath
+  );
   if (!normalizedPath || !projectName) {
     return normalizedPath;
   }
 
-  if (resolveWorkspaceRelativeProjectMatch(workspaceMetadata, normalizedPath)) {
+  const workspaceRelativeMatch = resolveWorkspaceRelativeProjectMatch(
+    workspaceMetadata,
+    normalizedPath
+  );
+  if (
+    workspaceRelativeMatch &&
+    matchesRepoRootProjectPath(workspaceRelativeMatch.projectPath, normalizedRepoRootProjectPath)
+  ) {
     return normalizedPath;
   }
 

@@ -13,6 +13,13 @@ const workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> = {
   ],
 };
 
+const windowsWorkspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> = {
+  projects: [
+    { projectName: "project-a", projectPath: "C:\\tmp\\project-a" },
+    { projectName: "project-b", projectPath: "C:\\tmp\\project-b" },
+  ],
+};
+
 describe("executeBash repo-root helpers", () => {
   test("resolves repo-root project paths from workspace-relative sibling project paths", () => {
     expect(resolveRepoRootProjectPath(workspaceMetadata, "project-b/src/example.ts")).toBe(
@@ -48,6 +55,25 @@ describe("executeBash repo-root helpers", () => {
     expect(
       reprojectRepoRootFilePath(workspaceMetadata, "src/{old.ts => new.ts}", "/tmp/project-b")
     ).toBe("project-b/src/{old.ts => new.ts}");
+  });
+
+  test("matches repo-root targets after normalizing Windows-style project paths", () => {
+    expect(
+      normalizeRepoRootFilePath(
+        windowsWorkspaceMetadata,
+        "project-b/src/example.ts",
+        "C:/tmp/project-b"
+      )
+    ).toBe("src/example.ts");
+    expect(
+      reprojectRepoRootFilePath(windowsWorkspaceMetadata, "src/example.ts", "C:/tmp/project-b")
+    ).toBe("project-b/src/example.ts");
+  });
+
+  test("reprojects repo-root paths whose first segment only matches a sibling project name", () => {
+    expect(
+      reprojectRepoRootFilePath(workspaceMetadata, "project-b/src/example.ts", "/tmp/project-a")
+    ).toBe("project-a/project-b/src/example.ts");
   });
 
   test("does not double-prefix paths that are already workspace-relative", () => {
