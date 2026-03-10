@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import * as path from "path";
 import { ExtensionMetadataService } from "./ExtensionMetadataService";
@@ -146,6 +146,29 @@ describe("ExtensionMetadataService", () => {
     expect(snapshots.get("ws-6")?.agentStatus).toBeNull();
     expect(snapshots.get("ws-7")?.recency).toBe(707);
     expect(snapshots.get("ws-8")?.lastThinkingLevel).toBe("high");
+  });
+
+  test("toSnapshot coerces malformed hasTodos to undefined", async () => {
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          "workspace-bad-todos": {
+            recency: 123,
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+            agentStatus: null,
+            hasTodos: "yes",
+          },
+        },
+      }),
+      "utf-8"
+    );
+
+    const snapshots = await service.getAllSnapshots();
+    expect(snapshots.get("workspace-bad-todos")?.hasTodos).toBeUndefined();
   });
 
   test("setStreaming round-trips hasTodos when provided", async () => {

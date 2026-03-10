@@ -84,7 +84,9 @@ export class ExtensionMetadataService {
       lastModel: entry.lastModel ?? null,
       lastThinkingLevel: entry.lastThinkingLevel ?? null,
       agentStatus: this.coerceAgentStatus(entry.agentStatus),
-      ...(entry.hasTodos !== undefined ? { hasTodos: entry.hasTodos } : {}),
+      // Persisted metadata is loaded via JSON.parse without per-field validation,
+      // so only surface hasTodos when it still satisfies the snapshot contract.
+      ...(typeof entry.hasTodos === "boolean" ? { hasTodos: entry.hasTodos } : {}),
     };
   }
 

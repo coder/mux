@@ -107,6 +107,9 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
         lastModel: metadata.lastModel ?? null,
         lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
         agentStatus: coerceAgentStatus(rawAgentStatus),
+        // Persisted metadata is loaded via JSON.parse without per-field validation,
+        // so only carry hasTodos forward when it is actually boolean.
+        ...(typeof metadata.hasTodos === "boolean" ? { hasTodos: metadata.hasTodos } : {}),
         lastStatusUrl: coerceStatusUrl(rawLastStatusUrl),
       });
     }
