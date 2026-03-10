@@ -348,6 +348,174 @@ describe("AgentContext", () => {
     });
   });
 
+<<<<<<< HEAD
+||||||| parent of 066769654 (🤖 fix: flush queued agent sync updates)
+  test("workspace-scoped agent sync serializes rapid selection changes", async () => {
+    const workspaceId = "workspace-sync-rapid";
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    mockWorkspaceMetadata.set(workspaceId, {});
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("exec"));
+
+    let contextValue: AgentContextValue | undefined;
+    let resolveFirstRequest: ((value: { success: true; data: undefined }) => void) | undefined;
+    const firstRequest = new Promise<{ success: true; data: undefined }>((resolve) => {
+      resolveFirstRequest = resolve;
+    });
+    let updateCallCount = 0;
+    updateSelectedAgentMock.mockImplementation(() => {
+      updateCallCount += 1;
+      if (updateCallCount === 1) {
+        return firstRequest;
+      }
+      return Promise.resolve({ success: true as const, data: undefined });
+    });
+
+    render(
+      <AgentProvider workspaceId={workspaceId} projectPath={projectPath}>
+        <Harness onChange={(value) => (contextValue = value)} />
+      </AgentProvider>
+    );
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("exec");
+      expect(updateSelectedAgentMock).toHaveBeenCalledWith({
+        workspaceId,
+        agentId: "exec",
+      });
+    });
+
+    act(() => {
+      contextValue?.setAgentId("plan");
+    });
+
+    expect(updateSelectedAgentMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirstRequest?.({ success: true, data: undefined });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(updateSelectedAgentMock).toHaveBeenLastCalledWith({
+        workspaceId,
+        agentId: "plan",
+      });
+    });
+  });
+
+=======
+  test("workspace-scoped agent sync serializes rapid selection changes", async () => {
+    const workspaceId = "workspace-sync-rapid";
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    mockWorkspaceMetadata.set(workspaceId, {});
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("exec"));
+
+    let contextValue: AgentContextValue | undefined;
+    let resolveFirstRequest: ((value: { success: true; data: undefined }) => void) | undefined;
+    const firstRequest = new Promise<{ success: true; data: undefined }>((resolve) => {
+      resolveFirstRequest = resolve;
+    });
+    let updateCallCount = 0;
+    updateSelectedAgentMock.mockImplementation(() => {
+      updateCallCount += 1;
+      if (updateCallCount === 1) {
+        return firstRequest;
+      }
+      return Promise.resolve({ success: true as const, data: undefined });
+    });
+
+    render(
+      <AgentProvider workspaceId={workspaceId} projectPath={projectPath}>
+        <Harness onChange={(value) => (contextValue = value)} />
+      </AgentProvider>
+    );
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("exec");
+      expect(updateSelectedAgentMock).toHaveBeenCalledWith({
+        workspaceId,
+        agentId: "exec",
+      });
+    });
+
+    act(() => {
+      contextValue?.setAgentId("plan");
+    });
+
+    expect(updateSelectedAgentMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirstRequest?.({ success: true, data: undefined });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(updateSelectedAgentMock).toHaveBeenLastCalledWith({
+        workspaceId,
+        agentId: "plan",
+      });
+    });
+  });
+
+  test("workspace-scoped agent sync flushes the latest queued request after an in-flight call", async () => {
+    const workspaceId = "workspace-sync-latest-wins";
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    mockWorkspaceMetadata.set(workspaceId, {});
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("exec"));
+
+    let contextValue: AgentContextValue | undefined;
+    let resolveFirstRequest: ((value: { success: true; data: undefined }) => void) | undefined;
+    const firstRequest = new Promise<{ success: true; data: undefined }>((resolve) => {
+      resolveFirstRequest = resolve;
+    });
+    let updateCallCount = 0;
+    updateSelectedAgentMock.mockImplementation(() => {
+      updateCallCount += 1;
+      if (updateCallCount === 1) {
+        return firstRequest;
+      }
+      return Promise.resolve({ success: true as const, data: undefined });
+    });
+
+    render(
+      <AgentProvider workspaceId={workspaceId} projectPath={projectPath}>
+        <Harness onChange={(value) => (contextValue = value)} />
+      </AgentProvider>
+    );
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("exec");
+      expect(updateSelectedAgentMock).toHaveBeenCalledWith({
+        workspaceId,
+        agentId: "exec",
+      });
+    });
+
+    act(() => {
+      contextValue?.setAgentId("plan");
+      contextValue?.setAgentId("auto");
+    });
+
+    expect(updateSelectedAgentMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirstRequest?.({ success: true, data: undefined });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(updateSelectedAgentMock).toHaveBeenCalledTimes(2);
+      expect(updateSelectedAgentMock).toHaveBeenLastCalledWith({
+        workspaceId,
+        agentId: "auto",
+      });
+    });
+  });
+
+>>>>>>> 066769654 (🤖 fix: flush queued agent sync updates)
   test("cycle shortcut switches from auto to exec", async () => {
     const projectPath = "/tmp/project";
     mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];

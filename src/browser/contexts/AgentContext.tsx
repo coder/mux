@@ -256,22 +256,30 @@ function AgentProviderWithState(props: {
         agentId: string;
       }) => Promise<{ success: boolean; data?: void; error?: string }>
     ) => {
-      if (pendingSelectedAgentSyncRef.current != null) {
+      if (pendingSelectedAgentSyncRef.current != null || !queuedSelectedAgentSyncRef.current) {
         return;
       }
 
-      while (queuedSelectedAgentSyncRef.current && isMountedRef.current) {
-        const nextRequest = queuedSelectedAgentSyncRef.current;
-        queuedSelectedAgentSyncRef.current = null;
-        const syncKey = `${nextRequest.workspaceId}:${nextRequest.agentId}`;
-        pendingSelectedAgentSyncRef.current = syncKey;
+      const nextRequest = queuedSelectedAgentSyncRef.current;
+      queuedSelectedAgentSyncRef.current = null;
+      const syncKey = `${nextRequest.workspaceId}:${nextRequest.agentId}`;
+      pendingSelectedAgentSyncRef.current = syncKey;
 
-        try {
-          await updateSelectedAgent(nextRequest);
-        } finally {
-          if (pendingSelectedAgentSyncRef.current === syncKey) {
-            pendingSelectedAgentSyncRef.current = null;
-          }
+      try {
+        await updateSelectedAgent(nextRequest);
+      } finally {
+        if (pendingSelectedAgentSyncRef.current === syncKey) {
+          pendingSelectedAgentSyncRef.current = null;
+        }
+
+        if (
+          queuedSelectedAgentSyncRef.current &&
+          pendingSelectedAgentSyncRef.current == null &&
+          isMountedRef.current
+        ) {
+          // Keep draining latest-wins agent sync requests even when the only change happened
+          // while a previous backend write was in flight and no rerender occurs afterward.
+          void flushSelectedAgentSync(updateSelectedAgent);
         }
       }
     },
