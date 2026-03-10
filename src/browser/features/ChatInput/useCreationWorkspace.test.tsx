@@ -1,5 +1,6 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
+import * as PersistedStateModule from "@/browser/hooks/usePersistedState";
 import type { ProjectConfig } from "@/common/types/project";
 import {
   GLOBAL_SCOPE_ID,
@@ -24,7 +25,7 @@ import type {
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { useCreationWorkspace, type CreationSendResult } from "./useCreationWorkspace";
 
@@ -85,11 +86,28 @@ const readPersistedStringMock = mock((key: string) => {
   return storedValue;
 });
 
-void mock.module("@/browser/hooks/usePersistedState", () => ({
-  readPersistedState: readPersistedStateMock,
-  readPersistedString: readPersistedStringMock,
-  updatePersistedState: updatePersistedStateMock,
-}));
+function installPersistedStateMocks(): () => void {
+  const readPersistedStateSpy = spyOn(
+    PersistedStateModule,
+    "readPersistedState"
+  ).mockImplementation(readPersistedStateMock as typeof PersistedStateModule.readPersistedState);
+  const readPersistedStringSpy = spyOn(
+    PersistedStateModule,
+    "readPersistedString"
+  ).mockImplementation(readPersistedStringMock as typeof PersistedStateModule.readPersistedString);
+  const updatePersistedStateSpy = spyOn(
+    PersistedStateModule,
+    "updatePersistedState"
+  ).mockImplementation(
+    updatePersistedStateMock as typeof PersistedStateModule.updatePersistedState
+  );
+
+  return () => {
+    readPersistedStateSpy.mockRestore();
+    readPersistedStringSpy.mockRestore();
+    updatePersistedStateSpy.mockRestore();
+  };
+}
 
 interface DraftSettingsInvocation {
   projectPath: string;
@@ -463,7 +481,10 @@ const TEST_METADATA: FrontendWorkspaceMetadata = {
 };
 
 describe("useCreationWorkspace", () => {
+  let restorePersistedStateMocks: (() => void) | null = null;
+
   beforeEach(() => {
+    restorePersistedStateMocks = installPersistedStateMocks();
     mockProjectConfigMap = new Map([[TEST_PROJECT_PATH, { workspaces: [], trusted: true }]]);
     persistedPreferences = {};
     readPersistedStateCalls.length = 0;
@@ -474,6 +495,8 @@ describe("useCreationWorkspace", () => {
 
   afterEach(() => {
     cleanup();
+    restorePersistedStateMocks?.();
+    restorePersistedStateMocks = null;
     // Reset global window/document/localStorage between tests
     // @ts-expect-error - test cleanup
     globalThis.window = undefined;
