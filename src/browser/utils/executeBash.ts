@@ -6,6 +6,10 @@ interface WorkspaceRelativeProjectMatch {
   projectPath: string;
 }
 
+function normalizePath(path: string | null | undefined): string {
+  return path?.replaceAll("\\", "/").trim() ?? "";
+}
+
 function resolveWorkspaceRelativeProjectMatch(
   workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined,
   workspaceRelativePath: string | null | undefined
@@ -15,7 +19,7 @@ function resolveWorkspaceRelativeProjectMatch(
     return undefined;
   }
 
-  const normalizedPath = workspaceRelativePath.replaceAll("\\", "/").trim();
+  const normalizedPath = normalizePath(workspaceRelativePath);
   if (!normalizedPath) {
     return undefined;
   }
@@ -44,6 +48,20 @@ function resolveWorkspaceRelativeProjectMatch(
   };
 }
 
+function resolveProjectNameForRepoRoot(
+  workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined,
+  repoRootProjectPath?: string | null
+): string | undefined {
+  const projects = workspaceMetadata?.projects;
+  const normalizedRepoRootProjectPath = normalizePath(repoRootProjectPath);
+  if (!projects || projects.length < 2 || !normalizedRepoRootProjectPath) {
+    return undefined;
+  }
+
+  return projects.find((candidate) => candidate.projectPath === normalizedRepoRootProjectPath)
+    ?.projectName;
+}
+
 /**
  * Resolve the owning project for a workspace-relative path when a multi-project workspace exposes
  * each repo under a top-level project-name directory inside the shared container root.
@@ -65,15 +83,38 @@ export function normalizeRepoRootFilePath(
   workspaceRelativePath: string | null | undefined,
   repoRootProjectPath?: string | null
 ): string {
-  const normalizedRepoRootProjectPath = repoRootProjectPath?.trim();
+  const normalizedRepoRootProjectPath = normalizePath(repoRootProjectPath);
   const match = resolveWorkspaceRelativeProjectMatch(workspaceMetadata, workspaceRelativePath);
   if (!normalizedRepoRootProjectPath || !match) {
-    return workspaceRelativePath?.replaceAll("\\", "/") ?? "";
+    return normalizePath(workspaceRelativePath);
   }
 
   return match.projectPath === normalizedRepoRootProjectPath && match.repoRelativePath
     ? match.repoRelativePath
     : match.normalizedPath;
+}
+
+/**
+ * Repo-root git output must be projected back onto the shared container root before downstream plain
+ * reads use it, otherwise paths like `src/file.ts` miss sibling-project files that live under
+ * `project-b/src/file.ts` in multi-project workspaces.
+ */
+export function reprojectRepoRootFilePath(
+  workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined,
+  repoRelativePath: string | null | undefined,
+  repoRootProjectPath?: string | null
+): string {
+  const normalizedPath = normalizePath(repoRelativePath);
+  const projectName = resolveProjectNameForRepoRoot(workspaceMetadata, repoRootProjectPath);
+  if (!normalizedPath || !projectName) {
+    return normalizedPath;
+  }
+
+  if (resolveWorkspaceRelativeProjectMatch(workspaceMetadata, normalizedPath)) {
+    return normalizedPath;
+  }
+
+  return `${projectName}/${normalizedPath}`;
 }
 
 /**
@@ -93,7 +134,7 @@ export function repoRootBashOptions(
     timeout_secs == null
       ? { cwdMode: "repo-root" as const }
       : { timeout_secs, cwdMode: "repo-root" as const };
-  const normalizedProjectPath = repoRootProjectPath?.trim();
+  const normalizedProjectPath = normalizePath(repoRootProjectPath);
   return normalizedProjectPath
     ? { ...options, repoRootProjectPath: normalizedProjectPath }
     : options;

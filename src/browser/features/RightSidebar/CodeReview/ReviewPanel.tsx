@@ -35,6 +35,7 @@ import { UntrackedStatus } from "./UntrackedStatus";
 import { shellQuote } from "@/common/utils/shell";
 import {
   normalizeRepoRootFilePath,
+  reprojectRepoRootFilePath,
   repoRootBashOptions,
   resolveRepoRootProjectPath,
 } from "@/browser/utils/executeBash";
@@ -819,11 +820,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       `echo ${shellQuote(nameStatusMarker)}`,
       nameStatusCommand,
     ].join("\n");
+    const fileTreeRepoRootProjectPath = projectPath;
 
     const cacheKey = makeReviewPanelCacheKey({
       workspaceId,
       workspacePath,
       gitCommand: fileTreeCommand,
+      repoRootProjectPath: fileTreeRepoRootProjectPath,
     });
 
     // Fast path: use cached tree when switching workspaces (unless user explicitly refreshed
@@ -848,6 +851,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           diffBase: filters.diffBase,
           refreshToken: refreshTrigger,
           originFetchRef,
+          repoRootProjectPath: fileTreeRepoRootProjectPath,
         });
         if (cancelled) return;
 
@@ -857,6 +861,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           script: fileTreeCommand,
           cacheKey,
           timeoutSecs: 30,
+          repoRootProjectPath: fileTreeRepoRootProjectPath,
           parse: (result) => {
             const output = result.data.output ?? "";
 
@@ -873,8 +878,29 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               nameStatusOutput = sections[1] ?? "";
             }
 
-            const fileStats = parseNumstat(numstatOutput);
-            const nameStatus = parseNameStatus(nameStatusOutput);
+            const fileStats = parseNumstat(numstatOutput).map((stat) => ({
+              ...stat,
+              filePath: reprojectRepoRootFilePath(
+                workspaceMetadata.get(workspaceId),
+                stat.filePath,
+                fileTreeRepoRootProjectPath
+              ),
+            }));
+            const nameStatus = parseNameStatus(nameStatusOutput).map((entry) => ({
+              ...entry,
+              filePath: reprojectRepoRootFilePath(
+                workspaceMetadata.get(workspaceId),
+                entry.filePath,
+                fileTreeRepoRootProjectPath
+              ),
+              oldPath: entry.oldPath
+                ? reprojectRepoRootFilePath(
+                    workspaceMetadata.get(workspaceId),
+                    entry.oldPath,
+                    fileTreeRepoRootProjectPath
+                  )
+                : undefined,
+            }));
             const statusByPath = new Map(nameStatus.map((entry) => [entry.filePath, entry]));
 
             for (const stat of fileStats) {
@@ -886,7 +912,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               }
             }
 
-            // Build tree with original paths (needed for git commands)
+            // Repo-root git output is reprojected back onto the shared container root here so
+            // downstream plain reads can keep using `cat project-a/src/file.ts` without caring
+            // which repo checkout produced the review metadata.
             return buildFileTree(fileStats);
           },
         });
@@ -911,6 +939,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     api,
     workspaceId,
     workspacePath,
+    projectPath,
+    workspaceMetadata,
     filters.diffBase,
     filters.includeUncommitted,
     refreshTrigger,
@@ -928,7 +958,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const isManualRefresh = refreshTrigger !== 0 && prevRefreshTrigger !== refreshTrigger;
 
     const pathFilter = selectedFilePath && !isImmersive ? ` -- "${selectedDiffPath}"` : "";
-    const diffRepoRootProjectPath = !isImmersive ? selectedRepoRootProjectPath : undefined;
+    const diffRepoRootProjectPath = !isImmersive
+      ? (selectedRepoRootProjectPath ?? projectPath)
+      : projectPath;
 
     const diffCommand = buildGitDiffCommand(
       filters.diffBase,
@@ -1011,7 +1043,39 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             const diffOutput = result.data.output ?? "";
             const truncationInfo = "truncated" in result.data ? result.data.truncated : undefined;
 
-            const fileDiffs = parseDiff(diffOutput);
+            // Git diff always reports repo-relative paths from the checkout we executed in.
+            // Reproject them onto the shared container root so immersive/plain file reads can
+            // open the same files without having to know which project supplied the diff.
+            const fileDiffs = parseDiff(diffOutput).map((fileDiff) => ({
+              ...fileDiff,
+              filePath: reprojectRepoRootFilePath(
+                workspaceMetadata.get(workspaceId),
+                fileDiff.filePath,
+                diffRepoRootProjectPath
+              ),
+              oldPath: fileDiff.oldPath
+                ? reprojectRepoRootFilePath(
+                    workspaceMetadata.get(workspaceId),
+                    fileDiff.oldPath,
+                    diffRepoRootProjectPath
+                  )
+                : undefined,
+              hunks: fileDiff.hunks.map((hunk) => ({
+                ...hunk,
+                filePath: reprojectRepoRootFilePath(
+                  workspaceMetadata.get(workspaceId),
+                  hunk.filePath,
+                  diffRepoRootProjectPath
+                ),
+                oldPath: hunk.oldPath
+                  ? reprojectRepoRootFilePath(
+                      workspaceMetadata.get(workspaceId),
+                      hunk.oldPath,
+                      diffRepoRootProjectPath
+                    )
+                  : undefined,
+              })),
+            }));
             const allHunks = extractAllHunks(fileDiffs);
 
             const diagnosticInfo: DiagnosticInfo = {
@@ -1066,6 +1130,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     api,
     workspaceId,
     workspacePath,
+    projectPath,
+    workspaceMetadata,
     filters.diffBase,
     filters.includeUncommitted,
     selectedFilePath,

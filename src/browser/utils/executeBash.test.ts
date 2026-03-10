@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { normalizeRepoRootFilePath, resolveRepoRootProjectPath } from "./executeBash";
+import {
+  normalizeRepoRootFilePath,
+  reprojectRepoRootFilePath,
+  resolveRepoRootProjectPath,
+} from "./executeBash";
 
 const workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> = {
   projects: [
@@ -26,6 +30,34 @@ describe("executeBash repo-root helpers", () => {
     expect(normalizeRepoRootFilePath(workspaceMetadata, "project-b/src/example.ts")).toBe(
       "project-b/src/example.ts"
     );
+  });
+
+  test("reprojects repo-root output back to workspace-relative paths for primary repos", () => {
+    expect(reprojectRepoRootFilePath(workspaceMetadata, "src/example.ts", "/tmp/project-a")).toBe(
+      "project-a/src/example.ts"
+    );
+  });
+
+  test("reprojects repo-root output back to workspace-relative paths for sibling repos", () => {
+    expect(reprojectRepoRootFilePath(workspaceMetadata, "src/example.ts", "/tmp/project-b")).toBe(
+      "project-b/src/example.ts"
+    );
+  });
+
+  test("preserves rename syntax while reprojecting repo-root output", () => {
+    expect(
+      reprojectRepoRootFilePath(workspaceMetadata, "src/{old.ts => new.ts}", "/tmp/project-b")
+    ).toBe("project-b/src/{old.ts => new.ts}");
+  });
+
+  test("does not double-prefix paths that are already workspace-relative", () => {
+    expect(
+      reprojectRepoRootFilePath(workspaceMetadata, "project-b/src/example.ts", "/tmp/project-b")
+    ).toBe("project-b/src/example.ts");
+  });
+
+  test("keeps repo-relative paths when execution never left the shared container root", () => {
+    expect(reprojectRepoRootFilePath(workspaceMetadata, "src/example.ts")).toBe("src/example.ts");
   });
 
   test("keeps primary-repo paths unchanged when no sibling project prefix is present", () => {
