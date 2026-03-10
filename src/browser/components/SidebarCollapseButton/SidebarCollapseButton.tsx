@@ -1,4 +1,5 @@
 import React from "react";
+import { PanelLeft, PanelRight } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 
 interface SidebarCollapseButtonProps {
@@ -12,7 +13,7 @@ interface SidebarCollapseButtonProps {
 
 /**
  * Collapse/expand toggle button for sidebars.
- * Renders at the bottom of the sidebar with « » chevrons.
+ * Icon selection is driven by the sidebar side.
  */
 export const SidebarCollapseButton: React.FC<SidebarCollapseButtonProps> = ({
   collapsed,
@@ -20,25 +21,21 @@ export const SidebarCollapseButton: React.FC<SidebarCollapseButtonProps> = ({
   side,
   shortcut,
 }) => {
-  // Left sidebar: collapsed shows », expanded shows «
-  // Right sidebar: collapsed shows «, expanded shows »
-  const chevron = side === "left" ? (collapsed ? "»" : "«") : collapsed ? "«" : "»";
+  const label = "Toggle sidebar";
+  const Icon = side === "left" ? PanelLeft : PanelRight;
 
-  const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  const className =
+    side === "left"
+      ? "text-muted hover:bg-hover hover:text-foreground focus-visible:ring-border flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200 focus-visible:outline-none focus-visible:ring-1"
+      : collapsed
+        ? "text-muted hover:bg-hover hover:text-foreground focus-visible:ring-border flex w-full flex-1 cursor-pointer items-center justify-center bg-transparent p-0 transition-all duration-200 focus-visible:outline-none focus-visible:ring-1"
+        : "text-muted border-dark hover:bg-hover hover:text-foreground focus-visible:ring-border flex h-6 w-full cursor-pointer items-center justify-center border-t bg-transparent p-0 transition-all duration-200 focus-visible:outline-none focus-visible:ring-1";
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
-          onClick={onToggle}
-          aria-label={label}
-          className={
-            collapsed
-              ? "text-muted hover:bg-hover hover:text-foreground flex w-full flex-1 cursor-pointer items-center justify-center bg-transparent p-0 text-xs transition-all duration-200"
-              : "text-muted border-dark hover:bg-hover hover:text-foreground mt-auto flex h-6 w-full cursor-pointer items-center justify-center border-t border-none bg-transparent p-0 text-xs transition-all duration-200"
-          }
-        >
-          {chevron}
+        <button onClick={onToggle} aria-label={label} className={className}>
+          <Icon className="size-3.5" aria-hidden="true" />
         </button>
       </TooltipTrigger>
       <TooltipContent align="center">

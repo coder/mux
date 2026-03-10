@@ -65,7 +65,7 @@ import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceS
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
+import { ChevronRight, CircleHelp, FolderPlus, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -1059,14 +1059,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     </>
                   )}
                 </div>
-                <button
-                  onClick={onAddProject}
-                  aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
-                >
-                  <span className="text-base leading-none">+</span>
-                  <span>Add Project</span>
-                </button>
+                <SidebarCollapseButton
+                  collapsed={collapsed}
+                  onToggle={onToggleCollapsed}
+                  side="left"
+                  shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+                />
               </div>
               <div
                 ref={projectListScrollRef}
@@ -1770,14 +1768,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   })
                 )}
               </div>
+              <div className="border-border border-t">
+                <button
+                  className="flex w-full items-center gap-2 bg-black px-3 py-2 text-sm text-white hover:bg-zinc-800"
+                  onClick={onAddProject}
+                  aria-label="Add project"
+                >
+                  <FolderPlus className="size-4" />
+                  Project
+                </button>
+              </div>
             </>
           )}
-          <SidebarCollapseButton
-            collapsed={collapsed}
-            onToggle={onToggleCollapsed}
-            side="left"
-            shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
-          />
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}
             title={
