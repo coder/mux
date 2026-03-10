@@ -70,6 +70,10 @@ import { isBashAvailable } from "../node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "./titleBarOptions";
 import { isUpdateInstallInProgress } from "./updateInstallState";
+import {
+  getMuxDeepLinksFromArgv,
+  getMuxProtocolClientRegistration,
+} from "./utils/muxProtocolRegistration";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
@@ -238,10 +242,8 @@ function handleMuxDeepLink(raw: string) {
 }
 
 function handleArgvMuxDeepLinks(argv: string[]) {
-  for (const arg of argv) {
-    if (arg.startsWith("mux:")) {
-      handleMuxDeepLink(arg);
-    }
+  for (const arg of getMuxDeepLinksFromArgv(argv)) {
+    handleMuxDeepLink(arg);
   }
 }
 
@@ -263,9 +265,16 @@ try {
 
 function registerMuxProtocolClient() {
   try {
-    if (!app.isPackaged && process.defaultApp && process.argv[1]) {
-      // On Windows dev builds, Electron needs the executable + app path to register.
-      app.setAsDefaultProtocolClient("mux", process.execPath, [path.resolve(process.argv[1])]);
+    const registration = getMuxProtocolClientRegistration({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      defaultApp: process.defaultApp,
+      argv: process.argv,
+      execPath: process.execPath,
+    });
+
+    if (registration) {
+      app.setAsDefaultProtocolClient("mux", registration.executable, registration.args);
       return;
     }
 
