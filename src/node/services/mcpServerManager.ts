@@ -1162,8 +1162,9 @@ export class MCPServerManager {
         workspaceId,
       });
 
-      // Recompute failure stats from the currently enabled server set so stale failures
-      // from newly-disabled servers do not trigger warnings while a lease is active.
+      // Recompute lease-visible stats from the currently enabled server set so stale
+      // failures and tool metadata from newly-disabled servers do not leak into the
+      // next stream while an existing lease is still active.
       existing.timedOutServerNames = [
         ...existing.timedOutServerNames.filter(
           (serverName) => enabledServerNames.has(serverName) && !existing.instances.has(serverName)
@@ -1171,29 +1172,25 @@ export class MCPServerManager {
         ...restartTimedOutNames,
       ];
 
-      const failedServerNames = [
-        ...existing.stats.failedServerNames.filter((serverName) =>
-          enabledServerNames.has(serverName)
-        ),
-        ...restartFailedNames,
-      ];
-      const leasedStats: MCPWorkspaceStats = {
-        ...existing.stats,
-        failedServerCount: failedServerNames.length,
-        failedServerNames,
-      };
-      existing.stats = leasedStats;
-
-      // Even while deferring restarts, ensure new tool lists reflect the latest enabled/disabled
-      // server set. We cannot revoke tools already captured by an in-flight stream, but we
-      // can avoid exposing tools from newly-disabled servers to the next stream.
+      // Even while deferring restarts, ensure new tool lists and stats reflect the latest
+      // enabled/disabled server set. We cannot revoke tools already captured by an in-flight
+      // stream, but we can avoid exposing tools from newly-disabled servers to the next stream.
       const instancesForTools = new Map(
         [...existing.instances].filter(([serverName]) => enabledServers[serverName] !== undefined)
       );
-      const leasedStats: MCPWorkspaceStats = {
-        ...existing.stats,
-        failedServerCount: Math.max(0, enabledEntries.length - instancesForTools.size),
-      };
+      const failedServerNames = [
+        ...new Set([
+          ...existing.stats.failedServerNames.filter((serverName) =>
+            enabledServerNames.has(serverName)
+          ),
+          ...restartFailedNames,
+        ]),
+      ];
+      const leasedStats = this.createWorkspaceStats(
+        enabledEntries.length,
+        instancesForTools,
+        failedServerNames
+      );
       existing.stats = leasedStats;
 
       return {

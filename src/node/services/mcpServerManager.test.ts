@@ -1170,8 +1170,8 @@ describe("MCPServerManager", () => {
     const dummyToolA = { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool;
 
     const startServersMock = mock(() =>
-      Promise.resolve(
-        new Map([
+      Promise.resolve({
+        instances: new Map([
           [
             "serverA",
             {
@@ -1183,8 +1183,9 @@ describe("MCPServerManager", () => {
               close: mock(() => Promise.resolve(undefined)),
             },
           ],
-        ])
-      )
+        ]),
+        failedServerNames: ["serverB"],
+      })
     );
 
     access.startServers = startServersMock;
@@ -1233,8 +1234,8 @@ describe("MCPServerManager", () => {
     );
 
     const startServersMock = mock((servers: Record<string, unknown>) =>
-      Promise.resolve(
-        new Map(
+      Promise.resolve({
+        instances: new Map(
           Object.keys(servers).map((name) => [
             name,
             {
@@ -1248,8 +1249,9 @@ describe("MCPServerManager", () => {
               close: mock(() => Promise.resolve(undefined)),
             },
           ])
-        )
-      )
+        ),
+        failedServerNames: [],
+      })
     );
 
     access.startServers = startServersMock as unknown as typeof access.startServers;
