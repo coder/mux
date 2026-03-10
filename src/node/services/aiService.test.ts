@@ -1582,7 +1582,6 @@ describe("AIService.streamMessage mux help agent suppression", () => {
         taskDepth: 0,
         shouldDisableTaskToolsForDepth: false,
         effectiveToolPolicy: undefined,
-        toolNamesForSentinel: [],
       },
     };
     spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);
@@ -1890,7 +1889,6 @@ describe("AIService.streamMessage multi-project trust gating", () => {
         taskDepth: 0,
         shouldDisableTaskToolsForDepth: false,
         effectiveToolPolicy: undefined,
-        toolNamesForSentinel: [],
       },
     };
     spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);
