@@ -1770,7 +1770,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               </div>
               <div className="border-border border-t">
                 <button
-                  className="flex w-full items-center gap-2 bg-black px-3 py-2 text-sm text-white hover:bg-zinc-800"
+                  className="bg-surface-secondary text-foreground hover:bg-hover flex w-full items-center gap-2 px-3 py-2 text-sm"
                   onClick={onAddProject}
                   aria-label="Add project"
                 >

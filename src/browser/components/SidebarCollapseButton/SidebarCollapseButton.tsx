@@ -34,7 +34,12 @@ export const SidebarCollapseButton: React.FC<SidebarCollapseButtonProps> = ({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button onClick={onToggle} aria-label={label} className={className}>
+        <button
+          onClick={onToggle}
+          aria-label={label}
+          aria-expanded={!collapsed}
+          className={className}
+        >
           <Icon className="size-3.5" aria-hidden="true" />
         </button>
       </TooltipTrigger>
