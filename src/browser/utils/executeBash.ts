@@ -97,9 +97,8 @@ export function normalizeRepoRootFilePath(
     return normalizePath(workspaceRelativePath);
   }
 
-  return matchesRepoRootProjectPath(match.projectPath, normalizedRepoRootProjectPath) &&
-    match.repoRelativePath
-    ? match.repoRelativePath
+  return matchesRepoRootProjectPath(match.projectPath, normalizedRepoRootProjectPath)
+    ? (match.repoRelativePath ?? ".")
     : match.normalizedPath;
 }
 

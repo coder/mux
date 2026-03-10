@@ -147,6 +147,15 @@ const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 const MULTI_PROJECT_WORKSPACES_DISABLED_ERROR = "Multi-project workspaces experiment is disabled";
 
+function normalizeRepoRootProjectPath(projectPath: string | null | undefined): string {
+  const normalizedPath = projectPath?.replaceAll("\\", "/").trim() ?? "";
+  if (!normalizedPath) {
+    return "";
+  }
+
+  return stripTrailingSlashes(path.posix.normalize(normalizedPath));
+}
+
 interface FileCompletionsCacheEntry {
   index: FileCompletionsIndex;
   fetchedAt: number;
@@ -5442,14 +5451,20 @@ export class WorkspaceService extends EventEmitter {
       let cwdForExecution = multiProjectContainerPath ?? workspacePath;
       assert(cwdForExecution?.length, "executeBash requires a resolved execution cwd");
       const requiresRepoRootCwd = command === "git" || options?.cwdMode === "repo-root";
-      const requestedRepoRootProjectPath = options?.repoRootProjectPath?.trim();
+      const requestedRepoRootProjectPath = normalizeRepoRootProjectPath(
+        options?.repoRootProjectPath
+      );
       if (multiProjectRuntimes && requiresRepoRootCwd) {
         const repoRootRuntime = requestedRepoRootProjectPath
           ? multiProjectRuntimes.find(
-              (runtimeEntry) => runtimeEntry.projectPath === requestedRepoRootProjectPath
+              (runtimeEntry) =>
+                normalizeRepoRootProjectPath(runtimeEntry.projectPath) ===
+                requestedRepoRootProjectPath
             )
           : (multiProjectRuntimes.find(
-              (runtimeEntry) => runtimeEntry.projectPath === metadata.projectPath
+              (runtimeEntry) =>
+                normalizeRepoRootProjectPath(runtimeEntry.projectPath) ===
+                normalizeRepoRootProjectPath(metadata.projectPath)
             ) ?? multiProjectRuntimes[0]);
         if (!repoRootRuntime) {
           return Err(

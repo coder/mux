@@ -33,6 +33,10 @@ describe("executeBash repo-root helpers", () => {
     ).toBe("src/example.ts");
   });
 
+  test("maps project-root selections to the repo root when execution switches into that repo", () => {
+    expect(normalizeRepoRootFilePath(workspaceMetadata, "project-b", "/tmp/project-b")).toBe(".");
+  });
+
   test("keeps workspace-relative paths when execution stays on the container root", () => {
     expect(normalizeRepoRootFilePath(workspaceMetadata, "project-b/src/example.ts")).toBe(
       "project-b/src/example.ts"
