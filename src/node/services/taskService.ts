@@ -2458,9 +2458,8 @@ export class TaskService {
 
       // Trust gate: skip dequeued tasks if the project lost trust since queuing.
       const dequeueCfg = this.config.loadConfigOrDefault();
-      const dequeueProjectConfig = dequeueCfg.projects.get(
-        stripTrailingSlashes(taskEntry.projectPath)
-      );
+      const normalizedTaskProjectPath = stripTrailingSlashes(taskEntry.projectPath);
+      const dequeueProjectConfig = dequeueCfg.projects.get(normalizedTaskProjectPath);
       if (!dequeueProjectConfig?.trusted) {
         log.warn("Skipping queued task for untrusted project", {
           taskId,
@@ -2469,6 +2468,36 @@ export class TaskService {
         taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (untrusted)", { taskId });
         await this.setTaskStatus(taskId, "interrupted");
         this.rejectWaiters(taskId, new Error("Task skipped: project is not trusted"));
+        continue;
+      }
+
+      // Multi-project queued tasks persist every constituent project. Re-check those secondary
+      // refs here so trust revocations terminate the task instead of retrying the same fork forever.
+      const untrustedSecondaryProject =
+        Array.isArray(task.projects) && task.projects.length > 1
+          ? task.projects.find((project) => {
+              const normalizedProjectPath = stripTrailingSlashes(project.projectPath);
+              if (normalizedProjectPath === normalizedTaskProjectPath) {
+                return false;
+              }
+              return !(dequeueCfg.projects.get(normalizedProjectPath)?.trusted ?? false);
+            })
+          : undefined;
+      if (untrustedSecondaryProject) {
+        log.warn("Skipping queued multi-project task for untrusted project", {
+          taskId,
+          projectPath: untrustedSecondaryProject.projectPath,
+          projects: task.projects,
+        });
+        taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (secondary untrusted)", {
+          taskId,
+          projectPath: untrustedSecondaryProject.projectPath,
+        });
+        await this.setTaskStatus(taskId, "interrupted");
+        this.rejectWaiters(
+          taskId,
+          new Error(`Task skipped: project ${untrustedSecondaryProject.projectPath} is not trusted`)
+        );
         continue;
       }
 

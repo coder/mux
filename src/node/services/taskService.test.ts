@@ -837,6 +837,172 @@ describe("TaskService", () => {
     }
   }, 20_000);
 
+  test("interrupts queued tasks when the primary project loses trust before dequeue", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_exec_task-queued";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(projectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+              },
+              {
+                path: runtime.getWorkspacePath(projectPath, queuedWorkspaceName),
+                id: queuedTaskId,
+                name: queuedWorkspaceName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                parentWorkspaceId: parentId,
+                taskStatus: "queued",
+                taskPrompt: "start queued task",
+                taskTrunkBranch: "main",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "Expected queued task project to exist before revoking trust");
+      project.trusted = false;
+      return cfg;
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await taskService.initialize();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const queuedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === queuedTaskId);
+    expect(queuedTask?.taskStatus).toBe("interrupted");
+  }, 20_000);
+
+  test("interrupts queued multi-project tasks when a secondary project loses trust", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const primaryProjectPath = await createTestProject(rootDir, "repo-primary");
+    const secondaryProjectPath = await createTestProject(rootDir, "repo-secondary");
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath: primaryProjectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath: primaryProjectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_exec_task-queued";
+    const projects = [
+      {
+        projectPath: primaryProjectPath,
+        projectName: path.basename(primaryProjectPath),
+      },
+      {
+        projectPath: secondaryProjectPath,
+        projectName: path.basename(secondaryProjectPath),
+      },
+    ];
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          primaryProjectPath,
+          {
+            trusted: true,
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                projects,
+              },
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, queuedWorkspaceName),
+                id: queuedTaskId,
+                name: queuedWorkspaceName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                parentWorkspaceId: parentId,
+                taskStatus: "queued",
+                taskPrompt: "start queued task",
+                taskTrunkBranch: "main",
+                projects,
+              },
+            ],
+          },
+        ],
+        [secondaryProjectPath, { trusted: true, workspaces: [] }],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    await config.editConfig((cfg) => {
+      const secondaryProject = cfg.projects.get(secondaryProjectPath);
+      assert(secondaryProject, "Expected secondary project to exist before revoking trust");
+      secondaryProject.trusted = false;
+      return cfg;
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await taskService.initialize();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const queuedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === queuedTaskId);
+    expect(queuedTask?.taskStatus).toBe("interrupted");
+  }, 20_000);
+
   test("does not run init hooks for queued tasks until they start", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
