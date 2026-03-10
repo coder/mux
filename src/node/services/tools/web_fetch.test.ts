@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import * as dns from "node:dns/promises";
+import type { LookupAddress, LookupAllOptions, LookupOneOptions, LookupOptions } from "node:dns";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import { createWebFetchTool } from "./web_fetch";
 import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools";
@@ -176,9 +177,25 @@ describe("web_fetch tool", () => {
   it("rejects hostnames that resolve to private addresses", async () => {
     using testEnv = createTestWebFetchTool();
 
-    const lookupSpy = spyOn(dns, "lookup").mockImplementation(() =>
-      Promise.resolve([{ address: "10.0.0.5", family: 4 }])
-    );
+    function lookupMock(hostname: string, family: number): Promise<LookupAddress>;
+    function lookupMock(hostname: string, options: LookupOneOptions): Promise<LookupAddress>;
+    function lookupMock(hostname: string, options: LookupAllOptions): Promise<LookupAddress[]>;
+    function lookupMock(
+      hostname: string,
+      options: LookupOptions
+    ): Promise<LookupAddress | LookupAddress[]>;
+    function lookupMock(hostname: string): Promise<LookupAddress>;
+    function lookupMock(
+      _hostname: string,
+      options?: number | LookupOptions
+    ): Promise<LookupAddress | LookupAddress[]> {
+      if (typeof options === "object" && options?.all) {
+        return Promise.resolve([{ address: "10.0.0.5", family: 4 }]);
+      }
+      return Promise.resolve({ address: "10.0.0.5", family: 4 });
+    }
+
+    const lookupSpy = spyOn(dns, "lookup").mockImplementation(lookupMock);
     const execSpy = spyOn(runtimeHelpers, "execBuffered");
 
     const result = (await testEnv.tool.execute!(
