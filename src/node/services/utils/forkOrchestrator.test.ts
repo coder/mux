@@ -304,9 +304,11 @@ describe("orchestrateFork", () => {
     } satisfies WorkspaceCreationResult);
 
     // Simulate SSH/Docker where local git discovery is unavailable.
-    // Use mockImplementation here because the branch resolver should short-circuit before
-    // touching git discovery, and this avoids depending on mockRejectedValue for an uncalled spy.
-    listLocalBranchesMock.mockImplementation(() => Promise.reject(new Error("git not available")));
+    // Use mockImplementation instead of mockRejectedValue so Bun does not surface an
+    // eager unhandled rejection when preferredTrunkBranch short-circuits git discovery.
+    listLocalBranchesMock.mockImplementation(async () => {
+      throw new Error("git not available");
+    });
 
     const result = await runOrchestrateFork({
       sourceRuntime,
