@@ -7,7 +7,12 @@ import {
 } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { generateDiff, validateAndCorrectPath, validatePlanModeAccess } from "./fileCommon";
+import {
+  FileToolPathValidationError,
+  generateDiff,
+  resolvePathWithinCwd,
+  validatePlanModeAccess,
+} from "./fileCommon";
 import { executeFileEditOperation } from "./file_edit_operation";
 import { convertNewlines, detectFileEol } from "./eol";
 import { fileExists } from "@/node/utils/runtime/fileExists";
@@ -55,13 +60,12 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
       { abortSignal }
     ): Promise<FileEditInsertToolResult> => {
       try {
-        const { correctedPath, warning: pathWarning } = validateAndCorrectPath(
-          path,
-          config.cwd,
-          config.runtime
-        );
+        const {
+          correctedPath,
+          warning: pathWarning,
+          resolvedPath,
+        } = resolvePathWithinCwd(path, config.cwd, config.runtime);
         path = correctedPath;
-        const resolvedPath = config.runtime.normalizePath(path, config.cwd);
 
         // Validate plan mode access restrictions
         const planModeError = await validatePlanModeAccess(path, config);
@@ -121,6 +125,13 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             }),
         });
       } catch (error) {
+        if (error instanceof FileToolPathValidationError) {
+          return {
+            success: false,
+            error: error.message,
+          };
+        }
+
         if (error && typeof error === "object" && "code" in error && error.code === "EACCES") {
           return {
             success: false,

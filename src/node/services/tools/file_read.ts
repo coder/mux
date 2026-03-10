@@ -2,7 +2,7 @@ import { tool } from "ai";
 import type { FileReadToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { validateFileSize, validateAndCorrectPath } from "./fileCommon";
+import { FileToolPathValidationError, resolvePathWithinCwd, validateFileSize } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -24,16 +24,12 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
 
       let filePath = path;
       try {
-        // Validate and auto-correct redundant path prefix
-        const { correctedPath: validatedPath, warning: pathWarning } = validateAndCorrectPath(
-          filePath,
-          config.cwd,
-          config.runtime
-        );
+        const {
+          correctedPath: validatedPath,
+          warning: pathWarning,
+          resolvedPath,
+        } = resolvePathWithinCwd(filePath, config.cwd, config.runtime);
         filePath = validatedPath;
-
-        // Use runtime's normalizePath method to resolve paths correctly for both local and SSH runtimes
-        const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
 
         // Check if file exists using runtime
         let fileStat;
@@ -163,6 +159,13 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
           ...(pathWarning && { warning: pathWarning }),
         };
       } catch (error) {
+        if (error instanceof FileToolPathValidationError) {
+          return {
+            success: false,
+            error: error.message,
+          };
+        }
+
         // Handle specific errors
         if (error && typeof error === "object" && "code" in error) {
           if (error.code === "ENOENT") {

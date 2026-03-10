@@ -168,6 +168,32 @@ describe("fileCommon", () => {
     });
   });
 
+  it("should reject traversal outside cwd for SSH runtimes", () => {
+    const sshRuntime = createRuntime({
+      type: "ssh",
+      host: "user@localhost",
+      srcBaseDir: "/home/user/mux",
+      identityFile: "/tmp/fake-key",
+    });
+
+    const result = validatePathInCwd("../outside.ts", "/home/user/mux/project", sshRuntime);
+    expect(result).not.toBeNull();
+    expect(result?.error).toContain("restricted to the workspace directory");
+  });
+
+  it("should allow absolute paths within cwd for SSH runtimes", () => {
+    const sshRuntime = createRuntime({
+      type: "ssh",
+      host: "user@localhost",
+      srcBaseDir: "/home/user/mux",
+      identityFile: "/tmp/fake-key",
+    });
+
+    expect(
+      validatePathInCwd("/home/user/mux/project/src/file.ts", "/home/user/mux/project", sshRuntime)
+    ).toBeNull();
+  });
+
   describe("validateNoRedundantPrefix", () => {
     const cwd = "/workspace/project";
     const runtime = createRuntime({ type: "local", srcBaseDir: cwd });

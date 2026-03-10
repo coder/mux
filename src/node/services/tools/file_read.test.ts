@@ -5,6 +5,7 @@ import * as path from "path";
 import * as os from "os";
 import { createFileReadTool } from "./file_read";
 import type { FileReadToolArgs, FileReadToolResult } from "@/common/types/tools";
+import type { Runtime } from "@/node/runtime/Runtime";
 import type { ToolExecutionOptions } from "ai";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
 
@@ -367,7 +368,57 @@ describe("file_read tool", () => {
     }
   });
 
-  it("should allow reading the configured plan file outside cwd in exec mode", async () => {
+  async function expectReadRejectedBeforeFileAccess(targetPath: string): Promise<void> {
+    let statCalls = 0;
+    let readFileCalls = 0;
+
+    const mockRuntime = {
+      normalizePath(targetPathValue: string, basePath: string): string {
+        return path.resolve(basePath, targetPathValue);
+      },
+      stat(): Promise<{ size: number; modifiedTime: Date; isDirectory: boolean }> {
+        statCalls += 1;
+        return Promise.resolve({
+          size: 1,
+          modifiedTime: new Date(),
+          isDirectory: false,
+        });
+      },
+      readFile(): Promise<Uint8Array> {
+        readFileCalls += 1;
+        return Promise.resolve(new TextEncoder().encode("blocked"));
+      },
+    } as unknown as Runtime;
+
+    const tool = createFileReadTool({
+      ...getTestDeps(),
+      cwd: testDir,
+      runtime: mockRuntime,
+      runtimeTempDir: testDir,
+    });
+
+    const result = (await tool.execute!(
+      { path: targetPath },
+      mockToolCallOptions
+    )) as FileReadToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("restricted to the workspace directory");
+    }
+    expect(statCalls).toBe(0);
+    expect(readFileCalls).toBe(0);
+  }
+
+  it("should reject traversal outside cwd before touching the filesystem", async () => {
+    await expectReadRejectedBeforeFileAccess("../outside.txt");
+  });
+
+  it("should reject absolute paths outside cwd before touching the filesystem", async () => {
+    await expectReadRejectedBeforeFileAccess(path.join(path.dirname(testDir), "outside.txt"));
+  });
+
+  it("should reject reading the configured plan file when it is outside cwd", async () => {
     const planDir = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-exec-read-"));
     const planPath = path.join(planDir, "plan.md");
 
@@ -388,9 +439,9 @@ describe("file_read tool", () => {
         mockToolCallOptions
       )) as FileReadToolResult;
 
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.content).toContain("# Plan");
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("restricted to the workspace directory");
       }
     } finally {
       await fs.rm(planDir, { recursive: true, force: true });

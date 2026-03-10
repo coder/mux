@@ -2,8 +2,7 @@ import * as path from "path";
 import assert from "@/common/utils/assert";
 import { createPatch } from "diff";
 import type { FileStat, Runtime } from "@/node/runtime/Runtime";
-import { SSHRuntime } from "@/node/runtime/SSHRuntime";
-import { expandTilde } from "@/node/runtime/tildeExpansion";
+import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 
 /**
@@ -20,9 +19,8 @@ export interface PlanModeValidationError {
 /**
  * Validate file path for plan mode restrictions.
  * Returns an error if:
- * - Editing plan file outside plan mode (read-only)
- * - Editing non-plan file in plan mode
- * - Path is outside cwd (for non-plan files)
+ * - Editing the plan file outside the plan agent (read-only)
+ * - Editing any non-plan file while the plan agent is locked to the plan file
  *
  * Returns null if validation passes.
  */
@@ -31,7 +29,6 @@ export async function validatePlanModeAccess(
   config: ToolConfiguration
 ): Promise<PlanModeValidationError | null> {
   // Plan file is always read-only outside the plan agent.
-  // This is especially important for SSH runtimes, where cwd validation is intentionally skipped.
   if ((await isPlanFilePath(filePath, config)) && !config.planFileOnly) {
     return {
       success: false,
@@ -54,7 +51,6 @@ export async function validatePlanModeAccess(
         error: `In the plan agent, only the plan file can be edited. You must use the exact plan file path: ${config.planFilePath} (attempted: ${filePath})`,
       };
     }
-    // Skip cwd validation for plan file - it may be outside workspace
   }
 
   return null;
@@ -173,6 +169,71 @@ export function validateNoRedundantPrefix(
   return null;
 }
 
+interface RuntimePathModule {
+  isAbsolute(filePath: string): boolean;
+  relative(from: string, to: string): string;
+}
+
+type ComparablePathKind = "absolute" | "home";
+
+interface ComparablePath {
+  kind: ComparablePathKind;
+  value: string;
+}
+
+export class FileToolPathValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FileToolPathValidationError";
+  }
+}
+
+function getRuntimePathModule(runtime: Runtime): RuntimePathModule {
+  return runtime instanceof RemoteRuntime ? path.posix : path;
+}
+
+function isRuntimeAbsolutePath(filePath: string, runtime: Runtime): boolean {
+  const trimmedPath = filePath.trim();
+  if (runtime instanceof RemoteRuntime) {
+    return trimmedPath.startsWith("/") || trimmedPath === "~" || trimmedPath.startsWith("~/");
+  }
+  return path.isAbsolute(trimmedPath);
+}
+
+function toComparablePath(normalizedPath: string): ComparablePath {
+  if (normalizedPath === "~") {
+    return {
+      kind: "home",
+      value: "/__mux_home__",
+    };
+  }
+
+  if (normalizedPath.startsWith("~/")) {
+    return {
+      kind: "home",
+      value: path.posix.join("/__mux_home__", normalizedPath.slice(2)),
+    };
+  }
+
+  return {
+    kind: "absolute",
+    value: normalizedPath,
+  };
+}
+
+function isWithinAllowedRoot(
+  allowedRoot: ComparablePath,
+  targetPath: ComparablePath,
+  pathModule: RuntimePathModule
+): boolean {
+  if (allowedRoot.kind !== targetPath.kind) {
+    return false;
+  }
+
+  const relativePath = pathModule.relative(allowedRoot.value, targetPath.value);
+  return !relativePath.startsWith("..") && !pathModule.isAbsolute(relativePath);
+}
+
 /**
  * Validates that a file path is within the allowed working directory.
  * Returns an error object if the path is outside cwd (and any optional allowlisted roots),
@@ -180,7 +241,7 @@ export function validateNoRedundantPrefix(
  *
  * @param filePath - The file path to validate (can be relative or absolute)
  * @param cwd - The working directory that file operations are restricted to
- * @param runtime - The runtime (used to detect SSH - TODO: make path validation runtime-aware)
+ * @param runtime - The runtime whose path semantics should be used for validation
  * @param extraAllowedDirs - Additional absolute directories that are allowlisted for access.
  * @returns Error object if invalid, null if valid
  */
@@ -190,52 +251,38 @@ export function validatePathInCwd(
   runtime: Runtime,
   extraAllowedDirs: string[] = []
 ): { error: string } | null {
-  // TODO: Make path validation runtime-aware instead of skipping for SSH.
-  // For now, skip local path validation for SSH runtimes since:
-  // 1. Node's path module doesn't understand remote paths (~/mux/branch)
-  // 2. The runtime's own file operations will fail on invalid paths anyway
-  if (runtime instanceof SSHRuntime) {
-    return null;
-  }
-
   const trimmedExtraAllowedDirs = extraAllowedDirs
     .map((dir) => dir.trim())
     .filter((dir) => dir.length > 0);
+  const pathModule = getRuntimePathModule(runtime);
 
   // extraAllowedDirs are an internal allowlist (e.g., stream-scoped runtimeTempDir).
   // For safety, require absolute paths so misconfiguration doesn't widen access.
   for (const dir of trimmedExtraAllowedDirs) {
-    assert(path.isAbsolute(dir), `extraAllowedDir must be an absolute path: '${dir}'`);
+    assert(
+      isRuntimeAbsolutePath(dir, runtime),
+      `extraAllowedDir must be an absolute path: '${dir}'`
+    );
   }
 
-  // Expand tildes FIRST so we validate the actual destination path.
-  // Without this, ~/outside/file.ts would be treated as a relative path
-  // (path.isAbsolute('~/...') returns false) and incorrectly pass validation.
-  const expandedPath = expandTilde(filePath);
-  const filePathIsAbsolute = path.isAbsolute(expandedPath);
+  const normalizedCwd = runtime.normalizePath(".", cwd);
+  const normalizedPath = runtime.normalizePath(filePath, normalizedCwd);
+  const filePathIsAbsolute = isRuntimeAbsolutePath(filePath, runtime);
+  const comparablePath = toComparablePath(normalizedPath);
 
   // Only allow extraAllowedDirs when the caller provides an absolute path.
   // This prevents relative-path escapes (e.g., ../...) from bypassing cwd restrictions.
-
-  // Resolve the path (handles relative paths and normalizes)
-  const resolvedPath = filePathIsAbsolute
-    ? path.resolve(expandedPath)
-    : path.resolve(cwd, expandedPath);
-
-  const allowedRoots = [cwd, ...(filePathIsAbsolute ? trimmedExtraAllowedDirs : [])].map((dir) =>
-    path.resolve(dir)
+  const allowedRoots = [normalizedCwd, ...(filePathIsAbsolute ? trimmedExtraAllowedDirs : [])].map(
+    (dir) => toComparablePath(runtime.normalizePath(dir, normalizedCwd))
   );
 
-  // Check if resolved path is within any allowed root.
-  // Use path.relative to check if we need to go "up" from the root to reach the file.
-  const isWithinAllowedRoot = allowedRoots.some((root) => {
-    const relativePath = path.relative(root, resolvedPath);
-    return !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
-  });
+  const isWithinRoot = allowedRoots.some((root) =>
+    isWithinAllowedRoot(root, comparablePath, pathModule)
+  );
 
-  if (!isWithinAllowedRoot) {
+  if (!isWithinRoot) {
     return {
-      error: `File operations are restricted to the workspace directory (${cwd}). The path '${filePath}' resolves outside this directory. If you need to modify files outside the workspace, please ask the user for permission first.`,
+      error: `File operations are restricted to the workspace directory (${normalizedCwd}). The path '${filePath}' resolves outside this directory. If you need to modify files outside the workspace, please ask the user for permission first.`,
     };
   }
 
@@ -267,4 +314,22 @@ export function validateAndCorrectPath(
     };
   }
   return { correctedPath: filePath };
+}
+
+export function resolvePathWithinCwd(
+  filePath: string,
+  cwd: string,
+  runtime: Runtime
+): { correctedPath: string; resolvedPath: string; warning?: string } {
+  const { correctedPath, warning } = validateAndCorrectPath(filePath, cwd, runtime);
+  const cwdValidation = validatePathInCwd(correctedPath, cwd, runtime);
+  if (cwdValidation) {
+    throw new FileToolPathValidationError(cwdValidation.error);
+  }
+
+  return {
+    correctedPath,
+    resolvedPath: runtime.normalizePath(correctedPath, cwd),
+    warning,
+  };
 }
