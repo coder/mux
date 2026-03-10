@@ -153,6 +153,16 @@ interface FileCompletionsCacheEntry {
   refreshing?: Promise<void>;
 }
 
+function parseFileCompletionPaths(stdout: string): string[] {
+  return (
+    stdout
+      .split("\n")
+      .map((line) => line.trim())
+      // File @mentions are whitespace-delimited, so we exclude spaced paths from autocomplete.
+      .filter((filePath) => Boolean(filePath) && !/\s/.test(filePath))
+  );
+}
+
 interface ArchiveMergedInProjectResult {
   archivedWorkspaceIds: string[];
   skippedWorkspaceIds: string[];
@@ -5173,6 +5183,73 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private async listGitPathsForFileCompletions(
+    runtime: Parameters<typeof execBuffered>[0],
+    cwd: string
+  ): Promise<string[] | null> {
+    assert(cwd.trim().length > 0, "File completion git listing requires a workspace cwd");
+
+    const result = await execBuffered(runtime, "git ls-files -co --exclude-standard", {
+      cwd,
+      timeout: 5,
+    });
+
+    if (result.exitCode !== 0) {
+      return null;
+    }
+
+    return parseFileCompletionPaths(result.stdout);
+  }
+
+  private async listWorkspacePathsForFileCompletions(
+    metadata: FrontendWorkspaceMetadata
+  ): Promise<string[] | null> {
+    if (!isMultiProject(metadata)) {
+      const runtime = createRuntimeForWorkspace(metadata);
+      const workspacePath = resolveWorkspaceExecutionPath(metadata, runtime);
+      return this.listGitPathsForFileCompletions(runtime, workspacePath);
+    }
+
+    const projectFiles = await Promise.all(
+      getProjects(metadata).map(async (project) => {
+        assert(
+          project.projectName.trim().length > 0,
+          `Workspace ${metadata.id} has a project without a projectName`
+        );
+
+        const projectRuntime = createRuntime(metadata.runtimeConfig, {
+          projectPath: project.projectPath,
+          workspaceName: metadata.name,
+        });
+        const projectWorkspacePath = projectRuntime.getWorkspacePath(
+          project.projectPath,
+          metadata.name
+        );
+        assert(
+          projectWorkspacePath.trim().length > 0,
+          `Workspace ${metadata.id} project ${project.projectName} resolved to an empty workspace path`
+        );
+
+        const repoFiles = await this.listGitPathsForFileCompletions(
+          projectRuntime,
+          projectWorkspacePath
+        );
+        if (repoFiles === null) {
+          return null;
+        }
+
+        return repoFiles.map((filePath) => path.posix.join(project.projectName, filePath));
+      })
+    );
+
+    const validProjectFiles = projectFiles.filter((files): files is string[] => files !== null);
+    if (validProjectFiles.length !== projectFiles.length) {
+      return null;
+    }
+
+    return validProjectFiles.flat();
+  }
+
   async getFileCompletions(
     workspaceId: string,
     query: string,
@@ -5187,9 +5264,6 @@ export class WorkspaceService extends EventEmitter {
     if (!metadata) {
       return { paths: [] };
     }
-
-    const runtime = createRuntimeForWorkspace(metadata);
-    const workspacePath = resolveWorkspaceExecutionPath(metadata, runtime);
 
     const now = Date.now();
     const CACHE_TTL_MS = 10_000;
@@ -5208,22 +5282,8 @@ export class WorkspaceService extends EventEmitter {
         const previousIndex = cacheEntry.index;
 
         try {
-          const result = await execBuffered(runtime, "git ls-files -co --exclude-standard", {
-            cwd: workspacePath,
-            timeout: 5,
-          });
-
-          if (result.exitCode !== 0) {
-            cacheEntry.index = previousIndex;
-          } else {
-            const files = result.stdout
-              .split("\n")
-              .map((line) => line.trim())
-              // File @mentions are whitespace-delimited, so we exclude spaced paths from autocomplete.
-              .filter((filePath) => Boolean(filePath) && !/\s/.test(filePath));
-            cacheEntry.index = buildFileCompletionsIndex(files);
-          }
-
+          const files = await this.listWorkspacePathsForFileCompletions(metadata);
+          cacheEntry.index = files === null ? previousIndex : buildFileCompletionsIndex(files);
           cacheEntry.fetchedAt = Date.now();
         } catch (error) {
           log.debug("getFileCompletions: failed to list files", {
