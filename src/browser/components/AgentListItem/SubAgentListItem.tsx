@@ -45,7 +45,12 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
             "pointer-events-none absolute inset-y-0 z-10 w-px",
             trunk.active && "subagent-connector-active"
           )}
-          style={{ left: trunk.left }}
+          style={
+            {
+              left: trunk.left,
+              "--connector-color": connectorColor,
+            } as React.CSSProperties
+          }
         />
       ))}
       <div
