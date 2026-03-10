@@ -17,6 +17,7 @@ import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadata
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { Ok } from "@/common/types/result";
 import type { ProjectsConfig } from "@/common/types/project";
@@ -64,6 +65,12 @@ const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
 const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
   cleanup: mock(() => Promise.resolve()),
 };
+
+function createMockExperimentsService(enabled: boolean): ExperimentsService {
+  return {
+    isExperimentEnabled: mock(() => enabled),
+  } as unknown as ExperimentsService;
+}
 
 describe("WorkspaceService executeBash runtime selection", () => {
   let historyService: HistoryService;
@@ -158,7 +165,11 @@ describe("WorkspaceService executeBash runtime selection", () => {
         waitForInit: waitForInitMock,
       } as unknown as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
     );
 
     try {
@@ -271,7 +282,11 @@ describe("WorkspaceService executeBash runtime selection", () => {
         waitForInit: waitForInitMock,
       } as unknown as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
     );
 
     try {
@@ -377,7 +392,11 @@ describe("WorkspaceService executeBash runtime selection", () => {
         waitForInit: waitForInitMock,
       } as unknown as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
     );
 
     try {
@@ -489,7 +508,11 @@ describe("WorkspaceService executeBash runtime selection", () => {
         waitForInit: waitForInitMock,
       } as unknown as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
     );
 
     try {
@@ -588,7 +611,11 @@ describe("WorkspaceService executeBash runtime selection", () => {
         waitForInit: waitForInitMock,
       } as unknown as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
     );
 
     try {
@@ -698,7 +725,11 @@ describe("WorkspaceService executeBash runtime selection", () => {
         waitForInit: waitForInitMock,
       } as unknown as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
     );
 
     try {
@@ -775,7 +806,11 @@ describe("WorkspaceService executeBash runtime selection", () => {
         waitForInit: waitForInitMock,
       } as unknown as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
-      mockBackgroundProcessManager as BackgroundProcessManager
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
     );
 
     try {
@@ -806,6 +841,152 @@ describe("WorkspaceService multi-project lifecycle", () => {
 
   afterEach(async () => {
     await cleanupHistory();
+  });
+
+  test("list() and getInfo() hide persisted multi-project metadata when experiment is disabled", async () => {
+    const singleProjectMetadata: FrontendWorkspaceMetadata = {
+      id: "ws-single",
+      name: "feature-single",
+      projectPath: "/tmp/project-a",
+      projectName: "project-a",
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: "/tmp/project-a/feature-single",
+    };
+    const multiProjectMetadata: FrontendWorkspaceMetadata = {
+      id: "ws-multi",
+      name: "feature-multi",
+      projectPath: "/tmp/project-a",
+      projectName: "project-a+project-b",
+      projects: [
+        { projectPath: "/tmp/project-a", projectName: "project-a" },
+        { projectPath: "/tmp/project-b", projectName: "project-b" },
+      ],
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: "/tmp/project-a/feature-multi",
+    };
+    const mockConfig: Partial<Config> = {
+      getAllWorkspaceMetadata: mock(() =>
+        Promise.resolve([singleProjectMetadata, multiProjectMetadata])
+      ),
+    };
+    const mockAIService = {
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      createMockInitStateManager(),
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(false)
+    );
+
+    expect((await workspaceService.list()).map((metadata) => metadata.id)).toEqual(["ws-single"]);
+    expect(await workspaceService.getInfo(singleProjectMetadata.id)).toEqual(
+      expect.objectContaining({ id: singleProjectMetadata.id })
+    );
+    expect(await workspaceService.getInfo(multiProjectMetadata.id)).toBeNull();
+  });
+
+  test("list() and getInfo() expose multi-project metadata when experiment is enabled", async () => {
+    const singleProjectMetadata: FrontendWorkspaceMetadata = {
+      id: "ws-single",
+      name: "feature-single",
+      projectPath: "/tmp/project-a",
+      projectName: "project-a",
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: "/tmp/project-a/feature-single",
+    };
+    const multiProjectMetadata: FrontendWorkspaceMetadata = {
+      id: "ws-multi",
+      name: "feature-multi",
+      projectPath: "/tmp/project-a",
+      projectName: "project-a+project-b",
+      projects: [
+        { projectPath: "/tmp/project-a", projectName: "project-a" },
+        { projectPath: "/tmp/project-b", projectName: "project-b" },
+      ],
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: "/tmp/project-a/feature-multi",
+    };
+    const mockConfig: Partial<Config> = {
+      getAllWorkspaceMetadata: mock(() =>
+        Promise.resolve([singleProjectMetadata, multiProjectMetadata])
+      ),
+    };
+    const mockAIService = {
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      mockAIService,
+      createMockInitStateManager(),
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(true)
+    );
+
+    expect((await workspaceService.list()).map((metadata) => metadata.id)).toEqual([
+      "ws-single",
+      "ws-multi",
+    ]);
+    expect(await workspaceService.getInfo(multiProjectMetadata.id)).toEqual(
+      expect.objectContaining({
+        id: multiProjectMetadata.id,
+        projects: multiProjectMetadata.projects,
+      })
+    );
+  });
+
+  test("createMultiProject rejects when the experiment is disabled", async () => {
+    const generateStableIdMock = mock(() => "ws-disabled");
+    const loadConfigOrDefaultMock = mock(() => ({ projects: new Map() }));
+    const workspaceService = new WorkspaceService(
+      {
+        generateStableId: generateStableIdMock,
+        loadConfigOrDefault: loadConfigOrDefaultMock,
+      } as unknown as Config,
+      historyService,
+      {
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService,
+      createMockInitStateManager(),
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      undefined,
+      undefined,
+      undefined,
+      createMockExperimentsService(false)
+    );
+
+    const result = await workspaceService.createMultiProject(
+      [
+        { projectPath: "/tmp/project-a", projectName: "project-a" },
+        { projectPath: "/tmp/project-b", projectName: "project-b" },
+      ],
+      "feature-disabled",
+      "main"
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      return;
+    }
+
+    expect(result.error).toBe("Multi-project workspaces experiment is disabled");
+    expect(generateStableIdMock).not.toHaveBeenCalled();
+    expect(loadConfigOrDefaultMock).not.toHaveBeenCalled();
   });
 
   test("createMultiProject creates per-project workspaces and persists metadata", async () => {
@@ -920,7 +1101,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.createMultiProject(
@@ -1129,7 +1314,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
             clearInMemoryState: clearInMemoryStateMock,
           } as unknown as InitStateManager,
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const metadataEvents: FrontendWorkspaceMetadata[] = [];
@@ -1267,7 +1456,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.createMultiProject(
@@ -1449,7 +1642,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.createMultiProject(
@@ -1513,7 +1710,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
         mockAIService,
         createMockInitStateManager(),
         mockExtensionMetadataService as ExtensionMetadataService,
-        mockBackgroundProcessManager as BackgroundProcessManager
+        mockBackgroundProcessManager as BackgroundProcessManager,
+        undefined,
+        undefined,
+        undefined,
+        createMockExperimentsService(true)
       );
 
       await assert.rejects(
@@ -1560,7 +1761,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.createMultiProject(
@@ -1671,7 +1876,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.remove(workspaceId, true);
@@ -1785,7 +1994,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.remove(workspaceId, false);
@@ -1953,7 +2166,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.rename(workspaceId, newName);
@@ -2141,7 +2358,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.rename(workspaceId, newName);
@@ -2329,7 +2550,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.rename(workspaceId, newName);
@@ -2567,7 +2792,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.rename(workspaceId, newName);
@@ -2829,7 +3058,11 @@ describe("WorkspaceService multi-project lifecycle", () => {
           mockAIService,
           createMockInitStateManager(),
           mockExtensionMetadataService as ExtensionMetadataService,
-          mockBackgroundProcessManager as BackgroundProcessManager
+          mockBackgroundProcessManager as BackgroundProcessManager,
+          undefined,
+          undefined,
+          undefined,
+          createMockExperimentsService(true)
         );
 
         const result = await workspaceService.rename(workspaceId, newName);

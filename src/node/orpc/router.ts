@@ -1,5 +1,6 @@
 import { os, ORPCError } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ORPCContext } from "./context";
 import { OnePasswordService } from "@/node/services/onePasswordService";
 import {
@@ -2717,6 +2718,14 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.createMultiProject.input)
         .output(schemas.workspace.createMultiProject.output)
         .handler(async ({ context, input }) => {
+          if (
+            !context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)
+          ) {
+            throw new ORPCError("BAD_REQUEST", {
+              message: "Multi-project workspaces experiment is disabled",
+            });
+          }
+
           const result = await context.workspaceService.createMultiProject(
             input.projects.map((project) => ({
               projectPath: stripTrailingSlashes(project.projectPath),

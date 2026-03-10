@@ -145,6 +145,8 @@ type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 type WorkspaceAgentStatus = NonNullable<WorkspaceActivitySnapshot["agentStatus"]>;
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
+const MULTI_PROJECT_WORKSPACES_DISABLED_ERROR = "Multi-project workspaces experiment is disabled";
+
 interface FileCompletionsCacheEntry {
   index: FileCompletionsIndex;
   fetchedAt: number;
@@ -1920,6 +1922,9 @@ export class WorkspaceService extends EventEmitter {
     runtimeConfig?: RuntimeConfig
   ): Promise<Result<FrontendWorkspaceMetadata>> {
     assert(projects.length > 1, "createMultiProject requires at least two projects");
+    if (!this.isMultiProjectWorkspacesExperimentEnabled()) {
+      return Err(MULTI_PROJECT_WORKSPACES_DISABLED_ERROR);
+    }
 
     let initLogger: ReturnType<WorkspaceService["createInitLogger"]> | null = null;
 
@@ -2676,6 +2681,29 @@ export class WorkspaceService extends EventEmitter {
     };
   }
 
+  private isMultiProjectWorkspacesExperimentEnabled(): boolean {
+    return (
+      this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES) ?? false
+    );
+  }
+
+  private shouldExposeWorkspaceMetadata(
+    metadata: WorkspaceMetadata | FrontendWorkspaceMetadata
+  ): boolean {
+    return this.isMultiProjectWorkspacesExperimentEnabled() || !isMultiProject(metadata);
+  }
+
+  private filterVisibleWorkspaceMetadata<T extends WorkspaceMetadata | FrontendWorkspaceMetadata>(
+    workspaces: readonly T[]
+  ): T[] {
+    if (this.isMultiProjectWorkspacesExperimentEnabled()) {
+      return [...workspaces];
+    }
+
+    // Keep persisted _multi config intact and hide it only at workspace-facing service boundaries.
+    return workspaces.filter((workspace) => this.shouldExposeWorkspaceMetadata(workspace));
+  }
+
   private enrichMaybeFrontendMetadata(
     metadata: FrontendWorkspaceMetadata | null
   ): FrontendWorkspaceMetadata | null {
@@ -2688,7 +2716,9 @@ export class WorkspaceService extends EventEmitter {
   async list(): Promise<FrontendWorkspaceMetadata[]> {
     try {
       const workspaces = await this.config.getAllWorkspaceMetadata();
-      return workspaces.map((w) => this.enrichFrontendMetadata(w));
+      return this.filterVisibleWorkspaceMetadata(workspaces).map((workspace) =>
+        this.enrichFrontendMetadata(workspace)
+      );
     } catch (error) {
       log.error("Failed to list workspaces:", error);
       return [];
@@ -2749,7 +2779,10 @@ export class WorkspaceService extends EventEmitter {
   }
   async getInfo(workspaceId: string): Promise<FrontendWorkspaceMetadata | null> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
-    const found = allMetadata.find((m) => m.id === workspaceId) ?? null;
+    const found = allMetadata.find((metadata) => metadata.id === workspaceId) ?? null;
+    if (found && !this.shouldExposeWorkspaceMetadata(found)) {
+      return null;
+    }
     return this.enrichMaybeFrontendMetadata(found);
   }
 
