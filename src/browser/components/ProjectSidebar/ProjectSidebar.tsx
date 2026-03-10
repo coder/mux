@@ -1536,6 +1536,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
                                     visitedAncestorIds.add(ancestorId);
 
+                                    const ancestorWorkspace = visibleRowsById.get(ancestorId);
+                                    if (!ancestorWorkspace) {
+                                      break;
+                                    }
+
                                     const ancestorMeta =
                                       rowMetaByVisibleWorkspaceId.get(ancestorId) ??
                                       baseRowMetaByWorkspaceId.get(ancestorId);
@@ -1550,10 +1555,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       });
                                     }
 
-                                    const ancestorWorkspace = visibleRowsById.get(ancestorId);
-                                    if (!ancestorWorkspace) {
-                                      break;
-                                    }
                                     ancestorId = ancestorWorkspace.parentWorkspaceId;
                                   }
                                   ancestorTrunks.sort((left, right) => left.depth - right.depth);
