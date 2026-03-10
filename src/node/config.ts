@@ -688,11 +688,13 @@ export class Config {
 
     for (const [projectPath, project] of config.projects) {
       for (const workspace of project.workspaces) {
+        const resolvedProjectPath = workspace.projects?.[0]?.projectPath ?? projectPath;
+
         // NEW FORMAT: Check config first (primary source of truth after migration)
         if (workspace.id === workspaceId) {
           return {
             workspacePath: workspace.path,
-            projectPath,
+            projectPath: resolvedProjectPath,
             workspaceName: workspace.name,
             parentWorkspaceId: workspace.parentWorkspaceId,
           };
@@ -713,7 +715,7 @@ export class Config {
               if (metadata.id === workspaceId) {
                 return {
                   workspacePath: workspace.path,
-                  projectPath,
+                  projectPath: resolvedProjectPath,
                   workspaceName: undefined,
                   parentWorkspaceId: undefined,
                 };
@@ -728,7 +730,7 @@ export class Config {
           if (legacyId === workspaceId) {
             return {
               workspacePath: workspace.path,
-              projectPath,
+              projectPath: resolvedProjectPath,
               workspaceName: undefined,
               parentWorkspaceId: undefined,
             };
