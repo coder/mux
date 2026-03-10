@@ -1780,6 +1780,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               </div>
             </>
           )}
+          {collapsed && (
+            <SidebarCollapseButton
+              collapsed={collapsed}
+              onToggle={onToggleCollapsed}
+              side="left"
+              shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+            />
+          )}
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}
             title={
