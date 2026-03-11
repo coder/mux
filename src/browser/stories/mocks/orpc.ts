@@ -258,7 +258,12 @@ export interface MockORPCClientOptions {
     location: string;
   }>;
   /** Mock clearLogs result (default: { success: true, error: null }) */
-  clearLogsResult?: { success: boolean; error?: string | null };
+  clearLogsResult?: {
+    success: boolean;
+    error?: string | null;
+  };
+  /** Per-workspace runtime statuses for RuntimeStatusStore stories */
+  runtimeStatuses?: Map<string, "running" | "stopped" | "unknown" | "unsupported">;
 }
 
 interface MockBackgroundProcess {
@@ -356,6 +361,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     logEntries = [],
     clearLogsResult = { success: true, error: null },
+    runtimeStatuses = new Map<string, "running" | "stopped" | "unknown" | "unsupported">(),
   } = options;
 
   // App now boots into the built-in mux-chat workspace by default.
@@ -1442,6 +1448,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           data: { success: true, output: "", exitCode: 0, wall_duration_ms: 0 },
         };
       },
+      getRuntimeStatuses: (input: { workspaceIds: string[] }) => {
+        const statuses: Record<string, "running" | "stopped" | "unknown" | "unsupported"> = {};
+        for (const id of input.workspaceIds) {
+          statuses[id] = runtimeStatuses.get(id) ?? "unsupported";
+        }
+        return Promise.resolve({ success: true as const, data: statuses });
+      },
+      stopRuntime: () =>
+        Promise.resolve({ success: true as const, data: { success: true, error: null } }),
       onChat: async function* (input: { workspaceId: string }, options?: { signal?: AbortSignal }) {
         if (!onChat) {
           // Default mock behavior: subscriptions should remain open.
