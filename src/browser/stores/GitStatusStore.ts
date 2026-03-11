@@ -13,7 +13,10 @@ import { MapStore } from "./MapStore";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { RefreshController } from "@/browser/utils/RefreshController";
 import { repoRootBashOptions } from "@/browser/utils/executeBash";
-import { canRunPassiveRuntimeCommand } from "@/browser/utils/runtimeExecutionPolicy";
+import {
+  canRunPassiveRuntimeCommand,
+  onPassiveRuntimeEligible,
+} from "@/browser/utils/runtimeExecutionPolicy";
 import {
   useRuntimeStatusStoreRaw as getRuntimeStatusStore,
   type RuntimeStatusStore,
@@ -52,6 +55,7 @@ interface FetchState {
 export class GitStatusStore {
   private statuses = new MapStore<string, GitStatus | null>();
   private fetchCache = new Map<string, FetchState>();
+  private runtimeRetryUnsubscribers = new Map<string, () => void>();
   private client: RouterClient<AppRouter> | null = null;
   private immediateUpdateQueued = false;
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
@@ -69,7 +73,7 @@ export class GitStatusStore {
   constructor(
     private readonly runtimeStatusStore: Pick<
       RuntimeStatusStore,
-      "getStatus"
+      "getStatus" | "subscribeKey"
     > = getRuntimeStatusStore()
   ) {
     // Create refresh controller with proactive focus refresh (catches external git changes)
@@ -206,6 +210,13 @@ export class GitStatusStore {
     }
 
     this.workspaceMetadata = metadata;
+
+    for (const [id, unsub] of this.runtimeRetryUnsubscribers) {
+      if (!metadata.has(id)) {
+        unsub();
+        this.runtimeRetryUnsubscribers.delete(id);
+      }
+    }
 
     // Remove statuses for deleted workspaces
     // Iterate plain map (statusCache) for membership, not reactive store
@@ -446,6 +457,27 @@ export class GitStatusStore {
           this.runtimeStatusStore.getStatus(metadata.id)
         )
       ) {
+        // Arm a one-shot retry so the workspace gets a fetch
+        // once the runtime becomes passively runnable.
+        if (!this.runtimeRetryUnsubscribers.has(metadata.id)) {
+          this.runtimeRetryUnsubscribers.set(
+            metadata.id,
+            onPassiveRuntimeEligible(
+              metadata.id,
+              metadata.runtimeConfig,
+              this.runtimeStatusStore,
+              () => {
+                this.runtimeRetryUnsubscribers.delete(metadata.id);
+                // Clear fetch backoff so the retry isn't suppressed.
+                const retryMetadata = this.workspaceMetadata.get(metadata.id);
+                if (retryMetadata) {
+                  this.fetchCache.delete(this.getFetchKey(retryMetadata));
+                }
+                this.refreshController.requestImmediate();
+              }
+            )
+          );
+        }
         continue;
       }
 
@@ -571,6 +603,10 @@ export class GitStatusStore {
     this.fetchCache.clear();
     this.fileModifyUnsubscribe?.();
     this.fileModifyUnsubscribe = null;
+    for (const unsub of this.runtimeRetryUnsubscribers.values()) {
+      unsub();
+    }
+    this.runtimeRetryUnsubscribers.clear();
     this.refreshController.dispose();
   }
 
