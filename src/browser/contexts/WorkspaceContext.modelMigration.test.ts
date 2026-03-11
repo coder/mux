@@ -98,4 +98,16 @@ describe("migrateLocalModelPrefsToBackend", () => {
 
     expect(updateModelPreferences).not.toHaveBeenCalled();
   });
+
+  test("preserves explicit gateway-scoped local default during migration", () => {
+    setLocalDefaultModel("openrouter:openai/gpt-5");
+    const { api, updateModelPreferences } = createApiMock();
+
+    migrateLocalModelPrefsToBackend(api, {});
+
+    expect(updateModelPreferences).toHaveBeenCalledTimes(1);
+    expect(updateModelPreferences).toHaveBeenCalledWith({
+      defaultModel: "openrouter:openai/gpt-5",
+    });
+  });
 });
