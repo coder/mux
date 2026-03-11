@@ -1,4 +1,4 @@
-import { validateWorkspaceName } from "./workspaceValidation";
+import { validateWorkspaceName, sanitizeWorkspaceNameForPath } from "./workspaceValidation";
 
 describe("validateWorkspaceName", () => {
   describe("valid names", () => {
@@ -20,6 +20,12 @@ describe("validateWorkspaceName", () => {
     test("accepts hyphens", () => {
       expect(validateWorkspaceName("my-branch").valid).toBe(true);
       expect(validateWorkspaceName("feature-test-123").valid).toBe(true);
+    });
+
+    test("accepts forward slashes in branch-style names", () => {
+      expect(validateWorkspaceName("feature/my-branch").valid).toBe(true);
+      expect(validateWorkspaceName("fix/issue-123").valid).toBe(true);
+      expect(validateWorkspaceName("user/feature/deep").valid).toBe(true);
     });
 
     test("accepts combinations", () => {
@@ -72,13 +78,45 @@ describe("validateWorkspaceName", () => {
       expect(validateWorkspaceName("branch%123").valid).toBe(false);
       expect(validateWorkspaceName("branch!123").valid).toBe(false);
       expect(validateWorkspaceName("branch.123").valid).toBe(false);
-      expect(validateWorkspaceName("branch/123").valid).toBe(false);
       expect(validateWorkspaceName("branch\\123").valid).toBe(false);
     });
 
-    test("rejects names with slashes", () => {
-      expect(validateWorkspaceName("feature/branch").valid).toBe(false);
+    test("rejects leading slash", () => {
+      expect(validateWorkspaceName("/feature").valid).toBe(false);
+    });
+
+    test("rejects trailing slash", () => {
+      expect(validateWorkspaceName("feature/").valid).toBe(false);
+    });
+
+    test("rejects consecutive slashes", () => {
+      expect(validateWorkspaceName("feature//branch").valid).toBe(false);
+    });
+
+    test("rejects backslashes", () => {
       expect(validateWorkspaceName("path\\to\\branch").valid).toBe(false);
     });
+  });
+});
+
+describe("sanitizeWorkspaceNameForPath", () => {
+  test("returns name unchanged when no slashes", () => {
+    expect(sanitizeWorkspaceNameForPath("my-branch")).toBe("my-branch");
+  });
+
+  test("replaces single slash with hyphen", () => {
+    expect(sanitizeWorkspaceNameForPath("feature/my-branch")).toBe("feature-my-branch");
+  });
+
+  test("replaces multiple slashes in deep paths", () => {
+    expect(sanitizeWorkspaceNameForPath("user/feature/deep")).toBe("user-feature-deep");
+  });
+
+  test("preserves existing consecutive hyphens", () => {
+    expect(sanitizeWorkspaceNameForPath("feature--branch")).toBe("feature--branch");
+  });
+
+  test("does not collapse hyphens adjacent to replaced slash", () => {
+    expect(sanitizeWorkspaceNameForPath("feature/-branch")).toBe("feature--branch");
   });
 });

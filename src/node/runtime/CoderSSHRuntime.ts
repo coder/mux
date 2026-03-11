@@ -55,6 +55,7 @@ const CODER_NAME_REGEX = /^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*$/;
  */
 function toCoderCompatibleName(name: string): string {
   return name
+    .replace(/\//g, "-") // Replace slashes with hyphens (branch-style names)
     .replace(/_/g, "-") // Replace underscores with hyphens
     .replace(/^-+|-+$/g, "") // Remove leading/trailing hyphens
     .replace(/-{2,}/g, "-"); // Collapse multiple hyphens

@@ -17,6 +17,7 @@ import { toPosixPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import { syncMuxignoreFiles } from "./muxignore";
+import { sanitizeWorkspaceNameForPath } from "@/common/utils/validation/workspaceValidation";
 
 export class WorktreeManager {
   private readonly srcBaseDir: string;
@@ -28,7 +29,13 @@ export class WorktreeManager {
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     const projectName = getProjectName(projectPath);
-    return path.join(this.srcBaseDir, projectName, workspaceName);
+    // In-place workspaces use absolute paths as workspace names — do not sanitize
+    // those since path.join already handles them correctly and sanitizing would
+    // turn e.g. "/home/user/project" into "-home-user-project".
+    const safeName = path.isAbsolute(workspaceName)
+      ? workspaceName
+      : sanitizeWorkspaceNameForPath(workspaceName);
+    return path.join(this.srcBaseDir, projectName, safeName);
   }
 
   async createWorkspace(params: {
@@ -243,6 +250,26 @@ export class WorktreeManager {
     // Compute workspace paths using canonical method
     const oldPath = this.getWorkspacePath(projectPath, oldName);
     const newPath = this.getWorkspacePath(projectPath, newName);
+
+    // Short-circuit: if the sanitized paths are identical (e.g. renaming
+    // "feature-a" <-> "feature/a"), skip the directory move — only the
+    // persisted name changes, not the physical location.
+    if (oldPath === newPath) {
+      // Still rename the git branch to maintain the workspace/branch name sync.
+      // Best-effort: branch rename can fail if the workspace is in detached HEAD
+      // state or if the branch has drifted, matching the normal rename path.
+      try {
+        using branchProc = execFileAsync(
+          "git",
+          ["-C", oldPath, "branch", "-m", oldName, newName],
+          noHooksEnv
+        );
+        await branchProc.result;
+      } catch {
+        // Best-effort: branch rename can fail (detached HEAD, branch drift, etc.)
+      }
+      return { success: true, oldPath, newPath };
+    }
 
     try {
       // Move the worktree directory (updates git's internal worktree metadata)

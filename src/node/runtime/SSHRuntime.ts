@@ -48,6 +48,7 @@ import { getOriginUrlForBundle } from "./gitBundleSync";
 import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
+import { sanitizeWorkspaceNameForPath } from "@/common/utils/validation/workspaceValidation";
 
 /** Name of the shared bare repo directory under each project on the remote. */
 const BASE_REPO_DIR = ".mux-base.git";
@@ -338,7 +339,13 @@ export class SSHRuntime extends RemoteRuntime {
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     const projectName = getProjectName(projectPath);
-    return path.posix.join(this.config.srcBaseDir, projectName, workspaceName);
+    // In-place workspaces use absolute paths as workspace names — do not sanitize
+    // those since path.posix.join already handles them correctly and sanitizing
+    // would turn e.g. "/home/user/project" into "-home-user-project".
+    const safeName = path.posix.isAbsolute(workspaceName)
+      ? workspaceName
+      : sanitizeWorkspaceNameForPath(workspaceName);
+    return path.posix.join(this.config.srcBaseDir, projectName, safeName);
   }
 
   /**
@@ -1146,6 +1153,27 @@ export class SSHRuntime extends RemoteRuntime {
     // Compute workspace paths using canonical method
     const oldPath = this.getWorkspacePath(projectPath, oldName);
     const newPath = this.getWorkspacePath(projectPath, newName);
+
+    // Short-circuit: if the sanitized paths are identical (e.g. renaming
+    // "feature-a" <-> "feature/a"), skip the directory move — only the
+    // persisted name changes, not the physical location.
+    if (oldPath === newPath) {
+      // Still rename the git branch to maintain the workspace/branch name sync.
+      // Best-effort: branch rename can fail if the workspace is in detached HEAD
+      // state or if the branch has drifted, matching the normal rename path.
+      try {
+        const expandedOldPath = expandTildeForSSH(oldPath);
+        const branchStream = await this.exec(
+          `git -C ${shescape.quote(expandedOldPath)} branch -m ${shescape.quote(oldName)} ${shescape.quote(newName)}`,
+          { cwd: this.config.srcBaseDir, timeout: 10, abortSignal }
+        );
+        await branchStream.stdin.abort();
+        await branchStream.exitCode;
+      } catch {
+        // Best-effort: branch rename can fail (detached HEAD, branch drift, etc.)
+      }
+      return { success: true, oldPath, newPath };
+    }
 
     try {
       const expandedOldPath = expandTildeForSSH(oldPath);

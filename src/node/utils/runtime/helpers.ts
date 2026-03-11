@@ -243,9 +243,13 @@ export async function movePlanFile(
     // Resolve tildes to absolute paths - bash doesn't expand ~ inside quotes
     const resolvedOldPath = await runtime.resolvePath(oldPath);
     const resolvedNewPath = await runtime.resolvePath(newPath);
+    // Ensure destination directory exists (slash-containing workspace names
+    // create subdirectories, e.g. "feature/my-branch.md").
+    const newDir = newPath.substring(0, newPath.lastIndexOf("/"));
+    const resolvedNewDir = await runtime.resolvePath(newDir);
     await execBuffered(
       runtime,
-      `mv ${shellQuote(resolvedOldPath)} ${shellQuote(resolvedNewPath)}`,
+      `mkdir -p ${shellQuote(resolvedNewDir)} && mv ${shellQuote(resolvedOldPath)} ${shellQuote(resolvedNewPath)}`,
       {
         cwd: "/tmp",
         timeout: 5,
