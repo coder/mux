@@ -155,7 +155,3 @@ export const ProjectConfigSchema = z.object({
       "Whether the user has confirmed trust for this project. Untrusted projects cannot run hooks or user scripts.",
   }),
 });
-
-export type SectionConfig = z.infer<typeof SectionConfigSchema>;
-export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
-export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
