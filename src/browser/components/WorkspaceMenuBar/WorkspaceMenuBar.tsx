@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
+import { Bell, BellOff, Ellipsis, Pencil } from "lucide-react";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
@@ -21,6 +21,7 @@ import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keyb
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/Button/Button";
+import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
@@ -352,20 +353,12 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         )}
       >
         {leftSidebarCollapsed && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onToggleLeftSidebarCollapsed}
-                aria-label="Open sidebar menu"
-                className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
-              >
-                <Menu className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Open sidebar ({formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})</TooltipContent>
-          </Tooltip>
+          <SidebarCollapseButton
+            collapsed={true}
+            onToggle={onToggleLeftSidebarCollapsed}
+            side="left"
+            shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+          />
         )}
         <RuntimeBadge
           runtimeConfig={runtimeConfig}

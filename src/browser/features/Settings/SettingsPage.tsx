@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import {
   ArrowLeft,
-  Menu,
   Settings,
   Key,
   Cpu,
@@ -20,7 +19,12 @@ import {
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
-import { isEditableElement, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  formatKeybind,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { GeneralSection } from "./Sections/GeneralSection";
 import { TasksSection } from "./Sections/TasksSection";
@@ -29,6 +33,7 @@ import { ModelsSection } from "./Sections/ModelsSection";
 import { System1Section } from "./Sections/System1Section";
 import { GovernorSection } from "./Sections/GovernorSection";
 import { Button } from "@/browser/components/Button/Button";
+import { SidebarCollapseButton } from "@/browser/components/SidebarCollapseButton/SidebarCollapseButton";
 import { MCPSettingsSection } from "./Sections/MCPSettingsSection";
 import { SecretsSection } from "./Sections/SecretsSection";
 import { LayoutsSection } from "./Sections/LayoutsSection";
@@ -194,16 +199,12 @@ export function SettingsPage(props: SettingsPageProps) {
       >
         <div className="flex min-w-0 items-center gap-2">
           {props.leftSidebarCollapsed && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={props.onToggleLeftSidebarCollapsed}
-              title="Open sidebar"
-              aria-label="Open sidebar menu"
-              className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
-            >
-              <Menu className="h-4 w-4" />
-            </Button>
+            <SidebarCollapseButton
+              collapsed={true}
+              onToggle={props.onToggleLeftSidebarCollapsed}
+              side="left"
+              shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+            />
           )}
           <span className="text-foreground text-sm font-semibold">Settings</span>
         </div>
@@ -266,7 +267,17 @@ export function SettingsPage(props: SettingsPageProps) {
           </div>
 
           <div className="border-border-medium hidden h-12 items-center justify-between border-b px-6 md:flex">
-            <span className="text-foreground text-sm font-medium">{currentSection.label}</span>
+            <div className="flex items-center gap-2">
+              {props.leftSidebarCollapsed && (
+                <SidebarCollapseButton
+                  collapsed={true}
+                  onToggle={props.onToggleLeftSidebarCollapsed}
+                  side="left"
+                  shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+                />
+              )}
+              <span className="text-foreground text-sm font-medium">{currentSection.label}</span>
+            </div>
             <Button
               variant="ghost"
               size="icon"

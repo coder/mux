@@ -55,7 +55,6 @@ import {
   type AgentRowRenderMeta,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
-import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
 import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
 import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModal/ProjectDeleteConfirmationModal";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -65,7 +64,7 @@ import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceS
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
+import { ChevronRight, CircleHelp, FolderPlus, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -1040,7 +1039,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         >
           {!collapsed && (
             <>
-              <div className="border-dark flex items-center justify-between border-b py-3 pr-3 pl-4">
+              <div className="border-dark flex items-center border-b py-3 pr-3 pl-4">
                 <div className="flex min-w-0 items-center gap-2">
                   <button
                     onClick={handleGoHome}
@@ -1059,14 +1058,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     </>
                   )}
                 </div>
-                <button
-                  onClick={onAddProject}
-                  aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
-                >
-                  <span className="text-base leading-none">+</span>
-                  <span>Add Project</span>
-                </button>
               </div>
               <div
                 ref={projectListScrollRef}
@@ -1831,14 +1822,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   })
                 )}
               </div>
+              <div className="border-border border-t">
+                <button
+                  className="bg-surface-primary text-foreground hover:bg-hover flex w-full items-center justify-center gap-2 px-3 py-2 text-sm"
+                  onClick={onAddProject}
+                  aria-label="Add project"
+                >
+                  <FolderPlus className="size-4" />
+                  Project
+                </button>
+              </div>
             </>
           )}
-          <SidebarCollapseButton
-            collapsed={collapsed}
-            onToggle={onToggleCollapsed}
-            side="left"
-            shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
-          />
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}
             title={

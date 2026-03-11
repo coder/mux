@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
@@ -48,6 +49,14 @@ void mock.module("@/browser/contexts/ProjectContext", () => ({
     userProjects: new Map(),
     getProjectConfig: () => undefined,
     refreshProjects: () => Promise.resolve(),
+  }),
+}));
+
+// ProjectPage is wrapped in AgentProvider, which reads workspace metadata context.
+// Provide minimal hook state so this test can render without the full WorkspaceProvider tree.
+void mock.module("@/browser/contexts/WorkspaceContext", () => ({
+  useWorkspaceMetadata: () => ({
+    workspaceMetadata: new Map(),
   }),
 }));
 
@@ -113,7 +122,9 @@ describe("ProjectPage", () => {
     const { rerender } = render(
       <RouterProvider>
         <SettingsProvider>
-          <ProjectPage {...baseProps} />
+          <TooltipProvider>
+            <ProjectPage {...baseProps} />
+          </TooltipProvider>
         </SettingsProvider>
       </RouterProvider>
     );
@@ -125,7 +136,9 @@ describe("ProjectPage", () => {
     rerender(
       <RouterProvider>
         <SettingsProvider>
-          <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+          <TooltipProvider>
+            <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+          </TooltipProvider>
         </SettingsProvider>
       </RouterProvider>
     );

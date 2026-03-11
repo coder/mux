@@ -38,7 +38,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
     }
   };
 
-  const width = collapsed ? "20px" : `${widthPx ?? 288}px`;
+  const width = collapsed ? "0px" : `${widthPx ?? 288}px`;
 
   return (
     <>
@@ -59,15 +59,17 @@ export function LeftSidebar(props: LeftSidebarProps) {
           !isResizing && "transition-[width] duration-200",
           "mobile-sidebar",
           collapsed && "mobile-sidebar-collapsed",
-          // In desktop mode when collapsed, start border below titlebar height (32px)
-          // so it aligns with titlebar bottom edge and doesn't cut through traffic lights
-          isDesktop &&
-            collapsed &&
-            "border-r-0 after:absolute after:right-0 after:top-8 after:bottom-0 after:w-px after:bg-border"
+          // In desktop mode when collapsed, hide the border so the sidebar is fully hidden.
+          isDesktop && collapsed && "border-r-0"
         )}
         style={{ width }}
       >
-        {!collapsed && <TitleBar onBeforeOpenSettings={handleBeforeOpenSettings} />}
+        {!collapsed && (
+          <TitleBar
+            onBeforeOpenSettings={handleBeforeOpenSettings}
+            onToggleCollapsed={onToggleCollapsed}
+          />
+        )}
         <ProjectSidebar
           {...projectSidebarProps}
           collapsed={collapsed}

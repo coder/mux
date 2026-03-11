@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "../SettingsButton/SettingsButton";
+import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
 import { GatewayIcon } from "../icons/GatewayIcon/GatewayIcon";
 import { Button } from "../Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -61,6 +62,7 @@ function getGitDescribe(version: unknown): string | undefined {
 
 interface TitleBarProps {
   onBeforeOpenSettings?: () => void;
+  onToggleCollapsed: () => void;
 }
 
 export function TitleBar(props: TitleBarProps) {
@@ -283,6 +285,12 @@ export function TitleBar(props: TitleBarProps) {
           // On touch/mobile, opening settings from the sidebar should also dismiss the
           // off-canvas sidebar so users are not stuck with it covering the settings page.
           onBeforeOpenSettings={props.onBeforeOpenSettings}
+        />
+        <SidebarCollapseButton
+          collapsed={false}
+          onToggle={props.onToggleCollapsed}
+          side="left"
+          shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
         />
       </div>
     </div>

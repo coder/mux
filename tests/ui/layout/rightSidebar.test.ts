@@ -303,9 +303,9 @@ describeIntegration("RightSidebar (UI)", () => {
       // Find and click collapse button
       const collapseButton = await waitFor(
         () => {
-          // The collapse button has aria-label containing "collapse" or "expand"
-          const btn = sidebar.querySelector('button[aria-label*="ollapse"]') as HTMLElement;
-          if (!btn) throw new Error("Collapse button not found");
+          // The toggle button always uses the same aria-label
+          const btn = sidebar.querySelector('button[aria-label="Toggle sidebar"]') as HTMLElement;
+          if (!btn) throw new Error("Toggle sidebar button not found");
           return btn;
         },
         { timeout: 5_000 }
@@ -324,7 +324,7 @@ describeIntegration("RightSidebar (UI)", () => {
       ) as HTMLElement;
       expect(collapsedSidebar).toBeTruthy();
       const expandButton = collapsedSidebar.querySelector(
-        'button[aria-label="Expand sidebar"]'
+        'button[aria-label="Toggle sidebar"]'
       ) as HTMLElement;
       expect(expandButton).toBeTruthy();
       fireEvent.click(expandButton);
