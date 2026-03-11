@@ -23,4 +23,18 @@ describe("getWorkspaceProjectRepos", () => {
       },
     ]);
   });
+
+  it("sanitizes storage keys derived from malformed project names", () => {
+    const repos = getWorkspaceProjectRepos({
+      workspaceId: "workspace-1",
+      workspaceName: "main",
+      workspacePath: "/tmp/workspaces/main",
+      runtimeConfig: { type: "local" },
+      projectPath: "/tmp/projects/main",
+      projectName: "../../secrets",
+      projects: [],
+    });
+
+    expect(repos[0]?.storageKey).toBe("..-..-secrets");
+  });
 });

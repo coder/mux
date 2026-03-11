@@ -34,6 +34,15 @@ import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos"
 /** Callback invoked after patch generation completes (success or failure). */
 export type OnPatchGenerationComplete = (childWorkspaceId: string) => Promise<void>;
 
+function isPathInsideDir(dirPath: string, filePath: string): boolean {
+  const resolvedDir = path.resolve(dirPath);
+  const resolvedFile = path.resolve(filePath);
+  const relativePath = path.relative(resolvedDir, resolvedFile);
+  return (
+    relativePath.length > 0 && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)
+  );
+}
+
 async function writeReadableStreamToLocalFile(
   stream: ReadableStream<Uint8Array>,
   filePath: string
@@ -688,6 +697,20 @@ export class GitPatchArtifactService {
             childWorkspaceId,
             projectRepo.storageKey
           );
+
+          if (!isPathInsideDir(parentSessionDir, patchPath)) {
+            await ensureProjectArtifact({
+              projectPath: projectRepo.projectPath,
+              projectName: projectRepo.projectName,
+              storageKey: projectRepo.storageKey,
+              status: "failed",
+              baseCommitSha,
+              headCommitSha,
+              commitCount,
+              error: `Refusing to write patch outside session dir for storage key ${projectRepo.storageKey}.`,
+            });
+            continue;
+          }
 
           const formatPatchStream = await runtime.exec(
             `git format-patch --stdout --binary ${baseCommitSha}..${headCommitSha}`,

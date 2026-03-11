@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import * as path from "node:path";
 
 import type { ProjectRef } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -20,6 +21,35 @@ interface WorkspaceProjectRepoParams {
   projectPath: string;
   projectName?: string;
   projects?: ProjectRef[];
+}
+
+function sanitizeStorageKey(projectName: string, projectPath: string): string {
+  const sanitize = (value: string) =>
+    value
+      .split("")
+      .map((char) => {
+        const isForbiddenPathChar = '<>:"/\\|?*'.includes(char);
+        return isForbiddenPathChar || char.charCodeAt(0) < 32 ? "-" : char;
+      })
+      .join("")
+      .trim();
+
+  const sanitizedProjectName = sanitize(projectName);
+  const fallbackProjectName =
+    sanitize(PlatformPaths.getProjectName(projectPath).trim()) || "project";
+  const storageKey =
+    sanitizedProjectName.length > 0 && sanitizedProjectName !== "." && sanitizedProjectName !== ".."
+      ? sanitizedProjectName
+      : fallbackProjectName;
+
+  assert(!path.isAbsolute(storageKey), "getWorkspaceProjectRepos: storageKey must stay relative");
+  assert(
+    !storageKey.includes(path.sep) && !storageKey.includes(path.posix.sep),
+    "getWorkspaceProjectRepos: storageKey must not contain path separators"
+  );
+  assert(storageKey !== "." && storageKey !== "..", "getWorkspaceProjectRepos: invalid storageKey");
+
+  return storageKey;
 }
 
 export function getWorkspaceProjectRepos(
@@ -89,7 +119,7 @@ export function getWorkspaceProjectRepos(
     return {
       projectPath: project.projectPath,
       projectName,
-      storageKey: projectName,
+      storageKey: sanitizeStorageKey(projectName, project.projectPath),
       repoCwd,
     } satisfies WorkspaceProjectRepo;
   });
