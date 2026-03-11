@@ -74,6 +74,8 @@ interface APIProviderProps {
   createWebSocket?: (url: string) => WebSocket;
 }
 
+const noopConnectionControl = (_token?: string) => undefined;
+
 function closeWebSocketSafely(ws: WebSocket) {
   try {
     // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
@@ -174,15 +176,8 @@ function createBrowserClient(
   };
 }
 
-export const APIProvider = (props: APIProviderProps) => {
-  // If client is provided externally, start in connected state immediately
-  const [state, setState] = useState<ConnectionState>(() => {
-    if (props.client) {
-      window.__ORPC_CLIENT__ = props.client;
-      return { status: "connected", client: props.client, cleanup: () => undefined };
-    }
-    return { status: "connecting" };
-  });
+function ManagedAPIProvider(props: Omit<APIProviderProps, "client">) {
+  const [state, setState] = useState<ConnectionState>({ status: "connecting" });
   const [authToken, setAuthToken] = useState<string | null>(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const urlToken = urlParams.get("token")?.trim();
@@ -241,13 +236,6 @@ export const APIProvider = (props: APIProviderProps) => {
 
       cleanupRef.current?.();
       cleanupRef.current = null;
-
-      if (props.client) {
-        window.__ORPC_CLIENT__ = props.client;
-        cleanupRef.current = null;
-        setState({ status: "connected", client: props.client, cleanup: () => undefined });
-        return;
-      }
 
       // Skip Electron detection if custom WebSocket factory provided (for testing)
       if (!props.createWebSocket && window.api) {
@@ -457,7 +445,7 @@ export const APIProvider = (props: APIProviderProps) => {
         scheduleReconnectRef.current?.();
       });
     },
-    [props.client, props.createWebSocket, wsFactory]
+    [props.createWebSocket, wsFactory]
   );
 
   // Schedule reconnection with exponential backoff
@@ -498,13 +486,13 @@ export const APIProvider = (props: APIProviderProps) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Liveness check: periodic ping to detect degraded connections
-  // Only runs for browser WebSocket connections (not Electron or test clients)
+  // Liveness check: periodic ping to detect degraded connections.
+  // Only runs for managed browser WebSocket connections.
   useEffect(() => {
-    // Only check liveness for connected/degraded browser connections
+    // Only check liveness for connected/degraded browser connections.
     if (state.status !== "connected" && state.status !== "degraded") return;
-    // Skip for Electron (MessagePort) and test clients (externally provided)
-    if (props.client || (!props.createWebSocket && window.api)) return;
+    // Skip for Electron (MessagePort) clients.
+    if (!props.createWebSocket && window.api) return;
 
     const client = state.client;
     const cleanup = state.cleanup;
@@ -592,7 +580,7 @@ export const APIProvider = (props: APIProviderProps) => {
       void checkLiveness();
     }, LIVENESS_INTERVAL_MS);
     return () => clearInterval(intervalId);
-  }, [state, props.client, props.createWebSocket, connect, authToken]);
+  }, [state, props.createWebSocket, connect, authToken]);
 
   const authenticate = useCallback(
     (token: string) => {
@@ -630,6 +618,42 @@ export const APIProvider = (props: APIProviderProps) => {
 
   // Always render children - consumers handle their own loading/error states
   return <APIContext.Provider value={value}>{props.children}</APIContext.Provider>;
+}
+
+function InjectedClientAPIProvider(
+  props: Pick<APIProviderProps, "children"> & { client: APIClient }
+) {
+  // User rationale: injected clients are already fully constructed, so wrapping them in the
+  // browser liveness/reconnect state machine risks leaking async state updates into tests.
+  window.__ORPC_CLIENT__ = props.client;
+
+  return (
+    <APIContext.Provider
+      value={{
+        status: "connected",
+        api: props.client,
+        error: null,
+        authenticate: noopConnectionControl,
+        retry: noopConnectionControl,
+      }}
+    >
+      {props.children}
+    </APIContext.Provider>
+  );
+}
+
+export const APIProvider = (props: APIProviderProps) => {
+  if (props.client) {
+    return (
+      <InjectedClientAPIProvider client={props.client}>{props.children}</InjectedClientAPIProvider>
+    );
+  }
+
+  return (
+    <ManagedAPIProvider createWebSocket={props.createWebSocket}>
+      {props.children}
+    </ManagedAPIProvider>
+  );
 };
 
 export const useAPI = (): UseAPIResult => {

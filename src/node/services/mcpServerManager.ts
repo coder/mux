@@ -734,10 +734,13 @@ export class MCPServerManager {
    * Get all servers from config (both enabled and disabled) + inline servers.
    * Returns full MCPServerInfo to preserve disabled state.
    */
-  private async getAllServers(projectPath: string): Promise<Record<string, MCPServerInfo>> {
+  private async getAllServers(
+    projectPath: string,
+    trusted = false
+  ): Promise<Record<string, MCPServerInfo>> {
     const configServers = this.ignoreConfigFile
       ? {}
-      : await this.configService.listServers(projectPath);
+      : await this.configService.listServers(projectPath, trusted);
     // Inline servers override config file servers (always enabled)
     const inlineAsInfo: Record<string, MCPServerInfo> = {};
     for (const [name, command] of Object.entries(this.inlineServers)) {
@@ -758,8 +761,12 @@ export class MCPServerManager {
    * @param projectPath - Project path to get servers for
    * @param overrides - Optional workspace-level overrides
    */
-  async listServers(projectPath: string, overrides?: WorkspaceMCPOverrides): Promise<MCPServerMap> {
-    const allServers = await this.getAllServers(projectPath);
+  async listServers(
+    projectPath: string,
+    overrides?: WorkspaceMCPOverrides,
+    trusted = false
+  ): Promise<MCPServerMap> {
+    const allServers = await this.getAllServers(projectPath, trusted);
     const enabled = this.applyServerOverrides(allServers, overrides);
     return this.filterServersByPolicy(enabled);
   }
@@ -886,15 +893,25 @@ export class MCPServerManager {
     projectPath: string;
     runtime: Runtime;
     workspacePath: string;
+    /** Whether repo-local MCP config is allowed for this project. */
+    trusted?: boolean;
     /** Per-workspace MCP overrides (disabled servers, tool allowlists) */
     overrides?: WorkspaceMCPOverrides;
     /** Project secrets, used for resolving {secret: "KEY"} header references. */
     projectSecrets?: Record<string, string>;
   }): Promise<MCPToolsForWorkspaceResult> {
-    const { workspaceId, projectPath, runtime, workspacePath, overrides, projectSecrets } = options;
+    const {
+      workspaceId,
+      projectPath,
+      runtime,
+      workspacePath,
+      trusted = false,
+      overrides,
+      projectSecrets,
+    } = options;
 
     // Fetch full server info for project-level allowlists and server filtering
-    const fullServerInfo = await this.getAllServers(projectPath);
+    const fullServerInfo = await this.getAllServers(projectPath, trusted);
 
     // Apply server-level overrides (enabled/disabled) before caching
     const enabledServers = this.filterServersByPolicy(
@@ -1145,8 +1162,9 @@ export class MCPServerManager {
         workspaceId,
       });
 
-      // Recompute failure stats from the currently enabled server set so stale failures
-      // from newly-disabled servers do not trigger warnings while a lease is active.
+      // Recompute lease-visible stats from the currently enabled server set so stale
+      // failures and tool metadata from newly-disabled servers do not leak into the
+      // next stream while an existing lease is still active.
       existing.timedOutServerNames = [
         ...existing.timedOutServerNames.filter(
           (serverName) => enabledServerNames.has(serverName) && !existing.instances.has(serverName)
@@ -1154,25 +1172,26 @@ export class MCPServerManager {
         ...restartTimedOutNames,
       ];
 
-      const failedServerNames = [
-        ...existing.stats.failedServerNames.filter((serverName) =>
-          enabledServerNames.has(serverName)
-        ),
-        ...restartFailedNames,
-      ];
-      const leasedStats: MCPWorkspaceStats = {
-        ...existing.stats,
-        failedServerCount: failedServerNames.length,
-        failedServerNames,
-      };
-      existing.stats = leasedStats;
-
-      // Even while deferring restarts, ensure new tool lists reflect the latest enabled/disabled
-      // server set. We cannot revoke tools already captured by an in-flight stream, but we
-      // can avoid exposing tools from newly-disabled servers to the next stream.
+      // Even while deferring restarts, ensure new tool lists and stats reflect the latest
+      // enabled/disabled server set. We cannot revoke tools already captured by an in-flight
+      // stream, but we can avoid exposing tools from newly-disabled servers to the next stream.
       const instancesForTools = new Map(
         [...existing.instances].filter(([serverName]) => enabledServers[serverName] !== undefined)
       );
+      const failedServerNames = [
+        ...new Set([
+          ...existing.stats.failedServerNames.filter((serverName) =>
+            enabledServerNames.has(serverName)
+          ),
+          ...restartFailedNames,
+        ]),
+      ];
+      const leasedStats = this.createWorkspaceStats(
+        enabledEntries.length,
+        instancesForTools,
+        failedServerNames
+      );
+      existing.stats = leasedStats;
 
       return {
         tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
@@ -1252,6 +1271,8 @@ export class MCPServerManager {
    */
   async test(options: {
     projectPath: string;
+    /** Whether repo-local MCP config is allowed for this project. */
+    trusted?: boolean;
     name?: string;
     command?: string;
     transport?: MCPServerTransport;
@@ -1262,11 +1283,20 @@ export class MCPServerManager {
     const isTransportAllowed = (t: MCPServerTransport): boolean => {
       return !this.policyService?.isEnforced() || this.policyService.isMcpTransportAllowed(t);
     };
-    const { projectPath, name, command, transport, url, headers, projectSecrets } = options;
+    const {
+      projectPath,
+      trusted = false,
+      name,
+      command,
+      transport,
+      url,
+      headers,
+      projectSecrets,
+    } = options;
     const trimmedName = name?.trim();
 
     if (trimmedName && !command?.trim() && !url?.trim()) {
-      const servers = await this.configService.listServers(projectPath);
+      const servers = await this.configService.listServers(projectPath, trusted);
       const server = servers[trimmedName];
       if (!server) {
         return { success: false, error: `Server "${trimmedName}" not found in configuration` };

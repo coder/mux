@@ -133,6 +133,7 @@ describe("AnalyticsQueryToolCall", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.ResizeObserver = originalResizeObserver;

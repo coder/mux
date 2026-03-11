@@ -50,7 +50,7 @@ describe("Queued agent task prompt markdown rendering", () => {
     expect(codeElement!.textContent).toContain("const x = 1;");
   });
 
-  test("renders markdown links as anchor elements", () => {
+  test("renders safe markdown links as anchor elements", () => {
     const view = render(
       <MarkdownRenderer
         content={"Check [this link](https://example.com) for details"}
@@ -59,10 +59,35 @@ describe("Queued agent task prompt markdown rendering", () => {
       />
     );
 
-    const anchor = view.container.querySelector("a");
+    const anchor = view.container.querySelector("a[href]");
     expect(anchor).toBeTruthy();
     expect(anchor!.getAttribute("href")).toBe("https://example.com/");
     expect(anchor!.textContent).toBe("this link");
+  });
+
+  test("keeps dangerous markdown link schemes inert", () => {
+    const dangerousLinks = [
+      ["javascript", "javascript:alert('xss')"],
+      ["data", "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="],
+      ["file", "file:///etc/passwd"],
+      ["vbscript", "vbscript:msgbox('xss')"],
+    ] as const;
+
+    for (const [label, href] of dangerousLinks) {
+      const view = render(
+        <MarkdownRenderer
+          content={`Blocked [${label} link](${href}) should stay inert`}
+          className="user-message-markdown"
+          preserveLineBreaks
+        />
+      );
+
+      const dangerousAnchor = view.container.querySelector("a[href]");
+      expect(dangerousAnchor).toBeNull();
+      expect(view.container.textContent).toContain(`${label} link`);
+
+      cleanup();
+    }
   });
 
   test("renders inline code with code element", () => {

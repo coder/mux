@@ -1,40 +1,104 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { GLOBAL_SCOPE_ID, getAgentIdKey, getProjectScopeId } from "@/common/constants/storage";
+import { requireTestModule } from "@/browser/testUtils";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { AgentContextValue } from "./AgentContext";
+import type * as AgentContextModule from "./AgentContext";
+import type * as APIModule from "./API";
+import type { APIClient } from "./API";
+import type * as ProjectContextModule from "./ProjectContext";
+import type * as RouterContextModule from "./RouterContext";
+import type * as WorkspaceContextModule from "./WorkspaceContext";
 
 let mockAgentDefinitions: AgentDefinitionDescriptor[] = [];
-const apiClient = {
-  agents: {
-    list: () => Promise.resolve(mockAgentDefinitions),
-  },
-};
-
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: apiClient,
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
-
 let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string; agentId?: string }>();
 
-void mock.module("@/browser/contexts/WorkspaceContext", () => ({
-  useWorkspaceMetadata: () => ({
-    workspaceMetadata: mockWorkspaceMetadata,
-    loading: false,
-  }),
-}));
+let APIProvider!: typeof APIModule.APIProvider;
+let RouterProvider!: typeof RouterContextModule.RouterProvider;
+let ProjectProvider!: typeof ProjectContextModule.ProjectProvider;
+let WorkspaceProvider!: typeof WorkspaceContextModule.WorkspaceProvider;
+let AgentProvider!: typeof AgentContextModule.AgentProvider;
+let useAgent!: typeof AgentContextModule.useAgent;
+let isolatedModuleDir: string | null = null;
 
-import { AgentProvider, useAgent, type AgentContextValue } from "./AgentContext";
+const contextsDir = dirname(fileURLToPath(import.meta.url));
+
+async function importIsolatedAgentModules() {
+  const tempDir = await mkdtemp(join(contextsDir, ".agent-context-test-"));
+  const isolatedApiPath = join(tempDir, "API.real.tsx");
+  const isolatedRouterPath = join(tempDir, "RouterContext.real.tsx");
+  const isolatedProjectPath = join(tempDir, "ProjectContext.real.tsx");
+  const isolatedWorkspacePath = join(tempDir, "WorkspaceContext.real.tsx");
+  const isolatedAgentPath = join(tempDir, "AgentContext.real.tsx");
+
+  await copyFile(join(contextsDir, "API.tsx"), isolatedApiPath);
+  await copyFile(join(contextsDir, "RouterContext.tsx"), isolatedRouterPath);
+
+  const projectContextSource = await readFile(join(contextsDir, "ProjectContext.tsx"), "utf8");
+  const isolatedProjectContextSource = projectContextSource.replace(
+    'from "@/browser/contexts/API";',
+    'from "./API.real.tsx";'
+  );
+
+  if (isolatedProjectContextSource === projectContextSource) {
+    throw new Error("Failed to rewrite ProjectContext API import for the isolated test copy");
+  }
+
+  await writeFile(isolatedProjectPath, isolatedProjectContextSource);
+
+  const workspaceContextSource = await readFile(join(contextsDir, "WorkspaceContext.tsx"), "utf8");
+  const isolatedWorkspaceContextSource = workspaceContextSource
+    .replaceAll('from "@/browser/contexts/API";', 'from "./API.real.tsx";')
+    .replace('from "@/browser/contexts/ProjectContext";', 'from "./ProjectContext.real.tsx";')
+    .replace('from "@/browser/contexts/RouterContext";', 'from "./RouterContext.real.tsx";');
+
+  if (isolatedWorkspaceContextSource === workspaceContextSource) {
+    throw new Error("Failed to rewrite WorkspaceContext imports for the isolated test copy");
+  }
+
+  await writeFile(isolatedWorkspacePath, isolatedWorkspaceContextSource);
+
+  const agentContextSource = await readFile(join(contextsDir, "AgentContext.tsx"), "utf8");
+  const isolatedAgentContextSource = agentContextSource
+    .replace('from "@/browser/contexts/API";', 'from "./API.real.tsx";')
+    .replace('from "@/browser/contexts/WorkspaceContext";', 'from "./WorkspaceContext.real.tsx";');
+
+  if (isolatedAgentContextSource === agentContextSource) {
+    throw new Error("Failed to rewrite AgentContext imports for the isolated test copy");
+  }
+
+  await writeFile(isolatedAgentPath, isolatedAgentContextSource);
+
+  ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
+    isolatedApiPath
+  ));
+  ({ RouterProvider } = requireTestModule<{
+    RouterProvider: typeof RouterContextModule.RouterProvider;
+  }>(isolatedRouterPath));
+  ({ ProjectProvider } = requireTestModule<{
+    ProjectProvider: typeof ProjectContextModule.ProjectProvider;
+  }>(isolatedProjectPath));
+  ({ WorkspaceProvider } = requireTestModule<{
+    WorkspaceProvider: typeof WorkspaceContextModule.WorkspaceProvider;
+  }>(isolatedWorkspacePath));
+  ({ AgentProvider, useAgent } = requireTestModule<{
+    AgentProvider: typeof AgentContextModule.AgentProvider;
+    useAgent: typeof AgentContextModule.useAgent;
+  }>(isolatedAgentPath));
+
+  return tempDir;
+}
 
 const AUTO_AGENT: AgentDefinitionDescriptor = {
   id: "auto",
@@ -86,12 +150,97 @@ function Harness(props: HarnessProps) {
   return null;
 }
 
+function createWorkspaceMetadata(
+  workspaceId: string,
+  overrides: { parentWorkspaceId?: string; agentId?: string } = {}
+): FrontendWorkspaceMetadata {
+  return {
+    id: workspaceId,
+    projectPath: "/tmp/project",
+    projectName: "project",
+    name: "main",
+    namedWorkspacePath: `/tmp/project/${workspaceId}`,
+    createdAt: "2025-01-01T00:00:00.000Z",
+    runtimeConfig: { type: "local", srcBaseDir: "/tmp/.mux/src" },
+    ...overrides,
+  };
+}
+
+function createEmptyAsyncIterable<T>(): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<T> {
+      return {
+        next: () => Promise.resolve({ done: true, value: undefined as T }),
+      };
+    },
+  };
+}
+
+function createApiClient(): APIClient {
+  const workspaceMetadata = Array.from(
+    mockWorkspaceMetadata.entries(),
+    ([workspaceId, overrides]) => createWorkspaceMetadata(workspaceId, overrides)
+  );
+
+  return {
+    agents: {
+      list: () => Promise.resolve(mockAgentDefinitions),
+    },
+    workspace: {
+      list: () => Promise.resolve(workspaceMetadata),
+      onMetadata: () => Promise.resolve(createEmptyAsyncIterable()),
+      onChat: () => Promise.resolve(createEmptyAsyncIterable()),
+      getSessionUsage: () => Promise.resolve(undefined),
+      activity: {
+        list: () => Promise.resolve({}),
+        subscribe: () => Promise.resolve(createEmptyAsyncIterable()),
+      },
+      truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+      interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+    },
+    projects: {
+      list: () => Promise.resolve([]),
+      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      secrets: {
+        get: () => Promise.resolve([]),
+      },
+    },
+    server: {
+      getLaunchProject: () => Promise.resolve(null),
+    },
+    terminal: {
+      openWindow: () => Promise.resolve(),
+    },
+  } as unknown as APIClient;
+}
+
+function renderAgentHarness(props: {
+  projectPath: string;
+  workspaceId?: string;
+  onChange: (value: AgentContextValue) => void;
+}) {
+  return render(
+    <APIProvider client={createApiClient()}>
+      <RouterProvider>
+        <ProjectProvider>
+          <WorkspaceProvider>
+            <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
+              <Harness onChange={props.onChange} />
+            </AgentProvider>
+          </WorkspaceProvider>
+        </ProjectProvider>
+      </RouterProvider>
+    </APIProvider>
+  );
+}
+
 describe("AgentContext", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
   let originalLocalStorage: typeof globalThis.localStorage;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    isolatedModuleDir = await importIsolatedAgentModules();
     mockAgentDefinitions = [];
     mockWorkspaceMetadata = new Map();
 
@@ -103,13 +252,26 @@ describe("AgentContext", () => {
     globalThis.window = dom as unknown as Window & typeof globalThis;
     globalThis.document = dom.document as unknown as Document;
     globalThis.localStorage = dom.localStorage as unknown as Storage;
+    window.api = {
+      platform: "darwin",
+      versions: {},
+      consumePendingDeepLinks: () => [],
+      onDeepLink: () => () => undefined,
+    };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    getWorkspaceStoreRaw().dispose();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.localStorage = originalLocalStorage;
+
+    if (isolatedModuleDir) {
+      await rm(isolatedModuleDir, { recursive: true, force: true });
+      isolatedModuleDir = null;
+    }
   });
 
   test("project-scoped agent falls back to global default when project preference is unset", async () => {
@@ -118,11 +280,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("ask");
@@ -139,11 +297,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("plan");
@@ -157,11 +311,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("auto");
@@ -188,11 +338,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("auto");
@@ -226,11 +372,11 @@ describe("AgentContext", () => {
     window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpenPicker as EventListener);
 
     try {
-      render(
-        <AgentProvider workspaceId={MUX_HELP_CHAT_WORKSPACE_ID} projectPath={projectPath}>
-          <Harness onChange={(value) => (contextValue = value)} />
-        </AgentProvider>
-      );
+      renderAgentHarness({
+        workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+        projectPath,
+        onChange: (value) => (contextValue = value),
+      });
 
       await waitFor(() => {
         // Backend-assigned agent overrides stale localStorage in locked workspaces.
@@ -289,11 +435,7 @@ describe("AgentContext", () => {
     window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpenPicker as EventListener);
 
     try {
-      render(
-        <AgentProvider projectPath={projectPath}>
-          <Harness onChange={(value) => (contextValue = value)} />
-        </AgentProvider>
-      );
+      renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
       await waitFor(() => {
         expect(contextValue?.agentId).toBe("mux");
@@ -333,11 +475,7 @@ describe("AgentContext", () => {
 
     let contextValue: AgentContextValue | undefined;
 
-    render(
-      <AgentProvider projectPath={projectPath}>
-        <Harness onChange={(value) => (contextValue = value)} />
-      </AgentProvider>
-    );
+    renderAgentHarness({ projectPath, onChange: (value) => (contextValue = value) });
 
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("exec");

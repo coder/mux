@@ -6,6 +6,7 @@ import {
   validatePathInCwd,
   validateFileSize,
   validateNoRedundantPrefix,
+  resolvePathWithinCwd,
   MAX_FILE_SIZE,
 } from "./fileCommon";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
@@ -165,6 +166,63 @@ describe("fileCommon", () => {
       const result = validatePathInCwd("~", cwd, runtime);
       expect(result).not.toBeNull();
       expect(result?.error).toContain("restricted to the workspace directory");
+    });
+  });
+
+  it("should reject traversal outside cwd for SSH runtimes", () => {
+    const sshRuntime = createRuntime({
+      type: "ssh",
+      host: "user@localhost",
+      srcBaseDir: "/home/user/mux",
+      identityFile: "/tmp/fake-key",
+    });
+
+    const result = validatePathInCwd("../outside.ts", "/home/user/mux/project", sshRuntime);
+    expect(result).not.toBeNull();
+    expect(result?.error).toContain("restricted to the workspace directory");
+  });
+
+  it("should allow absolute paths within cwd for SSH runtimes", () => {
+    const sshRuntime = createRuntime({
+      type: "ssh",
+      host: "user@localhost",
+      srcBaseDir: "/home/user/mux",
+      identityFile: "/tmp/fake-key",
+    });
+
+    expect(
+      validatePathInCwd("/home/user/mux/project/src/file.ts", "/home/user/mux/project", sshRuntime)
+    ).toBeNull();
+  });
+
+  describe("resolvePathWithinCwd", () => {
+    const cwd = "/workspace/project";
+    const runtime = createRuntime({ type: "local", srcBaseDir: cwd });
+    const planFilePath = "/home/user/.mux/plans/plan.md";
+
+    it("allows the exact configured plan file outside cwd for reads in any mode", () => {
+      const result = resolvePathWithinCwd(planFilePath, cwd, runtime, {
+        planFilePath,
+        allowConfiguredPlanFileOutsideCwd: true,
+      });
+
+      expect(result.correctedPath).toBe(planFilePath);
+      expect(result.resolvedPath).toBe(planFilePath);
+    });
+
+    it("keeps rejecting writes to the configured plan file outside cwd outside plan mode", () => {
+      expect(() => resolvePathWithinCwd(planFilePath, cwd, runtime, { planFilePath })).toThrow(
+        "restricted to the workspace directory"
+      );
+    });
+
+    it("keeps rejecting other outside-cwd paths even when plan file reads are allowlisted", () => {
+      expect(() =>
+        resolvePathWithinCwd("/home/user/.mux/plans/other.md", cwd, runtime, {
+          planFilePath,
+          allowConfiguredPlanFileOutsideCwd: true,
+        })
+      ).toThrow("restricted to the workspace directory");
     });
   });
 

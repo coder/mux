@@ -7,17 +7,75 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { createElement, type ComponentProps, type ReactNode } from "react";
+import { copyFile, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type * as APIModule from "@/browser/contexts/API";
+import type { APIClient } from "@/browser/contexts/API";
+import { requireTestModule } from "@/browser/testUtils";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import {
-  isGatewayFormat,
-  isProviderSupported,
-  migrateGatewayModel,
-  pendingGatewayEnrollments,
-  toGatewayModel,
-  useGateway,
-} from "./useGatewayModels";
+import type * as UseGatewayModelsModule from "./useGatewayModels";
+
+let APIProvider!: typeof APIModule.APIProvider;
+let isGatewayFormat!: typeof UseGatewayModelsModule.isGatewayFormat;
+let isProviderSupported!: typeof UseGatewayModelsModule.isProviderSupported;
+let migrateGatewayModel!: typeof UseGatewayModelsModule.migrateGatewayModel;
+let pendingGatewayEnrollments!: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
+let toGatewayModel!: typeof UseGatewayModelsModule.toGatewayModel;
+let useGateway!: typeof UseGatewayModelsModule.useGateway;
+let isolatedModulePaths: string[] = [];
+
+const hooksDir = dirname(fileURLToPath(import.meta.url));
+const contextsDir = join(hooksDir, "../contexts");
+
+async function importIsolatedGatewayModelsModule() {
+  const suffix = randomUUID();
+  const isolatedApiPath = join(contextsDir, `API.real.${suffix}.tsx`);
+  const isolatedHookPath = join(hooksDir, `useGatewayModels.real.${suffix}.ts`);
+
+  await copyFile(join(contextsDir, "API.tsx"), isolatedApiPath);
+
+  const hookSource = await readFile(join(hooksDir, "useGatewayModels.ts"), "utf8");
+  const isolatedHookSource = hookSource.replace(
+    'from "@/browser/contexts/API";',
+    `from "../contexts/API.real.${suffix}.tsx";`
+  );
+
+  if (isolatedHookSource === hookSource) {
+    throw new Error("Failed to rewrite useGatewayModels API import for the isolated test copy");
+  }
+
+  await writeFile(isolatedHookPath, isolatedHookSource);
+
+  ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
+    isolatedApiPath
+  ));
+  ({
+    isGatewayFormat,
+    isProviderSupported,
+    migrateGatewayModel,
+    pendingGatewayEnrollments,
+    toGatewayModel,
+    useGateway,
+  } = requireTestModule<{
+    isGatewayFormat: typeof UseGatewayModelsModule.isGatewayFormat;
+    isProviderSupported: typeof UseGatewayModelsModule.isProviderSupported;
+    migrateGatewayModel: typeof UseGatewayModelsModule.migrateGatewayModel;
+    pendingGatewayEnrollments: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
+    toGatewayModel: typeof UseGatewayModelsModule.toGatewayModel;
+    useGateway: typeof UseGatewayModelsModule.useGateway;
+  }>(isolatedHookPath));
+
+  return [isolatedApiPath, isolatedHookPath];
+}
+
+interface GatewayTestApiClient {
+  config: Pick<APIClient["config"], "updateMuxGatewayPrefs">;
+}
 
 // Tracks optimistic updates applied to provider config
 let optimisticUpdates: Array<{ provider: string; updates: Record<string, unknown> }> = [];
@@ -37,40 +95,71 @@ const useProvidersConfigMock = mock(() => ({
   },
 }));
 
-void mock.module("@/browser/hooks/useProvidersConfig", () => ({
-  useProvidersConfig: useProvidersConfigMock,
-}));
+const updateMuxGatewayPrefsMock = mock(() => Promise.resolve());
+let currentApiClient: GatewayTestApiClient | null = null;
 
-const updateMuxGatewayPrefsMock = mock(() => Promise.resolve({ success: true }));
-const getProvidersConfigMock = mock(() => Promise.resolve(mockConfig));
-let apiAvailable = true;
+function createDisconnectedWebSocket(): WebSocket {
+  const target = new EventTarget();
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: apiAvailable
-      ? {
-          config: {
-            updateMuxGatewayPrefs: updateMuxGatewayPrefsMock,
-          },
-          providers: {
-            getConfig: getProvidersConfigMock,
-          },
-        }
-      : null,
-    status: apiAvailable ? ("connected" as const) : ("disconnected" as const),
-    error: null,
-  }),
-}));
+  return {
+    url: "ws://localhost/orpc/ws",
+    readyState: WebSocket.CLOSED,
+    bufferedAmount: 0,
+    extensions: "",
+    protocol: "",
+    binaryType: "arraybuffer",
+    CONNECTING: WebSocket.CONNECTING,
+    OPEN: WebSocket.OPEN,
+    CLOSING: WebSocket.CLOSING,
+    CLOSED: WebSocket.CLOSED,
+    onopen: null,
+    onerror: null,
+    onclose: null,
+    onmessage: null,
+    addEventListener: target.addEventListener.bind(target),
+    removeEventListener: target.removeEventListener.bind(target),
+    dispatchEvent: target.dispatchEvent.bind(target),
+    close: () => undefined,
+    send: () => undefined,
+  } as unknown as WebSocket;
+}
+
+function renderUseGatewayHook() {
+  return renderHook(() => useGateway(), {
+    wrapper: (props: { children: ReactNode }) => {
+      const providerProps: Omit<ComponentProps<typeof APIProvider>, "children"> = currentApiClient
+        ? { client: currentApiClient as APIClient }
+        : { createWebSocket: createDisconnectedWebSocket };
+
+      return createElement(
+        APIProvider,
+        providerProps as ComponentProps<typeof APIProvider>,
+        props.children
+      );
+    },
+  });
+}
 
 describe("useGateway", () => {
-  beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+  beforeEach(async () => {
+    void mock.module("@/browser/hooks/useProvidersConfig", () => ({
+      useProvidersConfig: useProvidersConfigMock,
+    }));
+
+    isolatedModulePaths = await importIsolatedGatewayModelsModule();
+    mock.restore();
+
+    globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
+      typeof globalThis;
     globalThis.document = globalThis.window.document;
     optimisticUpdates = [];
     pendingGatewayEnrollments.clear();
     updateMuxGatewayPrefsMock.mockClear();
-    getProvidersConfigMock.mockClear();
-    apiAvailable = true;
+    currentApiClient = {
+      config: {
+        updateMuxGatewayPrefs: updateMuxGatewayPrefsMock,
+      },
+    };
     mockConfig = {
       "mux-gateway": {
         couponCodeSet: true,
@@ -80,12 +169,18 @@ describe("useGateway", () => {
     };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    mock.restore();
     pendingGatewayEnrollments.clear();
-    apiAvailable = true;
+    currentApiClient = null;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
+
+    for (const modulePath of isolatedModulePaths) {
+      await rm(modulePath, { force: true });
+    }
+    isolatedModulePaths = [];
   });
 
   const flushAsyncWork = async () => {
@@ -96,7 +191,7 @@ describe("useGateway", () => {
   };
 
   test("toggleEnabled flips isEnabled once per call via optimistic update", async () => {
-    const { result } = renderHook(() => useGateway());
+    const { result } = renderUseGatewayHook();
 
     expect(result.current.isConfigured).toBe(true);
     expect(result.current.isEnabled).toBe(true);
@@ -118,8 +213,8 @@ describe("useGateway", () => {
   });
 
   test("toggleEnabled is optimistic even when API is unavailable", () => {
-    apiAvailable = false;
-    const { result } = renderHook(() => useGateway());
+    currentApiClient = null;
+    const { result } = renderUseGatewayHook();
 
     act(() => result.current.toggleEnabled());
 
@@ -140,7 +235,7 @@ describe("useGateway", () => {
       },
     };
 
-    const { result } = renderHook(() => useGateway());
+    const { result } = renderUseGatewayHook();
 
     act(() => {
       result.current.setEnabledModels(["anthropic:claude-opus-4-5"]);
@@ -155,7 +250,7 @@ describe("useGateway", () => {
   });
 
   test("toggleModelGateway flips model membership once per call", async () => {
-    const { result } = renderHook(() => useGateway());
+    const { result } = renderUseGatewayHook();
 
     const modelId = "openai:gpt-5.2";
     act(() => result.current.toggleModelGateway(modelId));
@@ -182,7 +277,7 @@ describe("useGateway", () => {
       },
     };
 
-    const { result } = renderHook(() => useGateway());
+    const { result } = renderUseGatewayHook();
 
     expect(result.current.isConfigured).toBe(true);
     expect(result.current.isEnabled).toBe(false);
@@ -200,7 +295,7 @@ describe("useGateway", () => {
       },
     };
 
-    const { result, rerender } = renderHook(() => useGateway());
+    const { result, rerender } = renderUseGatewayHook();
     expect(result.current.isConfigured).toBe(true);
 
     mockConfig = {
@@ -219,7 +314,7 @@ describe("useGateway", () => {
   });
 
   test("marks gateway unconfigured when session-expired event fires", () => {
-    renderHook(() => useGateway());
+    renderUseGatewayHook();
 
     act(() => {
       window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
@@ -237,7 +332,7 @@ describe("useGateway", () => {
   test("defers session-expired event until provider config hydrates", () => {
     mockConfig = null;
 
-    const { rerender } = renderHook(() => useGateway());
+    const { rerender } = renderUseGatewayHook();
 
     act(() => {
       window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
@@ -269,7 +364,7 @@ describe("useGateway", () => {
   test("drains pending enrollments from migrateGatewayModel after config loads", async () => {
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    renderHook(() => useGateway());
+    renderUseGatewayHook();
     await flushAsyncWork();
 
     const enrollUpdate = optimisticUpdates.find((u) => u.updates.gatewayModels != null);
@@ -284,7 +379,7 @@ describe("useGateway", () => {
   });
 
   test("flushes enrollments queued after hook mount", async () => {
-    renderHook(() => useGateway());
+    renderUseGatewayHook();
 
     act(() => {
       expect(migrateGatewayModel("mux-gateway:openai/gpt-5.2")).toBe("openai:gpt-5.2");
@@ -309,7 +404,7 @@ describe("useGateway", () => {
 
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    renderHook(() => useGateway());
+    renderUseGatewayHook();
     await flushAsyncWork();
 
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
@@ -320,7 +415,7 @@ describe("useGateway", () => {
     mockConfig = null;
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    const { rerender } = renderHook(() => useGateway());
+    const { rerender } = renderUseGatewayHook();
     await flushAsyncWork();
 
     // Hydration not finished yet: keep enrollment queued.
@@ -358,7 +453,7 @@ describe("useGateway", () => {
 
     pendingGatewayEnrollments.add("anthropic:claude-opus-4-5");
 
-    renderHook(() => useGateway());
+    renderUseGatewayHook();
     await flushAsyncWork();
 
     expect(updateMuxGatewayPrefsMock).toHaveBeenCalledTimes(0);
@@ -367,6 +462,20 @@ describe("useGateway", () => {
 });
 
 describe("pure utility functions", () => {
+  beforeEach(async () => {
+    isolatedModulePaths = await importIsolatedGatewayModelsModule();
+    mock.restore();
+  });
+
+  afterEach(async () => {
+    mock.restore();
+    pendingGatewayEnrollments.clear();
+
+    for (const modulePath of isolatedModulePaths) {
+      await rm(modulePath, { force: true });
+    }
+    isolatedModulePaths = [];
+  });
   test("isGatewayFormat detects mux-gateway: prefix", () => {
     expect(isGatewayFormat("mux-gateway:anthropic/claude-opus-4-5")).toBe(true);
     expect(isGatewayFormat("anthropic:claude-opus-4-5")).toBe(false);

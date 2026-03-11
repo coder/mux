@@ -86,6 +86,7 @@ describe("AppLoader", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     cleanupDom?.();
     cleanupDom = null;
   });

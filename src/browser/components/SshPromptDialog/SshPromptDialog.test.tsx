@@ -174,6 +174,7 @@ describe("SshPromptDialog", () => {
   afterEach(() => {
     mockSubscription.close();
     cleanup();
+    mock.restore();
     cleanupDom?.();
     cleanupDom = null;
     api = null;

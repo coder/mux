@@ -1,90 +1,125 @@
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { requireTestModule } from "@/browser/testUtils";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
+import type * as ProjectPageModule from "@/browser/components/ProjectPage/ProjectPage";
+import type * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 
 let cleanupDom: (() => void) | null = null;
 let focusMock: ReturnType<typeof mock> | null = null;
 let readyCalls = 0;
 
-// Mock lottie-react so CreationCenterContent/WorkspaceShell imports don't execute
-// lottie-web canvas initialization in happy-dom (which causes unhandled errors).
-void mock.module("lottie-react", () => ({
-  __esModule: true,
-  default: () => <div data-testid="LottieMock" />,
-}));
+function registerProjectPageMocks() {
+  // Re-register mocks before each test because afterEach restores them and this
+  // file should not depend on top-level module mock state leaking across tests.
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: null,
-    status: "connecting" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
+  // Mock lottie-react so CreationCenterContent/WorkspaceShell imports don't execute
+  // lottie-web canvas initialization in happy-dom (which causes unhandled errors).
+  void mock.module("lottie-react", () => ({
+    __esModule: true,
+    default: () => <div data-testid="LottieMock" />,
+  }));
 
-// Mock useProvidersConfig to return a configured provider so ChatInput renders
-void mock.module("@/browser/hooks/useProvidersConfig", () => ({
-  useProvidersConfig: () => ({
-    config: { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
-    loading: false,
-    error: null,
-  }),
-}));
+  void mock.module("@/browser/contexts/API", () => ({
+    useAPI: () => ({
+      api: null,
+      status: "connecting" as const,
+      error: null,
+      authenticate: () => undefined,
+      retry: () => undefined,
+    }),
+  }));
 
-// Mock ConfiguredProvidersBar to avoid tooltip/context dependencies
-void mock.module("@/browser/components/ConfiguredProvidersBar/ConfiguredProvidersBar", () => ({
-  ConfiguredProvidersBar: () => <div data-testid="ConfiguredProvidersBarMock" />,
-}));
+  // Mock useProvidersConfig to return a configured provider so ChatInput renders
+  void mock.module("@/browser/hooks/useProvidersConfig", () => ({
+    useProvidersConfig: () => ({
+      config: { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
+      loading: false,
+      error: null,
+    }),
+  }));
 
-// Mock ProjectContext to provide trust data without requiring a full provider.
-// Must include all fields consumed by downstream hooks (e.g., useDraftWorkspaceSettings
-// reads userProjects) since bun test may share mock scope across files.
-void mock.module("@/browser/contexts/ProjectContext", () => ({
-  useProjectContext: () => ({
-    userProjects: new Map(),
-    getProjectConfig: () => undefined,
-    refreshProjects: () => Promise.resolve(),
-  }),
-}));
+  // Mock ConfiguredProvidersBar to avoid tooltip/context dependencies
+  void mock.module("@/browser/components/ConfiguredProvidersBar/ConfiguredProvidersBar", () => ({
+    ConfiguredProvidersBar: () => <div data-testid="ConfiguredProvidersBarMock" />,
+  }));
 
-// Mock ChatInput to simulate the old (buggy) behavior where onReady can fire again
-// on unrelated re-renders (e.g. workspace list updates).
-void mock.module("@/browser/features/ChatInput/index", () => ({
-  ChatInput: (props: {
-    onReady?: (api: {
-      focus: () => void;
-      restoreText: (text: string) => void;
-      restoreDraft: (pending: unknown) => void;
-      appendText: (text: string) => void;
-      prependText: (text: string) => void;
-    }) => void;
-  }) => {
-    useEffect(() => {
-      readyCalls += 1;
+  // Mock ProjectContext to provide the minimal routing/project surface used by the
+  // real WorkspaceProvider/AgentProvider stack without wiring the full app shell.
+  void mock.module("@/browser/contexts/ProjectContext", () => ({
+    useProjectContext: () => ({
+      userProjects: new Map(),
+      systemProjectPath: null,
+      resolveProjectPath: () => null,
+      resolveNewChatProjectPath: () => null,
+      getProjectConfig: () => undefined,
+      loading: false,
+      refreshProjects: () => Promise.resolve(),
+      addProject: () => undefined,
+      removeProject: () => Promise.resolve({ success: true }),
+      isProjectCreateModalOpen: false,
+      openProjectCreateModal: () => undefined,
+      closeProjectCreateModal: () => undefined,
+      workspaceModalState: {
+        isOpen: false,
+        projectPath: null,
+        projectName: "",
+        branches: [],
+        defaultTrunkBranch: undefined,
+        loadErrorMessage: null,
+        isLoading: false,
+      },
+      openWorkspaceModal: () => Promise.resolve(),
+      closeWorkspaceModal: () => undefined,
+      getBranchesForProject: () => Promise.resolve({ branches: [], trunkBranch: null }),
+      getSecrets: () => Promise.resolve([]),
+      updateSecrets: () => Promise.resolve(),
+      createSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      updateSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      removeSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      reorderSections: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
+      assignWorkspaceToSection: () =>
+        Promise.resolve({ ok: false, error: "not implemented in test" }),
+      hasAnyProject: false,
+    }),
+  }));
 
-      props.onReady?.({
-        focus: () => {
-          if (!focusMock) {
-            throw new Error("focusMock not initialized");
-          }
-          focusMock();
-        },
-        restoreText: () => undefined,
-        restoreDraft: () => undefined,
-        appendText: () => undefined,
-        prependText: () => undefined,
-      });
-    }, [props]);
+  // Mock ChatInput to simulate the old (buggy) behavior where onReady can fire again
+  // on unrelated re-renders (e.g. workspace list updates).
+  void mock.module("@/browser/features/ChatInput/index", () => ({
+    ChatInput: (props: {
+      onReady?: (api: {
+        focus: () => void;
+        restoreText: (text: string) => void;
+        restoreDraft: (pending: unknown) => void;
+        appendText: (text: string) => void;
+        prependText: (text: string) => void;
+      }) => void;
+    }) => {
+      useEffect(() => {
+        readyCalls += 1;
 
-    return <div data-testid="ChatInputMock" />;
-  },
-}));
+        props.onReady?.({
+          focus: () => {
+            if (!focusMock) {
+              throw new Error("focusMock not initialized");
+            }
+            focusMock();
+          },
+          restoreText: () => undefined,
+          restoreDraft: () => undefined,
+          appendText: () => undefined,
+          prependText: () => undefined,
+        });
+      }, [props]);
 
-import { ProjectPage } from "../ProjectPage/ProjectPage";
+      return <div data-testid="ChatInputMock" />;
+    },
+  }));
+}
 
 describe("ProjectPage", () => {
   beforeEach(() => {
@@ -92,16 +127,25 @@ describe("ProjectPage", () => {
 
     readyCalls = 0;
     focusMock = mock(() => undefined);
+    registerProjectPageMocks();
   });
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     cleanupDom?.();
     cleanupDom = null;
     focusMock = null;
   });
 
   test("auto-focuses the creation input only once even if ChatInput re-initializes", async () => {
+    const { ProjectPage } = requireTestModule<{
+      ProjectPage: typeof ProjectPageModule.ProjectPage;
+    }>("@/browser/components/ProjectPage/ProjectPage");
+    const { WorkspaceProvider } = requireTestModule<{
+      WorkspaceProvider: typeof WorkspaceContextModule.WorkspaceProvider;
+    }>("@/browser/contexts/WorkspaceContext");
+
     const baseProps = {
       projectPath: "/projects/demo",
       projectName: "demo",
@@ -113,7 +157,9 @@ describe("ProjectPage", () => {
     const { rerender } = render(
       <RouterProvider>
         <SettingsProvider>
-          <ProjectPage {...baseProps} />
+          <WorkspaceProvider>
+            <ProjectPage {...baseProps} />
+          </WorkspaceProvider>
         </SettingsProvider>
       </RouterProvider>
     );
@@ -125,7 +171,9 @@ describe("ProjectPage", () => {
     rerender(
       <RouterProvider>
         <SettingsProvider>
-          <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+          <WorkspaceProvider>
+            <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+          </WorkspaceProvider>
         </SettingsProvider>
       </RouterProvider>
     );

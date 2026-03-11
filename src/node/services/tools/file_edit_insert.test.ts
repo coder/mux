@@ -4,6 +4,7 @@ import * as path from "path";
 import * as os from "os";
 import { createFileEditInsertTool } from "./file_edit_insert";
 import type { FileEditInsertToolArgs, FileEditInsertToolResult } from "@/common/types/tools";
+import type { Runtime } from "@/node/runtime/Runtime";
 import type { ToolExecutionOptions } from "ai";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getTestDeps } from "./testHelpers";
@@ -157,6 +158,71 @@ describe("file_edit_insert tool", () => {
   });
 });
 
+describe("file_edit_insert cwd boundary enforcement", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), "file-edit-insert-boundary-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  async function expectInsertRejectedBeforeFileAccess(targetPath: string): Promise<void> {
+    let statCalls = 0;
+    let writeFileCalls = 0;
+
+    const mockRuntime = {
+      normalizePath(targetPathValue: string, basePath: string): string {
+        return path.resolve(basePath, targetPathValue);
+      },
+      stat(): Promise<{ size: number; modifiedTime: Date; isDirectory: boolean }> {
+        statCalls += 1;
+        return Promise.resolve({
+          size: 1,
+          modifiedTime: new Date(),
+          isDirectory: false,
+        });
+      },
+      writeFile(): Promise<void> {
+        writeFileCalls += 1;
+        return Promise.resolve();
+      },
+    } as unknown as Runtime;
+
+    const tool = createFileEditInsertTool({
+      ...getTestDeps(),
+      cwd: testDir,
+      runtime: mockRuntime,
+      runtimeTempDir: testDir,
+    });
+
+    const result = (await tool.execute!(
+      {
+        path: targetPath,
+        content: "blocked",
+      },
+      mockToolCallOptions
+    )) as FileEditInsertToolResult;
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("restricted to the workspace directory");
+    }
+    expect(statCalls).toBe(0);
+    expect(writeFileCalls).toBe(0);
+  }
+
+  it("rejects traversal outside cwd before checking file existence", async () => {
+    await expectInsertRejectedBeforeFileAccess("../outside.txt");
+  });
+
+  it("rejects absolute paths outside cwd before checking file existence", async () => {
+    await expectInsertRejectedBeforeFileAccess(path.join(path.dirname(testDir), "outside.txt"));
+  });
+});
+
 describe("file_edit_insert plan mode enforcement", () => {
   let testDir: string;
 
@@ -198,11 +264,10 @@ describe("file_edit_insert plan mode enforcement", () => {
     }
   });
 
-  it("allows creating plan file when in plan mode", async () => {
+  it("allows creating the configured plan file when it is outside cwd", async () => {
     const planFilePath = path.join(testDir, "plan.md");
     const workspaceCwd = path.join(testDir, "workspace");
 
-    // Create workspace directory
     await fs.mkdir(workspaceCwd, { recursive: true });
 
     const tool = createFileEditInsertTool({

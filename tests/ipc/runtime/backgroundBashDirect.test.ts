@@ -595,9 +595,29 @@ describe("Foreground to Background Migration", () => {
 
     const result = await bashPromise;
 
-    // Either it completed normally or was backgrounded
+    // Either it completed normally in the foreground, or it backgrounded before
+    // the foreground result captured any output. In that fast-exit race, fall
+    // back to the persisted output.log via manager.getOutput(), which is the
+    // authoritative source of process output across runtimes.
     expect(result.success).toBe(true);
-    expect(result.output).toContain(marker);
+
+    if (result.output?.includes(marker)) {
+      expect(result.output).toContain(marker);
+      if (!result.backgroundProcessId) {
+        expect(result.exitCode).toBe(0);
+      }
+      return;
+    }
+
+    expect(result.backgroundProcessId).toBe(testId);
+
+    const persistedOutput = await manager.getOutput(testId, undefined, undefined, 1);
+    expect(persistedOutput.success).toBe(true);
+    if (persistedOutput.success) {
+      expect(persistedOutput.status).toBe("exited");
+      expect(persistedOutput.exitCode).toBe(0);
+      expect(persistedOutput.output).toContain(marker);
+    }
   });
 
   it("should not kill backgrounded process when abort signal fires", async () => {

@@ -11,6 +11,7 @@ import {
   createTempGitRepo,
   cleanupTempGitRepo,
   resolveOrpcClient,
+  trustProject,
   sendMessageWithModel,
   createStreamCollector,
   assertStreamSuccess,
@@ -233,6 +234,50 @@ describeIntegration("MCP global configuration", () => {
     }
   });
 
+  test.concurrent(
+    "untrusted projects ignore repo .mux/mcp.jsonc but keep global MCP config",
+    async () => {
+      const env = await createTestEnvironment();
+      const repoPath = await createTempGitRepo();
+      const client = resolveOrpcClient(env);
+
+      try {
+        const globalCommand = "echo global";
+        const repoOnlyCommand = "echo repo-only";
+
+        const addResult = await client.mcp.add({ name: "chrome-devtools", command: globalCommand });
+        expect(addResult.success).toBe(true);
+
+        const overridePath = path.join(repoPath, ".mux", "mcp.jsonc");
+        await fs.mkdir(path.dirname(overridePath), { recursive: true });
+        await fs.writeFile(
+          overridePath,
+          JSON.stringify(
+            {
+              servers: {
+                "repo-only": repoOnlyCommand,
+              },
+            },
+            null,
+            2
+          ),
+          "utf-8"
+        );
+
+        expect(await client.mcp.list({ projectPath: repoPath })).toEqual({
+          "chrome-devtools": {
+            transport: "stdio",
+            command: globalCommand,
+            disabled: false,
+          },
+        });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(repoPath);
+      }
+    }
+  );
+
   test.concurrent("repo .mux/mcp.jsonc overrides global servers by name", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
@@ -262,6 +307,8 @@ describeIntegration("MCP global configuration", () => {
         ),
         "utf-8"
       );
+
+      await trustProject(env, repoPath);
 
       const merged = await client.mcp.list({ projectPath: repoPath });
       expect(merged).toMatchObject({

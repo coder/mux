@@ -1,6 +1,7 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import type { RecursivePartial } from "@/browser/testUtils";
 
 // Mock WebSocket that we can control
 class MockWebSocket {
@@ -64,6 +65,14 @@ let fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 
 // Mock orpc client
 let pingImpl: () => Promise<string> = () => Promise.resolve("pong");
+let storedAuthToken: string | null = null;
+const getStoredAuthTokenMock = mock(() => storedAuthToken);
+const setStoredAuthTokenMock = mock((token: string) => {
+  storedAuthToken = token;
+});
+const clearStoredAuthTokenMock = mock(() => {
+  storedAuthToken = null;
+});
 
 void mock.module("@/common/orpc/client", () => ({
   createClient: () => ({
@@ -85,15 +94,17 @@ void mock.module("@/browser/components/AuthTokenModal/AuthTokenModal", () => ({
   // Note: Module mocks leak between bun test files.
   // Export all commonly-used symbols to avoid cross-test import errors.
   AuthTokenModal: () => null,
-  getStoredAuthToken: () => null,
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  setStoredAuthToken: () => {},
-  // eslint-disable-next-line @typescript-eslint/no-empty-function
-  clearStoredAuthToken: () => {},
+  getStoredAuthToken: getStoredAuthTokenMock,
+  setStoredAuthToken: setStoredAuthTokenMock,
+  clearStoredAuthToken: clearStoredAuthTokenMock,
 }));
 
 // Import the real API module types (not the mocked version)
-import type { UseAPIResult as _UseAPIResult, APIProvider as APIProviderType } from "./API";
+import type {
+  APIClient as _APIClient,
+  UseAPIResult as _UseAPIResult,
+  APIProvider as APIProviderType,
+} from "./API";
 
 // IMPORTANT: Other test files mock @/browser/contexts/API with a fake APIProvider.
 // Module mocks leak between test files in bun (https://github.com/oven-sh/bun/issues/12823).
@@ -105,6 +116,7 @@ const RealAPIModule: {
 } = require("./API?real=1");
 /* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
 const { APIProvider, useAPI } = RealAPIModule;
+type APIClient = _APIClient;
 type UseAPIResult = _UseAPIResult;
 
 // Test component to observe API state
@@ -136,6 +148,10 @@ describe("API reconnection", () => {
       fetchImpl(input, init)) as typeof globalThis.fetch;
     MockWebSocket.reset();
     pingImpl = () => Promise.resolve("pong");
+    storedAuthToken = null;
+    getStoredAuthTokenMock.mockClear();
+    setStoredAuthTokenMock.mockClear();
+    clearStoredAuthTokenMock.mockClear();
   });
 
   afterEach(() => {
@@ -158,6 +174,64 @@ describe("API reconnection", () => {
     const ws1 = MockWebSocket.lastInstance();
     expect(ws1).toBeDefined();
     expect(ws1!.url).toBe("wss://coder.example.com/@u/ws/apps/mux/orpc/ws?token=abc");
+  });
+
+  test("injected clients skip internal auth token setup", async () => {
+    window.location.href = "https://mux.example.com/?token=injected-token";
+    const states: string[] = [];
+    const injectedClient: RecursivePartial<APIClient> = { general: {} };
+
+    render(
+      <APIProvider client={injectedClient as APIClient}>
+        <APIStateObserver onState={(s) => states.push(s.status)} />
+      </APIProvider>
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(states).toEqual(["connected"]);
+    expect(getStoredAuthTokenMock.mock.calls).toHaveLength(0);
+    expect(setStoredAuthTokenMock.mock.calls).toHaveLength(0);
+    expect(window.location.search).toBe("?token=injected-token");
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  test("injected clients keep internal connection controls disabled", async () => {
+    const states: string[] = [];
+    let latestState: UseAPIResult | null = null;
+    const injectedClient: RecursivePartial<APIClient> = { general: {} };
+
+    render(
+      <APIProvider client={injectedClient as APIClient}>
+        <APIStateObserver
+          onState={(state) => {
+            latestState = state;
+            states.push(state.status);
+          }}
+        />
+      </APIProvider>
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(latestState).not.toBeNull();
+
+    act(() => {
+      latestState!.retry();
+      latestState!.authenticate("unused-token");
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(states).toEqual(["connected"]);
+    expect(setStoredAuthTokenMock.mock.calls).toHaveLength(0);
+    expect(MockWebSocket.instances).toHaveLength(0);
   });
 
   test("reconnects on close without showing auth_required when previously connected", async () => {
