@@ -1,6 +1,7 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import type { RecursivePartial } from "@/browser/testUtils";
 
 // Mock WebSocket that we can control
 class MockWebSocket {
@@ -178,7 +179,7 @@ describe("API reconnection", () => {
   test("injected clients skip internal auth token setup", async () => {
     window.location.href = "https://mux.example.com/?token=injected-token";
     const states: string[] = [];
-    const injectedClient: Partial<APIClient> = { general: {} };
+    const injectedClient: RecursivePartial<APIClient> = { general: {} };
 
     render(
       <APIProvider client={injectedClient as APIClient}>
@@ -200,7 +201,7 @@ describe("API reconnection", () => {
   test("injected clients keep internal connection controls disabled", async () => {
     const states: string[] = [];
     let latestState: UseAPIResult | null = null;
-    const injectedClient: Partial<APIClient> = { general: {} };
+    const injectedClient: RecursivePartial<APIClient> = { general: {} };
 
     render(
       <APIProvider client={injectedClient as APIClient}>
