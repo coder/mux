@@ -348,6 +348,37 @@ describe("ProviderModelFactory routing", () => {
     });
   });
 
+  it("treats OpenAI as available for routing when only Codex OAuth is configured", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          // No apiKey — only Codex OAuth credentials.
+          codexOauth: { accessToken: "test-token", refreshToken: "test-refresh" },
+        },
+        openrouter: {
+          apiKey: "or-test",
+        },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["direct", "openrouter"],
+      });
+
+      // Direct OpenAI should win because Codex OAuth makes it available for routing.
+      const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.effectiveModelString).toBe("openai:gpt-5");
+      expect(result.data.routeProvider).toBe("openai");
+      expect(result.data.routedThroughGateway).toBe(false);
+    });
+  });
+
   it("leaves direct-provider model strings unchanged when direct routing wins", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

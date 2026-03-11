@@ -579,7 +579,14 @@ export class ProviderModelFactory {
   ): boolean {
     const providerConfig = providersConfig[provider] ?? {};
     const credentials = resolveProviderCredentials(provider, providerConfig);
-    if (!credentials.isConfigured) {
+
+    // OpenAI Codex OAuth is a valid credential path even without an API key;
+    // routing should treat it as available so direct OpenAI routes are honored.
+    const hasCodexOauth =
+      provider === "openai" &&
+      parseCodexOauthAuth((providerConfig as { codexOauth?: unknown }).codexOauth) !== null;
+
+    if (!credentials.isConfigured && !hasCodexOauth) {
       return false;
     }
 
