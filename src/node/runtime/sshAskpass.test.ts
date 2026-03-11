@@ -48,10 +48,10 @@ describe("sshAskpass", () => {
       const tmpBefore = await listAskpassTempDirs();
       const missingScriptError = new Error("ENOENT: script missing");
       const permissionDeniedError = new Error("EACCES: permission denied");
-      const accessSpy = spyOn(fs.promises, "access").mockImplementationOnce(async () => {
+      const accessSpy = spyOn(fs.promises, "access").mockImplementationOnce(() => {
         throw missingScriptError;
       });
-      const writeFileSpy = spyOn(fs.promises, "writeFile").mockImplementationOnce(async () => {
+      const writeFileSpy = spyOn(fs.promises, "writeFile").mockImplementationOnce(() => {
         throw permissionDeniedError;
       });
 

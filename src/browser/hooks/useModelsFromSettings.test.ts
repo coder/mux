@@ -1,22 +1,37 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, renderHook } from "@testing-library/react";
-import { createElement, type ReactNode } from "react";
+import { createElement, type ComponentProps, type ReactNode } from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { PolicyProvider } from "@/browser/contexts/PolicyContext";
+import { requireTestModule } from "@/browser/testUtils";
 import { GlobalWindow } from "happy-dom";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { HIDDEN_MODELS_KEY } from "@/common/constants/storage";
+import type * as UseModelsFromSettingsModule from "./useModelsFromSettings";
 
-let filterHiddenModels!: typeof import("./useModelsFromSettings").filterHiddenModels;
-let getSuggestedModels!: typeof import("./useModelsFromSettings").getSuggestedModels;
-let useModelsFromSettings!: typeof import("./useModelsFromSettings").useModelsFromSettings;
+let filterHiddenModels!: typeof UseModelsFromSettingsModule.filterHiddenModels;
+let getSuggestedModels!: typeof UseModelsFromSettingsModule.getSuggestedModels;
+let useModelsFromSettings!: typeof UseModelsFromSettingsModule.useModelsFromSettings;
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
 }
 
+async function* createEmptyAsyncIterable<T>(): AsyncGenerator<T, void, unknown> {
+  await Promise.resolve();
+  yield* new Array<T>();
+}
+
 let providersConfig: ProvidersConfigMap | null = null;
+
+type UseModelsPolicyApi = NonNullable<APIClient["policy"]>;
+type UseModelsPolicyChangeStream = Awaited<ReturnType<UseModelsPolicyApi["onChanged"]>>;
+
+interface UseModelsTestApiClient {
+  config: Pick<APIClient["config"], "updateModelPreferences">;
+  policy: Pick<UseModelsPolicyApi, "get" | "onChanged">;
+}
 
 const useProvidersConfigMock = mock(() => ({
   config: providersConfig,
@@ -26,9 +41,9 @@ const useProvidersConfigMock = mock(() => ({
 // Keep API and policy wiring real so this suite only localizes the provider-config hook mock
 // that useModelsFromSettings depends on directly. That avoids leaking top-level context mocks
 // into later suites that import the real API/Policy modules.
-const fakeApiClient: Partial<APIClient> = {
+const fakeApiClient: UseModelsTestApiClient = {
   config: {
-    updateModelPreferences: () => Promise.resolve({ success: true }),
+    updateModelPreferences: () => Promise.resolve(),
   },
   policy: {
     get: () =>
@@ -37,38 +52,41 @@ const fakeApiClient: Partial<APIClient> = {
         status: { state: "disabled" as const },
         policy: null,
       }),
-    onChanged: () =>
-      Promise.resolve(
-        (async function* () {
-          return;
-        })()
-      ),
+    onChanged: () => Promise.resolve(createEmptyAsyncIterable() as UseModelsPolicyChangeStream),
   },
 };
 
 function renderUseModelsFromSettingsHook() {
   return renderHook(() => useModelsFromSettings(), {
-    wrapper: (props: { children: ReactNode }) =>
-      createElement(
+    wrapper: (props: { children: ReactNode }) => {
+      const apiProviderProps: Omit<ComponentProps<typeof APIProvider>, "children"> = {
+        client: fakeApiClient as APIClient,
+      };
+
+      return createElement(
         APIProvider,
-        { client: fakeApiClient as APIClient },
+        apiProviderProps as ComponentProps<typeof APIProvider>,
         createElement(PolicyProvider, null, props.children)
-      ),
+      );
+    },
   });
 }
 
-async function importUseModelsFromSettingsWithLocalizedMocks() {
+function importUseModelsFromSettingsWithLocalizedMocks() {
   void mock.module("@/browser/hooks/useProvidersConfig", () => ({
     useProvidersConfig: useProvidersConfigMock,
   }));
 
-  ({ filterHiddenModels, getSuggestedModels, useModelsFromSettings } =
-    await import("./useModelsFromSettings"));
+  ({ filterHiddenModels, getSuggestedModels, useModelsFromSettings } = requireTestModule<{
+    filterHiddenModels: typeof UseModelsFromSettingsModule.filterHiddenModels;
+    getSuggestedModels: typeof UseModelsFromSettingsModule.getSuggestedModels;
+    useModelsFromSettings: typeof UseModelsFromSettingsModule.useModelsFromSettings;
+  }>("@/browser/hooks/useModelsFromSettings"));
   mock.restore();
 }
 
-beforeEach(async () => {
-  await importUseModelsFromSettingsWithLocalizedMocks();
+beforeEach(() => {
+  importUseModelsFromSettingsWithLocalizedMocks();
 });
 
 describe("getSuggestedModels", () => {

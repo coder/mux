@@ -1,9 +1,12 @@
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { requireTestModule } from "@/browser/testUtils";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
+import type * as ProjectPageModule from "@/browser/components/ProjectPage/ProjectPage";
+import type * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 
 let cleanupDom: (() => void) | null = null;
 let focusMock: ReturnType<typeof mock> | null = null;
@@ -136,10 +139,12 @@ describe("ProjectPage", () => {
   });
 
   test("auto-focuses the creation input only once even if ChatInput re-initializes", async () => {
-    const [{ ProjectPage }, { WorkspaceProvider }] = await Promise.all([
-      import("../ProjectPage/ProjectPage"),
-      import("@/browser/contexts/WorkspaceContext"),
-    ]);
+    const { ProjectPage } = requireTestModule<{
+      ProjectPage: typeof ProjectPageModule.ProjectPage;
+    }>("@/browser/components/ProjectPage/ProjectPage");
+    const { WorkspaceProvider } = requireTestModule<{
+      WorkspaceProvider: typeof WorkspaceContextModule.WorkspaceProvider;
+    }>("@/browser/contexts/WorkspaceContext");
 
     const baseProps = {
       projectPath: "/projects/demo",

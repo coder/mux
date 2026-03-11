@@ -3,27 +3,33 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
 
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { GLOBAL_SCOPE_ID, getAgentIdKey, getProjectScopeId } from "@/common/constants/storage";
+import { requireTestModule } from "@/browser/testUtils";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { AgentContextValue } from "./AgentContext";
+import type * as AgentContextModule from "./AgentContext";
+import type * as APIModule from "./API";
 import type { APIClient } from "./API";
+import type * as ProjectContextModule from "./ProjectContext";
+import type * as RouterContextModule from "./RouterContext";
+import type * as WorkspaceContextModule from "./WorkspaceContext";
 
 let mockAgentDefinitions: AgentDefinitionDescriptor[] = [];
 let mockWorkspaceMetadata = new Map<string, { parentWorkspaceId?: string; agentId?: string }>();
 
-let APIProvider!: typeof import("./API").APIProvider;
-let RouterProvider!: typeof import("./RouterContext").RouterProvider;
-let ProjectProvider!: typeof import("./ProjectContext").ProjectProvider;
-let WorkspaceProvider!: typeof import("./WorkspaceContext").WorkspaceProvider;
-let AgentProvider!: typeof import("./AgentContext").AgentProvider;
-let useAgent!: typeof import("./AgentContext").useAgent;
+let APIProvider!: typeof APIModule.APIProvider;
+let RouterProvider!: typeof RouterContextModule.RouterProvider;
+let ProjectProvider!: typeof ProjectContextModule.ProjectProvider;
+let WorkspaceProvider!: typeof WorkspaceContextModule.WorkspaceProvider;
+let AgentProvider!: typeof AgentContextModule.AgentProvider;
+let useAgent!: typeof AgentContextModule.useAgent;
 let isolatedModuleDir: string | null = null;
 
 const contextsDir = dirname(fileURLToPath(import.meta.url));
@@ -74,11 +80,22 @@ async function importIsolatedAgentModules() {
 
   await writeFile(isolatedAgentPath, isolatedAgentContextSource);
 
-  ({ APIProvider } = await import(pathToFileURL(isolatedApiPath).href));
-  ({ RouterProvider } = await import(pathToFileURL(isolatedRouterPath).href));
-  ({ ProjectProvider } = await import(pathToFileURL(isolatedProjectPath).href));
-  ({ WorkspaceProvider } = await import(pathToFileURL(isolatedWorkspacePath).href));
-  ({ AgentProvider, useAgent } = await import(pathToFileURL(isolatedAgentPath).href));
+  ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
+    isolatedApiPath
+  ));
+  ({ RouterProvider } = requireTestModule<{
+    RouterProvider: typeof RouterContextModule.RouterProvider;
+  }>(isolatedRouterPath));
+  ({ ProjectProvider } = requireTestModule<{
+    ProjectProvider: typeof ProjectContextModule.ProjectProvider;
+  }>(isolatedProjectPath));
+  ({ WorkspaceProvider } = requireTestModule<{
+    WorkspaceProvider: typeof WorkspaceContextModule.WorkspaceProvider;
+  }>(isolatedWorkspacePath));
+  ({ AgentProvider, useAgent } = requireTestModule<{
+    AgentProvider: typeof AgentContextModule.AgentProvider;
+    useAgent: typeof AgentContextModule.useAgent;
+  }>(isolatedAgentPath));
 
   return tempDir;
 }
@@ -150,9 +167,13 @@ function createWorkspaceMetadata(
 }
 
 function createEmptyAsyncIterable<T>(): AsyncIterable<T> {
-  return (async function* () {
-    await Promise.resolve();
-  })();
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<T> {
+      return {
+        next: () => Promise.resolve({ done: true, value: undefined as T }),
+      };
+    },
+  };
 }
 
 function createApiClient(): APIClient {
@@ -167,12 +188,12 @@ function createApiClient(): APIClient {
     },
     workspace: {
       list: () => Promise.resolve(workspaceMetadata),
-      onMetadata: async () => createEmptyAsyncIterable(),
-      onChat: async () => createEmptyAsyncIterable(),
+      onMetadata: () => Promise.resolve(createEmptyAsyncIterable()),
+      onChat: () => Promise.resolve(createEmptyAsyncIterable()),
       getSessionUsage: () => Promise.resolve(undefined),
       activity: {
         list: () => Promise.resolve({}),
-        subscribe: async () => createEmptyAsyncIterable(),
+        subscribe: () => Promise.resolve(createEmptyAsyncIterable()),
       },
       truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
       interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),

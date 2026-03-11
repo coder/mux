@@ -8,7 +8,9 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { OrpcServer } from "@/node/orpc/server";
 import type { ORPCContext } from "@/node/orpc/context";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { requireTestModule } from "@/browser/testUtils";
 import type { SavedQuery } from "@/common/types/savedQueries";
+import type * as OrpcServerModule from "@/node/orpc/server";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
 import {
   useAnalyticsProviderCacheHitRatio,
@@ -62,12 +64,14 @@ interface AnalyticsServiceCalls {
 let currentApiClient: RouterClient<AppRouter> | null = null;
 let analyticsServiceCalls: AnalyticsServiceCalls | null = null;
 
-async function importCreateOrpcServer() {
+function importCreateOrpcServer(): typeof OrpcServerModule.createOrpcServer {
   void mock.module("@/version", () => ({
     VERSION: "test-version",
   }));
 
-  const { createOrpcServer } = await import("@/node/orpc/server");
+  const { createOrpcServer } = requireTestModule<{
+    createOrpcServer: typeof OrpcServerModule.createOrpcServer;
+  }>("@/node/orpc/server");
   mock.restore();
   return createOrpcServer;
 }
@@ -208,7 +212,7 @@ describe("useAnalytics hooks", () => {
       analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
     };
 
-    const createOrpcServer = await importCreateOrpcServer();
+    const createOrpcServer = importCreateOrpcServer();
 
     server = await createOrpcServer({
       host: "127.0.0.1",
@@ -276,7 +280,9 @@ describe("useAnalytics hooks", () => {
     const from = new Date("2026-01-07T00:00:00.000Z");
     const to = new Date("2026-01-27T00:00:00.000Z");
 
-    const { result } = renderAnalyticsHook(() => useAnalyticsSpendByModel("/tmp/project", { from, to }));
+    const { result } = renderAnalyticsHook(() =>
+      useAnalyticsSpendByModel("/tmp/project", { from, to })
+    );
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -394,7 +400,7 @@ describe("useAnalytics hooks", () => {
       analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
     };
 
-    const createOrpcServer = await importCreateOrpcServer();
+    const createOrpcServer = importCreateOrpcServer();
 
     server = await createOrpcServer({
       host: "127.0.0.1",
@@ -427,7 +433,7 @@ describe("useAnalytics hooks", () => {
       analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
     };
 
-    const createOrpcServer = await importCreateOrpcServer();
+    const createOrpcServer = importCreateOrpcServer();
 
     server = await createOrpcServer({
       host: "127.0.0.1",

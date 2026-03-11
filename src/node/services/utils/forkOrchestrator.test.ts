@@ -306,7 +306,7 @@ describe("orchestrateFork", () => {
     // Simulate SSH/Docker where local git discovery is unavailable.
     // Use mockImplementation instead of mockRejectedValue so Bun does not surface an
     // eager unhandled rejection when preferredTrunkBranch short-circuits git discovery.
-    listLocalBranchesMock.mockImplementation(async () => {
+    listLocalBranchesMock.mockImplementation(() => {
       throw new Error("git not available");
     });
 

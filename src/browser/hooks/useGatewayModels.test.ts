@@ -7,18 +7,24 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { createElement, type ReactNode } from "react";
+import { createElement, type ComponentProps, type ReactNode } from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { requireTestModule } from "@/browser/testUtils";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import type * as UseGatewayModelsModule from "./useGatewayModels";
 
-let isGatewayFormat!: typeof import("./useGatewayModels").isGatewayFormat;
-let isProviderSupported!: typeof import("./useGatewayModels").isProviderSupported;
-let migrateGatewayModel!: typeof import("./useGatewayModels").migrateGatewayModel;
-let pendingGatewayEnrollments!: typeof import("./useGatewayModels").pendingGatewayEnrollments;
-let toGatewayModel!: typeof import("./useGatewayModels").toGatewayModel;
-let useGateway!: typeof import("./useGatewayModels").useGateway;
+let isGatewayFormat!: typeof UseGatewayModelsModule.isGatewayFormat;
+let isProviderSupported!: typeof UseGatewayModelsModule.isProviderSupported;
+let migrateGatewayModel!: typeof UseGatewayModelsModule.migrateGatewayModel;
+let pendingGatewayEnrollments!: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
+let toGatewayModel!: typeof UseGatewayModelsModule.toGatewayModel;
+let useGateway!: typeof UseGatewayModelsModule.useGateway;
+
+interface GatewayTestApiClient {
+  config: Pick<APIClient["config"], "updateMuxGatewayPrefs">;
+}
 
 // Tracks optimistic updates applied to provider config
 let optimisticUpdates: Array<{ provider: string; updates: Record<string, unknown> }> = [];
@@ -38,8 +44,8 @@ const useProvidersConfigMock = mock(() => ({
   },
 }));
 
-const updateMuxGatewayPrefsMock = mock(() => Promise.resolve({ success: true }));
-let currentApiClient: Partial<APIClient> | null = null;
+const updateMuxGatewayPrefsMock = mock(() => Promise.resolve());
+let currentApiClient: GatewayTestApiClient | null = null;
 
 function createDisconnectedWebSocket(): WebSocket {
   const target = new EventTarget();
@@ -69,19 +75,22 @@ function createDisconnectedWebSocket(): WebSocket {
 
 function renderUseGatewayHook() {
   return renderHook(() => useGateway(), {
-    wrapper: (props: { children: ReactNode }) =>
-      createElement(
+    wrapper: (props: { children: ReactNode }) => {
+      const providerProps: Omit<ComponentProps<typeof APIProvider>, "children"> = currentApiClient
+        ? { client: currentApiClient as APIClient }
+        : { createWebSocket: createDisconnectedWebSocket };
+
+      return createElement(
         APIProvider,
-        currentApiClient
-          ? { client: currentApiClient as APIClient }
-          : { createWebSocket: createDisconnectedWebSocket },
+        providerProps as ComponentProps<typeof APIProvider>,
         props.children
-      ),
+      );
+    },
   });
 }
 
 describe("useGateway", () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     void mock.module("@/browser/hooks/useProvidersConfig", () => ({
       useProvidersConfig: useProvidersConfigMock,
     }));
@@ -93,7 +102,14 @@ describe("useGateway", () => {
       pendingGatewayEnrollments,
       toGatewayModel,
       useGateway,
-    } = await import("./useGatewayModels"));
+    } = requireTestModule<{
+      isGatewayFormat: typeof UseGatewayModelsModule.isGatewayFormat;
+      isProviderSupported: typeof UseGatewayModelsModule.isProviderSupported;
+      migrateGatewayModel: typeof UseGatewayModelsModule.migrateGatewayModel;
+      pendingGatewayEnrollments: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
+      toGatewayModel: typeof UseGatewayModelsModule.toGatewayModel;
+      useGateway: typeof UseGatewayModelsModule.useGateway;
+    }>("@/browser/hooks/useGatewayModels"));
     mock.restore();
 
     globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
@@ -404,7 +420,7 @@ describe("useGateway", () => {
 });
 
 describe("pure utility functions", () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     ({
       isGatewayFormat,
       isProviderSupported,
@@ -412,7 +428,14 @@ describe("pure utility functions", () => {
       pendingGatewayEnrollments,
       toGatewayModel,
       useGateway,
-    } = await import("./useGatewayModels"));
+    } = requireTestModule<{
+      isGatewayFormat: typeof UseGatewayModelsModule.isGatewayFormat;
+      isProviderSupported: typeof UseGatewayModelsModule.isProviderSupported;
+      migrateGatewayModel: typeof UseGatewayModelsModule.migrateGatewayModel;
+      pendingGatewayEnrollments: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
+      toGatewayModel: typeof UseGatewayModelsModule.toGatewayModel;
+      useGateway: typeof UseGatewayModelsModule.useGateway;
+    }>("@/browser/hooks/useGatewayModels"));
   });
   test("isGatewayFormat detects mux-gateway: prefix", () => {
     expect(isGatewayFormat("mux-gateway:anthropic/claude-opus-4-5")).toBe(true);

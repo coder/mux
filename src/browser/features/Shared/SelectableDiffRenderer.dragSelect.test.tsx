@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, mock, test, type Mock } from "bun:test";
 import { copyFile, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
+import { requireTestModule } from "@/browser/testUtils";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import type * as DiffRendererModule from "./DiffRenderer";
 
-let SelectableDiffRenderer!: typeof import("./DiffRenderer").SelectableDiffRenderer;
+let SelectableDiffRenderer!: typeof DiffRendererModule.SelectableDiffRenderer;
 let isolatedDiffRendererPath: string | null = null;
 
 const sharedDir = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +22,9 @@ async function importIsolatedSelectableDiffRenderer() {
   // Load a unique temp copy of the real module so earlier Bun mock.module registrations for
   // @/browser/features/Shared/DiffRenderer cannot swap in the stubbed renderer for this suite.
   await copyFile(join(sharedDir, "DiffRenderer.tsx"), isolatedPath);
-  ({ SelectableDiffRenderer } = await import(pathToFileURL(isolatedPath).href));
+  ({ SelectableDiffRenderer } = requireTestModule<{
+    SelectableDiffRenderer: typeof DiffRendererModule.SelectableDiffRenderer;
+  }>(isolatedPath));
 
   return isolatedPath;
 }

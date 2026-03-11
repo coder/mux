@@ -2,20 +2,22 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ExperimentValue } from "@/common/orpc/types";
+import { requireTestModule, type RecursivePartial } from "@/browser/testUtils";
+import type * as APIModule from "./API";
 import type { APIClient } from "./API";
-import type { RecursivePartial } from "@/browser/testUtils";
+import type * as ExperimentsContextModule from "./ExperimentsContext";
 
 // Keep the API client local to each render so this suite does not leak a process-global
 // mock.module override into ProjectContext and other later context tests.
 let currentClientMock: RecursivePartial<APIClient> = {};
 
-let APIProvider!: typeof import("./API").APIProvider;
-let ExperimentsProvider!: typeof import("./ExperimentsContext").ExperimentsProvider;
-let useExperimentValue!: typeof import("./ExperimentsContext").useExperimentValue;
+let APIProvider!: typeof APIModule.APIProvider;
+let ExperimentsProvider!: typeof ExperimentsContextModule.ExperimentsProvider;
+let useExperimentValue!: typeof ExperimentsContextModule.useExperimentValue;
 let isolatedModuleDir: string | null = null;
 
 const contextsDir = dirname(fileURLToPath(import.meta.url));
@@ -41,10 +43,13 @@ async function importIsolatedExperimentModules() {
 
   await writeFile(isolatedExperimentsPath, isolatedExperimentsSource);
 
-  ({ APIProvider } = await import(pathToFileURL(isolatedApiPath).href));
-  ({ ExperimentsProvider, useExperimentValue } = await import(
-    pathToFileURL(isolatedExperimentsPath).href
+  ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
+    isolatedApiPath
   ));
+  ({ ExperimentsProvider, useExperimentValue } = requireTestModule<{
+    ExperimentsProvider: typeof ExperimentsContextModule.ExperimentsProvider;
+    useExperimentValue: typeof ExperimentsContextModule.useExperimentValue;
+  }>(isolatedExperimentsPath));
 
   return tempDir;
 }
@@ -87,10 +92,14 @@ describe("ExperimentsProvider", () => {
     globalThis.location = dom.location as unknown as Location;
     globalThis.StorageEvent = dom.StorageEvent as unknown as typeof StorageEvent;
     globalThis.CustomEvent = dom.CustomEvent as unknown as typeof CustomEvent;
-    globalThis.setTimeout = dom.setTimeout.bind(dom);
-    globalThis.clearTimeout = dom.clearTimeout.bind(dom);
-    globalThis.setInterval = dom.setInterval.bind(dom);
-    globalThis.clearInterval = dom.clearInterval.bind(dom);
+    globalThis.setTimeout = dom.setTimeout.bind(dom) as unknown as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = dom.clearTimeout.bind(
+      dom
+    ) as unknown as typeof globalThis.clearTimeout;
+    globalThis.setInterval = dom.setInterval.bind(dom) as unknown as typeof globalThis.setInterval;
+    globalThis.clearInterval = dom.clearInterval.bind(
+      dom
+    ) as unknown as typeof globalThis.clearInterval;
     globalThis.localStorage.clear();
   });
 
@@ -141,13 +150,17 @@ describe("ExperimentsProvider", () => {
 
     let scheduledPoll: (() => void) | null = null;
     const expectedInitialPollDelayMs = 100;
-    const scheduledPollHandle = Symbol("scheduled-poll") as ReturnType<typeof setTimeout>;
+    const scheduledPollHandle = originalSetTimeout(() => undefined, 0);
+    originalClearTimeout(scheduledPollHandle);
 
     // Capture the provider's first poll callback so this assertion does not depend on whichever
     // timer implementation earlier suites left behind.
     globalThis.setTimeout = ((callback: TimerHandler, delay?: number) => {
       if (delay === expectedInitialPollDelayMs && typeof callback === "function") {
-        scheduledPoll = callback;
+        const scheduledCallback = callback as () => void;
+        scheduledPoll = () => {
+          scheduledCallback();
+        };
         return scheduledPollHandle;
       }
 
@@ -181,11 +194,15 @@ describe("ExperimentsProvider", () => {
       expect(scheduledPoll).not.toBeNull();
     });
 
-    const pollRemoteExperiments = scheduledPoll;
-    expect(pollRemoteExperiments).not.toBeNull();
+    const pollRemoteExperiments: () => void =
+      scheduledPoll ??
+      (() => {
+        throw new Error("Expected poll callback to be scheduled");
+      });
+    expect(scheduledPoll).not.toBeNull();
 
-    await act(async () => {
-      pollRemoteExperiments?.();
+    act(() => {
+      pollRemoteExperiments();
     });
 
     await waitFor(() => {

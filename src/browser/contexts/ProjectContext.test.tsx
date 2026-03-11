@@ -3,20 +3,21 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
-import type { APIClient } from "./API";
-import type { RecursivePartial } from "@/browser/testUtils";
-
+import { requireTestModule, type RecursivePartial } from "@/browser/testUtils";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import type * as APIModule from "./API";
+import type * as ProjectContextModule from "./ProjectContext";
+import type { APIClient } from "./API";
 
 // Keep the client local to each test instead of using bun's process-global
 // mock.module registry for API, which leaks across context suites.
 let currentClientMock: RecursivePartial<APIClient> = {};
 
-let APIProvider!: typeof import("./API").APIProvider;
-let ProjectProvider!: typeof import("./ProjectContext").ProjectProvider;
-let useProjectContext!: typeof import("./ProjectContext").useProjectContext;
+let APIProvider!: typeof APIModule.APIProvider;
+let ProjectProvider!: typeof ProjectContextModule.ProjectProvider;
+let useProjectContext!: typeof ProjectContextModule.useProjectContext;
 let isolatedModuleDir: string | null = null;
 
 const contextsDir = dirname(fileURLToPath(import.meta.url));
@@ -42,10 +43,13 @@ async function importIsolatedProjectModules() {
 
   await writeFile(isolatedProjectContextPath, isolatedProjectContextSource);
 
-  ({ APIProvider } = await import(pathToFileURL(isolatedApiPath).href));
-  ({ ProjectProvider, useProjectContext } = await import(
-    pathToFileURL(isolatedProjectContextPath).href
+  ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
+    isolatedApiPath
   ));
+  ({ ProjectProvider, useProjectContext } = requireTestModule<{
+    ProjectProvider: typeof ProjectContextModule.ProjectProvider;
+    useProjectContext: typeof ProjectContextModule.useProjectContext;
+  }>(isolatedProjectContextPath));
 
   return tempDir;
 }
@@ -595,7 +599,7 @@ describe("ProjectContext", () => {
 });
 
 async function setup() {
-  const contextRef = { current: null as import("./ProjectContext").ProjectContext | null };
+  const contextRef = { current: null as ProjectContextModule.ProjectContext | null };
   function ContextCapture() {
     contextRef.current = useProjectContext();
     return null;

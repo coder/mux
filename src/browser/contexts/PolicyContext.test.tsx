@@ -2,19 +2,22 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
 import React from "react";
-import type { APIClient } from "./API";
+import { requireTestModule } from "@/browser/testUtils";
 import type { PolicyGetResponse } from "@/common/orpc/types";
+import type * as APIModule from "./API";
+import type { APIClient } from "./API";
+import type * as PolicyContextModule from "./PolicyContext";
 
 async function* emptyStream() {
   // no-op
 }
 
-let APIProvider!: typeof import("./API").APIProvider;
-let PolicyProvider!: typeof import("./PolicyContext").PolicyProvider;
-let usePolicy!: typeof import("./PolicyContext").usePolicy;
+let APIProvider!: typeof APIModule.APIProvider;
+let PolicyProvider!: typeof PolicyContextModule.PolicyProvider;
+let usePolicy!: typeof PolicyContextModule.usePolicy;
 let isolatedModuleDir: string | null = null;
 
 const contextsDir = dirname(fileURLToPath(import.meta.url));
@@ -38,8 +41,13 @@ async function importIsolatedPolicyModules() {
 
   await writeFile(isolatedPolicyContextPath, isolatedPolicyContextSource);
 
-  ({ APIProvider } = await import(pathToFileURL(isolatedApiPath).href));
-  ({ PolicyProvider, usePolicy } = await import(pathToFileURL(isolatedPolicyContextPath).href));
+  ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
+    isolatedApiPath
+  ));
+  ({ PolicyProvider, usePolicy } = requireTestModule<{
+    PolicyProvider: typeof PolicyContextModule.PolicyProvider;
+    usePolicy: typeof PolicyContextModule.usePolicy;
+  }>(isolatedPolicyContextPath));
 
   return tempDir;
 }
@@ -74,12 +82,13 @@ const buildEnforcedResponse = (): PolicyGetResponse => ({
   },
 });
 
-const Wrapper = (props: { children: React.ReactNode }) =>
-  React.createElement(
-    APIProvider,
-    { client: createApiClient() },
-    React.createElement(PolicyProvider, null, props.children)
+function Wrapper(props: { children: React.ReactNode }) {
+  return (
+    <APIProvider client={createApiClient()}>
+      <PolicyProvider>{props.children}</PolicyProvider>
+    </APIProvider>
   );
+}
 Wrapper.displayName = "PolicyContextTestWrapper";
 
 describe("PolicyContext", () => {
