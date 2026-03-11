@@ -23,6 +23,18 @@ interface WorkspaceProjectRepoParams {
   projects?: ProjectRef[];
 }
 
+interface WorkspaceProjectStorageKeyParams {
+  projectPath: string;
+  projectName?: string;
+  projects?: ProjectRef[];
+}
+
+export interface WorkspaceProjectStorageKey {
+  projectPath: string;
+  projectName: string;
+  storageKey: string;
+}
+
 function sanitizeStorageKey(projectName: string, projectPath: string): string {
   const sanitize = (value: string) =>
     value
@@ -57,6 +69,70 @@ function appendStorageKeySuffix(storageKey: string, suffix: number): string {
   return `${storageKey}-${suffix}`;
 }
 
+export function getWorkspaceProjectStorageKeys(
+  params: WorkspaceProjectStorageKeyParams
+): WorkspaceProjectStorageKey[] {
+  assert(
+    params.projectPath.trim().length > 0,
+    "getWorkspaceProjectStorageKeys: projectPath must be non-empty"
+  );
+
+  const trimmedProjectName = params.projectName?.trim();
+  const primaryProjectName =
+    trimmedProjectName && trimmedProjectName.length > 0
+      ? trimmedProjectName
+      : PlatformPaths.getProjectName(params.projectPath).trim();
+  assert(
+    primaryProjectName.length > 0,
+    "getWorkspaceProjectStorageKeys: primaryProjectName must be non-empty"
+  );
+
+  const orderedProjects =
+    params.projects && params.projects.length > 0
+      ? params.projects
+      : ([
+          {
+            projectPath: params.projectPath,
+            projectName: primaryProjectName,
+          },
+        ] satisfies ProjectRef[]);
+
+  const expectedProjectCount =
+    params.projects && params.projects.length > 0 ? params.projects.length : 1;
+  assert(
+    orderedProjects.length === expectedProjectCount,
+    `getWorkspaceProjectStorageKeys: expected ${expectedProjectCount} projects, got ${orderedProjects.length}`
+  );
+
+  const usedStorageKeys = new Set<string>();
+  const storageKeys = orderedProjects.map((project) => {
+    const projectName = project.projectName.trim();
+    assert(projectName.length > 0, "getWorkspaceProjectStorageKeys: projectName must be non-empty");
+
+    const baseStorageKey = sanitizeStorageKey(projectName, project.projectPath);
+    let storageKey = baseStorageKey;
+    let suffix = 2;
+    while (usedStorageKeys.has(storageKey)) {
+      storageKey = appendStorageKeySuffix(baseStorageKey, suffix);
+      suffix += 1;
+    }
+    usedStorageKeys.add(storageKey);
+
+    return {
+      projectPath: project.projectPath,
+      projectName,
+      storageKey,
+    } satisfies WorkspaceProjectStorageKey;
+  });
+
+  assert(
+    new Set(storageKeys.map((project) => project.storageKey)).size === storageKeys.length,
+    "getWorkspaceProjectStorageKeys: storage keys must be unique after disambiguation"
+  );
+
+  return storageKeys;
+}
+
 export function getWorkspaceProjectRepos(
   params: WorkspaceProjectRepoParams
 ): WorkspaceProjectRepo[] {
@@ -77,39 +153,14 @@ export function getWorkspaceProjectRepos(
     "getWorkspaceProjectRepos: projectPath must be non-empty"
   );
 
-  const trimmedProjectName = params.projectName?.trim();
-  const primaryProjectName =
-    trimmedProjectName && trimmedProjectName.length > 0
-      ? trimmedProjectName
-      : PlatformPaths.getProjectName(params.projectPath).trim();
-  assert(
-    primaryProjectName.length > 0,
-    "getWorkspaceProjectRepos: primaryProjectName must be non-empty"
-  );
+  const projectStorageKeys = getWorkspaceProjectStorageKeys({
+    projectPath: params.projectPath,
+    projectName: params.projectName,
+    projects: params.projects,
+  });
+  const isMultiProject = projectStorageKeys.length > 1;
 
-  const orderedProjects =
-    params.projects && params.projects.length > 0
-      ? params.projects
-      : ([
-          {
-            projectPath: params.projectPath,
-            projectName: primaryProjectName,
-          },
-        ] satisfies ProjectRef[]);
-
-  const expectedProjectCount =
-    params.projects && params.projects.length > 0 ? params.projects.length : 1;
-  assert(
-    orderedProjects.length === expectedProjectCount,
-    `getWorkspaceProjectRepos: expected ${expectedProjectCount} projects, got ${orderedProjects.length}`
-  );
-
-  const isMultiProject = orderedProjects.length > 1;
-  const usedStorageKeys = new Set<string>();
-  const repos = orderedProjects.map((project) => {
-    const projectName = project.projectName.trim();
-    assert(projectName.length > 0, "getWorkspaceProjectRepos: projectName must be non-empty");
-
+  const repos = projectStorageKeys.map((project) => {
     const repoCwd = isMultiProject
       ? createRuntime(params.runtimeConfig, {
           projectPath: project.projectPath,
@@ -119,22 +170,13 @@ export function getWorkspaceProjectRepos(
 
     assert(
       repoCwd.trim().length > 0,
-      `getWorkspaceProjectRepos: repoCwd missing for ${projectName}`
+      `getWorkspaceProjectRepos: repoCwd missing for ${project.projectName}`
     );
-
-    const baseStorageKey = sanitizeStorageKey(projectName, project.projectPath);
-    let storageKey = baseStorageKey;
-    let suffix = 2;
-    while (usedStorageKeys.has(storageKey)) {
-      storageKey = appendStorageKeySuffix(baseStorageKey, suffix);
-      suffix += 1;
-    }
-    usedStorageKeys.add(storageKey);
 
     return {
       projectPath: project.projectPath,
-      projectName,
-      storageKey,
+      projectName: project.projectName,
+      storageKey: project.storageKey,
       repoCwd,
     } satisfies WorkspaceProjectRepo;
   });

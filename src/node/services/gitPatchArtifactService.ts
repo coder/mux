@@ -29,7 +29,10 @@ import { shellQuote } from "@/common/utils/shell";
 import { streamToString } from "@/node/runtime/streamUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 import { PlatformPaths } from "@/common/utils/paths";
-import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
+import {
+  getWorkspaceProjectRepos,
+  getWorkspaceProjectStorageKeys,
+} from "@/node/services/workspaceProjectRepos";
 
 /** Callback invoked after patch generation completes (success or failure). */
 export type OnPatchGenerationComplete = (childWorkspaceId: string) => Promise<void>;
@@ -121,18 +124,20 @@ function buildPendingProjectArtifacts(params: {
           },
         ];
 
-  return projectRefs.map((project) => {
-    const projectName = project.projectName.trim();
-    assert(projectName.length > 0, "buildPendingProjectArtifacts: projectName must be non-empty");
-
-    return {
-      projectPath: project.projectPath,
-      projectName,
-      storageKey: projectName,
-      status: "pending",
-      baseCommitSha: baseCommitShaByProjectPath[project.projectPath] || undefined,
-    } satisfies SubagentGitProjectPatchArtifact;
-  });
+  return getWorkspaceProjectStorageKeys({
+    projectPath: params.projectPath,
+    projectName: getPrimaryProjectName(params.projectPath),
+    projects: projectRefs,
+  }).map(
+    (project) =>
+      ({
+        projectPath: project.projectPath,
+        projectName: project.projectName,
+        storageKey: project.storageKey,
+        status: "pending",
+        baseCommitSha: baseCommitShaByProjectPath[project.projectPath] || undefined,
+      }) satisfies SubagentGitProjectPatchArtifact
+  );
 }
 
 function buildPendingPatchArtifact(params: {
