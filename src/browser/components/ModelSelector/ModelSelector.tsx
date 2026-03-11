@@ -22,8 +22,14 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useRouting } from "@/browser/hooks/useRouting";
 
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { getModelName, getModelProvider, normalizeToCanonical } from "@/common/utils/ai/models";
+import {
+  getExplicitGatewayPrefix,
+  getModelName,
+  getModelProvider,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
 import { Button } from "../Button/Button";
 interface ModelSelectorProps {
   value: string;
@@ -254,14 +260,22 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       : cn("bg-background rounded-sm text-[11px]", className ?? "w-32");
 
     const hasValue = value.trim().length > 0;
+    const explicitGateway = hasValue ? getExplicitGatewayPrefix(value) : undefined;
     const canonicalValue = hasValue ? normalizeToCanonical(value) : "";
     const selectedProvider = hasValue ? getModelProvider(canonicalValue) : "";
     const displayValue = hasValue
       ? formatModelDisplayName(getModelName(canonicalValue))
       : (emptyLabel ?? "");
-    const routeInfo = hasValue ? routing.resolveRoute(canonicalValue) : null;
-    const routedViaDisplayName =
-      routeInfo && routeInfo.route !== "direct" ? routeInfo.displayName : null;
+
+    // Explicit gateway selections short-circuit route resolution: the user
+    // intentionally pinned a gateway, so display that gateway directly instead
+    // of resolving route priority from the canonical (gateway-stripped) model.
+    const routeInfo = hasValue && !explicitGateway ? routing.resolveRoute(canonicalValue) : null;
+    const routedViaDisplayName = explicitGateway
+      ? PROVIDER_DISPLAY_NAMES[explicitGateway]
+      : routeInfo && routeInfo.route !== "direct"
+        ? routeInfo.displayName
+        : null;
 
     return (
       <div ref={containerRef} className={containerClassName}>
@@ -296,7 +310,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             align={tooltipExtraContent ? "start" : "center"}
             className={cn(tooltipExtraContent && "max-w-80 whitespace-normal")}
           >
-            {canonicalValue}
+            {explicitGateway ? value.trim() : canonicalValue}
             {routedViaDisplayName ? (
               <>
                 <br />
