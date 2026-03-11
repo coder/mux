@@ -52,6 +52,11 @@ function sanitizeStorageKey(projectName: string, projectPath: string): string {
   return storageKey;
 }
 
+function appendStorageKeySuffix(storageKey: string, suffix: number): string {
+  assert(Number.isInteger(suffix) && suffix >= 2, "appendStorageKeySuffix: suffix must be >= 2");
+  return `${storageKey}-${suffix}`;
+}
+
 export function getWorkspaceProjectRepos(
   params: WorkspaceProjectRepoParams
 ): WorkspaceProjectRepo[] {
@@ -100,6 +105,7 @@ export function getWorkspaceProjectRepos(
   );
 
   const isMultiProject = orderedProjects.length > 1;
+  const usedStorageKeys = new Set<string>();
   const repos = orderedProjects.map((project) => {
     const projectName = project.projectName.trim();
     assert(projectName.length > 0, "getWorkspaceProjectRepos: projectName must be non-empty");
@@ -116,18 +122,26 @@ export function getWorkspaceProjectRepos(
       `getWorkspaceProjectRepos: repoCwd missing for ${projectName}`
     );
 
+    const baseStorageKey = sanitizeStorageKey(projectName, project.projectPath);
+    let storageKey = baseStorageKey;
+    let suffix = 2;
+    while (usedStorageKeys.has(storageKey)) {
+      storageKey = appendStorageKeySuffix(baseStorageKey, suffix);
+      suffix += 1;
+    }
+    usedStorageKeys.add(storageKey);
+
     return {
       projectPath: project.projectPath,
       projectName,
-      storageKey: sanitizeStorageKey(projectName, project.projectPath),
+      storageKey,
       repoCwd,
     } satisfies WorkspaceProjectRepo;
   });
 
-  const storageKeys = repos.map((repo) => repo.storageKey);
   assert(
-    new Set(storageKeys).size === storageKeys.length,
-    `getWorkspaceProjectRepos: duplicate storage keys ${storageKeys.join(", ")}`
+    new Set(repos.map((repo) => repo.storageKey)).size === repos.length,
+    "getWorkspaceProjectRepos: storage keys must be unique after disambiguation"
   );
 
   return repos;

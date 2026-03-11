@@ -37,4 +37,21 @@ describe("getWorkspaceProjectRepos", () => {
 
     expect(repos[0]?.storageKey).toBe("..-..-secrets");
   });
+
+  it("disambiguates storage keys when sanitized project names collide", () => {
+    const repos = getWorkspaceProjectRepos({
+      workspaceId: "workspace-1",
+      workspaceName: "main",
+      workspacePath: "/tmp/workspaces/main",
+      runtimeConfig: { type: "local" },
+      projectPath: "/tmp/projects/main",
+      projectName: "main",
+      projects: [
+        { projectPath: "/tmp/projects/api-core", projectName: "api:core" },
+        { projectPath: "/tmp/projects/api-core-alt", projectName: "api?core" },
+      ],
+    });
+
+    expect(repos.map((repo) => repo.storageKey)).toEqual(["api-core", "api-core-2"]);
+  });
 });
