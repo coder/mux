@@ -178,10 +178,10 @@ describe("API reconnection", () => {
   test("injected clients skip internal auth token setup", async () => {
     window.location.href = "https://mux.example.com/?token=injected-token";
     const states: string[] = [];
-    const injectedClient = { general: {} } as APIClient;
+    const injectedClient: Partial<APIClient> = { general: {} };
 
     render(
-      <APIProvider client={injectedClient}>
+      <APIProvider client={injectedClient as APIClient}>
         <APIStateObserver onState={(s) => states.push(s.status)} />
       </APIProvider>
     );
@@ -200,10 +200,10 @@ describe("API reconnection", () => {
   test("injected clients keep internal connection controls disabled", async () => {
     const states: string[] = [];
     let latestState: UseAPIResult | null = null;
-    const injectedClient = { general: {} } as APIClient;
+    const injectedClient: Partial<APIClient> = { general: {} };
 
     render(
-      <APIProvider client={injectedClient}>
+      <APIProvider client={injectedClient as APIClient}>
         <APIStateObserver
           onState={(state) => {
             latestState = state;
