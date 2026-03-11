@@ -11,7 +11,6 @@ import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
 import { InlineReviewNote, type ReviewActionCallbacks } from "./InlineReviewNote";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
@@ -1486,25 +1485,24 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   }}
                   reviewButton={
                     onReviewNote && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
-                            style={{ position: "absolute", inset: 0 }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCommentButtonClick(displayIndex, e.shiftKey);
-                            }}
-                            aria-label="Add review comment"
-                          >
-                            <MessageSquare className="size-3" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent align="start" side="top">
-                          Add review comment (Shift-click or drag to select range)
-                        </TooltipContent>
-                      </Tooltip>
+                      <>
+                        {/* Regular review can mount thousands of diff lines at once, so keep
+                            this affordance native instead of attaching a Radix tooltip to
+                            every line and paying the listener/DOM cost up front. */}
+                        <button
+                          type="button"
+                          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                          style={{ position: "absolute", inset: 0 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCommentButtonClick(displayIndex, e.shiftKey);
+                          }}
+                          aria-label="Add review comment"
+                          title="Add review comment (Shift-click or drag to select range)"
+                        >
+                          <MessageSquare className="size-3" />
+                        </button>
+                      </>
                     )
                   }
                 />
