@@ -3,8 +3,6 @@ import { AlertTriangle, Check, CircleDot, EyeOff, X } from "lucide-react";
 import type { ToolErrorResult } from "@/common/types/tools";
 import { LoadingDots } from "./ToolPrimitives";
 
-export { formatDuration } from "@/common/utils/formatDuration";
-
 /**
  * Shared utilities and hooks for tool components
  */

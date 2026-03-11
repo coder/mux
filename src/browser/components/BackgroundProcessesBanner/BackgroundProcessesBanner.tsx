@@ -3,7 +3,7 @@ import { Terminal, X, ChevronDown, ChevronRight, Loader2, FileText } from "lucid
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 import { BackgroundBashOutputDialog } from "../BackgroundBashOutputDialog/BackgroundBashOutputDialog";
-import { formatDuration } from "@/browser/features/Tools/Shared/toolUtils";
+import { formatDuration } from "@/common/utils/formatDuration";
 import {
   useBackgroundBashTerminatingIds,
   useBackgroundProcesses,

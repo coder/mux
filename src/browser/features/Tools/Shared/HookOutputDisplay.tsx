@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { WithHookOutput } from "@/common/types/tools";
-import { formatDuration } from "./toolUtils";
+import { formatDuration } from "@/common/utils/formatDuration";
 
 interface HookOutputDisplayProps {
   output: string;

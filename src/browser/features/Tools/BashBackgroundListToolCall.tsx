@@ -15,12 +15,8 @@ import {
   ToolIcon,
   ErrorBox,
 } from "./Shared/ToolPrimitives";
-import {
-  useToolExpansion,
-  getStatusDisplay,
-  formatDuration,
-  type ToolStatus,
-} from "./Shared/toolUtils";
+import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
+import { formatDuration } from "@/common/utils/formatDuration";
 import { cn } from "@/common/lib/utils";
 
 interface BashBackgroundListToolCallProps {
