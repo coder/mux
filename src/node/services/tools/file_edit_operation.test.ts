@@ -4,6 +4,11 @@ import * as path from "path";
 import { executeFileEditOperation } from "./file_edit_operation";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { MODEL_ONLY_TOOL_NOTIFICATIONS_FIELD } from "@/common/utils/tools/internalToolResultFields";
+import {
+  DOOM_LOOP_EDIT_THRESHOLD,
+  StreamEditTracker,
+} from "@/node/services/streamGuardrails/StreamEditTracker";
 
 import { getTestDeps, TestTempDir } from "./testHelpers";
 
@@ -280,5 +285,83 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     // We still resolve both paths to determine whether the attempted path is the plan file.
     expect(resolvePathCalls).toContain("../.mux/sessions/ws/plan.md");
     expect(resolvePathCalls).toContain("/home/user/.mux/sessions/ws/plan.md");
+  });
+});
+
+describe("executeFileEditOperation doom-loop guard", () => {
+  test("attaches a model-only notification when edit threshold is reached", async () => {
+    using tempDir = new TestTempDir("doom-loop-guard-test");
+
+    const filePath = path.join(tempDir.path, "main.ts");
+    await fs.writeFile(filePath, "const x = 0;\n");
+
+    const runtime = new LocalRuntime(tempDir.path);
+    const editTracker = new StreamEditTracker();
+
+    let thresholdResult: unknown;
+    for (let i = 1; i <= DOOM_LOOP_EDIT_THRESHOLD; i += 1) {
+      thresholdResult = await executeFileEditOperation({
+        config: {
+          cwd: tempDir.path,
+          runtime,
+          runtimeTempDir: tempDir.path,
+          editTracker,
+        },
+        filePath,
+        operation: () => ({ success: true, newContent: `const x = ${i};\n`, metadata: {} }),
+      });
+    }
+
+    expect(thresholdResult).toBeDefined();
+    const resultRecord = thresholdResult as Record<string, unknown>;
+
+    expect(resultRecord.success).toBe(true);
+    expect(Array.isArray(resultRecord[MODEL_ONLY_TOOL_NOTIFICATIONS_FIELD])).toBe(true);
+
+    const notifications = resultRecord[MODEL_ONLY_TOOL_NOTIFICATIONS_FIELD] as string[];
+    expect(notifications[0]).toContain("Potential doom loop");
+    expect(notifications[0]).toContain(filePath);
+  });
+
+  test("nudges at most once per file for a stream", async () => {
+    using tempDir = new TestTempDir("doom-loop-guard-once-test");
+
+    const filePath = path.join(tempDir.path, "main.ts");
+    await fs.writeFile(filePath, "const x = 0;\n");
+
+    const runtime = new LocalRuntime(tempDir.path);
+    const editTracker = new StreamEditTracker();
+
+    for (let i = 1; i <= DOOM_LOOP_EDIT_THRESHOLD; i += 1) {
+      await executeFileEditOperation({
+        config: {
+          cwd: tempDir.path,
+          runtime,
+          runtimeTempDir: tempDir.path,
+          editTracker,
+        },
+        filePath,
+        operation: () => ({ success: true, newContent: `const x = ${i};\n`, metadata: {} }),
+      });
+    }
+
+    const postThresholdResult = await executeFileEditOperation({
+      config: {
+        cwd: tempDir.path,
+        runtime,
+        runtimeTempDir: tempDir.path,
+        editTracker,
+      },
+      filePath,
+      operation: () => ({
+        success: true,
+        newContent: `const x = ${DOOM_LOOP_EDIT_THRESHOLD + 1};\n`,
+        metadata: {},
+      }),
+    });
+
+    const resultRecord = postThresholdResult as unknown as Record<string, unknown>;
+    expect(resultRecord.success).toBe(true);
+    expect(resultRecord[MODEL_ONLY_TOOL_NOTIFICATIONS_FIELD]).toBeUndefined();
   });
 });

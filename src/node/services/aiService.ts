@@ -85,6 +85,8 @@ import {
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
+import { StreamEditTracker } from "./streamGuardrails/StreamEditTracker";
+import { StreamVerificationTracker } from "./streamGuardrails/StreamVerificationTracker";
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -994,6 +996,10 @@ export class AIService extends EventEmitter {
         }
       }
 
+      // Guardrail trackers are per-stream and only enabled for AI tool execution.
+      const editTracker = new StreamEditTracker();
+      const verificationTracker = new StreamVerificationTracker();
+
       // Get model-specific tools with workspace path (correct for local or remote)
       const allTools = await getToolsForModel(
         modelString,
@@ -1031,6 +1037,9 @@ export class AIService extends EventEmitter {
           muxScope,
           // Only child workspaces (tasks) can report to a parent.
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
+          // Per-stream deterministic guardrails for completion + doom-loop detection.
+          editTracker,
+          verificationTracker,
           // External edit detection callback
           recordFileState,
           onConfigChanged: () => this.providerService.notifyConfigChanged(),

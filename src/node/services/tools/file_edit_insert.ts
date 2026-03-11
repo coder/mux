@@ -14,6 +14,8 @@ import { fileExists } from "@/node/utils/runtime/fileExists";
 import { writeFileString } from "@/node/utils/runtime/helpers";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { getErrorMessage } from "@/common/utils/errors";
+import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
+import { DOOM_LOOP_EDIT_THRESHOLD } from "@/node/services/streamGuardrails/StreamEditTracker";
 
 const READ_AND_RETRY_NOTE = `${EDIT_FAILED_NOTE_PREFIX} ${NOTE_READ_FILE_RETRY}`;
 
@@ -97,8 +99,23 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             }
           }
 
+          // Track new-file creation for doom-loop detection and verification guard.
+          // Reset verification state so pre-edit validation doesn't count.
+          let doomLoopNudge: string | undefined;
+          if (!config.planFileOnly && config.editTracker) {
+            const editCount = config.editTracker.recordEdit(resolvedPath);
+            config.verificationTracker?.resetValidation();
+            if (config.editTracker.shouldNudge(resolvedPath, DOOM_LOOP_EDIT_THRESHOLD)) {
+              config.editTracker.markNudged(resolvedPath);
+              doomLoopNudge =
+                `<notification>Potential doom loop: you have edited ${resolvedPath} ${editCount} times this stream. ` +
+                `Step back and reconsider:\n- Re-read the latest error/output carefully.\n- Verify your assumptions about the problem.\n` +
+                `- Consider a fundamentally different approach (not a small variation of what you've been trying).</notification>`;
+            }
+          }
+
           const diff = generateDiff(resolvedPath, "", content);
-          return {
+          const baseResult: FileEditInsertToolResult = {
             success: true,
             diff: FILE_EDIT_DIFF_OMITTED_MESSAGE,
             ui_only: {
@@ -108,6 +125,12 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
             },
             ...(pathWarning && { warning: pathWarning }),
           };
+          if (doomLoopNudge) {
+            return attachModelOnlyToolNotifications(baseResult, [
+              doomLoopNudge,
+            ]) as FileEditInsertToolResult;
+          }
+          return baseResult;
         }
 
         return executeFileEditOperation({

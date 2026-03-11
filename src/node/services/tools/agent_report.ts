@@ -20,6 +20,20 @@ export const createAgentReportTool: ToolFactory = (config: ToolConfiguration) =>
         );
       }
 
+      // Guard: if edits were made but no validation was attempted, nudge the agent to verify.
+      const hasEdits = config.editTracker?.hasAnyEdits() ?? false;
+      const hasValidated = config.verificationTracker?.hasValidationAttempt() ?? false;
+      if (hasEdits && !hasValidated) {
+        if (!config.verificationTracker?.hasBeenNudged()) {
+          config.verificationTracker?.markNudged();
+          throw new Error(
+            "agent_report rejected: no validation commands detected after file edits. " +
+              "Run the most relevant check (tests, typecheck, lint) and then call agent_report again. " +
+              "If validation is not applicable, call agent_report again to confirm."
+          );
+        }
+      }
+
       // Intentionally no side-effects. The backend orchestrator consumes the tool-call args
       // via persisted history/partial state once the tool call completes successfully.
       // The stream continues after this so the SDK can record usage, while StreamManager

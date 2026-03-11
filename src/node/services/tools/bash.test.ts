@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { createBashTool } from "./bash";
+import { createBashTool, looksLikeValidationCommand } from "./bash";
 import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
@@ -19,6 +19,7 @@ function isForegroundSuccess(
 }
 
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import { StreamVerificationTracker } from "@/node/services/streamGuardrails/StreamVerificationTracker";
 
 // Mock ToolCallOptions for testing
 const mockToolCallOptions: ToolExecutionOptions = {
@@ -42,6 +43,36 @@ function createTestBashTool() {
     },
   };
 }
+
+describe("looksLikeValidationCommand", () => {
+  it("matches common validation command patterns", () => {
+    expect(looksLikeValidationCommand("make test")).toBe(true);
+    expect(looksLikeValidationCommand("make typecheck")).toBe(true);
+    expect(looksLikeValidationCommand("bun test")).toBe(true);
+    expect(looksLikeValidationCommand("bun run lint")).toBe(true);
+    expect(looksLikeValidationCommand("vitest --run")).toBe(true);
+    expect(looksLikeValidationCommand("run_and_report typecheck make typecheck")).toBe(true);
+    expect(looksLikeValidationCommand("npm run test\npnpm run lint")).toBe(true);
+    // Validation commands after shell operators (monorepo/subdirectory workflows)
+    expect(looksLikeValidationCommand("cd packages/app && make test")).toBe(true);
+    expect(looksLikeValidationCommand("cd packages/app && bun test")).toBe(true);
+    expect(looksLikeValidationCommand("source .env; make typecheck")).toBe(true);
+    expect(looksLikeValidationCommand("run_and_report unit cd packages/app && bun test")).toBe(
+      true
+    );
+  });
+
+  it("does not match non-validation commands", () => {
+    expect(looksLikeValidationCommand("make build")).toBe(false);
+    expect(looksLikeValidationCommand("bun install")).toBe(false);
+    expect(looksLikeValidationCommand("echo test")).toBe(false);
+    expect(looksLikeValidationCommand("cargo build")).toBe(false);
+    // run_and_report wrapping a non-validation command should NOT trigger
+    expect(looksLikeValidationCommand("run_and_report install bun install")).toBe(false);
+    // run_and_report with validation text appearing as arguments, not the actual command
+    expect(looksLikeValidationCommand("run_and_report note echo make test")).toBe(false);
+  });
+});
 
 describe("bash tool", () => {
   it("should execute a simple command successfully", async () => {
@@ -1938,6 +1969,46 @@ describe("bash tool - background execution", () => {
     } else {
       throw new Error("Expected background process ID in result");
     }
+
+    await manager.terminateAll();
+    tempDir[Symbol.dispose]();
+  });
+});
+
+describe("bash tool - verification tracker", () => {
+  it("should mark verification for foreground validation commands", async () => {
+    const tempDir = new TestTempDir("test-bash-verify");
+    const config = createTestToolConfig(tempDir.path);
+    const tracker = new StreamVerificationTracker();
+    config.verificationTracker = tracker;
+    const tool = createBashTool(config);
+
+    await tool.execute!(
+      { script: "make test", timeout_secs: 5, run_in_background: false, display_name: "test" },
+      mockToolCallOptions
+    );
+
+    expect(tracker.hasValidationAttempt()).toBe(true);
+    tempDir[Symbol.dispose]();
+  });
+
+  it("should not mark verification for background validation commands", async () => {
+    const manager = new BackgroundProcessManager("/tmp/mux-test-verify-bg");
+    const tempDir = new TestTempDir("test-bash-verify-bg");
+    const config = createTestToolConfig(tempDir.path);
+    const tracker = new StreamVerificationTracker();
+    config.verificationTracker = tracker;
+    config.backgroundProcessManager = manager;
+    const tool = createBashTool(config);
+
+    await tool.execute!(
+      { script: "make test", timeout_secs: 5, run_in_background: true, display_name: "test-bg" },
+      mockToolCallOptions
+    );
+
+    // Background commands haven't produced results yet, so they shouldn't
+    // count as "validation attempted"
+    expect(tracker.hasValidationAttempt()).toBe(false);
 
     await manager.terminateAll();
     tempDir[Symbol.dispose]();

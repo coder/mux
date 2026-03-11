@@ -13,6 +13,8 @@ import {
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
+import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
+import { DOOM_LOOP_EDIT_THRESHOLD } from "@/node/services/streamGuardrails/StreamEditTracker";
 
 type FileEditOperationResult<TMetadata> =
   | {
@@ -131,6 +133,8 @@ export async function executeFileEditOperation<TMetadata>({
       throw err;
     }
 
+    let doomLoopNudge: string | undefined;
+
     // Record file state for post-compaction attachment tracking
     if (config.recordFileState) {
       try {
@@ -144,9 +148,20 @@ export async function executeFileEditOperation<TMetadata>({
       }
     }
 
+    // Track repeated edits to detect potential doom loops in exec mode.
+    // Reset verification state so pre-edit validation doesn't count.
+    if (!config.planFileOnly && config.editTracker) {
+      const editCount = config.editTracker.recordEdit(resolvedPath);
+      config.verificationTracker?.resetValidation();
+      if (config.editTracker.shouldNudge(resolvedPath, DOOM_LOOP_EDIT_THRESHOLD)) {
+        config.editTracker.markNudged(resolvedPath);
+        doomLoopNudge = `<notification>Potential doom loop: you have edited ${resolvedPath} ${editCount} times this stream. Step back and reconsider:\n- Re-read the latest error/output carefully.\n- Verify your assumptions about the problem.\n- Consider a fundamentally different approach (not a small variation of what you've been trying).</notification>`;
+      }
+    }
+
     const diff = generateDiff(resolvedPath, originalContent, operationResult.newContent);
 
-    return {
+    const baseResult: FileEditDiffSuccessBase & TMetadata = {
       success: true,
       diff: FILE_EDIT_DIFF_OMITTED_MESSAGE,
       ui_only: {
@@ -155,8 +170,14 @@ export async function executeFileEditOperation<TMetadata>({
         },
       },
       ...operationResult.metadata,
-      ...(pathWarning && { warning: pathWarning }),
+      ...(pathWarning ? { warning: pathWarning } : {}),
     };
+
+    if (doomLoopNudge) {
+      return attachModelOnlyToolNotifications(baseResult, [doomLoopNudge]) as typeof baseResult;
+    }
+
+    return baseResult;
   } catch (error) {
     if (error && typeof error === "object" && "code" in error) {
       const nodeError = error as { code?: string };

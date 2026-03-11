@@ -523,6 +523,33 @@ function validateScript(script: string, config: ToolConfiguration): BashToolResu
   return null; // Valid
 }
 
+// Patterns for commands that are inherently validation (tests, typecheck, lint).
+// `run_and_report` is a generic wrapper (`run_and_report <step> <cmd...>`), so we
+// match it only when the wrapped command itself is a validation command.
+const VALIDATION_COMMAND_RE =
+  /(?:make\s+(?:test|typecheck|lint|static-check|fmt-check)|bun\s+(?:test|run\s+(?:test|typecheck|lint))|npm\s+(?:test|run\s+(?:test|typecheck|lint))|pnpm\s+(?:test|run\s+(?:test|typecheck|lint))|yarn\s+(?:test|run\s+(?:test|typecheck|lint))|tsc|eslint|vitest|pytest|cargo\s+(?:test|check|clippy))\b/;
+
+// Match validation commands at line start, after shell operators (&&, ||, ;, |),
+// or after run_and_report wrappers, to handle monorepo/subdirectory workflows
+// like `cd packages/app && make test`.
+const CMD_PREFIX = String.raw`(?:^|\n|&&|\|\||[;|])\s*`;
+const VALIDATION_PATTERNS: RegExp[] = [
+  // run_and_report <step_name> <validation_command> — only when the actual command
+  // (third word) is a validation command. Chained commands like
+  // `run_and_report unit cd app && bun test` are caught by the standalone pattern below.
+  // NOTE: This is a heuristic. Environment prefixes like `env CI=1 bun test` or
+  // `bash -c "make test"` won't match the run_and_report rule, but may be caught by
+  // the standalone pattern if chained with &&/;. The agent_report escape hatch (second
+  // attempt always passes) covers any remaining false negatives.
+  new RegExp(`${CMD_PREFIX}run_and_report\\s+\\S+\\s+${VALIDATION_COMMAND_RE.source}`),
+  // Validation commands at line start or after shell operators
+  new RegExp(`${CMD_PREFIX}${VALIDATION_COMMAND_RE.source}`),
+];
+
+export function looksLikeValidationCommand(script: string): boolean {
+  return VALIDATION_PATTERNS.some((pattern) => pattern.test(script));
+}
+
 /**
  * Rewrite cmd.exe-style null-device redirects (e.g. `>nul`, `2>nul`) into `/dev/null`.
  *
@@ -861,6 +888,13 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       const safeDisplayName = resolveBashDisplayName(script, display_name);
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
+
+      // Mark validation attempts for the pre-completion verification guard.
+      // Only count foreground commands — background processes haven't produced
+      // results yet, so they don't count as "validation attempted".
+      if (!run_in_background && looksLikeValidationCommand(script)) {
+        config.verificationTracker?.markValidationAttempt();
+      }
 
       // Warn when the model appears to be reading files via bash output (cat/rg/grep).
       // Reading files via bash output is fragile (may be truncated or auto-filtered);

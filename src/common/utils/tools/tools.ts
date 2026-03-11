@@ -51,6 +51,8 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { StreamEditTracker } from "@/node/services/streamGuardrails/StreamEditTracker";
+import type { StreamVerificationTracker } from "@/node/services/streamGuardrails/StreamVerificationTracker";
 
 /**
  * Configuration for tools that need runtime context
@@ -95,6 +97,10 @@ export interface ToolConfiguration {
   taskService?: TaskService;
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
+  /** Per-stream edit tracker for doom-loop detection (not set for IPC tool calls) */
+  editTracker?: StreamEditTracker;
+  /** Per-stream verification tracker for completion guard (not set for IPC tool calls) */
+  verificationTracker?: StreamVerificationTracker;
   /** Experiments inherited from parent (for subagent spawning) */
   experiments?: {
     programmaticToolCalling?: boolean;
