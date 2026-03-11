@@ -36,7 +36,12 @@ import {
 } from "@/browser/hooks/useDesktopTitlebar";
 
 import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import {
+  getExplicitGatewayPrefix,
+  normalizeSelectedModel,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // Update check interval
@@ -85,14 +90,24 @@ export function TitleBar(props: TitleBarProps) {
   const [workspaceModelOverride] = usePersistedState<string | null>(workspaceModelKey, null, {
     listener: true,
   });
-  const activeModel = normalizeToCanonical(
+  const rawActiveModel =
     currentWorkspaceId &&
-      typeof workspaceModelOverride === "string" &&
-      workspaceModelOverride.trim().length > 0
+    typeof workspaceModelOverride === "string" &&
+    workspaceModelOverride.trim().length > 0
       ? workspaceModelOverride.trim()
-      : defaultModel
-  );
-  const activeRoute = routing.resolveRoute(activeModel);
+      : defaultModel;
+  const activeModel = normalizeSelectedModel(rawActiveModel);
+  const explicitGateway = getExplicitGatewayPrefix(activeModel);
+  const canonicalActiveModel = normalizeToCanonical(activeModel);
+  // Explicit gateway selections short-circuit route resolution: the user
+  // intentionally pinned a gateway, so display that gateway directly.
+  const activeRoute = explicitGateway
+    ? {
+        route: explicitGateway,
+        isAuto: false,
+        displayName: PROVIDER_DISPLAY_NAMES[explicitGateway] ?? explicitGateway,
+      }
+    : routing.resolveRoute(canonicalActiveModel);
   const activeRouteProvider = activeRoute.route;
   const isNonDirectRoute = activeRouteProvider !== "direct";
   const isMuxGatewayRoute = activeRouteProvider === "mux-gateway";
