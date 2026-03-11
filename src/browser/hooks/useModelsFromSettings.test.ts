@@ -28,9 +28,15 @@ const useRoutingMock = mock(() => ({
   routeOverrides,
   resolveRoute: () => ({ route: "direct", isAuto: true, displayName: "Direct" }),
   availableRoutes: () => [],
-  setRoutePreferences: () => {},
-  setRoutePriority: () => {},
-  setRouteOverride: () => {},
+  setRoutePreferences: () => {
+    /* noop */
+  },
+  setRoutePriority: () => {
+    /* noop */
+  },
+  setRouteOverride: () => {
+    /* noop */
+  },
 }));
 
 void mock.module("@/browser/hooks/useProvidersConfig", () => ({
