@@ -242,16 +242,25 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const routing = useRouting();
 
   const disableMuxGatewayRoute = useCallback(() => {
-    if (!routing.routePriority.includes("mux-gateway")) {
-      return;
-    }
-
     const nextPriority = routing.routePriority.filter((route) => route !== "mux-gateway");
     if (!nextPriority.includes("direct")) {
       nextPriority.push("direct");
     }
 
-    routing.setRoutePriority(nextPriority);
+    // Legacy configs can persist per-model mux-gateway overrides, and resolve.ts
+    // gives those overrides precedence over route priority order.
+    const nextOverrides = Object.fromEntries(
+      Object.entries(routing.routeOverrides).filter(([, route]) => route !== "mux-gateway")
+    );
+
+    if (
+      nextPriority.length === routing.routePriority.length &&
+      Object.keys(nextOverrides).length === Object.keys(routing.routeOverrides).length
+    ) {
+      return;
+    }
+
+    routing.setRoutePreferences(nextPriority, nextOverrides);
   }, [routing]);
 
   const cancelMuxGatewayLogin = useCallback(() => {

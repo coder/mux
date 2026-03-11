@@ -41,6 +41,9 @@ export interface RoutingState {
   /** Which routes can reach a given model's origin? */
   availableRoutes(canonicalModel: string): AvailableRoute[];
 
+  /** Replace both route priority and per-model overrides together */
+  setRoutePreferences(priority: string[], overrides: Record<string, string>): void;
+
   /** Set the full priority list (drag-reorder) */
   setRoutePriority(priority: string[]): void;
 
@@ -142,18 +145,25 @@ export function useRouting(): RoutingState {
     [api]
   );
 
-  const setRoutePriority = useCallback(
-    (priority: string[]) => {
+  const setRoutePreferences = useCallback(
+    (priority: string[], overrides: Record<string, string>) => {
       fetchVersionRef.current++;
       setRoutePriorityState(priority);
-      persistRoutePreferences(priority, routeOverrides);
+      setRouteOverridesState(overrides);
+      persistRoutePreferences(priority, overrides);
     },
-    [persistRoutePreferences, routeOverrides]
+    [persistRoutePreferences]
+  );
+
+  const setRoutePriority = useCallback(
+    (priority: string[]) => {
+      setRoutePreferences(priority, routeOverrides);
+    },
+    [routeOverrides, setRoutePreferences]
   );
 
   const setRouteOverride = useCallback(
     (canonicalModel: string, route: string | null) => {
-      fetchVersionRef.current++;
       const key = normalizeToCanonical(canonicalModel);
       const nextOverrides = { ...routeOverrides };
       if (route == null) {
@@ -162,10 +172,9 @@ export function useRouting(): RoutingState {
         nextOverrides[key] = route;
       }
 
-      setRouteOverridesState(nextOverrides);
-      persistRoutePreferences(routePriority, nextOverrides);
+      setRoutePreferences(routePriority, nextOverrides);
     },
-    [persistRoutePreferences, routeOverrides, routePriority]
+    [routeOverrides, routePriority, setRoutePreferences]
   );
 
   const resolveRoute = useCallback(
@@ -206,6 +215,7 @@ export function useRouting(): RoutingState {
     routeOverrides,
     resolveRoute,
     availableRoutes,
+    setRoutePreferences,
     setRoutePriority,
     setRouteOverride,
   };
