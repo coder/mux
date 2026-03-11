@@ -47,7 +47,7 @@ import {
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -354,12 +354,12 @@ function AppInner() {
   } = useCommandRegistry();
 
   /**
-   * Get model for a workspace, returning canonical format.
+   * Get the selected model for a workspace, preserving explicit gateway prefixes.
    */
   const getModelForWorkspace = useCallback((workspaceId: string): string => {
     const defaultModel = getDefaultModel();
     const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
-    return normalizeToCanonical(rawModel || defaultModel);
+    return normalizeSelectedModel(rawModel || defaultModel);
   }, []);
 
   const getThinkingLevelForWorkspace = useCallback(
@@ -383,6 +383,19 @@ function AppInner() {
       if (legacy !== undefined && THINKING_LEVELS.includes(legacy)) {
         updatePersistedState(scopedKey, legacy);
         return legacy;
+      }
+
+      // Fallback: check canonical key for legacy entries stored before gateway-aware normalization.
+      const canonicalModel = normalizeToCanonical(model);
+      if (canonicalModel !== model) {
+        const canonicalLegacy = readPersistedState<ThinkingLevel | undefined>(
+          getThinkingLevelByModelKey(canonicalModel),
+          undefined
+        );
+        if (canonicalLegacy !== undefined && THINKING_LEVELS.includes(canonicalLegacy)) {
+          updatePersistedState(scopedKey, canonicalLegacy);
+          return canonicalLegacy;
+        }
       }
 
       return "off";
