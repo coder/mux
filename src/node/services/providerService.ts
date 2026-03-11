@@ -293,7 +293,8 @@ export class ProviderService {
 
   /**
    * After a credential change, sync gateway presence in routePriority.
-   * Configured gateways auto-insert at position 1 (before "direct").
+   * Configured gateways auto-insert immediately before "direct" in routePriority,
+   * preserving existing user-defined order.
    * Unconfigured gateways are removed.
    */
   private async syncGatewayLifecycle(provider: string): Promise<void> {
@@ -308,9 +309,15 @@ export class ProviderService {
     const priority = config.routePriority ?? ["direct"];
 
     if (creds.isConfigured && !priority.includes(providerName)) {
+      // Insert before "direct" to stay reachable while preserving the
+      // relative order of any user-configured routes already present.
+      const directIndex = priority.indexOf("direct");
+      const insertIndex = directIndex === -1 ? priority.length : directIndex;
+      const nextPriority = [...priority];
+      nextPriority.splice(insertIndex, 0, providerName);
       await this.config.editConfig((c) => ({
         ...c,
-        routePriority: [providerName, ...priority],
+        routePriority: nextPriority,
         // Clear legacy disable — routePriority presence is now the authoritative
         // routing signal, so a stale muxGatewayEnabled: false must not veto it.
         ...(providerName === "mux-gateway" ? { muxGatewayEnabled: undefined } : {}),

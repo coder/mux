@@ -410,6 +410,50 @@ describe("ProviderService gateway lifecycle", () => {
     });
   });
 
+  it("preserves user order when inserting a second gateway before direct", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["mux-gateway", "direct"],
+      });
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+
+      const result = await service.setConfig("openrouter", ["apiKey"], "sk-or-test");
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual([
+        "mux-gateway",
+        "openrouter",
+        "direct",
+      ]);
+    });
+  });
+
+  it("appends gateway when direct is absent from routePriority", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["mux-gateway"],
+      });
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+
+      const result = await service.setConfig("openrouter", ["apiKey"], "sk-or-test");
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual(["mux-gateway", "openrouter"]);
+    });
+  });
+
   it("auto-removes gateway from routePriority when deconfigured", async () => {
     await withTempConfigAsync(async (config, service) => {
       const existingConfig = config.loadConfigOrDefault();
