@@ -8,6 +8,7 @@ import {
   type RuntimeConfig,
 } from "@/common/types/runtime";
 import {
+  getExplicitGatewayPrefix,
   isValidModelFormat,
   normalizeToCanonical,
   resolveModelAlias,
@@ -500,7 +501,10 @@ function normalizeModelForCommand(modelInput: string): string | null {
   }
 
   const resolved = resolveModelAlias(trimmed);
-  const normalized = normalizeToCanonical(resolved).trim();
+  // Explicit gateway scoping is user intent — preserve it for the backend to honor.
+  const normalized = getExplicitGatewayPrefix(resolved)
+    ? resolved.trim()
+    : normalizeToCanonical(resolved).trim();
 
   return isValidModelFormat(normalized) ? normalized : null;
 }

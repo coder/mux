@@ -69,6 +69,48 @@ describe("ACP slash command support", () => {
     expect(parsed.continueMessage).toBe("Continue with focused tests");
   });
 
+  it("preserves explicit gateway prefix in /compact -m model", () => {
+    const parsed = parseAcpSlashCommand(
+      "/compact -m openrouter:openai/gpt-5",
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("compact");
+    if (parsed == null || parsed.kind !== "compact") {
+      throw new Error("Expected /compact command with explicit gateway prefix to parse");
+    }
+
+    expect(parsed.model).toBe("openrouter:openai/gpt-5");
+  });
+
+  it("preserves mux-gateway prefix in /compact -m model", () => {
+    const parsed = parseAcpSlashCommand(
+      "/compact -m mux-gateway:anthropic/claude-sonnet-4-6",
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("compact");
+    if (parsed == null || parsed.kind !== "compact") {
+      throw new Error("Expected /compact command with mux-gateway prefix to parse");
+    }
+
+    expect(parsed.model).toBe("mux-gateway:anthropic/claude-sonnet-4-6");
+  });
+
+  it("still normalizes direct-provider models in /compact -m", () => {
+    const parsed = parseAcpSlashCommand(
+      "/compact -m anthropic:claude-sonnet-4-5",
+      mapSkillsByName(skills)
+    );
+
+    expect(parsed?.kind).toBe("compact");
+    if (parsed == null || parsed.kind !== "compact") {
+      throw new Error("Expected /compact command with direct-provider model to parse");
+    }
+
+    expect(parsed.model).toBe("anthropic:claude-sonnet-4-5");
+  });
+
   it("parses /compact flags and one-line follow-up", () => {
     const parsed = parseAcpSlashCommand(
       "/compact -t 1200 Continue with focused tests",
