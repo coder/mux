@@ -10,9 +10,10 @@ import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
-import { isDevcontainerRuntime, isSSHRuntime } from "@/common/types/runtime";
+import { isSSHRuntime } from "@/common/types/runtime";
 import { RefreshController } from "@/browser/utils/RefreshController";
 import { repoRootBashOptions } from "@/browser/utils/executeBash";
+import { canRunPassiveRuntimeCommand } from "@/browser/utils/runtimeExecutionPolicy";
 import {
   useRuntimeStatusStoreRaw as getRuntimeStatusStore,
   type RuntimeStatusStore,
@@ -430,13 +431,6 @@ export class GitStatusStore {
    */
   private tryFetchWorkspaces(workspaces: Map<string, FrontendWorkspaceMetadata>): void {
     const representativeWorkspaces = new Map<string, FrontendWorkspaceMetadata>();
-    const isFetchEligible = (metadata: FrontendWorkspaceMetadata): boolean => {
-      if (!isDevcontainerRuntime(metadata.runtimeConfig)) {
-        return true;
-      }
-
-      return this.runtimeStatusStore.getStatus(metadata.id) === "running";
-    };
 
     // Passive fetches are skipped for devcontainer workspaces whose runtime is not
     // already running. Stale ahead/behind metadata while stopped is intentional to
@@ -446,7 +440,12 @@ export class GitStatusStore {
       if (representativeWorkspaces.has(fetchKey) || !this.shouldFetch(fetchKey)) {
         continue;
       }
-      if (!isFetchEligible(metadata)) {
+      if (
+        !canRunPassiveRuntimeCommand(
+          metadata.runtimeConfig,
+          this.runtimeStatusStore.getStatus(metadata.id)
+        )
+      ) {
         continue;
       }
 
