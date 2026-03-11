@@ -37,6 +37,7 @@ import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { streamToString, shescape } from "./streamUtils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
 
 /**
  * Result from spawning a remote process.
@@ -382,7 +383,7 @@ export abstract class RemoteRuntime implements Runtime {
    */
   writeFile(filePath: string, abortSignal?: AbortSignal): WritableStream<Uint8Array> {
     const quotedPath = this.quoteForRemote(filePath);
-    const tempPath = `${filePath}.tmp.${Date.now()}`;
+    const tempPath = getAtomicWriteTempPath(filePath);
     const quotedTempPath = this.quoteForRemote(tempPath);
 
     // Build write command - subclasses can override buildWriteCommand for special handling
