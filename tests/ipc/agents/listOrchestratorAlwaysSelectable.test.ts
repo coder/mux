@@ -1,6 +1,5 @@
 /**
- * Tests that agents can declare UI requirements (e.g. a non-empty plan file)
- * that gate whether they are selectable in the agent picker.
+ * Tests that Orchestrator stays selectable in the agent picker regardless of plan file state.
  */
 
 import * as fs from "fs/promises";
@@ -19,7 +18,7 @@ import { detectDefaultTrunkBranch } from "../../../src/node/git";
 import { getPlanFilePath } from "../../../src/common/utils/planStorage";
 import { expandTilde } from "../../../src/node/runtime/tildeExpansion";
 
-describe("agents.list plan requirements", () => {
+describe("agents.list orchestrator availability", () => {
   let env: TestEnvironment;
   let repoPath: string;
 
@@ -56,8 +55,8 @@ describe("agents.list plan requirements", () => {
     }
   });
 
-  it("gates orchestrator uiSelectable on a non-empty plan file", async () => {
-    const branchName = generateBranchName("agents-plan-requires");
+  it("keeps orchestrator uiSelectable with no plan, an empty plan, and a non-empty plan", async () => {
+    const branchName = generateBranchName("agents-orchestrator-selectable");
     const trunkBranch = await detectDefaultTrunkBranch(repoPath);
 
     const createResult = await env.orpc.workspace.create({
@@ -77,37 +76,25 @@ describe("agents.list plan requirements", () => {
 
     const planPath = expandTilde(getPlanFilePath(workspaceName, projectName));
 
-    try {
-      // No plan file yet -> orchestrator is discoverable but not selectable.
-      const listNoPlan = await env.orpc.agents.list({ workspaceId });
-      const orchestratorNoPlan = listNoPlan.find((a) => a.id === "orchestrator");
-      expect(orchestratorNoPlan).toBeTruthy();
-      expect(orchestratorNoPlan?.uiSelectable).toBe(false);
+    async function expectOrchestratorSelectable(): Promise<void> {
+      const agents = await env.orpc.agents.list({ workspaceId });
+      const orchestrator = agents.find((agent) => agent.id === "orchestrator");
+      expect(orchestrator).toBeTruthy();
+      expect(orchestrator?.uiSelectable).toBe(true);
+    }
 
-      // Empty plan file still shouldn't satisfy the requirement.
+    try {
+      await fs.rm(planPath, { force: true });
+      await expectOrchestratorSelectable();
+
       await fs.mkdir(path.dirname(planPath), { recursive: true });
       await fs.writeFile(planPath, "");
+      await expectOrchestratorSelectable();
 
-      const listEmptyPlan = await env.orpc.agents.list({ workspaceId });
-      const orchestratorEmptyPlan = listEmptyPlan.find((a) => a.id === "orchestrator");
-      expect(orchestratorEmptyPlan).toBeTruthy();
-      expect(orchestratorEmptyPlan?.uiSelectable).toBe(false);
-
-      // Once plan file is non-empty, orchestrator becomes selectable.
       await fs.writeFile(planPath, "# Plan\n");
-
-      const listWithPlan = await env.orpc.agents.list({ workspaceId });
-      const orchestratorWithPlan = listWithPlan.find((a) => a.id === "orchestrator");
-      expect(orchestratorWithPlan).toBeTruthy();
-      expect(orchestratorWithPlan?.uiSelectable).toBe(true);
+      await expectOrchestratorSelectable();
     } finally {
-      // Best-effort cleanup.
-      try {
-        await fs.unlink(planPath);
-      } catch {
-        // ignore
-      }
-
+      await fs.rm(planPath, { force: true });
       await env.orpc.workspace.remove({ workspaceId });
     }
   }, 30_000);

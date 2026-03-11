@@ -151,6 +151,24 @@ describeIntegration("Agent Picker (UI)", () => {
     });
   }, 30_000);
 
+  test("orchestrator appears in dropdown without a plan file", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = setupTestDom();
+      const view = renderApp({ apiClient: env.orpc, metadata });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+        await openAgentPicker(view.container);
+
+        const agentNames = getVisibleAgentNames(view.container);
+        expect(agentNames).toContain("Orchestrator");
+        expect(getAgentIdByName(view.container, "Orchestrator")).toBe("orchestrator");
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 30_000);
+
   test("custom workspace agents appear alongside built-ins", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       // With workspaceId provided, agents are discovered from workspace worktree path.
