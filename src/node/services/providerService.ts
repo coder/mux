@@ -311,6 +311,9 @@ export class ProviderService {
       await this.config.editConfig((c) => ({
         ...c,
         routePriority: [providerName, ...priority],
+        // Clear legacy disable — routePriority presence is now the authoritative
+        // routing signal, so a stale muxGatewayEnabled: false must not veto it.
+        ...(providerName === "mux-gateway" ? { muxGatewayEnabled: undefined } : {}),
       }));
     } else if (!creds.isConfigured && priority.includes(providerName)) {
       await this.config.editConfig((c) => ({

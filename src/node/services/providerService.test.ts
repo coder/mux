@@ -392,6 +392,24 @@ describe("ProviderService gateway lifecycle", () => {
     });
   });
 
+  it("clears legacy muxGatewayEnabled: false when adding gateway to routePriority", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        muxGatewayEnabled: false,
+        routePriority: ["direct"],
+      });
+
+      const result = await service.setConfig("mux-gateway", ["couponCode"], "token");
+
+      expect(result.success).toBe(true);
+      const updatedConfig = config.loadConfigOrDefault();
+      expect(updatedConfig.routePriority).toEqual(["mux-gateway", "direct"]);
+      expect(updatedConfig.muxGatewayEnabled).toBeUndefined();
+    });
+  });
+
   it("auto-removes gateway from routePriority when deconfigured", async () => {
     await withTempConfigAsync(async (config, service) => {
       const existingConfig = config.loadConfigOrDefault();
