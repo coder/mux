@@ -18,6 +18,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
 import { Checkbox } from "../Checkbox/Checkbox";
 import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { getDevcontainerStatusChip } from "@/browser/utils/runtimeUi";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useRuntimeStatus, useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
@@ -142,6 +143,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   const isDevcontainerWorkspace = isDevcontainerRuntime(runtimeConfig);
   const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";
+  const devcontainerChip = isDevcontainerWorkspace
+    ? getDevcontainerStatusChip(runtimeStatus)
+    : null;
 
   const getMoreMenuAnchor = useCallback(() => {
     const rect = moreActionsButtonRef.current?.getBoundingClientRect();
@@ -422,16 +426,14 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
         <div className="flex items-center gap-1">
           <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
-          {isDevcontainerWorkspace && (
+          {devcontainerChip && (
             <span
               className={cn(
                 "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
-                isRuntimeRunning
-                  ? "bg-emerald-500/15 text-emerald-400"
-                  : "bg-muted/50 text-muted-foreground"
+                devcontainerChip.className
               )}
             >
-              {isRuntimeRunning ? "Devcontainer Running" : "Devcontainer Stopped"}
+              {devcontainerChip.label}
             </span>
           )}
           <GitStatusIndicator

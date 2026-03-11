@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { RuntimeEnablementId, RuntimeMode } from "@/common/types/runtime";
+import type { RuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
 import {
   SSHIcon,
   WorktreeIcon,
@@ -241,3 +242,33 @@ export const RUNTIME_BADGE_UI = {
     badge: RUNTIME_UI.devcontainer.badge,
   },
 } satisfies Record<RuntimeChoice, Pick<RuntimeUiSpec, "Icon" | "badge">>;
+
+export interface DevcontainerStatusChip {
+  label: string;
+  className: string;
+}
+
+/**
+ * Returns the titlebar chip presentation for a devcontainer runtime status,
+ * or null when the status is indeterminate and no chip should be shown.
+ * Only `running` and `stopped` produce a chip; `unknown`, `unsupported`,
+ * and null (not yet loaded) suppress the chip to avoid misreporting.
+ */
+export function getDevcontainerStatusChip(
+  status: RuntimeStatus | null
+): DevcontainerStatusChip | null {
+  switch (status) {
+    case "running":
+      return {
+        label: "Devcontainer Running",
+        className: "bg-emerald-500/15 text-emerald-400",
+      };
+    case "stopped":
+      return {
+        label: "Devcontainer Stopped",
+        className: "bg-muted/50 text-muted-foreground",
+      };
+    default:
+      return null;
+  }
+}
