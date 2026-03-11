@@ -143,7 +143,7 @@ function createBranchAwareExecutor(
   };
 }
 
-function createDevcontainerClient(runtimeStatus: "running" | "stopped") {
+function createDevcontainerClient(runtimeStatus: "running" | "stopped" | "unknown") {
   const stableCreatedAt = "2023-11-14T22:13:20.000Z";
 
   const workspaces = [
@@ -201,4 +201,9 @@ export const DevcontainerRunning: AppStory = {
  */
 export const DevcontainerStopped: AppStory = {
   render: () => <AppWithMocks setup={() => createDevcontainerClient("stopped")} />,
+};
+
+/** Devcontainer with unknown runtime status — no status chip should be visible. */
+export const DevcontainerUnknown: AppStory = {
+  render: () => <AppWithMocks setup={() => createDevcontainerClient("unknown")} />,
 };
