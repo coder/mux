@@ -339,16 +339,18 @@ export class EventSoundAssetService {
 
   async uploadFromData(input: UploadEventSoundAssetInput): Promise<EventSoundAsset> {
     return this.withSerializedMutation(async () => {
-      const mimeType = this.normalizeMimeType(input.mimeType);
-      if (!mimeType) {
-        throw new Error("Unsupported audio MIME type");
-      }
-
       const extensionFromName = this.getExtensionFromOriginalName(input.originalName);
-      const extension = extensionFromName ?? MIME_TO_EXTENSION[mimeType];
+      const mimeTypeFromInput = this.normalizeMimeType(input.mimeType);
+      const extension =
+        extensionFromName ?? (mimeTypeFromInput ? MIME_TO_EXTENSION[mimeTypeFromInput] : null);
       if (!extension) {
+        if (input.mimeType.trim().length > 0) {
+          throw new Error("Unsupported audio MIME type");
+        }
         throw new Error("Unsupported audio file extension");
       }
+
+      const mimeType = mimeTypeFromInput ?? EXTENSION_TO_MIME[extension];
 
       const bytes = this.decodeBase64Payload(input.base64);
       this.validateSize(bytes.byteLength);

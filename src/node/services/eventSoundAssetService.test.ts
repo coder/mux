@@ -114,6 +114,24 @@ describe("EventSoundAssetService", () => {
     const storedBytes = await fsPromises.readFile(storedPath!);
     expect(Buffer.compare(storedBytes, sourceBytes)).toBe(0);
   });
+  it("accepts uploads with empty MIME type when the extension is allowed", async () => {
+    const sourceBytes = Buffer.from("mux-event-sound-empty-mime");
+
+    const uploaded = await service.uploadFromData({
+      base64: sourceBytes.toString("base64"),
+      originalName: "upload.wav",
+      mimeType: "",
+    });
+
+    expect(uploaded.assetId).toMatch(/^[0-9a-f-]{36}\.wav$/i);
+    expect(uploaded.mimeType).toBe("audio/wav");
+
+    const storedPath = await service.getAssetFilePath(uploaded.assetId);
+    expect(storedPath).not.toBeNull();
+
+    const storedBytes = await fsPromises.readFile(storedPath!);
+    expect(Buffer.compare(storedBytes, sourceBytes)).toBe(0);
+  });
 
   it("rejects uploaded payloads larger than the max size", async () => {
     const oversizedPayload = Buffer.alloc(MAX_AUDIO_FILE_SIZE_BYTES + 1, 2).toString("base64");

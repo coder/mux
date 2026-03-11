@@ -62,15 +62,42 @@ function updateEventSoundConfig(
   };
 }
 
+function collectManagedAssetIds(settings: EventSoundSettings): Set<string> {
+  const managedAssetIds = new Set<string>();
+
+  for (const config of Object.values(settings ?? {})) {
+    if (config?.source?.kind === "managed") {
+      managedAssetIds.add(config.source.assetId);
+    }
+  }
+
+  return managedAssetIds;
+}
+
+function getUnreferencedManagedAssetIds(
+  previousSettings: EventSoundSettings,
+  nextSettings: EventSoundSettings
+): string[] {
+  const previousAssetIds = collectManagedAssetIds(previousSettings);
+  const nextAssetIds = collectManagedAssetIds(nextSettings);
+
+  return [...previousAssetIds].filter((assetId) => !nextAssetIds.has(assetId));
+}
+
 export function SoundsSection() {
   const { api } = useAPI();
   const [eventSoundSettings, setEventSoundSettings] = useState<EventSoundSettings>(undefined);
 
   const loadNonceRef = useRef(0);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
-  const pendingSettingsRef = useRef<{ hasPending: boolean; settings: EventSoundSettings }>({
+  const pendingSettingsRef = useRef<{
+    hasPending: boolean;
+    settings: EventSoundSettings;
+    staleManagedAssetIds: Set<string>;
+  }>({
     hasPending: false,
     settings: undefined,
+    staleManagedAssetIds: new Set<string>(),
   });
 
   // Browser mode uses one hidden file input for all rows, so we track which event key opened it.
@@ -98,13 +125,22 @@ export function SoundsSection() {
       });
   }, [api]);
 
-  const queueSettingsSave = (nextSettings: EventSoundSettings) => {
+  const queueSettingsSave = (nextSettings: EventSoundSettings, staleManagedAssetIds: string[]) => {
     if (!api?.config?.updateEventSoundSettings) {
       return;
     }
 
     pendingSettingsRef.current.hasPending = true;
     pendingSettingsRef.current.settings = nextSettings;
+
+    for (const staleAssetId of staleManagedAssetIds) {
+      pendingSettingsRef.current.staleManagedAssetIds.add(staleAssetId);
+    }
+
+    // If a pending save now references an asset again, do not delete it.
+    for (const referencedAssetId of collectManagedAssetIds(nextSettings)) {
+      pendingSettingsRef.current.staleManagedAssetIds.delete(referencedAssetId);
+    }
 
     // Serialize writes so rapid toggles/file selections cannot persist out-of-order settings.
     saveChainRef.current = saveChainRef.current
@@ -118,11 +154,22 @@ export function SoundsSection() {
           }
 
           const pendingSettings = pendingSettingsRef.current.settings;
+          const staleAssetIds = [...pendingSettingsRef.current.staleManagedAssetIds];
           pendingSettingsRef.current.hasPending = false;
+          pendingSettingsRef.current.staleManagedAssetIds.clear();
 
           try {
             await api.config.updateEventSoundSettings({ eventSoundSettings: pendingSettings });
+
+            const deleteAsset = api.eventSounds?.deleteAsset;
+            if (deleteAsset) {
+              const deletePromises = staleAssetIds.map((assetId) => deleteAsset({ assetId }));
+              await Promise.allSettled(deletePromises);
+            }
           } catch {
+            for (const staleAssetId of staleAssetIds) {
+              pendingSettingsRef.current.staleManagedAssetIds.add(staleAssetId);
+            }
             // Best-effort only.
           }
         }
@@ -135,7 +182,8 @@ export function SoundsSection() {
 
     setEventSoundSettings((prev) => {
       const next = updater(prev);
-      queueSettingsSave(next);
+      const staleManagedAssetIds = getUnreferencedManagedAssetIds(prev, next);
+      queueSettingsSave(next, staleManagedAssetIds);
       window.dispatchEvent(
         createCustomEvent(CUSTOM_EVENTS.EVENT_SOUND_SETTINGS_CHANGED, {
           eventSoundSettings: next,
