@@ -214,6 +214,7 @@ describe("FlowPromptComposerCard", () => {
     expect(view.getByRole("button", { name: "Copy path" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Open prompt" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Disable" })).toBeTruthy();
+    expect(view.getByTestId("flow-prompt-helper-row").className).toContain("md:col-span-2");
     expect(view.container.textContent).not.toContain("Send now");
     expect(view.container.textContent).not.toContain("Copy path");
     expect(view.container.textContent).not.toContain("Open prompt");

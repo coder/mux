@@ -293,24 +293,16 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
           <div className="border-border-medium bg-background-secondary/60 rounded-md border px-2.5 py-2">
             <div className="flex flex-col gap-2.5">
               {/*
-                Keep the label copy aligned like the other accessory banners, but switch the
-                action strip to tooltip-backed icon buttons so wide layouts stay compact without
-                reintroducing the mid-width overflow from the earlier text-button row.
+                Keep the header/actions on one compact row, but let the helper copy span the full
+                accessory width underneath so medium-length status text wraps against the whole
+                container instead of collapsing into a narrow column beside the icon.
               */}
-              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-start gap-2">
-                    <FileText className="text-foreground mt-0.5 h-4 w-4 shrink-0" />
-                    <div className="min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className="text-foreground text-sm font-medium">Flow Prompting</span>
-                        <span className="text-muted basis-full text-[11px] leading-4 sm:basis-auto">
-                          {statusText}
-                        </span>
-                      </div>
-                      {props.error ? <p className="text-xs text-red-400">{props.error}</p> : null}
-                    </div>
-                  </div>
+              <div className="grid gap-x-3 gap-y-1.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                <div className="flex min-w-0 items-center gap-2">
+                  <FileText className="text-foreground h-4 w-4 shrink-0" />
+                  <span className="text-foreground min-w-0 text-sm font-medium">
+                    Flow Prompting
+                  </span>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-1.5 md:flex-nowrap md:justify-end">
                   <div className="flex items-center gap-1.5">
@@ -367,6 +359,13 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
                       />
                     </>
                   ) : null}
+                </div>
+                <div
+                  data-testid="flow-prompt-helper-row"
+                  className="min-w-0 rounded-sm px-2 py-0.5 md:col-span-2"
+                >
+                  <p className="text-muted text-[11px] leading-4">{statusText}</p>
+                  {props.error ? <p className="pt-1 text-xs text-red-400">{props.error}</p> : null}
                 </div>
               </div>
               {preview ? (
