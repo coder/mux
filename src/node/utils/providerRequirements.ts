@@ -71,6 +71,13 @@ export const AZURE_OPENAI_ENV_VARS = {
   apiVersion: "AZURE_OPENAI_API_VERSION",
 };
 
+const BEDROCK_AUTH_ENV_VARS = {
+  accessKeyId: "AWS_ACCESS_KEY_ID",
+  secretAccessKey: "AWS_SECRET_ACCESS_KEY",
+  bearerToken: "AWS_BEARER_TOKEN_BEDROCK",
+  profile: "AWS_PROFILE",
+} as const;
+
 /** Resolve first non-empty env var from a list of candidates */
 function resolveEnv(
   keys: string[] | undefined,
@@ -83,12 +90,23 @@ function resolveEnv(
   return undefined;
 }
 
+function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasCredentialPair(accessKeyId: unknown, secretAccessKey: unknown): boolean {
+  return hasNonEmptyString(accessKeyId) && hasNonEmptyString(secretAccessKey);
+}
+
 // ============================================================================
 // Types
 // ============================================================================
 
 type ProviderSpecificCredentialFields = Partial<
-  Pick<BedrockProviderConfig, "region" | "bearerToken" | "accessKeyId" | "secretAccessKey"> &
+  Pick<
+    BedrockProviderConfig,
+    "region" | "profile" | "bearerToken" | "accessKeyId" | "secretAccessKey"
+  > &
     Pick<MuxGatewayProviderConfig, "couponCode" | "voucher"> &
     Pick<OpenAIProviderConfig, "organization">
 >;
@@ -180,6 +198,38 @@ export function resolveProviderCredentials(
   }
 
   return { isConfigured: false, missingRequirement: "api_key" };
+}
+
+/**
+ * Auto-route admission is stricter than general configured-state checks for Bedrock.
+ * A region alone is enough to show Bedrock as configured in the UI, but routePriority
+ * should only auto-admit it when we can also observe at least one auth signal.
+ */
+export function isProviderAutoRouteEligible(
+  provider: ProviderName,
+  config: ProviderConfigRaw,
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  const credentials = resolveProviderCredentials(provider, config, env);
+  if (!credentials.isConfigured) {
+    return false;
+  }
+
+  if (provider !== "bedrock") {
+    return true;
+  }
+
+  return (
+    hasCredentialPair(config.accessKeyId, config.secretAccessKey) ||
+    hasNonEmptyString(config.bearerToken) ||
+    hasNonEmptyString(config.profile) ||
+    hasCredentialPair(
+      env[BEDROCK_AUTH_ENV_VARS.accessKeyId],
+      env[BEDROCK_AUTH_ENV_VARS.secretAccessKey]
+    ) ||
+    hasNonEmptyString(env[BEDROCK_AUTH_ENV_VARS.bearerToken]) ||
+    hasNonEmptyString(env[BEDROCK_AUTH_ENV_VARS.profile])
+  );
 }
 
 /**

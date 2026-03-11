@@ -1,7 +1,45 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ProvidersConfig } from "@/node/config";
-import { hasAnyConfiguredProvider } from "./providerRequirements";
+import { hasAnyConfiguredProvider, isProviderAutoRouteEligible } from "./providerRequirements";
+
+describe("isProviderAutoRouteEligible", () => {
+  it("returns false for bedrock when only a region is configured", () => {
+    expect(isProviderAutoRouteEligible("bedrock", { region: "us-east-1" }, {})).toBe(false);
+  });
+
+  it("returns true for bedrock when config includes a credential pair", () => {
+    expect(
+      isProviderAutoRouteEligible(
+        "bedrock",
+        { region: "us-east-1", accessKeyId: "x", secretAccessKey: "y" },
+        {}
+      )
+    ).toBe(true);
+  });
+
+  it("returns false for bedrock when env only exposes a region", () => {
+    expect(isProviderAutoRouteEligible("bedrock", {}, { AWS_REGION: "us-east-1" })).toBe(false);
+  });
+
+  it("returns true for bedrock when env exposes region and credential pair", () => {
+    expect(
+      isProviderAutoRouteEligible(
+        "bedrock",
+        {},
+        {
+          AWS_REGION: "us-east-1",
+          AWS_ACCESS_KEY_ID: "x",
+          AWS_SECRET_ACCESS_KEY: "y",
+        }
+      )
+    ).toBe(true);
+  });
+
+  it("delegates to configured-state checks for non-bedrock providers", () => {
+    expect(isProviderAutoRouteEligible("mux-gateway", { couponCode: "x" }, {})).toBe(true);
+  });
+});
 
 describe("hasAnyConfiguredProvider", () => {
   it("returns false for null or empty config", () => {

@@ -44,7 +44,7 @@ import {
 } from "@/common/utils/ai/models";
 import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
-import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import { isProviderAutoRouteEligible } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
@@ -345,8 +345,7 @@ export class Config {
     const priority: string[] = [];
 
     for (const gw of GATEWAY_PROVIDERS) {
-      const creds = resolveProviderCredentials(gw, providersConfig[gw] ?? {});
-      if (creds.isConfigured) {
+      if (isProviderAutoRouteEligible(gw, providersConfig[gw] ?? {})) {
         priority.push(gw);
       }
     }

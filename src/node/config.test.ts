@@ -584,6 +584,10 @@ describe("Config", () => {
       "GITHUB_COPILOT_TOKEN",
       "AWS_REGION",
       "AWS_DEFAULT_REGION",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "AWS_PROFILE",
     ] as const;
     let originalGatewayEnv: Partial<Record<(typeof gatewayEnvKeys)[number], string | undefined>>;
 
@@ -630,6 +634,14 @@ describe("Config", () => {
     });
 
     it("leaves routePriority undefined on fresh installs without configured gateways", () => {
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toBeUndefined();
+    });
+
+    it("does not seed routePriority for bedrock when env only exposes a region", () => {
+      process.env.AWS_REGION = "us-east-1";
+
       const loaded = config.loadConfigOrDefault();
 
       expect(loaded.routePriority).toBeUndefined();

@@ -392,6 +392,21 @@ describe("ProviderService gateway lifecycle", () => {
     });
   });
 
+  it("does not auto-insert bedrock into routePriority when only region is configured", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["direct"],
+      });
+
+      const result = await service.setConfig("bedrock", ["region"], "us-east-1");
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual(["direct"]);
+    });
+  });
+
   it("clears legacy muxGatewayEnabled: false when adding gateway to routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
       const existingConfig = config.loadConfigOrDefault();

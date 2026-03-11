@@ -21,7 +21,7 @@ import {
 import { log } from "@/node/services/log";
 import {
   checkProviderConfigured,
-  resolveProviderCredentials,
+  isProviderAutoRouteEligible,
 } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
@@ -304,11 +304,14 @@ export class ProviderService {
     if (def.kind !== "gateway") return;
 
     const providersConfig = this.config.loadProvidersConfig() ?? {};
-    const creds = resolveProviderCredentials(providerName, providersConfig[providerName] ?? {});
+    const isAutoRouteEligible = isProviderAutoRouteEligible(
+      providerName,
+      providersConfig[providerName] ?? {}
+    );
     const config = this.config.loadConfigOrDefault();
     const priority = config.routePriority ?? ["direct"];
 
-    if (creds.isConfigured && !priority.includes(providerName)) {
+    if (isAutoRouteEligible && !priority.includes(providerName)) {
       // Insert before "direct" to stay reachable while preserving the
       // relative order of any user-configured routes already present.
       const directIndex = priority.indexOf("direct");
@@ -322,7 +325,7 @@ export class ProviderService {
         // routing signal, so a stale muxGatewayEnabled: false must not veto it.
         ...(providerName === "mux-gateway" ? { muxGatewayEnabled: undefined } : {}),
       }));
-    } else if (!creds.isConfigured && priority.includes(providerName)) {
+    } else if (!isAutoRouteEligible && priority.includes(providerName)) {
       await this.config.editConfig((c) => ({
         ...c,
         routePriority: priority.filter((p) => p !== providerName),
