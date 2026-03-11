@@ -62,7 +62,8 @@ export function getWorkspaceProjectRepos(
           },
         ] satisfies ProjectRef[]);
 
-  const expectedProjectCount = params.projects?.length ?? 1;
+  const expectedProjectCount =
+    params.projects && params.projects.length > 0 ? params.projects.length : 1;
   assert(
     orderedProjects.length === expectedProjectCount,
     `getWorkspaceProjectRepos: expected ${expectedProjectCount} projects, got ${orderedProjects.length}`

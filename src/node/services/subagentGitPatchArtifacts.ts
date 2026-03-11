@@ -50,6 +50,13 @@ export function matchesProjectArtifactProjectPath(
   artifact: Pick<SubagentGitProjectPatchArtifact, "projectPath" | "storageKey">,
   projectPath: string
 ): boolean {
+  return artifact.projectPath === projectPath;
+}
+
+export function matchesProjectArtifactProjectPathForUpdate(
+  artifact: Pick<SubagentGitProjectPatchArtifact, "projectPath" | "storageKey">,
+  projectPath: string
+): boolean {
   return artifact.projectPath === projectPath || isLegacySingleProjectArtifact(artifact);
 }
 
@@ -375,7 +382,7 @@ export async function markSubagentGitPatchArtifactApplied(params: {
         ...existing,
         updatedAtMs: params.appliedAtMs,
         projectArtifacts: existing.projectArtifacts.map((artifact) =>
-          matchesProjectArtifactProjectPath(artifact, params.projectPath)
+          matchesProjectArtifactProjectPathForUpdate(artifact, params.projectPath)
             ? {
                 ...artifact,
                 appliedAtMs: params.appliedAtMs,

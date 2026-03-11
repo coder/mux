@@ -8,6 +8,7 @@ import type { ToolExecutionOptions } from "ai";
 
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import {
+  getSubagentGitPatchArtifactsFilePath,
   getSubagentGitPatchMboxPath,
   readSubagentGitPatchArtifact,
   upsertSubagentGitPatchArtifact,
@@ -467,6 +468,68 @@ describe("task_apply_git_patch tool", () => {
       )?.appliedAtMs
     ).toBeUndefined();
   }, 20_000);
+
+  it("rejects mismatched project_path filters for legacy single-project artifacts", async () => {
+    const targetRepo = path.join(rootDir, "target");
+    await fsPromises.mkdir(targetRepo, { recursive: true });
+
+    const childTaskId = "child-task-legacy-filter";
+    const muxRoot = path.join(rootDir, "mux");
+    const workspaceId = "workspace-legacy-filter";
+    const sessionDir = path.join(muxRoot, "sessions", workspaceId);
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+
+    await writeWorkspaceConfig({
+      muxRoot,
+      workspaceId,
+      workspaceName: "target",
+      primaryProjectPath: targetRepo,
+      projects: [{ projectPath: targetRepo, projectName: "target" }],
+    });
+
+    await fsPromises.writeFile(
+      getSubagentGitPatchArtifactsFilePath(sessionDir),
+      JSON.stringify(
+        {
+          version: 1,
+          artifactsByChildTaskId: {
+            [childTaskId]: {
+              childTaskId,
+              parentWorkspaceId: workspaceId,
+              createdAtMs: Date.now(),
+              status: "ready",
+              commitCount: 1,
+              mboxPath: "/tmp/legacy-series.mbox",
+            },
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId,
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: sessionDir,
+    });
+
+    const mismatchedProjectPath = path.join(rootDir, "other-project");
+    const result = (await tool.execute!(
+      { task_id: childTaskId, project_path: mismatchedProjectPath },
+      mockToolCallOptions
+    )) as {
+      success: boolean;
+      error?: string;
+    };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(`No project patch artifact found for ${mismatchedProjectPath}.`);
+  });
 
   it("preserves legacy single-project result fields when one project result is returned", async () => {
     const childRepo = path.join(rootDir, "child");
