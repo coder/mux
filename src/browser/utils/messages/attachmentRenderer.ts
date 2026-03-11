@@ -66,14 +66,6 @@ export function renderAttachmentToContent(attachment: PostCompactionAttachment):
   }
 }
 
-/**
- * Render multiple post-compaction attachments to a single content string.
- * Each attachment is wrapped in a <system-update> tag.
- */
-export function renderAttachmentsToContent(attachments: PostCompactionAttachment[]): string {
-  return attachments.map((att) => wrapSystemUpdate(renderAttachmentToContent(att))).join("\n");
-}
-
 const PLAN_TRUNCATION_NOTE = "\n\n...(truncated)\n";
 
 function renderPlanFileReferenceWithBudget(
