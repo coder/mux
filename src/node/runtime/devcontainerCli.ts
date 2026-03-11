@@ -554,6 +554,67 @@ export async function getDevcontainerContainerId(
   });
 }
 
+export type DevcontainerProbeResult =
+  | { kind: "found"; containerId: string }
+  | { kind: "absent" }
+  | { kind: "error"; message: string };
+
+export type DevcontainerStopResult =
+  | { kind: "stopped" }
+  | { kind: "absent" }
+  | { kind: "error"; message: string };
+
+export async function probeDevcontainerStatus(
+  workspacePath: string,
+  timeoutMs = 10_000
+): Promise<DevcontainerProbeResult> {
+  const labelValue = workspacePath;
+
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "docker",
+      ["ps", "-q", "--filter", `label=devcontainer.local_folder=${labelValue}`],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: timeoutMs,
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    proc.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    proc.on("error", (error) => {
+      resolve({ kind: "error", message: getErrorMessage(error) });
+    });
+
+    proc.on("close", (code, signal) => {
+      const containerId = stdout.trim().split("\n")[0];
+      if (code === 0 && containerId) {
+        resolve({ kind: "found", containerId });
+        return;
+      }
+      if (code === 0) {
+        resolve({ kind: "absent" });
+        return;
+      }
+
+      const stderrMessage = stderr.trim();
+      const exitMessage = signal
+        ? `docker ps exited with signal ${signal}`
+        : `docker ps exited with code ${code ?? "null"}`;
+      resolve({
+        kind: "error",
+        message: stderrMessage ? `${exitMessage}: ${stderrMessage}` : exitMessage,
+      });
+    });
+  });
+}
 /**
  * Get the container name for a devcontainer workspace.
  * Returns null if no container exists.
@@ -598,6 +659,84 @@ export async function getDevcontainerContainerName(
   });
 }
 
+export async function stopDevcontainer(workspacePath: string): Promise<DevcontainerStopResult> {
+  const labelValue = workspacePath;
+
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "docker",
+      ["ps", "-q", "--filter", `label=devcontainer.local_folder=${labelValue}`],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10_000,
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    proc.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    proc.on("error", (error) => {
+      resolve({
+        kind: "error",
+        message: `Docker is not available: ${getErrorMessage(error)}`,
+      });
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        const stderrMessage = stderr.trim();
+        resolve({
+          kind: "error",
+          message: `Failed to query containers: ${stderrMessage || `docker ps exited with code ${code ?? "null"}`}`,
+        });
+        return;
+      }
+
+      const containerId = stdout.trim().split("\n")[0];
+      if (!containerId) {
+        resolve({ kind: "absent" });
+        return;
+      }
+
+      const removeProc = spawn("docker", ["rm", "-f", containerId], {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: DEFAULT_CLEANUP_TIMEOUT_MS,
+      });
+
+      let removeStderr = "";
+      removeProc.stderr?.on("data", (data: Buffer) => {
+        removeStderr += data.toString();
+      });
+
+      removeProc.on("error", (error) => {
+        resolve({
+          kind: "error",
+          message: `Docker is not available: ${getErrorMessage(error)}`,
+        });
+      });
+
+      removeProc.on("close", (removeCode) => {
+        if (removeCode === 0) {
+          resolve({ kind: "stopped" });
+          return;
+        }
+
+        const stderrMessage = removeStderr.trim();
+        resolve({
+          kind: "error",
+          message: `Failed to remove container: ${stderrMessage || `docker rm -f exited with code ${removeCode ?? "null"}`}`,
+        });
+      });
+    });
+  });
+}
+
 /**
  * Stop and remove the devcontainer (best-effort cleanup).
  * Does not throw on failure - container may not exist.
@@ -608,28 +747,7 @@ export async function getDevcontainerContainerName(
 export async function devcontainerDown(
   workspaceFolder: string,
   _configPath?: string,
-  timeoutMs = 60_000
+  _timeoutMs = 60_000
 ): Promise<void> {
-  const containerId = await getDevcontainerContainerId(workspaceFolder);
-  if (!containerId) {
-    // No container to stop
-    return;
-  }
-
-  return new Promise((resolve) => {
-    // Stop and remove the container
-    const proc = spawn("docker", ["rm", "-f", containerId], {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
-    });
-
-    proc.on("error", () => {
-      // Best-effort - don't fail if can't run
-      resolve();
-    });
-
-    proc.on("close", () => {
-      resolve();
-    });
-  });
+  await stopDevcontainer(workspaceFolder);
 }

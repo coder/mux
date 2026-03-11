@@ -13,6 +13,7 @@ import {
 import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
+import { useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
@@ -456,6 +457,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     deleteWorkspaceDraft,
   } = useWorkspaceActions();
   const workspaceStore = useWorkspaceStoreRaw();
+  const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const { navigateToProject } = useRouter();
   const { api } = useAPI();
   const { confirm: confirmDialog } = useConfirmDialog();
@@ -656,6 +658,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
   const workspaceForkError = usePopoverError();
+  const workspaceStopRuntimeError = usePopoverError();
   const workspaceRemoveError = usePopoverError();
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
     workspaceId: string;
@@ -743,6 +746,43 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       }
     },
     [api, workspaceForkError]
+  );
+
+  const handleStopRuntime = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      if (!api) {
+        workspaceStopRuntimeError.showError(workspaceId, "Not connected to server", anchor);
+        return;
+      }
+
+      try {
+        const result = await api.workspace.stopRuntime({ workspaceId });
+        if (!result.success) {
+          workspaceStopRuntimeError.showError(
+            workspaceId,
+            result.error ?? "Failed to stop container",
+            anchor
+          );
+          return;
+        }
+
+        // A successful stop should hide the running indicator and menu action without
+        // forcing rows to own their own optimistic runtime state.
+        runtimeStatusStore.invalidateWorkspace(workspaceId);
+      } catch (error) {
+        workspaceStopRuntimeError.showError(workspaceId, getErrorMessage(error), anchor);
+      }
+    },
+    [api, runtimeStatusStore, workspaceStopRuntimeError]
   );
 
   const performArchiveWorkspace = useCallback(
@@ -1446,6 +1486,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     }
                                     onSelectWorkspace={handleSelectWorkspace}
                                     onForkWorkspace={handleForkWorkspace}
+                                    onStopRuntime={handleStopRuntime}
                                     onArchiveWorkspace={handleArchiveWorkspace}
                                     onCancelCreation={handleCancelWorkspaceCreation}
                                     depth={
@@ -1974,6 +2015,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             error={workspaceArchiveError.error}
             prefix="Failed to archive chat"
             onDismiss={workspaceArchiveError.clearError}
+          />
+          <PopoverError
+            error={workspaceStopRuntimeError.error}
+            prefix="Failed to stop container"
+            onDismiss={workspaceStopRuntimeError.clearError}
           />
           <PopoverError
             error={workspaceForkError.error}

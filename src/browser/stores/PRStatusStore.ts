@@ -286,14 +286,18 @@ export class PRStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId,
         script: `gh pr view --json number,url,state,mergeable,mergeStateStatus,title,isDraft,headRefName,baseRefName,statusCheckRollup 2>/dev/null || echo '{"no_pr":true}'`,
+        // gh requires the runtime environment for devcontainer workspaces where
+        // the CLI / auth may only exist inside the container.
         options: repoRootBashOptions(15),
       });
 
       if (!this.isActive) return;
 
       if (!result.success || !result.data.success) {
+        const existing = this.workspacePRCache.get(workspaceId);
         this.workspacePRCache.set(workspaceId, {
-          prLink: null,
+          prLink: existing?.prLink ?? null,
+          status: existing?.status,
           error: "Failed to run gh CLI",
           loading: false,
           fetchedAt: Date.now(),
@@ -366,8 +370,10 @@ export class PRStatusStore {
           }
         }
       } else {
+        const existing = this.workspacePRCache.get(workspaceId);
         this.workspacePRCache.set(workspaceId, {
-          prLink: null,
+          prLink: existing?.prLink ?? null,
+          status: existing?.status,
           error: "Empty response from gh CLI",
           loading: false,
           fetchedAt: Date.now(),
@@ -378,8 +384,10 @@ export class PRStatusStore {
     } catch (err) {
       if (!this.isActive) return;
 
+      const existing = this.workspacePRCache.get(workspaceId);
       this.workspacePRCache.set(workspaceId, {
-        prLink: null,
+        prLink: existing?.prLink ?? null,
+        status: existing?.status,
         error: err instanceof Error ? err.message : "Unknown error",
         loading: false,
         fetchedAt: Date.now(),
@@ -490,6 +498,8 @@ export class PRStatusStore {
           `-F number=${prLink.number}`,
           "2>/dev/null",
         ].join(" "),
+        // gh requires the runtime environment for devcontainer workspaces where
+        // the CLI / auth may only exist inside the container.
         options: repoRootBashOptions(10),
       });
 

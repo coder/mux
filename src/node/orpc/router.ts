@@ -2806,6 +2806,18 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.unarchive(input.workspaceId);
         }),
+      stopRuntime: t
+        .input(schemas.workspace.stopRuntime.input)
+        .output(schemas.workspace.stopRuntime.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.stopRuntime(input.workspaceId);
+        }),
+      getRuntimeStatuses: t
+        .input(schemas.workspace.getRuntimeStatuses.input)
+        .output(schemas.workspace.getRuntimeStatuses.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getRuntimeStatuses(input.workspaceIds);
+        }),
       archiveMergedInProject: t
         .input(schemas.workspace.archiveMergedInProject.input)
         .output(schemas.workspace.archiveMergedInProject.output)
@@ -3186,7 +3198,10 @@ export const router = (authToken?: string) => {
           const result = await context.workspaceService.executeBash(
             input.workspaceId,
             input.script,
-            input.options,
+            {
+              ...(input.options ?? {}),
+              executionTarget: input.executionTarget ?? undefined,
+            },
             input.command ?? undefined,
             input.args ?? undefined
           );

@@ -106,6 +106,11 @@ export interface CreateRuntimeOptions {
    */
   workspaceName?: string;
   /**
+   * Persisted workspace path from config.json.
+   * Used by devcontainer runtimes to preserve the exact host path from startup.
+   */
+  workspacePath?: string;
+  /**
    * Coder service - required for SSH runtimes with Coder configuration.
    * When provided and config has coder field, returns a Coder SSH runtime (SSH/SSH2).
    */
@@ -212,7 +217,12 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
         shareCredentials: config.shareCredentials,
       });
       // Set workspace path for existing workspaces
-      if (options?.projectPath && options?.workspaceName) {
+      // For existing workspaces, prefer the persisted workspacePath — Docker labels
+      // devcontainers by the exact host path from startup, so canonical reconstruction
+      // can diverge for migrated/non-canonical entries.
+      if (options?.workspacePath) {
+        runtime.setCurrentWorkspacePath(options.workspacePath);
+      } else if (options?.projectPath && options?.workspaceName) {
         runtime.setCurrentWorkspacePath(
           runtime.getWorkspacePath(options.projectPath, options.workspaceName)
         );

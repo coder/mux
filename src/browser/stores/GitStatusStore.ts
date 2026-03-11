@@ -10,9 +10,13 @@ import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
-import { isSSHRuntime } from "@/common/types/runtime";
+import { isDevcontainerRuntime, isSSHRuntime } from "@/common/types/runtime";
 import { RefreshController } from "@/browser/utils/RefreshController";
 import { repoRootBashOptions } from "@/browser/utils/executeBash";
+import {
+  useRuntimeStatusStoreRaw as getRuntimeStatusStore,
+  type RuntimeStatusStore,
+} from "./RuntimeStatusStore";
 
 /**
  * External store for git status of all workspaces.
@@ -61,19 +65,12 @@ export class GitStatusStore {
   // Per-workspace refreshing state for UI shimmer effects
   private refreshingWorkspaces = new MapStore<string, boolean>();
 
-  setClient(client: RouterClient<AppRouter> | null): void {
-    this.client = client;
-
-    if (!client) {
-      return;
-    }
-
-    if (this.workspaceMetadata.size > 0) {
-      this.refreshController.requestImmediate();
-    }
-  }
-
-  constructor() {
+  constructor(
+    private readonly runtimeStatusStore: Pick<
+      RuntimeStatusStore,
+      "getStatus"
+    > = getRuntimeStatusStore()
+  ) {
     // Create refresh controller with proactive focus refresh (catches external git changes)
     this.refreshController = new RefreshController({
       onRefresh: () => this.updateGitStatus(),
@@ -84,6 +81,18 @@ export class GitStatusStore {
       refreshOnFocus: true, // Proactively refresh on focus to catch external changes
       focusDebounceMs: 500, // Prevent spam from rapid alt-tabbing
     });
+  }
+
+  setClient(client: RouterClient<AppRouter> | null): void {
+    this.client = client;
+
+    if (!client) {
+      return;
+    }
+
+    if (this.workspaceMetadata.size > 0) {
+      this.refreshController.requestImmediate();
+    }
   }
 
   /**
@@ -336,6 +345,11 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId: metadata.id,
         script,
+        // Local git metadata (status, diff) uses the host worktree directly —
+        // devcontainer workspaces bind-mount the repo from the host, so local-only
+        // git operations work without the container. Remote-auth operations
+        // (fetch, ls-remote) use the runtime path instead.
+        executionTarget: "host-workspace",
         options: repoRootBashOptions(5),
       });
 
@@ -415,23 +429,43 @@ export class GitStatusStore {
    * For local workspaces: workspaces share a repo, so fetch once per project.
    */
   private tryFetchWorkspaces(workspaces: Map<string, FrontendWorkspaceMetadata>): void {
+    const representativeWorkspaces = new Map<string, FrontendWorkspaceMetadata>();
+    const isFetchEligible = (metadata: FrontendWorkspaceMetadata): boolean => {
+      if (!isDevcontainerRuntime(metadata.runtimeConfig)) {
+        return true;
+      }
+
+      return this.runtimeStatusStore.getStatus(metadata.id) === "running";
+    };
+
+    // Passive fetches are skipped for devcontainer workspaces whose runtime is not
+    // already running. Stale ahead/behind metadata while stopped is intentional to
+    // preserve lazy-start.
+    for (const metadata of workspaces.values()) {
+      const fetchKey = this.getFetchKey(metadata);
+      if (representativeWorkspaces.has(fetchKey) || !this.shouldFetch(fetchKey)) {
+        continue;
+      }
+      if (!isFetchEligible(metadata)) {
+        continue;
+      }
+
+      representativeWorkspaces.set(fetchKey, metadata);
+    }
+
     // Find the workspace that needs fetching most urgently
     let targetFetchKey: string | null = null;
     let targetWorkspaceId: string | null = null;
     let oldestTime = Date.now();
 
-    for (const metadata of workspaces.values()) {
-      const fetchKey = this.getFetchKey(metadata);
+    for (const [fetchKey, metadata] of representativeWorkspaces) {
+      const cache = this.fetchCache.get(fetchKey);
+      const lastFetch = cache?.lastFetch ?? 0;
 
-      if (this.shouldFetch(fetchKey)) {
-        const cache = this.fetchCache.get(fetchKey);
-        const lastFetch = cache?.lastFetch ?? 0;
-
-        if (lastFetch < oldestTime) {
-          oldestTime = lastFetch;
-          targetFetchKey = fetchKey;
-          targetWorkspaceId = metadata.id;
-        }
+      if (lastFetch < oldestTime) {
+        oldestTime = lastFetch;
+        targetFetchKey = fetchKey;
+        targetWorkspaceId = metadata.id;
       }
     }
 
@@ -483,6 +517,9 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId,
         script: GIT_FETCH_SCRIPT,
+        // Passive fetches use the runtime path because git fetch / git ls-remote
+        // may need remote credentials that only exist inside the runtime. These
+        // background fetches are only scheduled when that runtime is already running.
         options: repoRootBashOptions(30),
       });
 

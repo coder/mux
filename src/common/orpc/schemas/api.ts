@@ -936,6 +936,14 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  stopRuntime: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  getRuntimeStatuses: {
+    input: z.object({ workspaceIds: z.array(z.string()) }),
+    output: z.record(z.string(), z.enum(["running", "stopped", "unknown", "unsupported"])),
+  },
   archiveMergedInProject: {
     input: z.object({ projectPath: z.string() }),
     output: ResultSchema(
@@ -1142,6 +1150,7 @@ export const workspace = {
       // (without shell interpolation) and falls back to shell-quoted argv for remote runtimes.
       command: z.string().nullish(),
       args: z.array(z.string()).nullish(),
+      executionTarget: z.enum(["runtime", "host-workspace"]).nullish(),
       options: z
         .object({
           timeout_secs: z.number().nullish(),

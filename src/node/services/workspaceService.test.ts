@@ -1624,6 +1624,218 @@ describe("WorkspaceService getFileCompletions", () => {
   });
 });
 
+describe("WorkspaceService executeBash host-workspace target", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let tempRoots: string[];
+
+  beforeEach(async () => {
+    tempRoots = [];
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+    await Promise.all(
+      tempRoots.map((tempRoot) => fsPromises.rm(tempRoot, { recursive: true, force: true }))
+    );
+  });
+
+  test("devcontainer host-workspace target runs on the host without waking the runtime", async () => {
+    const workspaceId = "ws-host-workspace";
+    const workspaceName = "feature-branch";
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-host-workspace-"));
+    tempRoots.push(tempRoot);
+    const projectPath = path.join(tempRoot, "project");
+    const srcDir = path.join(tempRoot, "src");
+    const hostWorkspacePath = path.join(srcDir, path.basename(projectPath), workspaceName);
+    const waitForInitMock = mock(() => Promise.resolve());
+    const getWorkspaceMetadataMock = mock(() =>
+      Promise.resolve(
+        Ok({
+          id: workspaceId,
+          name: workspaceName,
+          projectName: path.basename(projectPath),
+          projectPath,
+          runtimeConfig: {
+            type: "devcontainer" as const,
+            configPath: ".devcontainer/devcontainer.json",
+          },
+        })
+      )
+    );
+
+    await fsPromises.mkdir(hostWorkspacePath, { recursive: true });
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: getWorkspaceMetadataMock,
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      srcDir,
+      getSessionDir: mock(() => path.join(tempRoot, "sessions")),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => ({ projectPath, workspacePath: hostWorkspacePath })),
+      getEffectiveSecrets: mock(() => []),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [],
+              trusted: false,
+            },
+          ],
+        ]),
+      })),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+      waitForInit: waitForInitMock,
+    };
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime");
+
+    try {
+      const result = await workspaceService.executeBash(workspaceId, "pwd", {
+        executionTarget: "host-workspace",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.success).toBe(true);
+      if (!result.data.success) {
+        return;
+      }
+
+      expect(result.data.output.trim()).toBe(hostWorkspacePath);
+      expect(waitForInitMock).toHaveBeenCalledTimes(0);
+      expect(createRuntimeSpy).toHaveBeenCalledTimes(0);
+      expect(getWorkspaceMetadataMock).toHaveBeenCalledTimes(1);
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
+  test("devcontainer host-workspace target prefers the persisted workspace path", async () => {
+    const workspaceId = "ws-host-workspace-migrated";
+    const workspaceName = "feature-branch";
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-host-workspace-migrated-"));
+    tempRoots.push(tempRoot);
+    const projectPath = path.join(tempRoot, "project");
+    const srcDir = path.join(tempRoot, "src");
+    const canonicalHostWorkspacePath = path.join(srcDir, path.basename(projectPath), workspaceName);
+    const persistedHostWorkspacePath = path.join(tempRoot, "custom-migrated-path", "my-workspace");
+    const waitForInitMock = mock(() => Promise.resolve());
+    const getWorkspaceMetadataMock = mock(() =>
+      Promise.resolve(
+        Ok({
+          id: workspaceId,
+          name: workspaceName,
+          projectName: path.basename(projectPath),
+          projectPath,
+          runtimeConfig: {
+            type: "devcontainer" as const,
+            configPath: ".devcontainer/devcontainer.json",
+          },
+        })
+      )
+    );
+
+    await fsPromises.mkdir(persistedHostWorkspacePath, { recursive: true });
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: getWorkspaceMetadataMock,
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      srcDir,
+      getSessionDir: mock(() => path.join(tempRoot, "sessions")),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => ({ projectPath, workspacePath: persistedHostWorkspacePath })),
+      getEffectiveSecrets: mock(() => []),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [],
+              trusted: false,
+            },
+          ],
+        ]),
+      })),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+      waitForInit: waitForInitMock,
+    };
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime");
+
+    try {
+      const result = await workspaceService.executeBash(workspaceId, "pwd", {
+        executionTarget: "host-workspace",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(result.data.success).toBe(true);
+      if (!result.data.success) {
+        return;
+      }
+
+      expect(result.data.output.trim()).toBe(persistedHostWorkspacePath);
+      expect(result.data.output.trim()).not.toBe(canonicalHostWorkspacePath);
+      expect(waitForInitMock).toHaveBeenCalledTimes(0);
+      expect(createRuntimeSpy).toHaveBeenCalledTimes(0);
+      expect(getWorkspaceMetadataMock).toHaveBeenCalledTimes(1);
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
+});
+
 describe("WorkspaceService post-compaction metadata refresh", () => {
   let workspaceService: WorkspaceService;
   let historyService: HistoryService;
@@ -2621,7 +2833,10 @@ describe("WorkspaceService archiveMergedInProject", () => {
   type ExecuteBashFn = (
     workspaceId: string,
     script: string,
-    options?: { timeout_secs?: number }
+    options?: {
+      timeout_secs?: number;
+      executionTarget?: "runtime" | "host-workspace";
+    }
   ) => Promise<Result<BashToolResult>>;
 
   type ArchiveFn = (workspaceId: string) => Promise<Result<void>>;
@@ -2780,6 +2995,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
       (workspaceId, script, options) => {
         expect(script).toContain("gh pr view --json state");
         expect(options?.timeout_secs).toBe(15);
+        expect(options?.executionTarget).toBeUndefined();
 
         const result = ghResultsByWorkspaceId[workspaceId];
         if (!result) {

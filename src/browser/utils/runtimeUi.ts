@@ -215,6 +215,10 @@ export const RUNTIME_CHOICE_UI = {
   coder: CODER_RUNTIME_UI,
 } satisfies Record<RuntimeChoice, RuntimeUiSpec>;
 
+export const RUNTIME_STATUS_ICON_CLASS = {
+  devcontainerRunning: "text-[var(--color-runtime-devcontainer-text)]",
+} as const;
+
 export const RUNTIME_BADGE_UI = {
   ssh: {
     Icon: RUNTIME_UI.ssh.Icon,

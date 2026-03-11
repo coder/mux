@@ -50,7 +50,13 @@ import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
-import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
+import {
+  getDevcontainerContainerName,
+  probeDevcontainerStatus,
+  stopDevcontainer,
+} from "@/node/runtime/devcontainerCli";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import { ContainerManager } from "@/node/multiProject/containerManager";
@@ -143,6 +149,7 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 type WorkspaceAgentStatus = NonNullable<WorkspaceActivitySnapshot["agentStatus"]>;
+type WorkspaceRuntimeStatus = "running" | "stopped" | "unknown" | "unsupported";
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 const MULTI_PROJECT_WORKSPACES_DISABLED_ERROR = "Multi-project workspaces experiment is disabled";
@@ -176,6 +183,13 @@ interface ArchiveMergedInProjectResult {
   archivedWorkspaceIds: string[];
   skippedWorkspaceIds: string[];
   errors: Array<{ workspaceId: string; error: string }>;
+}
+
+interface ExecuteBashOptions {
+  timeout_secs?: number;
+  cwdMode?: "default" | "repo-root" | null;
+  repoRootProjectPath?: string | null;
+  executionTarget?: "runtime" | "host-workspace";
 }
 
 /**
@@ -2743,6 +2757,28 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  // Devcontainer Docker labels are keyed by the exact host worktree path from startup, so stop/status
+  // APIs must prefer the persisted config path and only fall back to canonical reconstruction if the
+  // config entry is missing.
+  private async getDevcontainerHostWorkspacePath(workspaceId: string): Promise<string> {
+    const workspace = this.config.findWorkspace(workspaceId);
+    if (workspace) {
+      return workspace.workspacePath;
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      throw new Error(metadataResult.error);
+    }
+
+    const metadata = metadataResult.data;
+    const hostRuntime = new WorktreeRuntime(this.config.srcDir, {
+      projectPath: metadata.projectPath,
+      workspaceName: metadata.name,
+    });
+    return hostRuntime.getWorkspacePath(metadata.projectPath, metadata.name);
+  }
+
   /**
    * Get devcontainer info for deep link generation.
    * Returns null if not a devcontainer workspace or container is not running.
@@ -2765,14 +2801,14 @@ export class WorkspaceService extends EventEmitter {
       return null;
     }
 
-    // Get the host workspace path
     const runtimeConfig = metadata.runtimeConfig;
     const runtime = createRuntime(runtimeConfig, {
       projectPath: metadata.projectPath,
       workspaceName: metadata.name,
+      workspacePath: workspace.workspacePath,
     });
 
-    const hostWorkspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+    const hostWorkspacePath = workspace.workspacePath;
 
     // Query Docker for container name (on-demand discovery)
     const containerName = await getDevcontainerContainerName(hostWorkspacePath);
@@ -3442,6 +3478,107 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async stopRuntime(workspaceId: string): Promise<Result<void>> {
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return Err(metadataResult.error);
+    }
+
+    if (this.aiService.isStreaming(workspaceId)) {
+      return Err("Cannot stop: workspace has an active AI stream");
+    }
+
+    // Treat any open terminal as active, even if idle, so we do not tear down a runtime with
+    // attached shells still open in the UI.
+    const workspaceActivity = this.terminalService?.getWorkspaceActivity(workspaceId);
+    if ((workspaceActivity?.totalSessions ?? 0) > 0) {
+      return Err("Cannot stop: workspace has active sessions");
+    }
+
+    const metadata = metadataResult.data;
+    if (metadata.runtimeConfig.type !== "devcontainer") {
+      return Err(`Runtime stop is unsupported for ${metadata.runtimeConfig.type} workspaces`);
+    }
+
+    const stopResult = await stopDevcontainer(
+      await this.getDevcontainerHostWorkspacePath(workspaceId)
+    );
+    if (stopResult.kind === "error") {
+      return Err(`Failed to stop runtime: ${stopResult.message}`);
+    }
+
+    return Ok(undefined);
+  }
+
+  async getRuntimeStatuses(
+    workspaceIds: string[]
+  ): Promise<Record<string, WorkspaceRuntimeStatus>> {
+    const statuses: Record<string, WorkspaceRuntimeStatus> = {};
+    for (const workspaceId of workspaceIds) {
+      statuses[workspaceId] = "unknown";
+    }
+
+    if (workspaceIds.length === 0) {
+      return statuses;
+    }
+
+    let allMetadata: WorkspaceMetadata[];
+    try {
+      allMetadata = await this.config.getAllWorkspaceMetadata();
+    } catch (error) {
+      log.debug("Failed to load workspace metadata for runtime status checks", {
+        error: getErrorMessage(error),
+      });
+      return statuses;
+    }
+
+    const metadataById = new Map(allMetadata.map((metadata) => [metadata.id, metadata]));
+    const probes = workspaceIds.map(async (workspaceId) => {
+      const metadata = metadataById.get(workspaceId);
+      if (!metadata) {
+        return { workspaceId, status: "unknown" as const };
+      }
+
+      if (metadata.runtimeConfig.type !== "devcontainer") {
+        return { workspaceId, status: "unsupported" as const };
+      }
+
+      // Passive status probes must not call ensureReady(); Docker labels are enough to tell
+      // whether the devcontainer is already running.
+      const probeResult = await probeDevcontainerStatus(
+        await this.getDevcontainerHostWorkspacePath(workspaceId)
+      );
+      // A clean miss means the container is stopped; probe failures should surface as unknown.
+      const status =
+        probeResult.kind === "found"
+          ? ("running" as const)
+          : probeResult.kind === "absent"
+            ? ("stopped" as const)
+            : ("unknown" as const);
+      return {
+        workspaceId,
+        status,
+      };
+    });
+
+    const probeResults = await Promise.allSettled(probes);
+    for (let i = 0; i < probeResults.length; i++) {
+      const probeResult = probeResults[i];
+      const workspaceId = workspaceIds[i];
+      if (probeResult.status === "fulfilled") {
+        statuses[probeResult.value.workspaceId] = probeResult.value.status;
+        continue;
+      }
+
+      log.debug("Failed to determine workspace runtime status", {
+        workspaceId,
+        error: getErrorMessage(probeResult.reason),
+      });
+    }
+
+    return statuses;
+  }
+
   /**
    * Archive all non-archived workspaces within a project whose GitHub PR is merged.
    *
@@ -3483,7 +3620,11 @@ export class WorkspaceService extends EventEmitter {
           const result = await this.executeBash(
             workspaceId,
             `gh pr view --json state 2>/dev/null || echo '{"no_pr":true}'`,
-            { timeout_secs: GH_TIMEOUT_SECS }
+            {
+              timeout_secs: GH_TIMEOUT_SECS,
+              // gh requires the runtime environment — devcontainer auth/CLI
+              // may only exist inside the container.
+            }
           );
 
           if (!result.success) {
@@ -5327,11 +5468,7 @@ export class WorkspaceService extends EventEmitter {
   async executeBash(
     workspaceId: string,
     script: string,
-    options?: {
-      timeout_secs?: number | null;
-      cwdMode?: "default" | "repo-root" | null;
-      repoRootProjectPath?: string | null;
-    } | null,
+    options?: ExecuteBashOptions,
     command?: string,
     args?: string[]
   ): Promise<Result<BashToolResult>> {
@@ -5360,13 +5497,67 @@ export class WorkspaceService extends EventEmitter {
       return Err(`Workspace ${workspaceId} is archived; cannot execute bash`);
     }
 
+    if (
+      options?.executionTarget === "host-workspace" &&
+      metadata.runtimeConfig?.type === "devcontainer"
+    ) {
+      try {
+        // Preserve the existing config guard even when bypassing the devcontainer runtime.
+        const workspace = this.config.findWorkspace(workspaceId);
+        if (!workspace) {
+          return Err(`Workspace ${workspaceId} not found in config`);
+        }
+
+        let hostScript = script;
+        if (command != null) {
+          if (command !== "git") {
+            return Err("executeBash command mode only supports git");
+          }
+          const commandArgs = args ?? [];
+          hostScript = [shellQuote(command), ...commandArgs.map((a) => shellQuote(a))].join(" ");
+        }
+
+        // Passive git/PR metadata refreshes only need the host worktree for devcontainer workspaces.
+        // Running them on the host avoids waking every visible devcontainer via ensureReady().
+        const hostRuntime = new WorktreeRuntime(this.config.srcDir, {
+          projectPath: metadata.projectPath,
+          workspaceName: metadata.name,
+        });
+        const hostWorkspacePath = workspace.workspacePath;
+        const projectSecrets = this.config.getEffectiveSecrets(metadata.projectPath);
+        const configSnapshot = this.config.loadConfigOrDefault();
+
+        using tempDir = new DisposableTempDir("mux-ipc-bash");
+        const bashTool = createBashTool({
+          cwd: hostWorkspacePath,
+          runtime: hostRuntime,
+          secrets: await secretsToRecord(projectSecrets, this.opResolver),
+          runtimeTempDir: tempDir.path,
+          overflow_policy: "truncate",
+          trusted: isWorkspaceTrustedForSharedExecution(metadata, configSnapshot.projects),
+        });
+
+        const result = (await bashTool.execute!(
+          {
+            script: hostScript,
+            timeout_secs: options?.timeout_secs ?? 120,
+          },
+          {
+            toolCallId: `bash-${Date.now()}`,
+            messages: [],
+          }
+        )) as BashToolResult;
+
+        return Ok(result);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        return Err(`Failed to execute bash command: ${message}`);
+      }
+    }
+
     // Wait for workspace initialization (container creation, code sync, etc.)
     // Same behavior as AI tools - 5 min timeout, then proceeds anyway
     await this.initStateManager.waitForInit(workspaceId);
-
-    if (args != null && command == null) {
-      return Err("executeBash command args require a command");
-    }
 
     try {
       // Get the persisted workspace entry from config. Multi-project git command mode needs the
@@ -5389,13 +5580,19 @@ export class WorkspaceService extends EventEmitter {
         : undefined;
 
       // Multi-project workspaces execute bash from the container root so sibling repos are addressable.
+      // Single-project workspaces use the persisted workspacePath so devcontainer Docker labels
+      // resolve to the correct container even if the path diverges from canonical reconstruction.
       const runtime = multiProjectRuntimes
         ? new MultiProjectRuntime(
             new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
             multiProjectRuntimes,
             metadata.name
           )
-        : createRuntimeForWorkspace(metadata);
+        : createRuntime(metadata.runtimeConfig, {
+            projectPath: metadata.projectPath,
+            workspaceName: metadata.name,
+            workspacePath: workspace.workspacePath,
+          });
 
       // Ensure runtime is ready (e.g., start Docker container if stopped)
       const readyResult = await runtime.ensureReady();

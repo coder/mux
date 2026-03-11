@@ -8,6 +8,7 @@ import { StartupConnectionError } from "../StartupConnectionError/StartupConnect
 import { useReducedMotion } from "../../hooks/useReducedMotion";
 import { useWorkspaceStoreRaw, workspaceStore } from "../../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../../stores/GitStatusStore";
+import { useRuntimeStatusStoreRaw } from "../../stores/RuntimeStatusStore";
 import { useBackgroundBashStoreRaw } from "../../stores/BackgroundBashStore";
 import { getPRStatusStoreInstance } from "../../stores/PRStatusStore";
 import { ProjectProvider, useProjectContext } from "../../contexts/ProjectContext";
@@ -68,6 +69,7 @@ function AppLoaderInner() {
   // Get store instances
   const workspaceStoreInstance = useWorkspaceStoreRaw();
   const gitStatusStore = useGitStatusStoreRaw();
+  const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const backgroundBashStore = useBackgroundBashStoreRaw();
 
   const prefersReducedMotion = useReducedMotion();
@@ -85,12 +87,14 @@ function AppLoaderInner() {
     // Keep store clients in sync even during backend restarts (api can be null while reconnecting).
     workspaceStoreInstance.setClient(api ?? null);
     gitStatusStore.setClient(api ?? null);
+    runtimeStatusStore.setClient(api ?? null);
     backgroundBashStore.setClient(api ?? null);
     getPRStatusStoreInstance().setClient(api ?? null);
 
     if (!workspaceContext.loading) {
       workspaceStoreInstance.syncWorkspaces(workspaceContext.workspaceMetadata);
       gitStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
+      runtimeStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
 
       // Wire up file-modification subscription (idempotent - only subscribes once)
       gitStatusStore.subscribeToFileModifications((listener) =>
@@ -106,6 +110,7 @@ function AppLoaderInner() {
     workspaceContext.workspaceMetadata,
     workspaceStoreInstance,
     gitStatusStore,
+    runtimeStatusStore,
     backgroundBashStore,
     api,
   ]);

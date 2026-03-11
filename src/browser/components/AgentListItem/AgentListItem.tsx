@@ -2,10 +2,12 @@ import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
+import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { isDevcontainerRuntime } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
@@ -39,7 +41,9 @@ import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContex
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
+import { DevcontainerIcon } from "../icons/RuntimeIcons/RuntimeIcons";
 import { useAPI } from "@/browser/contexts/API";
+import { RUNTIME_STATUS_ICON_CLASS } from "@/browser/utils/runtimeUi";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -82,6 +86,7 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   onToggleCompletedChildren?: (workspaceId: string) => void;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onForkWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onStopRuntime?: (workspaceId: string, button?: HTMLElement) => Promise<void>;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
   onCancelCreation: (workspaceId: string) => Promise<void>;
 }
@@ -358,6 +363,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     onToggleCompletedChildren,
     onSelectWorkspace,
     onForkWorkspace,
+    onStopRuntime,
     onArchiveWorkspace,
     onCancelCreation,
   } = props;
@@ -370,6 +376,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const isDisabled = isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
+  const runtimeStatus = useRuntimeStatus(workspaceId);
 
   // Get title edit context — manages inline title editing state across the sidebar
   const {
@@ -393,6 +400,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const overflowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const overflowMenuFrameRef = useRef<number | null>(null);
 
   // Context menu via right-click / long-press. The hook manages position + long-press state.
@@ -536,6 +544,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     onToggleCompletedChildren?.(workspaceId);
     return true;
   };
+  const isDevcontainerWorkspace = isDevcontainerRuntime(metadata.runtimeConfig);
+  const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";
 
   const paddingLeft = getItemPaddingLeft(depth);
 
@@ -740,6 +750,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 )}
                 <PopoverTrigger asChild>
                   <button
+                    ref={overflowMenuButtonRef}
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
                       ctxMenu.isOpen ? "opacity-100" : "opacity-0",
@@ -766,6 +777,15 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 >
                   <WorkspaceActionsMenuContent
                     onEditTitle={startEditing}
+                    onStopRuntime={
+                      isRuntimeRunning && onStopRuntime
+                        ? () =>
+                            void onStopRuntime(
+                              workspaceId,
+                              overflowMenuButtonRef.current ?? undefined
+                            )
+                        : null
+                    }
                     onForkChat={(anchorEl) => {
                       void onForkWorkspace(workspaceId, anchorEl);
                     }}
@@ -872,6 +892,21 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                       {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
                       commands
                     </TooltipContent>
+                  </Tooltip>
+                )}
+                {isRuntimeRunning && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        className={cn(
+                          "flex items-center",
+                          RUNTIME_STATUS_ICON_CLASS.devcontainerRunning
+                        )}
+                      >
+                        <DevcontainerIcon className="h-3 w-3" />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">Container running</TooltipContent>
                   </Tooltip>
                 )}
               </div>
