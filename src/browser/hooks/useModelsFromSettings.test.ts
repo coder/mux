@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import {
   filterHiddenModels,
+  getDefaultModel,
   getSuggestedModels,
   useModelsFromSettings,
 } from "./useModelsFromSettings";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { HIDDEN_MODELS_KEY } from "@/common/constants/storage";
+import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 function countOccurrences(haystack: string[], needle: string): number {
   return haystack.filter((v) => v === needle).length;
@@ -17,6 +18,21 @@ function countOccurrences(haystack: string[], needle: string): number {
 let providersConfig: ProvidersConfigMap | null = null;
 let routePriority: string[] = ["direct"];
 let routeOverrides: Record<string, string> = {};
+
+interface TestApi {
+  config?: {
+    updateModelPreferences?: (patch: {
+      defaultModel?: string;
+      hiddenModels?: string[];
+    }) => Promise<unknown>;
+  };
+  providers?: {
+    getConfig?: () => Promise<ProvidersConfigMap>;
+    setModels?: (input: { provider: string; models: string[] }) => Promise<unknown>;
+  };
+}
+
+let apiMock: TestApi | null = null;
 
 const useProvidersConfigMock = mock(() => ({
   config: providersConfig,
@@ -48,7 +64,7 @@ void mock.module("@/browser/hooks/useRouting", () => ({
 }));
 
 void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({ api: null }),
+  useAPI: () => ({ api: apiMock }),
 }));
 
 void mock.module("@/browser/contexts/PolicyContext", () => ({
@@ -126,6 +142,100 @@ describe("getSuggestedModels", () => {
 describe("filterHiddenModels", () => {
   test("filters out hidden models", () => {
     expect(filterHiddenModels(["a", "b", "c"], ["b"])).toEqual(["a", "c"]);
+  });
+});
+
+describe("useModelsFromSettings selected model preservation", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.window.localStorage.clear();
+    providersConfig = null;
+    routePriority = ["direct"];
+    routeOverrides = {};
+    apiMock = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+    apiMock = null;
+  });
+
+  test("getDefaultModel preserves explicit gateway-scoped defaults", () => {
+    const gatewayModel = "openrouter:openai/gpt-5";
+    globalThis.window.localStorage.setItem(DEFAULT_MODEL_KEY, JSON.stringify(gatewayModel));
+
+    expect(getDefaultModel()).toBe(gatewayModel);
+  });
+
+  test("setDefaultModel persists explicit gateway-scoped defaults", async () => {
+    const updateModelPreferences = mock(() => Promise.resolve(undefined));
+    apiMock = {
+      config: { updateModelPreferences },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    act(() => {
+      result.current.setDefaultModel("openrouter:openai/gpt-5");
+    });
+
+    await waitFor(() => expect(result.current.defaultModel).toBe("openrouter:openai/gpt-5"));
+    expect(globalThis.window.localStorage.getItem(DEFAULT_MODEL_KEY)).toBe(
+      JSON.stringify("openrouter:openai/gpt-5")
+    );
+    expect(updateModelPreferences).toHaveBeenCalledWith({
+      defaultModel: "openrouter:openai/gpt-5",
+    });
+  });
+
+  test("ensureModelInSettings skips syncing explicit gateway-scoped selections", () => {
+    const setModels = mock(() => Promise.resolve(undefined));
+    providersConfig = {
+      anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true, models: [] },
+    };
+    apiMock = {
+      providers: {
+        getConfig: () => Promise.resolve(providersConfig ?? {}),
+        setModels,
+      },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    act(() => {
+      result.current.ensureModelInSettings("openrouter:anthropic/custom-model");
+    });
+
+    expect(setModels).not.toHaveBeenCalled();
+  });
+
+  test("ensureModelInSettings still syncs direct-provider custom models", async () => {
+    const setModels = mock(() => Promise.resolve(undefined));
+    providersConfig = {
+      anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true, models: [] },
+    };
+    apiMock = {
+      providers: {
+        getConfig: () => Promise.resolve(providersConfig ?? {}),
+        setModels,
+      },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    act(() => {
+      result.current.ensureModelInSettings("anthropic:custom-model");
+    });
+
+    await waitFor(() =>
+      expect(setModels).toHaveBeenCalledWith({
+        provider: "anthropic",
+        models: ["custom-model"],
+      })
+    );
   });
 });
 

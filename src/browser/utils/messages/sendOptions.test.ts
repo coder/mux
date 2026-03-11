@@ -35,17 +35,22 @@ describe("getSendOptionsFromStorage", () => {
 
   /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 
-  test("normalizes stored model preference with shared helper", () => {
+  test("preserves explicit gateway-scoped stored model preferences", () => {
     const workspaceId = "ws-1";
     const rawModel = "mux-gateway:anthropic/claude-haiku-4-5";
 
     window.localStorage.setItem(getModelKey(workspaceId), JSON.stringify(rawModel));
 
     const options = getSendOptionsFromStorage(workspaceId);
-    const expectedModel = normalizeModelPreference(rawModel, "openai:default");
 
-    expect(options.model).toBe(expectedModel);
+    expect(options.model).toBe(rawModel);
     expect(options.thinkingLevel).toBe(WORKSPACE_DEFAULTS.thinkingLevel);
+  });
+
+  test("keeps direct-provider model preferences normalized via the shared helper", () => {
+    expect(normalizeModelPreference(" openai:gpt-5.2 ", "anthropic:default")).toBe(
+      "openai:gpt-5.2"
+    );
   });
 
   test("omits system1 thinking when set to off", () => {

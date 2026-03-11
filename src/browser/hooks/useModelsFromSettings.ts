@@ -12,7 +12,11 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { isValidProvider } from "@/common/constants/providers";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import {
+  getExplicitGatewayPrefix,
+  normalizeSelectedModel,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
 import { isModelAvailable } from "@/common/routing";
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
@@ -86,9 +90,8 @@ export function getDefaultModel(): string {
   const persisted = readPersistedString(DEFAULT_MODEL_KEY);
   if (!persisted) return fallback;
 
-  // Migrate legacy mux-gateway format to canonical form.
-  const canonical = normalizeToCanonical(persisted).trim();
-  return canonical || fallback;
+  const selectedModel = normalizeSelectedModel(persisted);
+  return selectedModel || fallback;
 }
 
 /**
@@ -129,14 +132,14 @@ export function useModelsFromSettings() {
     (next: string | ((prev: string) => string)) => {
       setDefaultModel((prev) => {
         const resolved = typeof next === "function" ? next(prev) : next;
-        const canonical = normalizeToCanonical(resolved).trim();
-        const canonicalPrev = normalizeToCanonical(prev).trim();
+        const selectedModel = normalizeSelectedModel(resolved);
+        const previousSelectedModel = normalizeSelectedModel(prev);
 
-        if (canonical !== canonicalPrev) {
-          persistModelPrefs({ defaultModel: canonical });
+        if (selectedModel !== previousSelectedModel) {
+          persistModelPrefs({ defaultModel: selectedModel });
         }
 
-        return canonical;
+        return selectedModel;
       });
     },
     [persistModelPrefs, setDefaultModel]
@@ -273,21 +276,22 @@ export function useModelsFromSettings() {
     (modelString: string) => {
       if (!api) return;
 
-      const canonical = normalizeToCanonical(modelString).trim();
-      if (!canonical) return;
-      if (BUILT_IN_MODEL_SET.has(canonical)) return;
+      const selectedModel = normalizeSelectedModel(modelString);
+      if (!selectedModel) return;
 
-      if (!isModelAllowedByPolicy(effectivePolicy, canonical)) {
+      const canonicalModel = normalizeToCanonical(selectedModel).trim();
+      if (BUILT_IN_MODEL_SET.has(canonicalModel)) return;
+      if (!isModelAllowedByPolicy(effectivePolicy, canonicalModel)) {
         return;
       }
+      if (getExplicitGatewayPrefix(selectedModel)) return;
 
-      const colonIndex = canonical.indexOf(":");
+      const colonIndex = selectedModel.indexOf(":");
       if (colonIndex === -1) return;
 
-      const provider = canonical.slice(0, colonIndex);
-      const modelId = canonical.slice(colonIndex + 1);
+      const provider = selectedModel.slice(0, colonIndex);
+      const modelId = selectedModel.slice(colonIndex + 1);
       if (!provider || !modelId) return;
-      if (provider === "mux-gateway") return;
       if (!isValidProvider(provider)) return;
 
       const run = async () => {

@@ -76,6 +76,18 @@ export function getExplicitGatewayPrefix(modelString: string): ProviderName | un
   const providerName = trimmedModelString.slice(0, colonIndex) as ProviderName;
   return PROVIDER_DEFINITIONS[providerName]?.kind === "gateway" ? providerName : undefined;
 }
+
+/**
+ * Normalize a selected model while preserving explicit gateway routing choices.
+ * User-selected gateway identities like openrouter:openai/gpt-5 should stay intact.
+ */
+export function normalizeSelectedModel(modelString: string): string {
+  const trimmedModelString = modelString.trim();
+  return getExplicitGatewayPrefix(trimmedModelString)
+    ? trimmedModelString
+    : normalizeToCanonical(trimmedModelString);
+}
+
 /**
  * Extract the model name from a model string (e.g., "anthropic:claude-sonnet-4-5" -> "claude-sonnet-4-5")
  * @param modelString - Full model string in format "provider:model-name"

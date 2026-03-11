@@ -2,7 +2,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { coerceThinkingLevel } from "@/common/types/thinking";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
 
 export interface ExperimentValues {
   programmaticToolCalling: boolean | undefined;
@@ -22,11 +22,11 @@ export interface SendMessageOptionsInput {
   disableWorkspaceAgents?: boolean;
 }
 
-/** Normalize a preferred model string for routing (gateway migration + trimming). */
+/** Normalize a preferred model string for routing while preserving explicit gateway choices. */
 export function normalizeModelPreference(rawModel: unknown, fallbackModel: string): string {
   const trimmed =
     typeof rawModel === "string" && rawModel.trim().length > 0 ? rawModel.trim() : null;
-  return normalizeToCanonical(trimmed ?? fallbackModel);
+  return normalizeSelectedModel(trimmed ?? fallbackModel);
 }
 
 export function normalizeSystem1Model(rawModel: unknown): string | undefined {

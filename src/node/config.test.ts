@@ -182,23 +182,23 @@ describe("Config", () => {
   });
 
   describe("model preferences", () => {
-    it("should normalize and persist defaultModel and hiddenModels", async () => {
+    it("should preserve explicit gateway-scoped defaultModel and hiddenModels", async () => {
       await config.editConfig((cfg) => {
         cfg.defaultModel = "mux-gateway:openai/gpt-4o";
         cfg.hiddenModels = [
           " mux-gateway:openai/gpt-4o-mini ",
           "invalid-model",
-          "openai:gpt-4o-mini", // duplicate
+          "openai:gpt-4o-mini",
         ];
         return cfg;
       });
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.defaultModel).toBe("openai:gpt-4o");
-      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+      expect(loaded.defaultModel).toBe("mux-gateway:openai/gpt-4o");
+      expect(loaded.hiddenModels).toEqual(["mux-gateway:openai/gpt-4o-mini", "openai:gpt-4o-mini"]);
     });
 
-    it("normalizes gateway-prefixed model strings on load", () => {
+    it("preserves explicit gateway-prefixed model strings on load", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
         configFile,
@@ -210,8 +210,8 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.defaultModel).toBe("openai:gpt-4o");
-      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+      expect(loaded.defaultModel).toBe("mux-gateway:openai/gpt-4o");
+      expect(loaded.hiddenModels).toEqual(["mux-gateway:openai/gpt-4o-mini"]);
     });
 
     it("rejects malformed mux-gateway model strings on load", () => {
@@ -244,6 +244,49 @@ describe("Config", () => {
       const loaded = config.loadConfigOrDefault();
       expect(loaded.defaultModel).toBeUndefined();
       expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+    });
+  });
+
+  describe("agent AI defaults model normalization", () => {
+    it("preserves explicit gateway-scoped model strings in nested AI defaults", async () => {
+      await config.editConfig((cfg) => {
+        cfg.agentAiDefaults = {
+          exec: { modelString: " openrouter:openai/gpt-5 ", thinkingLevel: "high" },
+          worker: {
+            modelString: " mux-gateway:anthropic/claude-haiku-4-5 ",
+            thinkingLevel: "low",
+          },
+        };
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        agentAiDefaults?: Record<string, { modelString?: string }>;
+        subagentAiDefaults?: Record<string, { modelString?: string }>;
+      };
+
+      expect(raw.agentAiDefaults).toEqual({
+        exec: { modelString: "openrouter:openai/gpt-5", thinkingLevel: "high" },
+        worker: {
+          modelString: "mux-gateway:anthropic/claude-haiku-4-5",
+          thinkingLevel: "low",
+        },
+      });
+      expect(raw.subagentAiDefaults).toEqual({
+        worker: {
+          modelString: "mux-gateway:anthropic/claude-haiku-4-5",
+          thinkingLevel: "low",
+        },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.agentAiDefaults?.exec?.modelString).toBe("openrouter:openai/gpt-5");
+      expect(loaded.agentAiDefaults?.worker?.modelString).toBe(
+        "mux-gateway:anthropic/claude-haiku-4-5"
+      );
+      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe(
+        "mux-gateway:anthropic/claude-haiku-4-5"
+      );
     });
   });
   describe("route priority and overrides persistence", () => {

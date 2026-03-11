@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   getExplicitGatewayPrefix,
+  normalizeSelectedModel,
   normalizeToCanonical,
   getModelName,
   supports1MContext,
@@ -43,6 +44,26 @@ describe("getExplicitGatewayPrefix", () => {
     expect(getExplicitGatewayPrefix("openai:gpt-5")).toBeUndefined();
     expect(getExplicitGatewayPrefix("anthropic:claude-sonnet-4-5")).toBeUndefined();
     expect(getExplicitGatewayPrefix("no-colon-model-string")).toBeUndefined();
+  });
+});
+
+describe("normalizeSelectedModel", () => {
+  it("preserves explicit gateway-scoped model selections", () => {
+    expect(normalizeSelectedModel(" openrouter:openai/gpt-5 ")).toBe("openrouter:openai/gpt-5");
+    expect(normalizeSelectedModel("mux-gateway:anthropic/claude-sonnet-4-5")).toBe(
+      "mux-gateway:anthropic/claude-sonnet-4-5"
+    );
+    expect(normalizeSelectedModel("github-copilot:claude-sonnet-4-5")).toBe(
+      "github-copilot:claude-sonnet-4-5"
+    );
+    expect(normalizeSelectedModel("bedrock:anthropic.claude-haiku-4-5")).toBe(
+      "bedrock:anthropic.claude-haiku-4-5"
+    );
+  });
+
+  it("keeps direct-provider selections canonical", () => {
+    expect(normalizeSelectedModel(" openai:gpt-5 ")).toBe("openai:gpt-5");
+    expect(normalizeSelectedModel("anthropic:claude-haiku-4-5")).toBe("anthropic:claude-haiku-4-5");
   });
 });
 describe("getModelName", () => {

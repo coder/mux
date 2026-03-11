@@ -29,7 +29,7 @@ import {
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -574,7 +574,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "workspace" ? props.workspaceId : getProjectScopeId(props.projectPath)
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
-  // - preferredModel: canonical model used for backend routing
+  // - preferredModel: selected model used for backend routing, preserving explicit gateway choices
   // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
   const preferredModel = sendMessageOptions.model;
   const baseModel = sendMessageOptions.baseModel;
@@ -620,18 +620,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
-      const canonicalModel = normalizeToCanonical(model);
-      ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
+      const selectedModel = normalizeSelectedModel(model);
+      ensureModelInSettings(selectedModel); // Ensure model exists in Settings
 
       if (onModelChange) {
         // Notify parent of model change (for context switch warning + persisted model metadata).
         // Called before early returns so warnings work even offline or with custom agents.
-        onModelChange(canonicalModel);
+        onModelChange(selectedModel);
       } else {
         const scopeId =
           variant === "creation" ? getProjectScopeId(creationProjectPath) : workspaceId;
         if (scopeId) {
-          setWorkspaceModelWithOrigin(scopeId, canonicalModel, "user");
+          setWorkspaceModelWithOrigin(scopeId, selectedModel, "user");
         }
       }
 
@@ -651,7 +651,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [normalizedAgentId]: { model: canonicalModel, thinkingLevel },
+            [normalizedAgentId]: { model: selectedModel, thinkingLevel },
           };
         },
         {}
@@ -663,7 +663,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
-        model: canonicalModel,
+        model: selectedModel,
         thinkingLevel,
       });
 
@@ -671,7 +671,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         .updateAgentAISettings({
           workspaceId,
           agentId: normalizedAgentId,
-          aiSettings: { model: canonicalModel, thinkingLevel },
+          aiSettings: { model: selectedModel, thinkingLevel },
         })
         .then((result) => {
           if (!result.success) {

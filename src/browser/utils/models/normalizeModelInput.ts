@@ -1,8 +1,7 @@
 import {
-  getExplicitGatewayPrefix,
   resolveModelAlias,
   isValidModelFormat,
-  normalizeToCanonical,
+  normalizeSelectedModel,
 } from "@/common/utils/ai/models";
 
 export interface ModelInputResult {
@@ -20,18 +19,16 @@ export function normalizeModelInput(raw: string | null | undefined): ModelInputR
 
   const resolved = resolveModelAlias(trimmed);
   const isAlias = resolved !== trimmed;
-  const explicitGateway = getExplicitGatewayPrefix(resolved);
-  // Explicit gateway scoping is user intent — preserve it for the backend to honor.
-  const canonical = explicitGateway ? resolved.trim() : normalizeToCanonical(resolved).trim();
+  const selectedModel = normalizeSelectedModel(resolved);
 
-  if (!isValidModelFormat(canonical)) {
+  if (!isValidModelFormat(selectedModel)) {
     return { model: null, isAlias, error: "invalid-format" };
   }
 
-  const separatorIndex = canonical.indexOf(":");
-  if (canonical.slice(separatorIndex + 1).startsWith(":")) {
+  const separatorIndex = selectedModel.indexOf(":");
+  if (selectedModel.slice(separatorIndex + 1).startsWith(":")) {
     return { model: null, isAlias, error: "invalid-format" };
   }
 
-  return { model: canonical, isAlias };
+  return { model: selectedModel, isAlias };
 }

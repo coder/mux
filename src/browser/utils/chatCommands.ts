@@ -35,6 +35,7 @@ import {
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
 import type { ChatAttachment } from "../features/ChatInput/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
@@ -188,10 +189,12 @@ export async function processSlashCommand(
       return { clearInput: false, toastShown: true };
     }
 
-    const canonicalModel = normalized.model;
-    const separatorIndex = canonicalModel.indexOf(":");
-    const provider = canonicalModel.slice(0, separatorIndex);
-    const modelId = canonicalModel.slice(separatorIndex + 1);
+    const selectedModel = normalized.model;
+    const separatorIndex = selectedModel.indexOf(":");
+    const provider = selectedModel.slice(0, separatorIndex);
+    const modelId = selectedModel.slice(separatorIndex + 1);
+    const canonicalModel = normalizeToCanonical(selectedModel);
+    const explicitGateway = getExplicitGatewayPrefix(selectedModel);
 
     try {
       // Validate provider is supported
@@ -205,8 +208,8 @@ export async function processSlashCommand(
         return { clearInput: false, toastShown: true };
       }
 
-      // Align with settings behavior: only persist non-built-in, non-gateway models.
-      if (activeClient && !BUILT_IN_MODEL_SET.has(canonicalModel) && provider !== "mux-gateway") {
+      // Align with settings behavior: only persist non-built-in direct-provider models.
+      if (activeClient && !BUILT_IN_MODEL_SET.has(canonicalModel) && !explicitGateway) {
         try {
           const config = await activeClient.providers.getConfig();
           const existingModels: ProviderModelEntry[] = config[provider]?.models ?? [];
@@ -223,12 +226,12 @@ export async function processSlashCommand(
       }
 
       setInput("");
-      setPreferredModel(canonicalModel);
+      setPreferredModel(selectedModel);
       trackCommandUsed("model");
       setToast({
         id: Date.now().toString(),
         type: "success",
-        message: `Model changed to ${canonicalModel}`,
+        message: `Model changed to ${selectedModel}`,
       });
       return { clearInput: true, toastShown: true };
     } catch (error) {

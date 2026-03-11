@@ -37,7 +37,11 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 import { getMuxHome } from "@/common/constants/paths";
 import { GATEWAY_PROVIDERS } from "@/common/constants/providers";
 import { PlatformPaths } from "@/common/utils/paths";
-import { isValidModelFormat, normalizeToCanonical } from "@/common/utils/ai/models";
+import {
+  isValidModelFormat,
+  normalizeSelectedModel,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
 import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
@@ -153,7 +157,7 @@ function normalizeOptionalModelString(value: unknown): string | undefined {
     return undefined;
   }
 
-  const normalized = normalizeToCanonical(trimmed);
+  const normalized = normalizeSelectedModel(trimmed);
   if (!isValidModelFormat(normalized)) {
     return undefined;
   }
@@ -178,6 +182,23 @@ function normalizeOptionalModelStringArray(value: unknown): string[] | undefined
   }
 
   return out;
+}
+
+function normalizeAiDefaultsModelStrings<T extends Record<string, { modelString?: string }>>(
+  value: T
+): T {
+  let modified = false;
+  const normalizedEntries = Object.entries(value).map(([id, entry]) => {
+    const normalizedModelString = normalizeOptionalModelString(entry.modelString);
+    if (normalizedModelString !== entry.modelString) {
+      modified = true;
+      return [id, { ...entry, modelString: normalizedModelString }];
+    }
+
+    return [id, entry];
+  });
+
+  return modified ? (Object.fromEntries(normalizedEntries) as T) : value;
 }
 
 function parseOptionalPort(value: unknown): number | undefined {
@@ -357,7 +378,7 @@ export class Config {
               continue;
             }
 
-            const normalized = normalizeToCanonical(modelString.trim());
+            const normalized = normalizeSelectedModel(modelString.trim());
             if (normalized !== modelString) {
               (entry as { modelString?: string }).modelString = normalized;
               modified = true;
@@ -432,9 +453,9 @@ export class Config {
           }
         }
 
-        // Normalize gateway-prefixed model strings so persisted config uses canonical ids.
+        // Normalize persisted model preferences while preserving explicit gateway selections.
         if (typeof parsed.defaultModel === "string") {
-          const normalized = normalizeToCanonical(parsed.defaultModel.trim());
+          const normalized = normalizeSelectedModel(parsed.defaultModel.trim());
           if (normalized !== parsed.defaultModel) {
             parsed.defaultModel = normalized;
             configModified = true;
@@ -446,7 +467,7 @@ export class Config {
             (model): model is string => typeof model === "string"
           );
           const normalizedHiddenModels = sourceHiddenModels.map((model) =>
-            normalizeToCanonical(model.trim())
+            normalizeSelectedModel(model.trim())
           );
 
           if (
@@ -702,10 +723,11 @@ export class Config {
         data.viewedSplashScreens = config.viewedSplashScreens;
       }
       if (config.agentAiDefaults && Object.keys(config.agentAiDefaults).length > 0) {
-        data.agentAiDefaults = config.agentAiDefaults;
+        const normalizedAgentAiDefaults = normalizeAiDefaultsModelStrings(config.agentAiDefaults);
+        data.agentAiDefaults = normalizedAgentAiDefaults;
 
         const legacySubagent: Record<string, unknown> = {};
-        for (const [id, entry] of Object.entries(config.agentAiDefaults)) {
+        for (const [id, entry] of Object.entries(normalizedAgentAiDefaults)) {
           if (id === "plan" || id === "exec" || id === "compact") continue;
           legacySubagent[id] = entry;
         }
@@ -715,7 +737,7 @@ export class Config {
       } else {
         // Legacy only.
         if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
-          data.subagentAiDefaults = config.subagentAiDefaults;
+          data.subagentAiDefaults = normalizeAiDefaultsModelStrings(config.subagentAiDefaults);
         }
       }
 
