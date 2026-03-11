@@ -3598,6 +3598,16 @@ export const router = (authToken?: string) => {
             }
             return { success: true as const, data: undefined };
           }),
+        attach: t
+          .input(schemas.workspace.flowPrompt.attach.input)
+          .output(schemas.workspace.flowPrompt.attach.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.attachFlowPrompt(input.workspaceId);
+            if (!result.success) {
+              return { success: false as const, error: result.error };
+            }
+            return { success: true as const, data: result.data };
+          }),
         updateAutoSendMode: t
           .input(schemas.workspace.flowPrompt.updateAutoSendMode.input)
           .output(schemas.workspace.flowPrompt.updateAutoSendMode.output)
@@ -3605,6 +3615,19 @@ export const router = (authToken?: string) => {
             const result = await context.workspaceService.updateFlowPromptAutoSendMode(
               input.workspaceId,
               input.mode
+            );
+            if (!result.success) {
+              return { success: false as const, error: result.error };
+            }
+            return { success: true as const, data: undefined };
+          }),
+        updateAgentScope: t
+          .input(schemas.workspace.flowPrompt.updateAgentScope.input)
+          .output(schemas.workspace.flowPrompt.updateAgentScope.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.updateFlowPromptAgentScope(
+              input.workspaceId,
+              input.agentScope
             );
             if (!result.success) {
               return { success: false as const, error: result.error };

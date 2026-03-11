@@ -19,6 +19,7 @@ function createEmptyState(workspaceId: string): FlowPromptState {
     isCurrentVersionEnqueued: false,
     hasPendingUpdate: false,
     autoSendMode: "off",
+    agentScope: "",
     updatePreviewText: null,
   };
 }
@@ -35,6 +36,7 @@ function areStatesEqual(a: FlowPromptState, b: FlowPromptState): boolean {
     a.isCurrentVersionEnqueued === b.isCurrentVersionEnqueued &&
     a.hasPendingUpdate === b.hasPendingUpdate &&
     a.autoSendMode === b.autoSendMode &&
+    a.agentScope === b.agentScope &&
     a.updatePreviewText === b.updatePreviewText
   );
 }

@@ -123,6 +123,24 @@ export function useFlowPrompt(
     [api, isUpdatingAutoSendMode, workspaceId]
   );
 
+  const updateAgentScope = useCallback(
+    async (agentScope: string) => {
+      if (!api) {
+        setError("API not available");
+        return;
+      }
+
+      const result = await api.workspace.flowPrompt.updateAgentScope({ workspaceId, agentScope });
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
+
+      setError(null);
+    },
+    [api, workspaceId]
+  );
+
   const sendNow = useCallback(async () => {
     if (!api) {
       setError("API not available");
@@ -155,6 +173,7 @@ export function useFlowPrompt(
     enableFlowPrompt,
     disableFlowPrompt,
     updateAutoSendMode,
+    updateAgentScope,
     sendNow,
   };
 }

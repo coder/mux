@@ -1087,6 +1087,9 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           onAutoSendModeChange={(mode) => {
             void flowPrompt.updateAutoSendMode(mode);
           }}
+          onAgentScopeChange={(agentScope) => {
+            void flowPrompt.updateAgentScope(agentScope);
+          }}
           onSendNow={() => {
             void flowPrompt.sendNow();
           }}

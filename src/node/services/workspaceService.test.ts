@@ -903,10 +903,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
     const acceptedMessage = createMuxMessage(
       "flow-prompt-accepted",
       "user",
-      "updated flow prompt",
-      {
-        synthetic: true,
-      }
+      "Re the live prompt in /tmp/workspace/.mux/prompts/feature.md:"
     );
 
     sessionEmitter.emit("chat-event", {
@@ -917,8 +914,11 @@ describe("WorkspaceService sendMessage status clearing", () => {
         metadata: {
           ...(acceptedMessage.metadata ?? {}),
           muxMetadata: {
-            type: "flow-prompt-update",
-            fingerprint: "flow-prompt-fingerprint",
+            type: "normal",
+            flowPromptAttachment: {
+              path: "/tmp/workspace/.mux/prompts/feature.md",
+              fingerprint: "flow-prompt-fingerprint",
+            },
           },
         },
       },
@@ -1275,6 +1275,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
               isCurrentVersionEnqueued: boolean;
               hasPendingUpdate: boolean;
               autoSendMode: "off" | "end-of-turn";
+              agentScope: string;
               updatePreviewText: string | null;
             }>;
           };
@@ -1292,6 +1293,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
       isCurrentVersionEnqueued: false,
       hasPendingUpdate: false,
       autoSendMode: "off",
+      agentScope: "",
       updatePreviewText: null,
     });
 
@@ -1300,6 +1302,31 @@ describe("WorkspaceService Flow Prompting controls", () => {
     expect(result.success).toBe(true);
     expect(session.clearFlowPromptUpdate).toHaveBeenCalledTimes(1);
     expect(setAutoSendMode).toHaveBeenCalledWith(workspaceId, "off", { clearPending: true });
+  });
+
+  test("updateFlowPromptAgentScope persists the latest scope text", async () => {
+    const workspaceId = "flow-scope-workspace";
+    const setAgentScope = spyOn(
+      (
+        workspaceService as unknown as {
+          flowPromptService: {
+            setAgentScope: (workspaceId: string, agentScope: string) => Promise<unknown>;
+          };
+        }
+      ).flowPromptService,
+      "setAgentScope"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.updateFlowPromptAgentScope(
+      workspaceId,
+      "Only work on the stage 2 test coverage."
+    );
+
+    expect(result.success).toBe(true);
+    expect(setAgentScope).toHaveBeenCalledWith(
+      workspaceId,
+      "Only work on the stage 2 test coverage."
+    );
   });
 
   test("disabling Flow Prompting clears any queued synthetic follow-up before deleting the file", async () => {
@@ -1329,6 +1356,47 @@ describe("WorkspaceService Flow Prompting controls", () => {
     expect(result.success).toBe(true);
     expect(session.clearFlowPromptUpdate).toHaveBeenCalledTimes(1);
     expect(deletePromptFile).toHaveBeenCalledWith(workspaceId);
+  });
+
+  test("attachFlowPrompt clears stale synthetic retries and returns the latest attach draft", async () => {
+    const workspaceId = "flow-attach-workspace";
+    const session = {
+      clearFlowPromptUpdate: mock(() => undefined),
+    };
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = mock(() => session as unknown as AgentSession);
+
+    const attachDraft = {
+      text: "Re the live prompt in /tmp/test/workspace/.mux/prompts/feature.md:\n",
+      flowPromptAttachment: {
+        path: "/tmp/test/workspace/.mux/prompts/feature.md",
+        fingerprint: "flow-prompt-fingerprint",
+      },
+    };
+    const flowPromptService = (
+      workspaceService as unknown as {
+        flowPromptService: {
+          clearPendingUpdate: (workspaceId: string, fingerprint?: string) => void;
+          getAttachDraft: (workspaceId: string) => Promise<typeof attachDraft | null>;
+        };
+      }
+    ).flowPromptService;
+    const clearPendingUpdate = spyOn(flowPromptService, "clearPendingUpdate").mockImplementation(
+      () => undefined
+    );
+    const getAttachDraft = spyOn(flowPromptService, "getAttachDraft").mockResolvedValue(
+      attachDraft
+    );
+
+    const result = await workspaceService.attachFlowPrompt(workspaceId);
+
+    expect(result).toEqual({ success: true, data: attachDraft });
+    expect(session.clearFlowPromptUpdate).toHaveBeenCalledTimes(1);
+    expect(clearPendingUpdate).toHaveBeenCalledWith(workspaceId);
+    expect(getAttachDraft).toHaveBeenCalledWith(workspaceId);
   });
 
   test("sendFlowPromptNow queues the latest diff and interrupts the current turn", async () => {
@@ -1369,7 +1437,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
       path: "/tmp/test/workspace/.mux/prompts/feature.md",
       nextContent: "Updated flow prompt instructions",
       nextFingerprint: "flow-prompt-fingerprint",
-      text: "[Flow prompt updated. Follow current agent instructions.]",
+      text: `[Flow prompt updated. Follow current agent instructions.]\n\nAgent scope:\n\`\`\`md\nOnly work on the test coverage for stage 2.\n\`\`\``,
       state: {
         workspaceId,
         path: "/tmp/test/workspace/.mux/prompts/feature.md",
@@ -1381,6 +1449,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
         isCurrentVersionEnqueued: false,
         hasPendingUpdate: false,
         autoSendMode: "off" as const,
+        agentScope: "Only work on the test coverage for stage 2.",
         updatePreviewText: "[Flow prompt updated. Follow current agent instructions.]",
       },
     };
@@ -1418,8 +1487,8 @@ describe("WorkspaceService Flow Prompting controls", () => {
     );
     expect(markPendingUpdate).toHaveBeenCalledWith(workspaceId, "Updated flow prompt instructions");
     expect(queuedFlowPromptUpdate).toBeDefined();
-    expect(queuedFlowPromptUpdate?.message).toBe(
-      "[Flow prompt updated. Follow current agent instructions.]"
+    expect(queuedFlowPromptUpdate?.message).toContain(
+      "Only work on the test coverage for stage 2."
     );
     expect(queuedFlowPromptUpdate?.options?.queueDispatchMode).toBe("turn-end");
     expect(queuedFlowPromptUpdate?.internal).toEqual({ synthetic: true });

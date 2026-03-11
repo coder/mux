@@ -9,6 +9,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import * as runtimeHelpers from "@/node/runtime/runtimeHelpers";
 
 import {
+  buildFlowPromptAttachMessage,
   buildFlowPromptUpdateMessage,
   getFlowPromptPollIntervalMs,
   WorkspaceFlowPromptService,
@@ -517,6 +518,7 @@ test("shouldEmitUpdate skips repeated clear notifications while deletion is pend
           lastSentContent: string | null;
           lastSentFingerprint: string | null;
           autoSendMode: "off" | "end-of-turn";
+          agentScope: string;
         },
         pendingFingerprint: string | null,
         inFlightFingerprint: string | null,
@@ -531,6 +533,7 @@ test("shouldEmitUpdate skips repeated clear notifications while deletion is pend
         lastSentContent: "Keep this instruction active.",
         lastSentFingerprint: "previous-fingerprint",
         autoSendMode: "end-of-turn",
+        agentScope: "",
       },
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       null,
@@ -551,6 +554,7 @@ test("shouldEmitUpdate respects auto-send being off", () => {
           lastSentContent: string | null;
           lastSentFingerprint: string | null;
           autoSendMode: "off" | "end-of-turn";
+          agentScope: string;
         },
         pendingFingerprint: string | null,
         inFlightFingerprint: string | null,
@@ -565,6 +569,7 @@ test("shouldEmitUpdate respects auto-send being off", () => {
         lastSentContent: "Keep this instruction active.",
         lastSentFingerprint: "previous-fingerprint",
         autoSendMode: "off",
+        agentScope: "",
       },
       null,
       null,
@@ -585,6 +590,7 @@ test("shouldEmitUpdate suppresses flow prompt revisions that are already in flig
           lastSentContent: string | null;
           lastSentFingerprint: string | null;
           autoSendMode: "off" | "end-of-turn";
+          agentScope: string;
         },
         pendingFingerprint: string | null,
         inFlightFingerprint: string | null,
@@ -599,6 +605,7 @@ test("shouldEmitUpdate suppresses flow prompt revisions that are already in flig
         lastSentContent: "Keep this instruction active.",
         lastSentFingerprint: "previous-fingerprint",
         autoSendMode: "end-of-turn",
+        agentScope: "",
       },
       null,
       "new-fingerprint",
@@ -620,6 +627,7 @@ test("getState waits for an in-flight refresh instead of returning stale state",
     isCurrentVersionEnqueued: false,
     hasPendingUpdate: false,
     autoSendMode: "off" as const,
+    agentScope: "",
     updatePreviewText: null,
   };
   const freshState = {
@@ -704,6 +712,7 @@ test("refreshMonitor reruns once when a save lands during an in-flight refresh",
     isCurrentVersionEnqueued: true,
     hasPendingUpdate: false,
     autoSendMode: "off" as const,
+    agentScope: "",
     updatePreviewText: null,
   };
   const service = new WorkspaceFlowPromptService({
@@ -736,6 +745,7 @@ test("refreshMonitor reruns once when a save lands during an in-flight refresh",
         lastSentContent: string | null;
         lastSentFingerprint: string | null;
         autoSendMode: "off" | "end-of-turn";
+        agentScope: string;
       }>;
     },
     "readPersistedState"
@@ -743,6 +753,7 @@ test("refreshMonitor reruns once when a save lands during an in-flight refresh",
     lastSentContent: previousContent,
     lastSentFingerprint: staleSnapshot.contentFingerprint,
     autoSendMode: "off",
+    agentScope: "",
   });
 
   const monitors = (
@@ -836,6 +847,7 @@ it("includes the queued preview text in state while a flow prompt update is pend
           lastSentContent: string | null;
           lastSentFingerprint: string | null;
           autoSendMode: "off" | "end-of-turn";
+          agentScope: string;
         },
         pendingFingerprint: string | null
       ) => {
@@ -865,6 +877,7 @@ it("includes the queued preview text in state while a flow prompt update is pend
       lastSentContent: previousContent,
       lastSentFingerprint: "2b025ee42d57e6eaf463f4ed6d7ee0ec2a58d5a1f501ef50b57462d4be4ca0b1",
       autoSendMode: "end-of-turn",
+      agentScope: "",
     },
     "94326d87717f640c44b44234d652ce38a34c79f5d6cbe2f1bb2ed9042f692e91"
   );
@@ -896,11 +909,13 @@ it("keeps the live diff visible even when auto-send is off", () => {
           lastSentContent: string | null;
           lastSentFingerprint: string | null;
           autoSendMode: "off" | "end-of-turn";
+          agentScope: string;
         },
         pendingFingerprint: string | null
       ) => {
         hasPendingUpdate: boolean;
         autoSendMode: "off" | "end-of-turn";
+        agentScope: string;
         updatePreviewText: string | null;
       };
     }
@@ -923,6 +938,7 @@ it("keeps the live diff visible even when auto-send is off", () => {
       lastSentContent: previousContent,
       lastSentFingerprint: "ef45d76e44c5ac31c43c08bf9fcf76a151867766f3bfa75e95b0098e59ff65fd",
       autoSendMode: "off",
+      agentScope: "",
     },
     null
   );
@@ -955,6 +971,7 @@ it("keeps the queued preview visible when deleting the flow prompt file is still
           lastSentContent: string | null;
           lastSentFingerprint: string | null;
           autoSendMode: "off" | "end-of-turn";
+          agentScope: string;
         },
         pendingFingerprint: string | null
       ) => {
@@ -978,12 +995,56 @@ it("keeps the queued preview visible when deleting the flow prompt file is still
       lastSentContent: "Keep following the original flow prompt",
       lastSentFingerprint: "80b54f769f33b541a90900ac3fe33625bf2ec3ca3e9ec1415c2ab7ab6df554ef",
       autoSendMode: "end-of-turn",
+      agentScope: "",
     },
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   );
 
   expect(state.hasPendingUpdate).toBe(true);
   expect(state.updatePreviewText).toContain("flow prompt file is now empty");
+});
+
+describe("buildFlowPromptAttachMessage", () => {
+  const flowPromptPath = "/tmp/workspace/.mux/prompts/feature-branch.md";
+
+  it("keeps fresh prompts lightweight by referencing the live prompt path", () => {
+    const message = buildFlowPromptAttachMessage({
+      path: flowPromptPath,
+      previousContent: "",
+      nextContent: "Implement the UI and keep tests green.",
+    });
+
+    expect(message).toBe(`Re the live prompt in ${flowPromptPath}:\n`);
+  });
+
+  it("includes a diff when a prior prompt already existed", () => {
+    const previousContent = Array.from(
+      { length: 40 },
+      (_, index) => `Context line ${index + 1}`
+    ).join("\n");
+    const nextContent = previousContent.replace("Context line 20", "Updated context line 20");
+    const message = buildFlowPromptAttachMessage({
+      path: flowPromptPath,
+      previousContent,
+      nextContent,
+    });
+
+    expect(message).toContain(`Re the live prompt in ${flowPromptPath}:`);
+    expect(message).toContain("Latest flow prompt changes:");
+    expect(message).toContain("```diff");
+    expect(message).toContain("Updated context line 20");
+  });
+
+  it("allows attaching a cleared prompt so the next turn drops old instructions", () => {
+    const message = buildFlowPromptAttachMessage({
+      path: flowPromptPath,
+      previousContent: "Keep working on the refactor.",
+      nextContent: "   ",
+    });
+
+    expect(message).toContain(`Re the live prompt in ${flowPromptPath}:`);
+    expect(message).toContain("flow prompt file is now empty");
+  });
 });
 
 describe("buildFlowPromptUpdateMessage", () => {
@@ -999,6 +1060,18 @@ describe("buildFlowPromptUpdateMessage", () => {
     expect(message).toContain("Flow prompt file path:");
     expect(message).toContain("Current flow prompt contents:");
     expect(message).toContain("Implement the UI and keep tests green.");
+  });
+
+  it("includes Agent Scope text when present", () => {
+    const message = buildFlowPromptUpdateMessage({
+      path: flowPromptPath,
+      previousContent: "",
+      nextContent: "Implement the UI and keep tests green.",
+      agentScope: "Only work on the test coverage and do not edit later plan stages.",
+    });
+
+    expect(message).toContain("Agent scope:");
+    expect(message).toContain("Only work on the test coverage");
   });
 
   it("sends a diff when a prior prompt already existed", () => {

@@ -148,7 +148,18 @@ export const FlowPromptStateSchema = z.object({
   isCurrentVersionEnqueued: z.boolean(),
   hasPendingUpdate: z.boolean(),
   autoSendMode: FlowPromptAutoSendModeSchema,
+  agentScope: z.string(),
   updatePreviewText: z.string().nullable(),
+});
+
+export const FlowPromptAttachmentSchema = z.object({
+  path: z.string(),
+  fingerprint: z.string(),
+});
+
+export const FlowPromptAttachDraftSchema = z.object({
+  text: z.string(),
+  flowPromptAttachment: FlowPromptAttachmentSchema,
 });
 
 // Tokenizer
@@ -1264,10 +1275,21 @@ export const workspace = {
       input: z.object({ workspaceId: z.string() }),
       output: ResultSchema(z.void(), z.string()),
     },
+    attach: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(FlowPromptAttachDraftSchema, z.string()),
+    },
     updateAutoSendMode: {
       input: z.object({
         workspaceId: z.string(),
         mode: FlowPromptAutoSendModeSchema,
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    updateAgentScope: {
+      input: z.object({
+        workspaceId: z.string(),
+        agentScope: z.string(),
       }),
       output: ResultSchema(z.void(), z.string()),
     },

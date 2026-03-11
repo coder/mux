@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { parsePatch } from "diff";
 import {
   ChevronDown,
@@ -14,6 +14,7 @@ import type { FlowPromptAutoSendMode } from "@/common/constants/flowPrompting";
 import type { FlowPromptState } from "@/common/orpc/types";
 import { Button } from "@/browser/components/Button/Button";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
 import {
   Select,
   SelectContent,
@@ -43,6 +44,7 @@ interface FlowPromptComposerCardProps {
   onSendNow: () => void;
   onToggleCollapsed: () => void;
   onAutoSendModeChange: (mode: FlowPromptAutoSendMode) => void;
+  onAgentScopeChange: (agentScope: string) => void;
 }
 
 export function shouldShowFlowPromptComposerCard(
@@ -212,6 +214,27 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
   const isAutoSendChanging = props.isUpdatingAutoSendMode === true;
   const isCollapsed = props.isCollapsed === true;
   const isSendingNow = props.isSendingNow === true;
+  const agentScopeFieldId = useId();
+  const agentScopeRef = useRef<HTMLTextAreaElement>(null);
+  const lastAgentScopeWorkspaceIdRef = useRef(props.state.workspaceId);
+  const [draftAgentScope, setDraftAgentScope] = useState(props.state.agentScope);
+  const [hasEditedAgentScope, setHasEditedAgentScope] = useState(false);
+
+  useAutoResizeTextarea(agentScopeRef, draftAgentScope, 24);
+
+  useEffect(() => {
+    if (lastAgentScopeWorkspaceIdRef.current !== props.state.workspaceId) {
+      lastAgentScopeWorkspaceIdRef.current = props.state.workspaceId;
+      setDraftAgentScope(props.state.agentScope);
+      setHasEditedAgentScope(false);
+      return;
+    }
+
+    if (!hasEditedAgentScope && draftAgentScope !== props.state.agentScope) {
+      setDraftAgentScope(props.state.agentScope);
+    }
+  }, [draftAgentScope, hasEditedAgentScope, props.state.agentScope, props.state.workspaceId]);
+
   const statusText =
     !props.state.exists && preview?.kind === "cleared"
       ? props.state.hasPendingUpdate
@@ -252,6 +275,11 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
       return;
     }
     void copyToClipboard(props.state.path);
+  };
+  const handleAgentScopeChange = (nextAgentScope: string) => {
+    setHasEditedAgentScope(true);
+    setDraftAgentScope(nextAgentScope);
+    props.onAgentScopeChange(nextAgentScope);
   };
 
   return (
@@ -367,6 +395,32 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
                   <p className="text-muted text-[11px] leading-4">{statusText}</p>
                   {props.error ? <p className="pt-1 text-xs text-red-400">{props.error}</p> : null}
                 </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor={agentScopeFieldId}
+                    className="text-foreground text-[11px] font-medium tracking-wide uppercase"
+                  >
+                    Agent Scope
+                  </label>
+                  <span className="text-muted text-[10px] leading-none">
+                    Sent with the next Flow Prompt update
+                  </span>
+                </div>
+                <textarea
+                  id={agentScopeFieldId}
+                  ref={agentScopeRef}
+                  value={draftAgentScope}
+                  onChange={(event) => {
+                    handleAgentScopeChange(event.target.value);
+                  }}
+                  placeholder="Optional: narrow the agent to the plan stage, milestone, or files it should focus on next."
+                  className="border-border-medium bg-background focus:border-accent text-foreground placeholder:text-muted w-full resize-none rounded-md border px-3 py-2 text-sm focus:outline-none"
+                  rows={3}
+                  aria-label="Agent Scope"
+                  spellCheck={false}
+                />
               </div>
               {preview ? (
                 <div className="border-border-medium bg-background rounded-md border">

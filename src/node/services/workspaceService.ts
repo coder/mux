@@ -1528,16 +1528,21 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    const flowPromptMetadata = muxMetadata as {
+    const flowPromptAttachment = muxMetadata as {
+      flowPromptAttachment?: { fingerprint?: unknown } | undefined;
       type?: unknown;
       fingerprint?: unknown;
     };
-    const fingerprint = flowPromptMetadata.fingerprint;
-    if (
-      flowPromptMetadata.type !== "flow-prompt-update" ||
-      typeof fingerprint !== "string" ||
-      fingerprint.length === 0
-    ) {
+    const nestedFingerprint = flowPromptAttachment.flowPromptAttachment?.fingerprint;
+    const fingerprint =
+      typeof nestedFingerprint === "string" && nestedFingerprint.length > 0
+        ? nestedFingerprint
+        : flowPromptAttachment.type === "flow-prompt-update" &&
+            typeof flowPromptAttachment.fingerprint === "string" &&
+            flowPromptAttachment.fingerprint.length > 0
+          ? flowPromptAttachment.fingerprint
+          : null;
+    if (fingerprint == null) {
       return;
     }
 
@@ -3031,6 +3036,32 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async attachFlowPrompt(workspaceId: string): Promise<
+    Result<
+      {
+        text: string;
+        flowPromptAttachment: { path: string; fingerprint: string };
+      },
+      string
+    >
+  > {
+    try {
+      // Manual attach should drop any older queued synthetic retry before building a draft from
+      // the latest prompt revision.
+      this.getOrCreateSession(workspaceId).clearFlowPromptUpdate();
+      this.flowPromptService.clearPendingUpdate(workspaceId);
+
+      const attachDraft = await this.flowPromptService.getAttachDraft(workspaceId);
+      if (!attachDraft) {
+        return Err("No flow prompt is available to attach.");
+      }
+
+      return Ok(attachDraft);
+    } catch (error) {
+      return Err(`Failed to attach Flow Prompting update: ${getErrorMessage(error)}`);
+    }
+  }
+
   async updateFlowPromptAutoSendMode(
     workspaceId: string,
     mode: FlowPromptAutoSendMode
@@ -3045,6 +3076,18 @@ export class WorkspaceService extends EventEmitter {
       return Ok(undefined);
     } catch (error) {
       return Err(`Failed to update Flow Prompting auto-send: ${getErrorMessage(error)}`);
+    }
+  }
+
+  async updateFlowPromptAgentScope(
+    workspaceId: string,
+    agentScope: string
+  ): Promise<Result<void, string>> {
+    try {
+      await this.flowPromptService.setAgentScope(workspaceId, agentScope);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to update Flow Prompting agent scope: ${getErrorMessage(error)}`);
     }
   }
 
