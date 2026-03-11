@@ -32,6 +32,17 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
     expect(parsed.metadata?.acpPromptId).toBe("acp-prompt-123");
   });
 
+  test("preserves routeProvider metadata", () => {
+    const parsed = MuxMessageSchema.parse({
+      ...createMessage(),
+      metadata: {
+        routeProvider: "openai",
+      },
+    });
+
+    expect(parsed.metadata?.routeProvider).toBe("openai");
+  });
+
   test("tolerates malformed compactionEpoch values by treating them as absent", () => {
     const malformedCompactionEpochValues: unknown[] = [
       0,
