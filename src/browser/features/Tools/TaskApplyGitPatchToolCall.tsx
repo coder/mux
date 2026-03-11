@@ -25,10 +25,6 @@ type TaskApplyGitPatchFailureResult = Extract<TaskApplyGitPatchToolResult, { suc
 
 interface TaskApplyGitPatchToolCallProps {
   args: TaskApplyGitPatchToolArgs;
-  /**
-   * Tool results may be wrapped as `{ type: "json", value: ... }` (e.g. via streamManager).
-   * Treat as unknown and unwrap defensively.
-   */
   result?: unknown;
   status?: ToolStatus;
 }
@@ -46,6 +42,18 @@ interface AppliedCommit {
   sha?: string;
 }
 
+export interface ParsedProjectResult {
+  projectPath: string;
+  projectName: string;
+  status: "applied" | "failed" | "skipped";
+  appliedCommits?: AppliedCommit[];
+  headCommitSha?: string;
+  error?: string;
+  failedPatchSubject?: string;
+  conflictPaths?: string[];
+  note?: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -53,8 +61,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function unwrapJsonContainer(value: unknown): unknown {
   let current = value;
 
-  // Tool outputs can be wrapped as `{ type: "json", value: ... }`.
-  // Some paths may double-wrap; unwrap a couple layers defensively.
   for (let i = 0; i < 2; i++) {
     if (
       current !== null &&
@@ -92,10 +98,7 @@ function readStringArray(value: unknown): string[] | undefined {
   return items.length > 0 ? items : undefined;
 }
 
-function readAppliedCommits(result: unknown): AppliedCommit[] | undefined {
-  if (!isRecord(result)) return undefined;
-
-  const value = (result as { appliedCommits?: unknown }).appliedCommits;
+function readAppliedCommits(value: unknown): AppliedCommit[] | undefined {
   if (!Array.isArray(value)) return undefined;
 
   const commits: AppliedCommit[] = [];
@@ -115,11 +118,58 @@ function readAppliedCommits(result: unknown): AppliedCommit[] | undefined {
   return commits;
 }
 
+function readResultAppliedCommits(result: unknown): AppliedCommit[] | undefined {
+  if (!isRecord(result)) return undefined;
+  return readAppliedCommits((result as { appliedCommits?: unknown }).appliedCommits);
+}
+
 function readLegacyAppliedCommitCount(result: unknown): number | undefined {
   if (!isRecord(result)) return undefined;
 
   const value = (result as { appliedCommitCount?: unknown }).appliedCommitCount;
   return typeof value === "number" ? value : undefined;
+}
+
+function readProjectResults(result: unknown): ParsedProjectResult[] | undefined {
+  if (!isRecord(result)) return undefined;
+
+  const value = (result as { projectResults?: unknown }).projectResults;
+  if (!Array.isArray(value)) return undefined;
+
+  const projectResults: ParsedProjectResult[] = [];
+  for (const projectResult of value) {
+    if (!isRecord(projectResult)) continue;
+
+    const projectPath = readNonEmptyString(
+      (projectResult as { projectPath?: unknown }).projectPath
+    );
+    const projectName = readNonEmptyString(
+      (projectResult as { projectName?: unknown }).projectName
+    );
+    const status = (projectResult as { status?: unknown }).status;
+    if (!projectPath || !projectName) continue;
+    if (status !== "applied" && status !== "failed" && status !== "skipped") continue;
+
+    projectResults.push({
+      projectPath,
+      projectName,
+      status,
+      appliedCommits: readAppliedCommits(
+        (projectResult as { appliedCommits?: unknown }).appliedCommits
+      ),
+      headCommitSha: readNonEmptyString(
+        (projectResult as { headCommitSha?: unknown }).headCommitSha
+      ),
+      error: readNonEmptyString((projectResult as { error?: unknown }).error),
+      failedPatchSubject: readNonEmptyString(
+        (projectResult as { failedPatchSubject?: unknown }).failedPatchSubject
+      ),
+      conflictPaths: readStringArray((projectResult as { conflictPaths?: unknown }).conflictPaths),
+      note: readNonEmptyString((projectResult as { note?: unknown }).note),
+    });
+  }
+
+  return projectResults.length > 0 ? projectResults : undefined;
 }
 
 const CopyableCode: React.FC<{
@@ -136,7 +186,7 @@ const CopyableCode: React.FC<{
         <button
           type="button"
           className={cn(
-            "min-w-0 font-mono text-[11px] text-link opacity-90 hover:opacity-100 hover:underline underline-offset-2 truncate",
+            "min-w-0 truncate font-mono text-[11px] text-link opacity-90 hover:opacity-100 hover:underline underline-offset-2",
             className
           )}
           onClick={() => void copyToClipboard(value)}
@@ -154,6 +204,106 @@ const ErrorOutput: React.FC<{ error: string }> = ({ error }) => (
     <pre className="m-0 max-h-[200px] overflow-y-auto break-words whitespace-pre-wrap">{error}</pre>
   </ErrorBox>
 );
+
+export const TaskApplyGitPatchProjectResultCard: React.FC<{
+  projectResult: ParsedProjectResult;
+  isDryRun: boolean;
+}> = ({ projectResult, isDryRun }) => {
+  const shownConflictPaths = projectResult.conflictPaths?.slice(0, MAX_CONFLICT_PATHS_SHOWN);
+  const remainingConflictPaths =
+    projectResult.conflictPaths && shownConflictPaths
+      ? Math.max(0, projectResult.conflictPaths.length - shownConflictPaths.length)
+      : 0;
+  const appliedCommitCount = projectResult.appliedCommits?.length ?? 0;
+
+  return (
+    <div className="bg-code-bg flex flex-col gap-2 rounded px-2 py-2 text-[11px] leading-[1.4]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-text font-medium">{projectResult.projectName}</span>
+        <span className="text-secondary font-mono text-[10px]">{projectResult.projectPath}</span>
+        <span className="text-muted rounded border px-1.5 py-0.5 text-[10px] capitalize">
+          {projectResult.status}
+        </span>
+        {appliedCommitCount > 0 && (
+          <span className="text-secondary text-[10px]">
+            {isDryRun ? "Would apply" : "Applied"} {formatCommitCount(appliedCommitCount)}
+          </span>
+        )}
+      </div>
+
+      {projectResult.headCommitSha && (
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="text-secondary shrink-0 font-medium">HEAD:</span>
+          <CopyableCode
+            value={projectResult.headCommitSha}
+            displayValue={formatShortSha(projectResult.headCommitSha)}
+            tooltipLabel="Copy HEAD SHA"
+          />
+        </div>
+      )}
+
+      {projectResult.appliedCommits && projectResult.appliedCommits.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <span className="text-secondary font-medium">Commits</span>
+          <div className="flex flex-col gap-1">
+            {projectResult.appliedCommits.map((commit, index) => (
+              <div
+                key={`${commit.sha ?? index}-${commit.subject}`}
+                className="flex min-w-0 items-start gap-2"
+              >
+                {commit.sha ? (
+                  <CopyableCode
+                    value={commit.sha}
+                    displayValue={formatShortSha(commit.sha)}
+                    tooltipLabel="Copy commit SHA"
+                    className="shrink-0"
+                  />
+                ) : (
+                  <span className="text-secondary shrink-0 font-mono text-[11px]">
+                    {index + 1}.
+                  </span>
+                )}
+                <span className="text-text min-w-0 break-words">{commit.subject}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(projectResult.failedPatchSubject ??
+        (shownConflictPaths && shownConflictPaths.length > 0) ??
+        projectResult.error) &&
+        projectResult.status !== "applied" && (
+          <div className="flex flex-col gap-1">
+            {projectResult.failedPatchSubject && (
+              <div className="flex min-w-0 items-start gap-1.5">
+                <span className="text-secondary shrink-0 font-medium">Failed patch:</span>
+                <span className="text-text min-w-0 break-words">
+                  {projectResult.failedPatchSubject}
+                </span>
+              </div>
+            )}
+            {shownConflictPaths && shownConflictPaths.length > 0 && (
+              <div className="flex min-w-0 items-start gap-1.5">
+                <span className="text-secondary shrink-0 font-medium">Conflicts:</span>
+                <span className="text-text min-w-0 font-mono break-words">
+                  {shownConflictPaths.join(", ")}
+                  {remainingConflictPaths > 0 && (
+                    <span className="text-secondary"> +{remainingConflictPaths} more</span>
+                  )}
+                </span>
+              </div>
+            )}
+            {projectResult.error && <ErrorOutput error={projectResult.error} />}
+          </div>
+        )}
+
+      {projectResult.note && (
+        <div className="text-secondary whitespace-pre-wrap">{projectResult.note}</div>
+      )}
+    </div>
+  );
+};
 
 export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps> = ({
   args,
@@ -184,46 +334,33 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
       : undefined;
 
   const isDryRun = dryRunFromResult === true || args.dry_run === true;
-
-  // Result schema guarantees appliedCommits, but older persisted history might only have
-  // appliedCommitCount. Be defensive and support both.
-  const appliedCommits = successResult ? readAppliedCommits(successResult) : undefined;
-  const legacyAppliedCommitCount = successResult
+  const projectResults = readProjectResults(unwrappedResult);
+  const fallbackAppliedCommits = successResult
+    ? readResultAppliedCommits(successResult)
+    : undefined;
+  const fallbackLegacyAppliedCommitCount = successResult
     ? readLegacyAppliedCommitCount(successResult)
     : undefined;
-  const appliedCommitCount = appliedCommits
-    ? appliedCommits.length
-    : (legacyAppliedCommitCount ?? 0);
+  const appliedCommitCount = projectResults
+    ? projectResults.reduce(
+        (sum, projectResult) => sum + (projectResult.appliedCommits?.length ?? 0),
+        0
+      )
+    : fallbackAppliedCommits
+      ? fallbackAppliedCommits.length
+      : (fallbackLegacyAppliedCommitCount ?? 0);
+  const appliedProjectCount = projectResults?.filter(
+    (projectResult) => projectResult.status === "applied"
+  ).length;
 
   const errorPreview =
     typeof errorResult?.error === "string" ? errorResult.error.split("\n")[0]?.trim() : undefined;
 
-  // Auto-expand on failures so the user sees actionable notes (git am --continue/--abort, etc.).
   const { expanded, toggleExpanded } = useToolExpansion(Boolean(errorResult));
-
   const { copied: copiedError, copyToClipboard: copyErrorToClipboard } = useCopyToClipboard();
 
   const effectiveThreeWay = args.three_way !== false;
-
   const errorNote = errorResult && "note" in errorResult ? errorResult.note : undefined;
-
-  // Optional structured diagnostics (added to the tool output over time).
-  const errorDiagnostics: Record<string, unknown> | null =
-    errorResult && isRecord(unwrappedResult) ? unwrappedResult : null;
-
-  const failedPatchSubject = errorDiagnostics
-    ? readNonEmptyString(errorDiagnostics.failedPatchSubject)
-    : undefined;
-
-  const conflictPaths = errorDiagnostics
-    ? readStringArray(errorDiagnostics.conflictPaths)
-    : undefined;
-
-  const shownConflictPaths = conflictPaths?.slice(0, MAX_CONFLICT_PATHS_SHOWN);
-  const remainingConflictPaths =
-    conflictPaths && shownConflictPaths
-      ? Math.max(0, conflictPaths.length - shownConflictPaths.length)
-      : 0;
 
   return (
     <ToolContainer expanded={expanded} className="@container">
@@ -235,12 +372,9 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
         {isDryRun && <span className="text-backgrounded text-[10px] font-medium">dry-run</span>}
         {successResult && (
           <span className="text-secondary ml-2 text-[10px] whitespace-nowrap">
-            {formatCommitCount(appliedCommitCount)}
-          </span>
-        )}
-        {successResult?.headCommitSha && (
-          <span className="text-secondary ml-2 hidden text-[10px] whitespace-nowrap @sm:inline">
-            HEAD {formatShortSha(successResult.headCommitSha)}
+            {projectResults && projectResults.length > 1 && appliedProjectCount != null
+              ? `${appliedProjectCount} projects, ${formatCommitCount(appliedCommitCount)}`
+              : formatCommitCount(appliedCommitCount)}
           </span>
         )}
         {errorPreview && (
@@ -268,6 +402,12 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
           <DetailSection>
             <DetailLabel>Options</DetailLabel>
             <div className="bg-code-bg flex flex-wrap gap-4 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
+              <div className="flex items-center gap-1.5">
+                <span className="text-secondary font-medium">project_path:</span>
+                <span className="text-text font-mono">
+                  {args.project_path ?? "all ready projects"}
+                </span>
+              </div>
               <div className="flex items-center gap-1.5">
                 <span className="text-secondary font-medium">dry_run:</span>
                 <span className="text-text font-mono">
@@ -306,49 +446,56 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                       {isDryRun ? "Would apply" : "Applied"}:
                     </span>
                     <span className="text-text font-mono">
-                      {formatCommitCount(appliedCommitCount)}
+                      {projectResults && projectResults.length > 1 && appliedProjectCount != null
+                        ? `${appliedProjectCount} projects, ${formatCommitCount(appliedCommitCount)}`
+                        : formatCommitCount(appliedCommitCount)}
                     </span>
                   </div>
-                  {successResult.headCommitSha && (
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="text-secondary shrink-0 font-medium">HEAD:</span>
-                      <CopyableCode
-                        value={successResult.headCommitSha}
-                        displayValue={formatShortSha(successResult.headCommitSha)}
-                        tooltipLabel="Copy HEAD SHA"
-                      />
-                    </div>
-                  )}
                 </div>
               </DetailSection>
 
-              {appliedCommits && appliedCommits.length > 0 && (
+              {projectResults && projectResults.length > 0 ? (
                 <DetailSection>
-                  <DetailLabel>Commits</DetailLabel>
-                  <div className="bg-code-bg flex flex-col gap-1 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
-                    {appliedCommits.map((commit, index) => (
-                      <div
-                        // SHA is intentionally optional (dry-run results omit it).
-                        key={`${commit.sha ?? index}-${commit.subject}`}
-                        className="flex min-w-0 items-start gap-2"
-                      >
-                        {commit.sha ? (
-                          <CopyableCode
-                            value={commit.sha}
-                            displayValue={formatShortSha(commit.sha)}
-                            tooltipLabel="Copy commit SHA"
-                            className="shrink-0"
-                          />
-                        ) : (
-                          <span className="text-secondary shrink-0 font-mono text-[11px]">
-                            {index + 1}.
-                          </span>
-                        )}
-                        <span className="text-text min-w-0 break-words">{commit.subject}</span>
-                      </div>
+                  <DetailLabel>Projects</DetailLabel>
+                  <div className="flex flex-col gap-2">
+                    {projectResults.map((projectResult) => (
+                      <TaskApplyGitPatchProjectResultCard
+                        key={`${projectResult.projectPath}-${projectResult.status}`}
+                        projectResult={projectResult}
+                        isDryRun={isDryRun}
+                      />
                     ))}
                   </div>
                 </DetailSection>
+              ) : (
+                fallbackAppliedCommits &&
+                fallbackAppliedCommits.length > 0 && (
+                  <DetailSection>
+                    <DetailLabel>Commits</DetailLabel>
+                    <div className="bg-code-bg flex flex-col gap-1 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
+                      {fallbackAppliedCommits.map((commit, index) => (
+                        <div
+                          key={`${commit.sha ?? index}-${commit.subject}`}
+                          className="flex min-w-0 items-start gap-2"
+                        >
+                          {commit.sha ? (
+                            <CopyableCode
+                              value={commit.sha}
+                              displayValue={formatShortSha(commit.sha)}
+                              tooltipLabel="Copy commit SHA"
+                              className="shrink-0"
+                            />
+                          ) : (
+                            <span className="text-secondary shrink-0 font-mono text-[11px]">
+                              {index + 1}.
+                            </span>
+                          )}
+                          <span className="text-text min-w-0 break-words">{commit.subject}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </DetailSection>
+                )
               )}
               {successResult.note && (
                 <DetailSection>
@@ -361,6 +508,21 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
 
           {errorResult && (
             <>
+              {projectResults && projectResults.length > 0 && (
+                <DetailSection>
+                  <DetailLabel>Projects</DetailLabel>
+                  <div className="flex flex-col gap-2">
+                    {projectResults.map((projectResult) => (
+                      <TaskApplyGitPatchProjectResultCard
+                        key={`${projectResult.projectPath}-${projectResult.status}`}
+                        projectResult={projectResult}
+                        isDryRun={isDryRun}
+                      />
+                    ))}
+                  </div>
+                </DetailSection>
+              )}
+
               <DetailSection>
                 <DetailLabel className="flex items-center justify-between gap-2">
                   <span>Error</span>
@@ -372,29 +534,6 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                     {copiedError ? "Copied" : "Copy"}
                   </HeaderButton>
                 </DetailLabel>
-
-                {(failedPatchSubject ?? (shownConflictPaths && shownConflictPaths.length > 0)) && (
-                  <div className="bg-code-bg mb-2 flex flex-col gap-1 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
-                    {failedPatchSubject && (
-                      <div className="flex min-w-0 items-start gap-1.5">
-                        <span className="text-secondary shrink-0 font-medium">Failed patch:</span>
-                        <span className="text-text min-w-0 break-words">{failedPatchSubject}</span>
-                      </div>
-                    )}
-                    {shownConflictPaths && shownConflictPaths.length > 0 && (
-                      <div className="flex min-w-0 items-start gap-1.5">
-                        <span className="text-secondary shrink-0 font-medium">Conflicts:</span>
-                        <span className="text-text min-w-0 font-mono break-words">
-                          {shownConflictPaths.join(", ")}
-                          {remainingConflictPaths > 0 && (
-                            <span className="text-secondary"> +{remainingConflictPaths} more</span>
-                          )}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 <ErrorOutput error={errorResult.error} />
               </DetailSection>
 

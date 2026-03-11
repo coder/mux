@@ -40,6 +40,7 @@ import type {
   TaskTerminateToolSuccessResult,
 } from "@/common/types/tools";
 import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
+import { formatGitPatchArtifactSummary } from "./taskPatchSummary";
 
 /**
  * Clean SVG icon for task tools - represents spawning/branching work
@@ -635,29 +636,7 @@ const TaskAwaitResult: React.FC<{
   const gitPatchArtifact =
     result.status === "completed" ? result.artifacts?.gitFormatPatch : undefined;
 
-  const patchSummary = (() => {
-    if (!gitPatchArtifact) return null;
-
-    switch (gitPatchArtifact.status) {
-      case "pending":
-        return "Patch: pending";
-      case "skipped":
-        return "Patch: skipped (no commits)";
-      case "ready": {
-        const count = gitPatchArtifact.commitCount ?? 0;
-        const label = count === 1 ? "commit" : "commits";
-        return `Patch: ready (${count} ${label})`;
-      }
-      case "failed": {
-        const error = gitPatchArtifact.error?.trim();
-        const shortError =
-          error && error.length > 80 ? `${error.slice(0, 77)}…` : (error ?? undefined);
-        return shortError ? `Patch: failed (${shortError})` : "Patch: failed";
-      }
-      default:
-        return `Patch: ${String(gitPatchArtifact.status)}`;
-    }
-  })();
+  const patchSummary = formatGitPatchArtifactSummary(gitPatchArtifact);
   const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
 
   const showDetails = suppressReport !== true;

@@ -4487,7 +4487,7 @@ describe("TaskService", () => {
     };
 
     const parentSessionDir = config.getSessionDir(parentId);
-    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
+    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId, "repo");
 
     const waiter = taskService.waitForAgentReport(childId, {
       timeoutMs: 10_000,
@@ -4525,7 +4525,10 @@ describe("TaskService", () => {
         }
       } else if (artifact?.status === "failed" || artifact?.status === "skipped") {
         throw new Error(
-          `Patch artifact generation failed with status=${artifact.status}: ${artifact.error ?? "unknown error"}`
+          `Patch artifact generation failed with status=${artifact.status}: ${
+            artifact.projectArtifacts.find((projectArtifact) => projectArtifact.status === "failed")
+              ?.error ?? "unknown error"
+          }`
         );
       }
 
@@ -4552,6 +4555,180 @@ describe("TaskService", () => {
     expect(ws).toBeUndefined();
   }, 20_000);
 
+  test("agent_report generates mixed per-project git format-patch artifacts for multi-project exec tasks before cleanup", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const primaryProjectPath = path.join(rootDir, "project-a");
+    const secondaryProjectPath = path.join(rootDir, "project-b");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    const parentPath = path.join(primaryProjectPath, "parent");
+    const childWorkspacePath = path.join(rootDir, "multi-project-container");
+    await fsPromises.mkdir(parentPath, { recursive: true });
+    await fsPromises.mkdir(childWorkspacePath, { recursive: true });
+    await fsPromises.mkdir(primaryProjectPath, { recursive: true });
+    await fsPromises.mkdir(secondaryProjectPath, { recursive: true });
+
+    initGitRepo(primaryProjectPath);
+    initGitRepo(secondaryProjectPath);
+    const primaryBaseCommitSha = execSync("git rev-parse HEAD", {
+      cwd: primaryProjectPath,
+      encoding: "utf-8",
+    }).trim();
+    const secondaryBaseCommitSha = execSync("git rev-parse HEAD", {
+      cwd: secondaryProjectPath,
+      encoding: "utf-8",
+    }).trim();
+
+    execSync("bash -lc 'echo \"secondary\" >> README.md'", {
+      cwd: secondaryProjectPath,
+      stdio: "ignore",
+    });
+    execSync("git add README.md", { cwd: secondaryProjectPath, stdio: "ignore" });
+    execSync('git commit -m "secondary change"', {
+      cwd: secondaryProjectPath,
+      stdio: "ignore",
+    });
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          primaryProjectPath,
+          {
+            trusted: true,
+            workspaces: [
+              {
+                path: parentPath,
+                id: parentId,
+                name: "parent",
+                runtimeConfig: { type: "local" },
+              },
+              {
+                path: childWorkspacePath,
+                id: childId,
+                name: "agent_exec_child",
+                parentWorkspaceId: parentId,
+                agentType: "exec",
+                agentId: "exec",
+                taskStatus: "running",
+                runtimeConfig: { type: "local" },
+                taskBaseCommitSha: primaryBaseCommitSha,
+                taskBaseCommitShaByProjectPath: {
+                  [primaryProjectPath]: primaryBaseCommitSha,
+                  [secondaryProjectPath]: secondaryBaseCommitSha,
+                },
+                projects: [
+                  { projectPath: primaryProjectPath, projectName: "project-a" },
+                  { projectPath: secondaryProjectPath, projectName: "project-b" },
+                ],
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-partial",
+      "assistant",
+      "Waiting on subagent…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-call-1",
+          toolName: "task",
+          input: { subagent_type: "exec", prompt: "do the thing", title: "Test task" },
+          state: "input-available",
+        },
+      ]
+    );
+    expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
+
+    const childPartial = createMuxMessage(
+      "assistant-child-partial",
+      "assistant",
+      "",
+      { timestamp: Date.now(), historySequence: 0 },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+    expect((await partialService.writePartial(childId, childPartial)).success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    const parentSessionDir = config.getSessionDir(parentId);
+    const secondaryPatchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId, "project-b");
+
+    const waiter = taskService.waitForAgentReport(childId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentId,
+    });
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
+
+    await waiter;
+
+    const start = Date.now();
+    let artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    while (artifact?.status === "pending") {
+      if (Date.now() - start > 20_000) {
+        throw new Error(
+          `Timed out waiting for multi-project patch generation: ${JSON.stringify(artifact)}`
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    }
+
+    expect(artifact?.status).toBe("ready");
+    expect(artifact?.readyProjectCount).toBe(1);
+    expect(artifact?.skippedProjectCount).toBe(1);
+    expect(artifact?.projectArtifacts).toEqual([
+      expect.objectContaining({
+        projectPath: primaryProjectPath,
+        projectName: "project-a",
+        status: "skipped",
+        commitCount: 0,
+      }),
+      expect.objectContaining({
+        projectPath: secondaryProjectPath,
+        projectName: "project-b",
+        status: "ready",
+        commitCount: 1,
+      }),
+    ]);
+    await fsPromises.stat(secondaryPatchPath);
+  }, 20_000);
   test("agent_report generates git format-patch artifact for exec-derived custom tasks before cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -4667,7 +4844,7 @@ describe("TaskService", () => {
     };
 
     const parentSessionDir = config.getSessionDir(parentId);
-    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
+    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId, "repo");
 
     const waiter = taskService.waitForAgentReport(childId, {
       timeoutMs: 10_000,
@@ -4705,7 +4882,10 @@ describe("TaskService", () => {
         }
       } else if (artifact?.status === "failed" || artifact?.status === "skipped") {
         throw new Error(
-          `Patch artifact generation failed with status=${artifact.status}: ${artifact.error ?? "unknown error"}`
+          `Patch artifact generation failed with status=${artifact.status}: ${
+            artifact.projectArtifacts.find((projectArtifact) => projectArtifact.status === "failed")
+              ?.error ?? "unknown error"
+          }`
         );
       }
 

@@ -5,6 +5,7 @@ import * as path from "path";
 
 import {
   getSubagentGitPatchArtifactsFilePath,
+  getSubagentGitPatchMboxPath,
   markSubagentGitPatchArtifactApplied,
   readSubagentGitPatchArtifactsFile,
   upsertSubagentGitPatchArtifact,
@@ -23,14 +24,13 @@ describe("subagentGitPatchArtifacts", () => {
 
   test("readSubagentGitPatchArtifactsFile returns empty file when missing", async () => {
     const file = await readSubagentGitPatchArtifactsFile(testDir);
-    expect(file.version).toBe(1);
+    expect(file.version).toBe(2);
     expect(file.artifactsByChildTaskId).toEqual({});
   });
 
-  test("upsertSubagentGitPatchArtifact writes and updates artifacts", async () => {
+  test("upsertSubagentGitPatchArtifact writes normalized task-scoped artifacts", async () => {
     const workspaceId = "parent-1";
     const childTaskId = "child-1";
-
     const createdAtMs = Date.now();
 
     await upsertSubagentGitPatchArtifact({
@@ -42,9 +42,28 @@ describe("subagentGitPatchArtifacts", () => {
         parentWorkspaceId: workspaceId,
         createdAtMs,
         updatedAtMs: createdAtMs,
-        status: "ready",
-        commitCount: 2,
-        mboxPath: "/tmp/series.mbox",
+        status: "pending",
+        projectArtifacts: [
+          {
+            projectPath: "/tmp/project-a",
+            projectName: "project-a",
+            storageKey: "project-a",
+            status: "ready",
+            commitCount: 2,
+            mboxPath: getSubagentGitPatchMboxPath(testDir, childTaskId, "project-a"),
+          },
+          {
+            projectPath: "/tmp/project-b",
+            projectName: "project-b",
+            storageKey: "project-b",
+            status: "skipped",
+            commitCount: 0,
+          },
+        ],
+        readyProjectCount: 0,
+        failedProjectCount: 0,
+        skippedProjectCount: 0,
+        totalCommitCount: 0,
       }),
     });
 
@@ -58,10 +77,13 @@ describe("subagentGitPatchArtifacts", () => {
     expect(artifact?.parentWorkspaceId).toBe(workspaceId);
     expect(artifact?.createdAtMs).toBe(createdAtMs);
     expect(artifact?.status).toBe("ready");
-    expect(artifact?.commitCount).toBe(2);
+    expect(artifact?.readyProjectCount).toBe(1);
+    expect(artifact?.skippedProjectCount).toBe(1);
+    expect(artifact?.totalCommitCount).toBe(2);
+    expect(artifact?.projectArtifacts).toHaveLength(2);
   });
 
-  test("markSubagentGitPatchArtifactApplied sets appliedAtMs", async () => {
+  test("markSubagentGitPatchArtifactApplied sets appliedAtMs on only the matching project", async () => {
     const workspaceId = "parent-1";
     const childTaskId = "child-1";
     const createdAtMs = Date.now();
@@ -75,9 +97,29 @@ describe("subagentGitPatchArtifacts", () => {
         parentWorkspaceId: workspaceId,
         createdAtMs,
         updatedAtMs: createdAtMs,
-        status: "ready",
-        commitCount: 1,
-        mboxPath: "/tmp/series.mbox",
+        status: "pending",
+        projectArtifacts: [
+          {
+            projectPath: "/tmp/project-a",
+            projectName: "project-a",
+            storageKey: "project-a",
+            status: "ready",
+            commitCount: 1,
+            mboxPath: getSubagentGitPatchMboxPath(testDir, childTaskId, "project-a"),
+          },
+          {
+            projectPath: "/tmp/project-b",
+            projectName: "project-b",
+            storageKey: "project-b",
+            status: "ready",
+            commitCount: 1,
+            mboxPath: getSubagentGitPatchMboxPath(testDir, childTaskId, "project-b"),
+          },
+        ],
+        readyProjectCount: 0,
+        failedProjectCount: 0,
+        skippedProjectCount: 0,
+        totalCommitCount: 0,
       }),
     });
 
@@ -86,13 +128,55 @@ describe("subagentGitPatchArtifacts", () => {
       workspaceId,
       workspaceSessionDir: testDir,
       childTaskId,
+      projectPath: "/tmp/project-b",
       appliedAtMs,
     });
 
-    expect(updated?.appliedAtMs).toBe(appliedAtMs);
+    expect(
+      updated?.projectArtifacts.find((artifact) => artifact.projectPath === "/tmp/project-a")
+        ?.appliedAtMs
+    ).toBeUndefined();
+    expect(
+      updated?.projectArtifacts.find((artifact) => artifact.projectPath === "/tmp/project-b")
+        ?.appliedAtMs
+    ).toBe(appliedAtMs);
     expect(updated?.updatedAtMs).toBe(appliedAtMs);
+  });
+
+  test("normalizes version 1 artifacts into one-project patch sets", async () => {
+    const childTaskId = "child-1";
+    const artifactsPath = getSubagentGitPatchArtifactsFilePath(testDir);
+    await fsPromises.writeFile(
+      artifactsPath,
+      JSON.stringify(
+        {
+          version: 1,
+          artifactsByChildTaskId: {
+            [childTaskId]: {
+              childTaskId,
+              parentWorkspaceId: "parent-1",
+              createdAtMs: 123,
+              status: "ready",
+              commitCount: 1,
+              mboxPath: "/tmp/legacy-series.mbox",
+            },
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
 
     const file = await readSubagentGitPatchArtifactsFile(testDir);
-    expect(file.artifactsByChildTaskId[childTaskId]?.appliedAtMs).toBe(appliedAtMs);
+    const artifact = file.artifactsByChildTaskId[childTaskId];
+    expect(artifact?.projectArtifacts).toHaveLength(1);
+    expect(artifact?.projectArtifacts[0]).toMatchObject({
+      projectName: "project",
+      storageKey: "legacy-single-project",
+      status: "ready",
+      commitCount: 1,
+      mboxPath: "/tmp/legacy-series.mbox",
+    });
   });
 });

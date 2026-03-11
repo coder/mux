@@ -29,7 +29,21 @@ describe("task_await tool", () => {
       childTaskId: "t1",
       parentWorkspaceId: "parent-workspace",
       createdAtMs: 123,
-      status: "pending",
+      status: "ready",
+      projectArtifacts: [
+        {
+          projectPath: "/tmp/project-a",
+          projectName: "project-a",
+          storageKey: "project-a",
+          status: "ready",
+          commitCount: 1,
+          mboxPath: "/tmp/project-a/series.mbox",
+        },
+      ],
+      readyProjectCount: 1,
+      failedProjectCount: 0,
+      skippedProjectCount: 0,
+      totalCommitCount: 1,
     } as const;
 
     const taskService = {
@@ -40,7 +54,7 @@ describe("task_await tool", () => {
           artifactsPath,
           JSON.stringify(
             {
-              version: 1,
+              version: 2,
               artifactsByChildTaskId: { [taskId]: gitFormatPatch },
             },
             null,
@@ -70,6 +84,68 @@ describe("task_await tool", () => {
         },
       ],
     });
+  });
+
+  it("normalizes version 1 gitFormatPatch artifacts into a one-project patch set", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-v1-artifacts");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const workspaceSessionDir = baseConfig.workspaceSessionDir;
+    if (!workspaceSessionDir) {
+      throw new Error("Expected workspaceSessionDir to be set in test tool config");
+    }
+    const artifactsPath = getSubagentGitPatchArtifactsFilePath(workspaceSessionDir);
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport: mock(async (taskId: string) => {
+        await fs.promises.writeFile(
+          artifactsPath,
+          JSON.stringify(
+            {
+              version: 1,
+              artifactsByChildTaskId: {
+                [taskId]: {
+                  childTaskId: taskId,
+                  parentWorkspaceId: "parent-workspace",
+                  createdAtMs: 123,
+                  status: "ready",
+                  commitCount: 1,
+                  mboxPath: "/tmp/legacy-series.mbox",
+                },
+              },
+            },
+            null,
+            2
+          ),
+          "utf-8"
+        );
+
+        return { reportMarkdown: "ok" };
+      }),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["t1"] }, mockToolCallOptions)
+    )) as {
+      results: Array<{
+        status: string;
+        artifacts?: { gitFormatPatch?: { projectArtifacts?: unknown[] } };
+      }>;
+    };
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.status).toBe("completed");
+    expect(result.results[0]?.artifacts?.gitFormatPatch?.projectArtifacts).toEqual([
+      expect.objectContaining({
+        projectName: "project",
+        storageKey: "legacy-single-project",
+        status: "ready",
+        commitCount: 1,
+      }),
+    ]);
   });
   it("returns completed results for all awaited tasks", async () => {
     using tempDir = new TestTempDir("test-task-await-tool");

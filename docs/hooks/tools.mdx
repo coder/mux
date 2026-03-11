@@ -527,14 +527,15 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>task_apply_git_patch (4)</summary>
+<summary>task_apply_git_patch (5)</summary>
 
-| Env var                    | JSON path   | Type    | Description                                                                                                                    |
-| -------------------------- | ----------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `MUX_TOOL_INPUT_DRY_RUN`   | `dry_run`   | boolean | When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace). |
-| `MUX_TOOL_INPUT_FORCE`     | `force`     | boolean | When true, allow apply even if the patch was previously applied (and skip clean-tree checks).                                  |
-| `MUX_TOOL_INPUT_TASK_ID`   | `task_id`   | string  | Child task ID whose patch artifact should be applied                                                                           |
-| `MUX_TOOL_INPUT_THREE_WAY` | `three_way` | boolean | When true, run git am with --3way                                                                                              |
+| Env var                       | JSON path      | Type    | Description                                                                                                                    |
+| ----------------------------- | -------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_DRY_RUN`      | `dry_run`      | boolean | When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace). |
+| `MUX_TOOL_INPUT_FORCE`        | `force`        | boolean | When true, allow apply even if the patch was previously applied (and skip clean-tree checks).                                  |
+| `MUX_TOOL_INPUT_PROJECT_PATH` | `project_path` | string  | When provided, apply only the patch artifact for this project path.                                                            |
+| `MUX_TOOL_INPUT_TASK_ID`      | `task_id`      | string  | Child task ID whose patch artifact should be applied                                                                           |
+| `MUX_TOOL_INPUT_THREE_WAY`    | `three_way`    | boolean | When true, run git am with --3way                                                                                              |
 
 </details>
 

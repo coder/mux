@@ -700,44 +700,53 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
     const childArtifacts = await readSubagentGitPatchArtifactsFile(params.childSessionDir);
     const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
 
-    for (const [taskId] of childEntries) {
+    for (const [taskId, childEntry] of childEntries) {
       if (!taskId) continue;
 
-      const srcDir = path.dirname(getSubagentGitPatchMboxPath(params.childSessionDir, taskId));
-      const destDir = path.dirname(getSubagentGitPatchMboxPath(params.parentSessionDir, taskId));
+      for (const projectArtifact of childEntry.projectArtifacts) {
+        if (!projectArtifact.mboxPath) {
+          continue;
+        }
 
-      if (!isPathInsideDir(params.childSessionDir, srcDir)) {
-        log.error("Refusing to roll up patch artifact outside child session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          childSessionDir: params.childSessionDir,
+        const srcDir = path.dirname(projectArtifact.mboxPath);
+        const destDir = path.dirname(
+          getSubagentGitPatchMboxPath(params.parentSessionDir, taskId, projectArtifact.storageKey)
+        );
+
+        if (!isPathInsideDir(params.childSessionDir, srcDir)) {
+          log.error("Refusing to roll up patch artifact outside child session dir", {
+            parentWorkspaceId: params.parentWorkspaceId,
+            childWorkspaceId: params.childWorkspaceId,
+            taskId,
+            childSessionDir: params.childSessionDir,
+            srcDir,
+          });
+          continue;
+        }
+
+        if (!isPathInsideDir(params.parentSessionDir, destDir)) {
+          log.error("Refusing to roll up patch artifact outside parent session dir", {
+            parentWorkspaceId: params.parentWorkspaceId,
+            childWorkspaceId: params.childWorkspaceId,
+            taskId,
+            parentSessionDir: params.parentSessionDir,
+            destDir,
+          });
+          continue;
+        }
+
+        await copyDirIfMissingBestEffort({
           srcDir,
-        });
-        continue;
-      }
-
-      if (!isPathInsideDir(params.parentSessionDir, destDir)) {
-        log.error("Refusing to roll up patch artifact outside parent session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          parentSessionDir: params.parentSessionDir,
           destDir,
+          logContext: {
+            parentWorkspaceId: params.parentWorkspaceId,
+            childWorkspaceId: params.childWorkspaceId,
+            artifact: "subagent-patches",
+            taskId,
+            projectPath: projectArtifact.projectPath,
+          },
         });
-        continue;
       }
-
-      await copyDirIfMissingBestEffort({
-        srcDir,
-        destDir,
-        logContext: {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          artifact: "subagent-patches",
-          taskId,
-        },
-      });
     }
 
     if (childEntries.length > 0) {
@@ -757,7 +766,16 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
                 ...childEntry,
                 childTaskId: taskId,
                 parentWorkspaceId: params.parentWorkspaceId,
-                mboxPath: getSubagentGitPatchMboxPath(params.parentSessionDir, taskId),
+                projectArtifacts: childEntry.projectArtifacts.map((projectArtifact) => ({
+                  ...projectArtifact,
+                  mboxPath: projectArtifact.mboxPath
+                    ? getSubagentGitPatchMboxPath(
+                        params.parentSessionDir,
+                        taskId,
+                        projectArtifact.storageKey
+                      )
+                    : undefined,
+                })),
               };
             }
           }

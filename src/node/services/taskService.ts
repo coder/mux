@@ -49,6 +49,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
+import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -232,6 +233,37 @@ function buildAgentWorkspaceName(agentType: string, workspaceId: string): string
 
 function getIsoNow(): string {
   return new Date().toISOString();
+}
+
+async function readTaskBaseCommitShaByProjectPath(params: {
+  workspaceId: string;
+  workspaceName: string;
+  workspacePath: string;
+  runtimeConfig: RuntimeConfig;
+  projectPath: string;
+  projectName: string;
+  projects?: WorkspaceMetadata["projects"];
+  runtime: Runtime;
+}): Promise<Record<string, string>> {
+  const projectRepos = getWorkspaceProjectRepos({
+    workspaceId: params.workspaceId,
+    workspaceName: params.workspaceName,
+    workspacePath: params.workspacePath,
+    runtimeConfig: params.runtimeConfig,
+    projectPath: params.projectPath,
+    projectName: params.projectName,
+    projects: params.projects,
+  });
+
+  const taskBaseCommitShaByProjectPath: Record<string, string> = {};
+  for (const projectRepo of projectRepos) {
+    const taskBaseCommitSha = await tryReadGitHeadCommitSha(params.runtime, projectRepo.repoCwd);
+    if (taskBaseCommitSha) {
+      taskBaseCommitShaByProjectPath[projectRepo.projectPath] = taskBaseCommitSha;
+    }
+  }
+
+  return taskBaseCommitShaByProjectPath;
 }
 
 export class ForegroundWaitBackgroundedError extends Error {
@@ -1202,7 +1234,17 @@ export class TaskService {
     // Multi-project forks need per-project secrets for each runtime's init hook.
     this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
 
-    const taskBaseCommitSha = await tryReadGitHeadCommitSha(runtimeForTaskWorkspace, workspacePath);
+    const taskBaseCommitShaByProjectPath = await readTaskBaseCommitShaByProjectPath({
+      workspaceId: taskId,
+      workspaceName,
+      workspacePath,
+      runtimeConfig: forkedRuntimeConfig,
+      projectPath: parentMeta.projectPath,
+      projectName: parentMeta.projectName,
+      projects: inheritedProjects,
+      runtime: runtimeForTaskWorkspace,
+    });
+    const taskBaseCommitSha = taskBaseCommitShaByProjectPath[parentMeta.projectPath];
 
     taskQueueDebug("TaskService.create started (workspace created)", {
       taskId,
@@ -1234,6 +1276,7 @@ export class TaskService {
         taskStatus: "running",
         taskTrunkBranch: trunkBranch,
         taskBaseCommitSha: taskBaseCommitSha ?? undefined,
+        taskBaseCommitShaByProjectPath,
         taskModelString,
         taskThinkingLevel: effectiveThinkingLevel,
         taskExperiments: args.experiments,
@@ -2608,16 +2651,31 @@ export class TaskService {
       // Capture base commit for git-format-patch generation before the agent starts.
       // This must reflect the *actual* workspace HEAD after creation/fork, not the parent's current HEAD
       // (queued tasks can start much later).
-      if (!coerceNonEmptyString(task.taskBaseCommitSha)) {
-        const taskBaseCommitSha = await tryReadGitHeadCommitSha(
-          runtimeForTaskWorkspace,
-          workspacePath
-        );
-        if (taskBaseCommitSha) {
+      if (
+        !coerceNonEmptyString(task.taskBaseCommitSha) ||
+        Object.keys(task.taskBaseCommitShaByProjectPath ?? {}).length === 0
+      ) {
+        const taskBaseCommitShaByProjectPath = await readTaskBaseCommitShaByProjectPath({
+          workspaceId: taskId,
+          workspaceName: task.name,
+          workspacePath,
+          runtimeConfig: forkedRuntimeConfig,
+          projectPath: taskEntry.projectPath,
+          projectName:
+            task.projects?.find((project) => project.projectPath === taskEntry.projectPath)
+              ?.projectName ??
+            taskEntry.projectPath.split("/").filter(Boolean).at(-1) ??
+            taskEntry.projectPath,
+          projects: task.projects,
+          runtime: runtimeForTaskWorkspace,
+        });
+        const taskBaseCommitSha = taskBaseCommitShaByProjectPath[taskEntry.projectPath];
+        if (taskBaseCommitSha || Object.keys(taskBaseCommitShaByProjectPath).length > 0) {
           await this.editWorkspaceEntry(
             taskId,
             (ws) => {
               ws.taskBaseCommitSha = taskBaseCommitSha;
+              ws.taskBaseCommitShaByProjectPath = taskBaseCommitShaByProjectPath;
             },
             { allowMissing: true }
           );

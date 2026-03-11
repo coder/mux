@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 
 import type { Config } from "@/node/config";
+import type {
+  SubagentGitPatchArtifact,
+  SubagentGitProjectPatchArtifact,
+} from "@/common/utils/tools/toolDefinitions";
+import type { ProjectRef } from "@/common/types/workspace";
 import {
   coerceNonEmptyString,
   tryReadGitHeadCommitSha,
@@ -22,6 +27,8 @@ import {
 import { shellQuote } from "@/common/utils/shell";
 import { streamToString } from "@/node/runtime/streamUtils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { PlatformPaths } from "@/common/utils/paths";
+import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 
 /** Callback invoked after patch generation completes (success or failure). */
 export type OnPatchGenerationComplete = (childWorkspaceId: string) => Promise<void>;
@@ -51,6 +58,128 @@ async function writeReadableStreamToLocalFile(
   } finally {
     await fileHandle.close();
   }
+}
+
+function getPrimaryProjectName(projectPath: string, projects?: ProjectRef[]): string {
+  const matchingProjectName = projects
+    ?.find((project) => project.projectPath.trim() === projectPath.trim())
+    ?.projectName?.trim();
+  return matchingProjectName && matchingProjectName.length > 0
+    ? matchingProjectName
+    : PlatformPaths.getProjectName(projectPath).trim();
+}
+
+function buildTaskBaseCommitShaByProjectPath(params: {
+  projectPath: string;
+  projects?: ProjectRef[];
+  taskBaseCommitSha?: string;
+  taskBaseCommitShaByProjectPath?: Record<string, string>;
+}): Record<string, string> {
+  const baseCommitShaByProjectPath = { ...(params.taskBaseCommitShaByProjectPath ?? {}) };
+  if (params.taskBaseCommitSha?.trim()) {
+    baseCommitShaByProjectPath[params.projectPath] = params.taskBaseCommitSha.trim();
+  }
+
+  if (Array.isArray(params.projects)) {
+    for (const project of params.projects) {
+      if (!project.projectPath.trim()) {
+        continue;
+      }
+      if (!(project.projectPath in baseCommitShaByProjectPath)) {
+        baseCommitShaByProjectPath[project.projectPath] = "";
+      }
+    }
+  }
+
+  return baseCommitShaByProjectPath;
+}
+
+function buildPendingProjectArtifacts(params: {
+  projectPath: string;
+  projects?: ProjectRef[];
+  taskBaseCommitSha?: string;
+  taskBaseCommitShaByProjectPath?: Record<string, string>;
+}): SubagentGitProjectPatchArtifact[] {
+  const baseCommitShaByProjectPath = buildTaskBaseCommitShaByProjectPath(params);
+  const projectRefs =
+    params.projects && params.projects.length > 0
+      ? params.projects
+      : [
+          {
+            projectPath: params.projectPath,
+            projectName: getPrimaryProjectName(params.projectPath),
+          },
+        ];
+
+  return projectRefs.map((project) => {
+    const projectName = project.projectName.trim();
+    assert(projectName.length > 0, "buildPendingProjectArtifacts: projectName must be non-empty");
+
+    return {
+      projectPath: project.projectPath,
+      projectName,
+      storageKey: projectName,
+      status: "pending",
+      baseCommitSha: baseCommitShaByProjectPath[project.projectPath] || undefined,
+    } satisfies SubagentGitProjectPatchArtifact;
+  });
+}
+
+function buildPendingPatchArtifact(params: {
+  childTaskId: string;
+  parentWorkspaceId: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  projectArtifacts: SubagentGitProjectPatchArtifact[];
+}): SubagentGitPatchArtifact {
+  return {
+    childTaskId: params.childTaskId,
+    parentWorkspaceId: params.parentWorkspaceId,
+    createdAtMs: params.createdAtMs,
+    updatedAtMs: params.updatedAtMs,
+    status: "pending",
+    projectArtifacts: params.projectArtifacts,
+    readyProjectCount: 0,
+    failedProjectCount: 0,
+    skippedProjectCount: 0,
+    totalCommitCount: 0,
+  };
+}
+
+function replaceProjectArtifact(params: {
+  artifact: SubagentGitPatchArtifact;
+  nextProjectArtifact: SubagentGitProjectPatchArtifact;
+  updatedAtMs: number;
+}): SubagentGitPatchArtifact {
+  return {
+    ...params.artifact,
+    updatedAtMs: params.updatedAtMs,
+    projectArtifacts: params.artifact.projectArtifacts.map((projectArtifact) =>
+      projectArtifact.projectPath === params.nextProjectArtifact.projectPath
+        ? params.nextProjectArtifact
+        : projectArtifact
+    ),
+  };
+}
+
+function failPendingProjectArtifacts(params: {
+  artifact: SubagentGitPatchArtifact;
+  error: string;
+  updatedAtMs: number;
+}): SubagentGitPatchArtifact {
+  return {
+    ...params.artifact,
+    updatedAtMs: params.updatedAtMs,
+    projectArtifacts: params.artifact.projectArtifacts.map((projectArtifact) =>
+      projectArtifact.status === "pending"
+        ? {
+            ...projectArtifact,
+            status: "failed",
+            error: params.error,
+          }
+        : projectArtifact
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -156,12 +285,16 @@ export class GitPatchArtifactService {
       }
     }
 
-    if (!shouldGeneratePatch) {
+    if (!shouldGeneratePatch || !childEntry) {
       return;
     }
 
-    const baseCommitSha =
-      coerceNonEmptyString(childEntry?.workspace.taskBaseCommitSha) ?? undefined;
+    const pendingProjectArtifacts = buildPendingProjectArtifacts({
+      projectPath: childEntry.projectPath,
+      projects: childEntry.workspace.projects,
+      taskBaseCommitSha: coerceNonEmptyString(childEntry.workspace.taskBaseCommitSha) ?? undefined,
+      taskBaseCommitShaByProjectPath: childEntry.workspace.taskBaseCommitShaByProjectPath,
+    });
 
     const artifact = await upsertSubagentGitPatchArtifact({
       workspaceId: parentWorkspaceId,
@@ -172,15 +305,16 @@ export class GitPatchArtifactService {
           return existing;
         }
 
-        return {
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "pending",
-          baseCommitSha: baseCommitSha ?? existing?.baseCommitSha,
-        };
+        return (
+          existing ??
+          buildPendingPatchArtifact({
+            childTaskId: childWorkspaceId,
+            parentWorkspaceId,
+            createdAtMs: nowMs,
+            updatedAtMs: nowMs,
+            projectArtifacts: pendingProjectArtifacts,
+          })
+        );
       },
     });
 
@@ -202,28 +336,27 @@ export class GitPatchArtifactService {
             error,
           });
 
-          // Best-effort: if generation failed before it could update the artifact status,
-          // mark it failed so the parent isn't blocked forever by a pending marker.
           try {
             await upsertSubagentGitPatchArtifact({
               workspaceId: parentWorkspaceId,
               workspaceSessionDir: parentSessionDir,
               childTaskId: childWorkspaceId,
               updater: (existing) => {
-                if (existing && existing.status !== "pending") {
-                  return existing;
-                }
-
                 const failedAtMs = Date.now();
-                return {
-                  ...(existing ?? {}),
-                  childTaskId: childWorkspaceId,
-                  parentWorkspaceId,
-                  createdAtMs: existing?.createdAtMs ?? failedAtMs,
-                  updatedAtMs: failedAtMs,
-                  status: "failed",
+                const pendingArtifact =
+                  existing ??
+                  buildPendingPatchArtifact({
+                    childTaskId: childWorkspaceId,
+                    parentWorkspaceId,
+                    createdAtMs: failedAtMs,
+                    updatedAtMs: failedAtMs,
+                    projectArtifacts: pendingProjectArtifacts,
+                  });
+                return failPendingProjectArtifacts({
+                  artifact: pendingArtifact,
                   error: getErrorMessage(error),
-                };
+                  updatedAtMs: failedAtMs,
+                });
               },
             });
           } catch (updateError: unknown) {
@@ -238,26 +371,26 @@ export class GitPatchArtifactService {
           this.pendingJobsByTaskId.delete(childWorkspaceId);
         });
     } catch (error: unknown) {
-      // If scheduling fails synchronously, don't leave the artifact stuck in `pending`.
       await upsertSubagentGitPatchArtifact({
         workspaceId: parentWorkspaceId,
         workspaceSessionDir: parentSessionDir,
         childTaskId: childWorkspaceId,
         updater: (existing) => {
-          if (existing && existing.status !== "pending") {
-            return existing;
-          }
-
           const failedAtMs = Date.now();
-          return {
-            ...(existing ?? {}),
-            childTaskId: childWorkspaceId,
-            parentWorkspaceId,
-            createdAtMs: existing?.createdAtMs ?? failedAtMs,
-            updatedAtMs: failedAtMs,
-            status: "failed",
+          const pendingArtifact =
+            existing ??
+            buildPendingPatchArtifact({
+              childTaskId: childWorkspaceId,
+              parentWorkspaceId,
+              createdAtMs: failedAtMs,
+              updatedAtMs: failedAtMs,
+              projectArtifacts: pendingProjectArtifacts,
+            });
+          return failPendingProjectArtifacts({
+            artifact: pendingArtifact,
             error: getErrorMessage(error),
-          };
+            updatedAtMs: failedAtMs,
+          });
         },
       });
       return;
@@ -278,8 +411,8 @@ export class GitPatchArtifactService {
 
     const updateArtifact = async (
       updater: Parameters<typeof upsertSubagentGitPatchArtifact>[0]["updater"]
-    ): Promise<void> => {
-      await upsertSubagentGitPatchArtifact({
+    ): Promise<SubagentGitPatchArtifact> => {
+      return await upsertSubagentGitPatchArtifact({
         workspaceId: parentWorkspaceId,
         workspaceSessionDir: parentSessionDir,
         childTaskId: childWorkspaceId,
@@ -294,15 +427,21 @@ export class GitPatchArtifactService {
       const entry = findWorkspaceEntry(cfg, childWorkspaceId);
 
       if (!entry) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "failed",
-          error: "Task workspace not found in config.",
-        }));
+        await updateArtifact((existing) =>
+          failPendingProjectArtifacts({
+            artifact:
+              existing ??
+              buildPendingPatchArtifact({
+                childTaskId: childWorkspaceId,
+                parentWorkspaceId,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+                projectArtifacts: [],
+              }),
+            error: "Task workspace not found in config.",
+            updatedAtMs: nowMs,
+          })
+        );
         return;
       }
 
@@ -310,43 +449,76 @@ export class GitPatchArtifactService {
 
       const workspacePath = coerceNonEmptyString(ws.path);
       if (!workspacePath) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "failed",
-          error: "Task workspace path missing.",
-        }));
+        await updateArtifact((existing) =>
+          failPendingProjectArtifacts({
+            artifact:
+              existing ??
+              buildPendingPatchArtifact({
+                childTaskId: childWorkspaceId,
+                parentWorkspaceId,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+                projectArtifacts: buildPendingProjectArtifacts({
+                  projectPath: entry.projectPath,
+                  projects: ws.projects,
+                  taskBaseCommitSha: coerceNonEmptyString(ws.taskBaseCommitSha) ?? undefined,
+                  taskBaseCommitShaByProjectPath: ws.taskBaseCommitShaByProjectPath,
+                }),
+              }),
+            error: "Task workspace path missing.",
+            updatedAtMs: nowMs,
+          })
+        );
         return;
       }
 
       if (!ws.runtimeConfig) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "failed",
-          error: "Task runtimeConfig missing.",
-        }));
+        await updateArtifact((existing) =>
+          failPendingProjectArtifacts({
+            artifact:
+              existing ??
+              buildPendingPatchArtifact({
+                childTaskId: childWorkspaceId,
+                parentWorkspaceId,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+                projectArtifacts: buildPendingProjectArtifacts({
+                  projectPath: entry.projectPath,
+                  projects: ws.projects,
+                  taskBaseCommitSha: coerceNonEmptyString(ws.taskBaseCommitSha) ?? undefined,
+                  taskBaseCommitShaByProjectPath: ws.taskBaseCommitShaByProjectPath,
+                }),
+              }),
+            error: "Task runtimeConfig missing.",
+            updatedAtMs: nowMs,
+          })
+        );
         return;
       }
 
       const fallbackName = workspacePath.split("/").pop() ?? workspacePath.split("\\").pop() ?? "";
       const workspaceName = coerceNonEmptyString(ws.name) ?? coerceNonEmptyString(fallbackName);
       if (!workspaceName) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "failed",
-          error: "Task workspace name missing.",
-        }));
+        await updateArtifact((existing) =>
+          failPendingProjectArtifacts({
+            artifact:
+              existing ??
+              buildPendingPatchArtifact({
+                childTaskId: childWorkspaceId,
+                parentWorkspaceId,
+                createdAtMs: nowMs,
+                updatedAtMs: nowMs,
+                projectArtifacts: buildPendingProjectArtifacts({
+                  projectPath: entry.projectPath,
+                  projects: ws.projects,
+                  taskBaseCommitSha: coerceNonEmptyString(ws.taskBaseCommitSha) ?? undefined,
+                  taskBaseCommitShaByProjectPath: ws.taskBaseCommitShaByProjectPath,
+                }),
+              }),
+            error: "Task workspace name missing.",
+            updatedAtMs: nowMs,
+          })
+        );
         return;
       }
 
@@ -356,172 +528,219 @@ export class GitPatchArtifactService {
         name: workspaceName,
       });
 
-      let baseCommitSha = coerceNonEmptyString(ws.taskBaseCommitSha);
-      if (!baseCommitSha) {
-        const trunkBranch =
-          coerceNonEmptyString(ws.taskTrunkBranch) ??
-          coerceNonEmptyString(findWorkspaceEntry(cfg, parentWorkspaceId)?.workspace.name);
+      const projectRepos = getWorkspaceProjectRepos({
+        workspaceId: childWorkspaceId,
+        workspaceName,
+        workspacePath,
+        runtimeConfig: ws.runtimeConfig,
+        projectPath: entry.projectPath,
+        projectName: getPrimaryProjectName(entry.projectPath, ws.projects),
+        projects: ws.projects,
+      });
+      const taskBaseCommitShaByProjectPath = buildTaskBaseCommitShaByProjectPath({
+        projectPath: entry.projectPath,
+        projects: ws.projects,
+        taskBaseCommitSha: coerceNonEmptyString(ws.taskBaseCommitSha) ?? undefined,
+        taskBaseCommitShaByProjectPath: ws.taskBaseCommitShaByProjectPath,
+      });
 
-        if (!trunkBranch) {
-          await updateArtifact((existing) => ({
-            ...(existing ?? {}),
-            childTaskId: childWorkspaceId,
-            parentWorkspaceId,
-            createdAtMs: existing?.createdAtMs ?? nowMs,
-            updatedAtMs: nowMs,
+      const ensureProjectArtifact = async (
+        nextProjectArtifact: SubagentGitProjectPatchArtifact
+      ): Promise<void> => {
+        await updateArtifact((existing) => {
+          const pendingArtifact =
+            existing ??
+            buildPendingPatchArtifact({
+              childTaskId: childWorkspaceId,
+              parentWorkspaceId,
+              createdAtMs: nowMs,
+              updatedAtMs: nowMs,
+              projectArtifacts: buildPendingProjectArtifacts({
+                projectPath: entry.projectPath,
+                projects: ws.projects,
+                taskBaseCommitSha: coerceNonEmptyString(ws.taskBaseCommitSha) ?? undefined,
+                taskBaseCommitShaByProjectPath: ws.taskBaseCommitShaByProjectPath,
+              }),
+            });
+          return replaceProjectArtifact({
+            artifact: pendingArtifact,
+            nextProjectArtifact,
+            updatedAtMs: Date.now(),
+          });
+        });
+      };
+
+      for (const projectRepo of projectRepos) {
+        try {
+          let baseCommitSha = coerceNonEmptyString(
+            taskBaseCommitShaByProjectPath[projectRepo.projectPath]
+          );
+          if (!baseCommitSha) {
+            const trunkBranch =
+              coerceNonEmptyString(ws.taskTrunkBranch) ??
+              coerceNonEmptyString(findWorkspaceEntry(cfg, parentWorkspaceId)?.workspace.name);
+
+            if (!trunkBranch) {
+              await ensureProjectArtifact({
+                projectPath: projectRepo.projectPath,
+                projectName: projectRepo.projectName,
+                storageKey: projectRepo.storageKey,
+                status: "failed",
+                error:
+                  "taskBaseCommitSha missing and could not determine trunk branch for merge-base fallback.",
+              });
+              continue;
+            }
+
+            const mergeBaseResult = await execBuffered(
+              runtime,
+              `git merge-base ${shellQuote(trunkBranch)} HEAD`,
+              { cwd: projectRepo.repoCwd, timeout: 30 }
+            );
+            if (mergeBaseResult.exitCode !== 0) {
+              await ensureProjectArtifact({
+                projectPath: projectRepo.projectPath,
+                projectName: projectRepo.projectName,
+                storageKey: projectRepo.storageKey,
+                status: "failed",
+                error: `git merge-base failed: ${mergeBaseResult.stderr.trim() || "unknown error"}`,
+              });
+              continue;
+            }
+
+            baseCommitSha = mergeBaseResult.stdout.trim();
+          }
+
+          const headCommitSha = await tryReadGitHeadCommitSha(runtime, projectRepo.repoCwd);
+          if (!headCommitSha) {
+            await ensureProjectArtifact({
+              projectPath: projectRepo.projectPath,
+              projectName: projectRepo.projectName,
+              storageKey: projectRepo.storageKey,
+              status: "failed",
+              baseCommitSha,
+              error: "git rev-parse HEAD failed.",
+            });
+            continue;
+          }
+
+          const countResult = await execBuffered(
+            runtime,
+            `git rev-list --count ${baseCommitSha}..${headCommitSha}`,
+            { cwd: projectRepo.repoCwd, timeout: 30 }
+          );
+          if (countResult.exitCode !== 0) {
+            await ensureProjectArtifact({
+              projectPath: projectRepo.projectPath,
+              projectName: projectRepo.projectName,
+              storageKey: projectRepo.storageKey,
+              status: "failed",
+              baseCommitSha,
+              headCommitSha,
+              error: `git rev-list failed: ${countResult.stderr.trim() || "unknown error"}`,
+            });
+            continue;
+          }
+
+          const commitCount = Number.parseInt(countResult.stdout.trim(), 10);
+          if (!Number.isFinite(commitCount) || commitCount < 0) {
+            await ensureProjectArtifact({
+              projectPath: projectRepo.projectPath,
+              projectName: projectRepo.projectName,
+              storageKey: projectRepo.storageKey,
+              status: "failed",
+              baseCommitSha,
+              headCommitSha,
+              error: `Invalid commit count: ${countResult.stdout.trim()}`,
+            });
+            continue;
+          }
+
+          if (commitCount === 0) {
+            await ensureProjectArtifact({
+              projectPath: projectRepo.projectPath,
+              projectName: projectRepo.projectName,
+              storageKey: projectRepo.storageKey,
+              status: "skipped",
+              baseCommitSha,
+              headCommitSha,
+              commitCount,
+            });
+            continue;
+          }
+
+          const patchPath = getSubagentGitPatchMboxPath(
+            parentSessionDir,
+            childWorkspaceId,
+            projectRepo.storageKey
+          );
+
+          const formatPatchStream = await runtime.exec(
+            `git format-patch --stdout --binary ${baseCommitSha}..${headCommitSha}`,
+            { cwd: projectRepo.repoCwd, timeout: 120 }
+          );
+          await formatPatchStream.stdin.close();
+
+          const stderrPromise = streamToString(formatPatchStream.stderr);
+          const writePromise = writeReadableStreamToLocalFile(formatPatchStream.stdout, patchPath);
+
+          const [exitCode, stderr] = await Promise.all([
+            formatPatchStream.exitCode,
+            stderrPromise,
+            writePromise,
+          ]);
+
+          if (exitCode !== 0) {
+            await fsPromises.rm(patchPath, { force: true });
+            await ensureProjectArtifact({
+              projectPath: projectRepo.projectPath,
+              projectName: projectRepo.projectName,
+              storageKey: projectRepo.storageKey,
+              status: "failed",
+              baseCommitSha,
+              headCommitSha,
+              commitCount,
+              error: `git format-patch failed (exitCode=${exitCode}): ${stderr.trim() || "unknown error"}`,
+            });
+            continue;
+          }
+
+          await ensureProjectArtifact({
+            projectPath: projectRepo.projectPath,
+            projectName: projectRepo.projectName,
+            storageKey: projectRepo.storageKey,
+            status: "ready",
+            baseCommitSha,
+            headCommitSha,
+            commitCount,
+            mboxPath: patchPath,
+          });
+        } catch (error: unknown) {
+          await ensureProjectArtifact({
+            projectPath: projectRepo.projectPath,
+            projectName: projectRepo.projectName,
+            storageKey: projectRepo.storageKey,
             status: "failed",
-            error:
-              "taskBaseCommitSha missing and could not determine trunk branch for merge-base fallback.",
-          }));
-          return;
+            error: getErrorMessage(error),
+          });
         }
-
-        const mergeBaseResult = await execBuffered(
-          runtime,
-          `git merge-base ${shellQuote(trunkBranch)} HEAD`,
-          { cwd: workspacePath, timeout: 30 }
-        );
-        if (mergeBaseResult.exitCode !== 0) {
-          await updateArtifact((existing) => ({
-            ...(existing ?? {}),
-            childTaskId: childWorkspaceId,
-            parentWorkspaceId,
-            createdAtMs: existing?.createdAtMs ?? nowMs,
-            updatedAtMs: nowMs,
-            status: "failed",
-            error: `git merge-base failed: ${mergeBaseResult.stderr.trim() || "unknown error"}`,
-          }));
-          return;
-        }
-
-        baseCommitSha = mergeBaseResult.stdout.trim();
       }
-
-      const headCommitSha = await tryReadGitHeadCommitSha(runtime, workspacePath);
-      if (!headCommitSha) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "failed",
-          error: "git rev-parse HEAD failed.",
-        }));
-        return;
-      }
-
-      const countResult = await execBuffered(
-        runtime,
-        `git rev-list --count ${baseCommitSha}..${headCommitSha}`,
-        { cwd: workspacePath, timeout: 30 }
-      );
-      if (countResult.exitCode !== 0) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "failed",
-          baseCommitSha,
-          headCommitSha,
-          error: `git rev-list failed: ${countResult.stderr.trim() || "unknown error"}`,
-        }));
-        return;
-      }
-
-      const commitCount = Number.parseInt(countResult.stdout.trim(), 10);
-      if (!Number.isFinite(commitCount) || commitCount < 0) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "failed",
-          baseCommitSha,
-          headCommitSha,
-          error: `Invalid commit count: ${countResult.stdout.trim()}`,
-        }));
-        return;
-      }
-
-      if (commitCount === 0) {
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: nowMs,
-          status: "skipped",
-          baseCommitSha,
-          headCommitSha,
-          commitCount,
-          error: undefined,
-        }));
-        return;
-      }
-
-      const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childWorkspaceId);
-
-      const formatPatchStream = await runtime.exec(
-        `git format-patch --stdout --binary ${baseCommitSha}..${headCommitSha}`,
-        { cwd: workspacePath, timeout: 120 }
-      );
-      await formatPatchStream.stdin.close();
-
-      const stderrPromise = streamToString(formatPatchStream.stderr);
-      const writePromise = writeReadableStreamToLocalFile(formatPatchStream.stdout, patchPath);
-
-      const [exitCode, stderr] = await Promise.all([
-        formatPatchStream.exitCode,
-        stderrPromise,
-        writePromise,
-      ]);
-
-      if (exitCode !== 0) {
-        // Leave no half-written patches around.
-        await fsPromises.rm(patchPath, { force: true });
-
-        await updateArtifact((existing) => ({
-          ...(existing ?? {}),
-          childTaskId: childWorkspaceId,
-          parentWorkspaceId,
-          createdAtMs: existing?.createdAtMs ?? nowMs,
-          updatedAtMs: Date.now(),
-          status: "failed",
-          baseCommitSha,
-          headCommitSha,
-          commitCount,
-          error: `git format-patch failed (exitCode=${exitCode}): ${stderr.trim() || "unknown error"}`,
-        }));
-        return;
-      }
-
-      await updateArtifact((existing) => ({
-        ...(existing ?? {}),
-        childTaskId: childWorkspaceId,
-        parentWorkspaceId,
-        createdAtMs: existing?.createdAtMs ?? nowMs,
-        updatedAtMs: Date.now(),
-        status: "ready",
-        baseCommitSha,
-        headCommitSha,
-        commitCount,
-        mboxPath: patchPath,
-        error: undefined,
-      }));
     } catch (error: unknown) {
-      await updateArtifact((existing) => ({
-        ...(existing ?? {}),
-        childTaskId: childWorkspaceId,
-        parentWorkspaceId,
-        createdAtMs: existing?.createdAtMs ?? nowMs,
-        updatedAtMs: Date.now(),
-        status: "failed",
-        error: getErrorMessage(error),
-      }));
+      await updateArtifact((existing) =>
+        failPendingProjectArtifacts({
+          artifact:
+            existing ??
+            buildPendingPatchArtifact({
+              childTaskId: childWorkspaceId,
+              parentWorkspaceId,
+              createdAtMs: nowMs,
+              updatedAtMs: nowMs,
+              projectArtifacts: [],
+            }),
+          error: getErrorMessage(error),
+          updatedAtMs: Date.now(),
+        })
+      );
     } finally {
       // Unblock auto-cleanup once the patch generation attempt has finished.
       await onComplete(childWorkspaceId);

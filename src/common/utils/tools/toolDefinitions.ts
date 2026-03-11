@@ -284,12 +284,11 @@ export const SubagentGitPatchArtifactStatusSchema = z.enum([
   "skipped",
 ]);
 
-export const SubagentGitPatchArtifactSchema = z
+export const SubagentGitProjectPatchArtifactSchema = z
   .object({
-    childTaskId: z.string(),
-    parentWorkspaceId: z.string(),
-    createdAtMs: z.number().int().nonnegative(),
-    updatedAtMs: z.number().int().nonnegative().optional(),
+    projectPath: z.string(),
+    projectName: z.string(),
+    storageKey: z.string(),
     status: SubagentGitPatchArtifactStatusSchema,
     baseCommitSha: z.string().optional(),
     headCommitSha: z.string().optional(),
@@ -300,6 +299,22 @@ export const SubagentGitPatchArtifactSchema = z
   })
   .strict();
 
+export const SubagentGitPatchArtifactSchema = z
+  .object({
+    childTaskId: z.string(),
+    parentWorkspaceId: z.string(),
+    createdAtMs: z.number().int().nonnegative(),
+    updatedAtMs: z.number().int().nonnegative().optional(),
+    status: SubagentGitPatchArtifactStatusSchema,
+    projectArtifacts: z.array(SubagentGitProjectPatchArtifactSchema),
+    readyProjectCount: z.number().int().nonnegative(),
+    failedProjectCount: z.number().int().nonnegative(),
+    skippedProjectCount: z.number().int().nonnegative(),
+    totalCommitCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type SubagentGitProjectPatchArtifact = z.infer<typeof SubagentGitProjectPatchArtifactSchema>;
 export type SubagentGitPatchArtifact = z.infer<typeof SubagentGitPatchArtifactSchema>;
 
 const TaskAwaitToolArtifactsSchema = z
@@ -377,6 +392,10 @@ export const TaskAwaitToolResultSchema = z
 export const TaskApplyGitPatchToolArgsSchema = z
   .object({
     task_id: z.string().min(1).describe("Child task ID whose patch artifact should be applied"),
+    project_path: z
+      .string()
+      .nullish()
+      .describe("When provided, apply only the patch artifact for this project path."),
     dry_run: z
       .boolean()
       .nullish()
@@ -402,12 +421,29 @@ const TaskApplyGitPatchAppliedCommitSchema = z
   })
   .strict();
 
+const TaskApplyGitPatchProjectResultStatusSchema = z.enum(["applied", "failed", "skipped"]);
+
+export const TaskApplyGitPatchProjectResultSchema = z
+  .object({
+    projectPath: z.string(),
+    projectName: z.string(),
+    status: TaskApplyGitPatchProjectResultStatusSchema,
+    appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema).optional(),
+    headCommitSha: z.string().optional(),
+    error: z.string().optional(),
+    failedPatchSubject: z.string().optional(),
+    conflictPaths: z.array(z.string()).optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
 export const TaskApplyGitPatchToolResultSchema = z.union([
   z
     .object({
       success: z.literal(true),
       taskId: z.string(),
-      appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema),
+      projectResults: z.array(TaskApplyGitPatchProjectResultSchema),
+      appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema).optional(),
       headCommitSha: z.string().optional(),
       dryRun: z.boolean().optional(),
       note: z.string().optional(),
@@ -418,7 +454,10 @@ export const TaskApplyGitPatchToolResultSchema = z.union([
       success: z.literal(false),
       taskId: z.string(),
       error: z.string(),
+      projectResults: z.array(TaskApplyGitPatchProjectResultSchema).optional(),
       dryRun: z.boolean().optional(),
+      appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema).optional(),
+      headCommitSha: z.string().optional(),
       conflictPaths: z.array(z.string()).optional(),
       failedPatchSubject: z.string().optional(),
       note: z.string().optional(),

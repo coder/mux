@@ -102,6 +102,10 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "Git commit SHA this agent task workspace started from (used for generating git-format-patch artifacts).",
   }),
+  taskBaseCommitShaByProjectPath: z.record(z.string(), z.string()).optional().meta({
+    description:
+      "Per-project git HEAD SHAs captured when an agent task workspace starts (used for multi-project git-format-patch artifacts).",
+  }),
   taskTrunkBranch: z.string().optional().meta({
     description:
       "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",

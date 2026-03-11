@@ -3,33 +3,232 @@ import * as path from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
-import type { SubagentGitPatchArtifact } from "@/common/utils/tools/toolDefinitions";
+import type {
+  SubagentGitPatchArtifact,
+  SubagentGitProjectPatchArtifact,
+} from "@/common/utils/tools/toolDefinitions";
 import { log } from "@/node/services/log";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 
 export interface SubagentGitPatchArtifactsFile {
-  version: 1;
+  version: 2;
   artifactsByChildTaskId: Record<string, SubagentGitPatchArtifact>;
 }
 
-const SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION = 1 as const;
+interface LegacySubagentGitPatchArtifactV1 {
+  childTaskId: string;
+  parentWorkspaceId: string;
+  createdAtMs: number;
+  updatedAtMs?: number;
+  status: SubagentGitPatchArtifact["status"];
+  baseCommitSha?: string;
+  headCommitSha?: string;
+  commitCount?: number;
+  mboxPath?: string;
+  error?: string;
+  appliedAtMs?: number;
+}
+
+const SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION = 2 as const;
 
 const SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_NAME = "subagent-patches.json";
 const SUBAGENT_GIT_PATCH_DIR_NAME = "subagent-patches";
 const SUBAGENT_GIT_PATCH_MBOX_FILE_NAME = "series.mbox";
+const LEGACY_SINGLE_PROJECT_NAME = "project";
+const LEGACY_SINGLE_PROJECT_PATH = "__legacy_single_project__";
+const LEGACY_SINGLE_PROJECT_STORAGE_KEY = "legacy-single-project";
+
+function createEmptyArtifactsFile(): SubagentGitPatchArtifactsFile {
+  return { version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+}
+
+function summarizeProjectArtifacts(
+  projectArtifacts: SubagentGitProjectPatchArtifact[]
+): Pick<
+  SubagentGitPatchArtifact,
+  "status" | "readyProjectCount" | "failedProjectCount" | "skippedProjectCount" | "totalCommitCount"
+> {
+  const readyProjectCount = projectArtifacts.filter(
+    (artifact) => artifact.status === "ready"
+  ).length;
+  const failedProjectCount = projectArtifacts.filter(
+    (artifact) => artifact.status === "failed"
+  ).length;
+  const skippedProjectCount = projectArtifacts.filter(
+    (artifact) => artifact.status === "skipped"
+  ).length;
+  const pendingProjectCount = projectArtifacts.filter(
+    (artifact) => artifact.status === "pending"
+  ).length;
+  const totalCommitCount = projectArtifacts.reduce(
+    (sum, artifact) => sum + (artifact.commitCount ?? 0),
+    0
+  );
+
+  if (projectArtifacts.length === 0) {
+    return {
+      status: "failed",
+      readyProjectCount,
+      failedProjectCount,
+      skippedProjectCount,
+      totalCommitCount,
+    };
+  }
+
+  if (pendingProjectCount > 0) {
+    return {
+      status: "pending",
+      readyProjectCount,
+      failedProjectCount,
+      skippedProjectCount,
+      totalCommitCount,
+    };
+  }
+
+  if (readyProjectCount > 0) {
+    return {
+      status: "ready",
+      readyProjectCount,
+      failedProjectCount,
+      skippedProjectCount,
+      totalCommitCount,
+    };
+  }
+
+  if (projectArtifacts.length > 0 && skippedProjectCount === projectArtifacts.length) {
+    return {
+      status: "skipped",
+      readyProjectCount,
+      failedProjectCount,
+      skippedProjectCount,
+      totalCommitCount,
+    };
+  }
+
+  return {
+    status: failedProjectCount > 0 ? "failed" : "skipped",
+    readyProjectCount,
+    failedProjectCount,
+    skippedProjectCount,
+    totalCommitCount,
+  };
+}
+
+function normalizeProjectArtifacts(
+  projectArtifacts: SubagentGitProjectPatchArtifact[]
+): SubagentGitProjectPatchArtifact[] {
+  const normalizedProjectArtifacts = projectArtifacts.map((artifact) => ({
+    ...artifact,
+    projectName: artifact.projectName.trim(),
+    storageKey: (artifact.storageKey || artifact.projectName).trim(),
+  }));
+
+  const storageKeys = normalizedProjectArtifacts.map((artifact) => artifact.storageKey);
+  if (new Set(storageKeys).size !== storageKeys.length) {
+    throw new Error(`normalizeProjectArtifacts: duplicate storage keys ${storageKeys.join(", ")}`);
+  }
+
+  return normalizedProjectArtifacts;
+}
+
+function normalizeLegacyArtifact(
+  legacyArtifact: LegacySubagentGitPatchArtifactV1
+): SubagentGitPatchArtifact {
+  return normalizeSubagentGitPatchArtifact({
+    childTaskId: legacyArtifact.childTaskId,
+    parentWorkspaceId: legacyArtifact.parentWorkspaceId,
+    createdAtMs: legacyArtifact.createdAtMs,
+    updatedAtMs: legacyArtifact.updatedAtMs,
+    status: legacyArtifact.status,
+    projectArtifacts: [
+      {
+        projectPath: LEGACY_SINGLE_PROJECT_PATH,
+        projectName: LEGACY_SINGLE_PROJECT_NAME,
+        storageKey: LEGACY_SINGLE_PROJECT_STORAGE_KEY,
+        status: legacyArtifact.status,
+        baseCommitSha: legacyArtifact.baseCommitSha,
+        headCommitSha: legacyArtifact.headCommitSha,
+        commitCount: legacyArtifact.commitCount,
+        mboxPath: legacyArtifact.mboxPath,
+        error: legacyArtifact.error,
+        appliedAtMs: legacyArtifact.appliedAtMs,
+      },
+    ],
+    readyProjectCount: 0,
+    failedProjectCount: 0,
+    skippedProjectCount: 0,
+    totalCommitCount: 0,
+  });
+}
+
+export function normalizeSubagentGitPatchArtifact(
+  artifact: SubagentGitPatchArtifact
+): SubagentGitPatchArtifact {
+  const normalizedProjectArtifacts = normalizeProjectArtifacts(artifact.projectArtifacts);
+  const summary = summarizeProjectArtifacts(normalizedProjectArtifacts);
+
+  return {
+    childTaskId: artifact.childTaskId,
+    parentWorkspaceId: artifact.parentWorkspaceId,
+    createdAtMs: artifact.createdAtMs,
+    updatedAtMs: artifact.updatedAtMs,
+    status: summary.status,
+    projectArtifacts: normalizedProjectArtifacts,
+    readyProjectCount: summary.readyProjectCount,
+    failedProjectCount: summary.failedProjectCount,
+    skippedProjectCount: summary.skippedProjectCount,
+    totalCommitCount: summary.totalCommitCount,
+  };
+}
+
+function normalizeArtifactsByChildTaskId(
+  artifactsByChildTaskId: Record<string, unknown>,
+  version: number | undefined
+): Record<string, SubagentGitPatchArtifact> {
+  const normalizedEntries = Object.entries(artifactsByChildTaskId).map(
+    ([childTaskId, artifact]) => {
+      if (!artifact || typeof artifact !== "object") {
+        throw new Error(`Invalid subagent git patch artifact for task ${childTaskId}`);
+      }
+
+      const normalizedArtifact =
+        version === 1
+          ? normalizeLegacyArtifact(artifact as LegacySubagentGitPatchArtifactV1)
+          : normalizeSubagentGitPatchArtifact(artifact as SubagentGitPatchArtifact);
+
+      return [childTaskId, { ...normalizedArtifact, childTaskId }] as const;
+    }
+  );
+
+  return Object.fromEntries(normalizedEntries);
+}
 
 export function getSubagentGitPatchArtifactsFilePath(workspaceSessionDir: string): string {
   return path.join(workspaceSessionDir, SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_NAME);
 }
 
-export function getSubagentGitPatchMboxPath(
+export function getSubagentGitPatchTaskDir(
   workspaceSessionDir: string,
   childTaskId: string
 ): string {
+  return path.join(workspaceSessionDir, SUBAGENT_GIT_PATCH_DIR_NAME, childTaskId);
+}
+
+export function getSubagentGitPatchProjectDir(
+  workspaceSessionDir: string,
+  childTaskId: string,
+  storageKey: string
+): string {
+  return path.join(getSubagentGitPatchTaskDir(workspaceSessionDir, childTaskId), storageKey);
+}
+
+export function getSubagentGitPatchMboxPath(
+  workspaceSessionDir: string,
+  childTaskId: string,
+  storageKey = LEGACY_SINGLE_PROJECT_STORAGE_KEY
+): string {
   return path.join(
-    workspaceSessionDir,
-    SUBAGENT_GIT_PATCH_DIR_NAME,
-    childTaskId,
+    getSubagentGitPatchProjectDir(workspaceSessionDir, childTaskId, storageKey),
     SUBAGENT_GIT_PATCH_MBOX_FILE_NAME
   );
 }
@@ -43,7 +242,7 @@ export async function readSubagentGitPatchArtifactsFile(
     const parsed = JSON.parse(raw) as unknown;
 
     if (!parsed || typeof parsed !== "object") {
-      return { version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+      return createEmptyArtifactsFile();
     }
 
     const obj = parsed as {
@@ -51,29 +250,31 @@ export async function readSubagentGitPatchArtifactsFile(
       artifactsByChildTaskId?: unknown;
     };
 
-    const version = obj.version;
+    const version = typeof obj.version === "number" ? obj.version : undefined;
     const artifactsByChildTaskId = obj.artifactsByChildTaskId;
 
-    if (version !== SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION) {
-      // Unknown version; treat as empty.
-      return { version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+    if (version !== 1 && version !== SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION) {
+      return createEmptyArtifactsFile();
     }
 
     if (!artifactsByChildTaskId || typeof artifactsByChildTaskId !== "object") {
-      return { version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+      return createEmptyArtifactsFile();
     }
 
     return {
       version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION,
-      artifactsByChildTaskId: artifactsByChildTaskId as Record<string, SubagentGitPatchArtifact>,
+      artifactsByChildTaskId: normalizeArtifactsByChildTaskId(
+        artifactsByChildTaskId as Record<string, unknown>,
+        version
+      ),
     };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return { version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+      return createEmptyArtifactsFile();
     }
 
     log.error("Failed to read subagent git patch artifacts file", { error });
-    return { version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+    return createEmptyArtifactsFile();
   }
 }
 
@@ -93,6 +294,13 @@ export async function updateSubagentGitPatchArtifactsFile(params: {
   return workspaceFileLocks.withLock(params.workspaceId, async () => {
     const file = await readSubagentGitPatchArtifactsFile(params.workspaceSessionDir);
     params.update(file);
+    file.version = SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION;
+    file.artifactsByChildTaskId = Object.fromEntries(
+      Object.entries(file.artifactsByChildTaskId).map(([childTaskId, artifact]) => [
+        childTaskId,
+        normalizeSubagentGitPatchArtifact({ ...artifact, childTaskId }),
+      ])
+    );
     try {
       await fsPromises.mkdir(params.workspaceSessionDir, { recursive: true });
       const filePath = getSubagentGitPatchArtifactsFilePath(params.workspaceSessionDir);
@@ -117,7 +325,7 @@ export async function upsertSubagentGitPatchArtifact(params: {
     workspaceSessionDir: params.workspaceSessionDir,
     update: (file) => {
       const existing = file.artifactsByChildTaskId[params.childTaskId] ?? null;
-      updated = params.updater(existing);
+      updated = normalizeSubagentGitPatchArtifact(params.updater(existing));
       file.artifactsByChildTaskId[params.childTaskId] = updated;
     },
   });
@@ -133,6 +341,7 @@ export async function markSubagentGitPatchArtifactApplied(params: {
   workspaceId: string;
   workspaceSessionDir: string;
   childTaskId: string;
+  projectPath: string;
   appliedAtMs: number;
 }): Promise<SubagentGitPatchArtifact | null> {
   let updated: SubagentGitPatchArtifact | null = null;
@@ -147,11 +356,18 @@ export async function markSubagentGitPatchArtifactApplied(params: {
         return;
       }
 
-      updated = {
+      updated = normalizeSubagentGitPatchArtifact({
         ...existing,
-        appliedAtMs: params.appliedAtMs,
         updatedAtMs: params.appliedAtMs,
-      };
+        projectArtifacts: existing.projectArtifacts.map((artifact) =>
+          artifact.projectPath === params.projectPath
+            ? {
+                ...artifact,
+                appliedAtMs: params.appliedAtMs,
+              }
+            : artifact
+        ),
+      });
       file.artifactsByChildTaskId[params.childTaskId] = updated;
     },
   });
