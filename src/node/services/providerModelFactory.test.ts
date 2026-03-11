@@ -349,34 +349,50 @@ describe("ProviderModelFactory routing", () => {
   });
 
   it("treats OpenAI as available for routing when only Codex OAuth is configured", async () => {
-    await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        openai: {
-          // No apiKey — only Codex OAuth credentials.
-          codexOauth: { accessToken: "test-token", refreshToken: "test-refresh" },
-        },
-        openrouter: {
-          apiKey: "or-test",
-        },
-      });
+    // Temporarily remove OPENAI_API_KEY so the test only succeeds via Codex OAuth,
+    // not by falling through to an env-var credential path.
+    const savedKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      await withTempConfig(async (config, factory) => {
+        config.saveProvidersConfig({
+          openai: {
+            // No apiKey — only Codex OAuth credentials.
+            codexOauth: {
+              type: "oauth",
+              access: "test-access-token",
+              refresh: "test-refresh-token",
+              expires: Date.now() + 60_000,
+            },
+          },
+          openrouter: {
+            apiKey: "or-test",
+          },
+        });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["direct", "openrouter"],
-      });
+        const projectConfig = config.loadConfigOrDefault();
+        await config.saveConfig({
+          ...projectConfig,
+          routePriority: ["direct", "openrouter"],
+        });
 
-      // Direct OpenAI should win because Codex OAuth makes it available for routing.
-      const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
+        // Direct OpenAI should win because Codex OAuth makes it available for routing.
+        // Use a model from CODEX_OAUTH_ALLOWED_MODELS so createModel can route through OAuth.
+        const result = await factory.resolveAndCreateModel("openai:gpt-5.2", "off");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(result.data.effectiveModelString).toBe("openai:gpt-5.2");
+        expect(result.data.routeProvider).toBe("openai");
+        expect(result.data.routedThroughGateway).toBe(false);
+      });
+    } finally {
+      if (savedKey !== undefined) {
+        process.env.OPENAI_API_KEY = savedKey;
       }
-
-      expect(result.data.effectiveModelString).toBe("openai:gpt-5");
-      expect(result.data.routeProvider).toBe("openai");
-      expect(result.data.routedThroughGateway).toBe(false);
-    });
+    }
   });
 
   it("leaves direct-provider model strings unchanged when direct routing wins", async () => {
