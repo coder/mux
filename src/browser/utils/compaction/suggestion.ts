@@ -35,11 +35,21 @@ function buildIsConfigured(
     providersConfig?.[provider]?.isEnabled !== false;
 }
 
-export function getExplicitCompactionSuggestion(options: {
-  modelId: string;
+export interface CompactionRouteOptions {
+  routePriority: string[];
+  routeOverrides: Record<string, string>;
+}
+
+export interface CompactionAvailabilityOptions extends CompactionRouteOptions {
   providersConfig: ProvidersConfigMap | null;
   policy?: EffectivePolicy | null;
-}): CompactionSuggestion | null {
+}
+
+export function getExplicitCompactionSuggestion(
+  options: {
+    modelId: string;
+  } & CompactionAvailabilityOptions
+): CompactionSuggestion | null {
   const modelId = options.modelId.trim();
   if (modelId.length === 0) {
     return null;
@@ -47,7 +57,7 @@ export function getExplicitCompactionSuggestion(options: {
 
   const normalized = normalizeToCanonical(modelId);
   const isConfigured = buildIsConfigured(options.providersConfig);
-  if (!isModelAvailable(normalized, isConfigured)) {
+  if (!isModelAvailable(normalized, options.routePriority, options.routeOverrides, isConfigured)) {
     return null;
   }
 
@@ -81,11 +91,11 @@ export function getExplicitCompactionSuggestion(options: {
  *
  * Uses max_input_tokens (not total context) since that's the actual limit for request payloads.
  */
-export function getHigherContextCompactionSuggestion(options: {
-  currentModel: string;
-  providersConfig: ProvidersConfigMap | null;
-  policy?: EffectivePolicy | null;
-}): CompactionSuggestion | null {
+export function getHigherContextCompactionSuggestion(
+  options: {
+    currentModel: string;
+  } & CompactionAvailabilityOptions
+): CompactionSuggestion | null {
   const currentStats = getModelStats(options.currentModel);
   if (!currentStats?.max_input_tokens) {
     return null;
@@ -95,7 +105,7 @@ export function getHigherContextCompactionSuggestion(options: {
   const isConfigured = buildIsConfigured(options.providersConfig);
 
   for (const known of Object.values(KNOWN_MODELS)) {
-    if (!isModelAvailable(known.id, isConfigured)) {
+    if (!isModelAvailable(known.id, options.routePriority, options.routeOverrides, isConfigured)) {
       continue;
     }
 

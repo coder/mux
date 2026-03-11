@@ -11,7 +11,7 @@ import type { DisplayedMessage } from "@/common/types/message";
 import { getPreferredCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
-import { getExplicitCompactionSuggestion } from "./suggestion";
+import { getExplicitCompactionSuggestion, type CompactionRouteOptions } from "./suggestion";
 
 /** Safety buffer - warn if context exceeds 90% of target model's limit */
 const CONTEXT_FIT_THRESHOLD = 0.9;
@@ -39,7 +39,7 @@ export function findPreviousModel(messages: DisplayedMessage[]): string | null {
 }
 
 /** Options for accessibility checks in context switch validation */
-export interface ContextSwitchOptions {
+export interface ContextSwitchOptions extends CompactionRouteOptions {
   providersConfig: ProvidersConfigMap | null;
   policy: EffectivePolicy | null;
 }
@@ -60,6 +60,8 @@ function resolveCompactionModel(
       modelId: preferred,
       providersConfig: options.providersConfig,
       policy: options.policy,
+      routePriority: options.routePriority,
+      routeOverrides: options.routeOverrides,
     });
     const limit = getEffectiveContextLimit(preferred, use1M, options.providersConfig);
     if (accessible && limit && limit > currentTokens) return preferred;
@@ -69,6 +71,8 @@ function resolveCompactionModel(
       modelId: previousModel,
       providersConfig: options.providersConfig,
       policy: options.policy,
+      routePriority: options.routePriority,
+      routeOverrides: options.routeOverrides,
     });
     const limit = getEffectiveContextLimit(previousModel, use1M, options.providersConfig);
     if (accessible && limit && limit > currentTokens) return previousModel;

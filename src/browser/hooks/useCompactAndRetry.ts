@@ -3,6 +3,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useRouting } from "@/browser/hooks/useRouting";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
   formatCompactionCommandLine,
@@ -74,6 +75,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
   const [providersConfig, setProvidersConfig] = useState<ProvidersConfigMap | null>(null);
+  const { routePriority, routeOverrides } = useRouting();
   const [isRetryingWithCompaction, setIsRetryingWithCompaction] = useState(false);
   const isMountedRef = useRef(true);
   const autoCompactionAttemptRef = useRef<string | null>(null);
@@ -155,6 +157,8 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         currentModel: compactionTargetModel,
         providersConfig,
         policy: effectivePolicy,
+        routePriority,
+        routeOverrides,
       });
     }
 
@@ -164,6 +168,8 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         modelId: preferred,
         providersConfig,
         policy: effectivePolicy,
+        routePriority,
+        routeOverrides,
       });
       if (explicit) {
         return explicit;
@@ -174,6 +180,8 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       currentModel: compactionTargetModel,
       providersConfig,
       policy: effectivePolicy,
+      routePriority,
+      routeOverrides,
     });
   }, [
     compactionTargetModel,
@@ -182,6 +190,8 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
     providersConfig,
     effectivePolicy,
     configuredCompactionModel,
+    routePriority,
+    routeOverrides,
   ]);
 
   /**

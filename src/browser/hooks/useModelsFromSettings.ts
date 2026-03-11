@@ -7,6 +7,7 @@ import {
 } from "@/common/constants/codexOAuth";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
+import { useRouting } from "./useRouting";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { isValidProvider } from "@/common/constants/providers";
@@ -116,6 +117,7 @@ export function useModelsFromSettings() {
     [api]
   );
   const { config, refresh } = useProvidersConfig();
+  const { routePriority, routeOverrides } = useRouting();
 
   const [defaultModel, setDefaultModel] = usePersistedState<string>(
     DEFAULT_MODEL_KEY,
@@ -174,7 +176,7 @@ export function useModelsFromSettings() {
         return false;
       }
 
-      if (isModelAvailable(modelId, isConfigured)) {
+      if (isModelAvailable(modelId, routePriority, routeOverrides, isConfigured)) {
         return false;
       }
 
@@ -195,7 +197,16 @@ export function useModelsFromSettings() {
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy, isConfigured, openaiApiKeySet, codexOauthSet]);
+  }, [
+    config,
+    hiddenModels,
+    effectivePolicy,
+    isConfigured,
+    routePriority,
+    routeOverrides,
+    openaiApiKeySet,
+    codexOauthSet,
+  ]);
 
   const hiddenModelsForSelector = useMemo(
     () => dedupeKeepFirst([...hiddenModels, ...providerHiddenModels]),
@@ -210,7 +221,9 @@ export function useModelsFromSettings() {
     const providerFiltered =
       config == null
         ? suggested
-        : suggested.filter((modelId) => isModelAvailable(modelId, isConfigured));
+        : suggested.filter((modelId) =>
+            isModelAvailable(modelId, routePriority, routeOverrides, isConfigured)
+          );
 
     if (config == null) {
       return effectivePolicy
@@ -242,7 +255,16 @@ export function useModelsFromSettings() {
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
-  }, [config, hiddenModels, effectivePolicy, isConfigured, openaiApiKeySet, codexOauthSet]);
+  }, [
+    config,
+    hiddenModels,
+    effectivePolicy,
+    isConfigured,
+    routePriority,
+    routeOverrides,
+    openaiApiKeySet,
+    codexOauthSet,
+  ]);
 
   /**
    * If a model is selected that isn't built-in, persist it as a provider custom model.

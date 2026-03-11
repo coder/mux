@@ -10,6 +10,20 @@ function createIsConfigured(configuredProviders: string[]): (provider: string) =
   return (provider: string): boolean => configuredSet.has(provider);
 }
 
+function isModelAvailableForRoutes(options: {
+  modelId: string;
+  configuredProviders: string[];
+  routePriority: string[];
+  routeOverrides?: Record<string, string>;
+}): boolean {
+  return isModelAvailable(
+    options.modelId,
+    options.routePriority,
+    options.routeOverrides ?? {},
+    createIsConfigured(options.configuredProviders)
+  );
+}
+
 describe("resolveRoute", () => {
   test("walks route priority: mux-gateway, then openrouter, then direct", () => {
     const routePriority = ["mux-gateway", "openrouter", "direct"];
@@ -171,23 +185,85 @@ describe("resolveRoute", () => {
 
 describe("isModelAvailable", () => {
   test("returns true when direct route is configured", () => {
-    expect(isModelAvailable(MODEL, createIsConfigured(["anthropic"]))).toBe(true);
+    expect(
+      isModelAvailableForRoutes({
+        modelId: MODEL,
+        configuredProviders: ["anthropic"],
+        routePriority: ["direct"],
+      })
+    ).toBe(true);
   });
 
   test("returns true when gateway route is configured", () => {
-    expect(isModelAvailable(MODEL, createIsConfigured(["openrouter"]))).toBe(true);
+    expect(
+      isModelAvailableForRoutes({
+        modelId: MODEL,
+        configuredProviders: ["openrouter"],
+        routePriority: ["openrouter", "direct"],
+      })
+    ).toBe(true);
   });
 
   test("returns true when Bedrock can route the model", () => {
-    expect(isModelAvailable(MODEL, createIsConfigured(["bedrock"]))).toBe(true);
+    expect(
+      isModelAvailableForRoutes({
+        modelId: MODEL,
+        configuredProviders: ["bedrock"],
+        routePriority: ["bedrock", "direct"],
+      })
+    ).toBe(true);
   });
 
   test("returns true when GitHub Copilot can route an OpenAI model", () => {
-    expect(isModelAvailable(OPENAI_MODEL, createIsConfigured(["github-copilot"]))).toBe(true);
+    expect(
+      isModelAvailableForRoutes({
+        modelId: OPENAI_MODEL,
+        configuredProviders: ["github-copilot"],
+        routePriority: ["github-copilot", "direct"],
+      })
+    ).toBe(true);
+  });
+
+  test("returns false when a configured gateway is absent from routePriority", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: MODEL,
+        configuredProviders: ["openrouter"],
+        routePriority: ["direct"],
+      })
+    ).toBe(false);
+  });
+
+  test("returns true when an override selects a configured gateway outside routePriority", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: MODEL,
+        configuredProviders: ["openrouter"],
+        routePriority: ["direct"],
+        routeOverrides: { [MODEL]: "openrouter" },
+      })
+    ).toBe(true);
+  });
+
+  test("falls through an unconfigured override to a viable priority route", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: MODEL,
+        configuredProviders: ["bedrock"],
+        routePriority: ["bedrock", "direct"],
+        routeOverrides: { [MODEL]: "openrouter" },
+      })
+    ).toBe(true);
   });
 
   test("returns false when no route is configured", () => {
-    expect(isModelAvailable(MODEL, () => false)).toBe(false);
+    expect(
+      isModelAvailableForRoutes({
+        modelId: MODEL,
+        configuredProviders: [],
+        routePriority: ["mux-gateway", "openrouter", "direct"],
+      })
+    ).toBe(false);
   });
 });
 

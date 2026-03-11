@@ -13,6 +13,7 @@ import type { DisplayedMessage } from "@/common/types/message";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { useRouting } from "@/browser/hooks/useRouting";
 import {
   checkContextSwitch,
   findPreviousModel,
@@ -139,13 +140,19 @@ export function useContextSwitchWarning(
   const warning = switchState.warning;
   const prevUse1MRef = useRef(use1M);
   const policyState = usePolicy();
+  const { routePriority, routeOverrides } = useRouting();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
 
   // Options for validating compaction model accessibility
   const checkOptions: ContextSwitchOptions = useMemo(
-    () => ({ providersConfig, policy: effectivePolicy }),
-    [providersConfig, effectivePolicy]
+    () => ({
+      providersConfig,
+      policy: effectivePolicy,
+      routePriority,
+      routeOverrides,
+    }),
+    [providersConfig, effectivePolicy, routePriority, routeOverrides]
   );
 
   const prevCheckOptionsRef = useRef(checkOptions);
@@ -185,6 +192,8 @@ export function useContextSwitchWarning(
         currentModel: w.targetModel,
         providersConfig,
         policy: effectivePolicy,
+        routePriority,
+        routeOverrides,
       });
 
       if (suggestion) {
@@ -195,7 +204,7 @@ export function useContextSwitchWarning(
       }
       return w;
     },
-    [providersConfig, effectivePolicy, use1M]
+    [providersConfig, effectivePolicy, routePriority, routeOverrides, use1M]
   );
 
   const evaluateWarning = useCallback(

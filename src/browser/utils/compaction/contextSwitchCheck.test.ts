@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { checkContextSwitch } from "./contextSwitchCheck";
 import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 
-const OPTIONS = { providersConfig: null, policy: null };
+const OPTIONS = {
+  providersConfig: null,
+  policy: null,
+  routePriority: ["direct"],
+  routeOverrides: {},
+};
 
 describe("checkContextSwitch", () => {
   test("returns null when target model matches previous model", () => {
@@ -72,6 +77,8 @@ describe("checkContextSwitch", () => {
         },
       },
       policy: null,
+      routePriority: ["direct"],
+      routeOverrides: {},
     });
 
     expect(warning).not.toBeNull();
