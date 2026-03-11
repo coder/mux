@@ -1,6 +1,5 @@
 import { tool } from "ai";
 
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { SkillsCatalogReadToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
@@ -14,7 +13,7 @@ interface SkillsCatalogReadToolArgs {
   skillId: string;
 }
 
-export const createSkillsCatalogReadTool: ToolFactory = (config: ToolConfiguration) => {
+export const createSkillsCatalogReadTool: ToolFactory = (_config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.skills_catalog_read.description,
     inputSchema: TOOL_DEFINITIONS.skills_catalog_read.schema,
@@ -23,13 +22,6 @@ export const createSkillsCatalogReadTool: ToolFactory = (config: ToolConfigurati
       repo,
       skillId,
     }: SkillsCatalogReadToolArgs): Promise<SkillsCatalogReadToolResult> => {
-      if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
-        return {
-          success: false,
-          error: "skills_catalog_read is only available in the Chat with Mux system workspace",
-        };
-      }
-
       try {
         const fetched = await fetchSkillContent(owner, repo, skillId);
 

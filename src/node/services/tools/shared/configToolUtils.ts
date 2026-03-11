@@ -1,21 +1,3 @@
-import path from "node:path";
-import type { ToolConfiguration } from "@/common/utils/tools/tools";
-
-/**
- * Derive the mux home directory (~/.mux) from the workspace session directory.
- * workspaceSessionDir = <muxHome>/sessions/<workspaceId>
- */
-export function getMuxHomeFromWorkspaceSessionDir(
-  config: ToolConfiguration,
-  toolName: string
-): string {
-  if (!config.workspaceSessionDir) {
-    throw new Error(`${toolName} requires workspaceSessionDir`);
-  }
-  const sessionsDir = path.dirname(config.workspaceSessionDir);
-  return path.dirname(sessionsDir);
-}
-
 /**
  * Parse a string as a non-negative integer array index.
  * Returns null if the string is not a valid non-negative integer.

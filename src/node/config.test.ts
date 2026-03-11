@@ -736,6 +736,92 @@ describe("Config", () => {
       });
     });
 
+    it("injects global secrets with injectAll into any project's effective secrets", async () => {
+      await config.updateGlobalSecrets([
+        { key: "INJECTED", value: "everywhere", injectAll: true },
+        { key: "STORED_ONLY", value: "shared" },
+      ]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      expect(record).toEqual({
+        INJECTED: "everywhere",
+      });
+    });
+
+    it("project secrets override injectAll global secrets", async () => {
+      await config.updateGlobalSecrets([{ key: "TOKEN", value: "global", injectAll: true }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [{ key: "TOKEN", value: "project" }]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        TOKEN: "project",
+      });
+    });
+
+    it("injects injectAll globals alongside project-specific secrets", async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "global", injectAll: true }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [{ key: "LOCAL_TOKEN", value: "local" }]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        GLOBAL_TOKEN: "global",
+        LOCAL_TOKEN: "local",
+      });
+    });
+
+    it("returns only globally injected secrets for project settings visibility", async () => {
+      await config.updateGlobalSecrets([
+        { key: "GLOBAL_VISIBLE", value: "v", injectAll: true },
+        { key: "GLOBAL_HIDDEN", value: "h" },
+        { key: "SHARED", value: "global", injectAll: true },
+      ]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "LOCAL_ONLY", value: "local" },
+        { key: "SHARED", value: "project" },
+      ]);
+
+      expect(config.getInjectedGlobalSecrets(projectPath)).toEqual([
+        { key: "GLOBAL_VISIBLE", value: "v" },
+      ]);
+    });
+
+    it("does not inject global secrets unless injectAll is true", async () => {
+      await config.updateGlobalSecrets([
+        { key: "A", value: "1", injectAll: false },
+        { key: "B", value: "2" },
+        { key: "C", value: "3", injectAll: true },
+      ]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      expect(record).toEqual({
+        C: "3",
+      });
+    });
+
+    it("uses last global duplicate to decide injectAll behavior", async () => {
+      await config.updateGlobalSecrets([
+        { key: "DUP", value: "first", injectAll: true },
+        { key: "DUP", value: "second", injectAll: false },
+      ]);
+
+      expect(await secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({});
+
+      await config.updateGlobalSecrets([
+        { key: "DUP", value: "first", injectAll: false },
+        { key: "DUP", value: "second", injectAll: true },
+      ]);
+
+      expect(await secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({
+        DUP: "second",
+      });
+    });
+
     it('resolves project secret aliases to global secrets via {secret:"KEY"}', async () => {
       await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "abc" }]);
 
@@ -891,6 +977,22 @@ describe("Config", () => {
 
       expect(config.getGlobalSecrets()).toEqual([]);
       expect(config.getProjectSecrets("/repo")).toEqual([{ key: "A", value: "1" }]);
+    });
+    it("sanitizes malformed injectAll values without dropping valid secrets", async () => {
+      const projectPath = "/repo";
+      const secretsFile = path.join(tempDir, "secrets.json");
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: [{ key: "GLOBAL_TOKEN", value: "abc", injectAll: "true" }],
+          [projectPath]: [{ key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } }],
+        })
+      );
+
+      expect(config.getGlobalSecrets()).toEqual([{ key: "GLOBAL_TOKEN", value: "abc" }]);
+      expect(await secretsToRecord(config.getEffectiveSecrets(projectPath))).toEqual({
+        TOKEN: "abc",
+      });
     });
   });
 });

@@ -26,21 +26,46 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 describe("skills_catalog_search", () => {
-  it("rejects search outside Chat with Mux workspace", async () => {
-    using tempDir = new TestTempDir("test-skills-catalog-search-reject");
+  it("allows search from non-mux-chat workspace", async () => {
+    using tempDir = new TestTempDir("test-skills-catalog-search-non-mux-chat-workspace");
     const config = createTestToolConfig(tempDir.path, {
-      workspaceId: "regular-workspace",
+      workspaceId: "my-project",
     });
+
+    fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        query: "testing",
+        searchType: "keyword",
+        count: 1,
+        skills: [
+          {
+            skillId: "test-skill",
+            name: "test-skill",
+            installs: 42,
+            source: "test-owner/test-repo",
+          },
+        ],
+      })
+    );
 
     const tool = createSkillsCatalogSearchTool(config);
     const result = (await tool.execute!(
-      { query: "test" },
+      { query: "testing" },
       mockToolCallOptions
     )) as SkillsCatalogSearchToolResult;
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toMatch(/only available/i);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.count).toBe(1);
+      expect(result.skills).toHaveLength(1);
+      expect(result.skills[0]).toEqual({
+        skillId: "test-skill",
+        name: "test-skill",
+        owner: "test-owner",
+        repo: "test-repo",
+        installs: 42,
+        url: "https://skills.sh/skill/test-skill",
+      });
     }
   });
 

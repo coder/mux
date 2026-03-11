@@ -788,6 +788,15 @@ export const secrets = {
     input: z.object({ projectPath: z.string().optional() }),
     output: z.array(SecretSchema),
   },
+  /**
+   * Read-only list of global secret keys injected into a project via `injectAll`.
+   *
+   * Project-owned keys are excluded because local/project secrets always win on collision.
+   */
+  getInjectedGlobals: {
+    input: z.object({ projectPath: z.string() }).strict(),
+    output: z.array(z.string()),
+  },
   update: {
     input: z.object({
       projectPath: z.string().optional(),

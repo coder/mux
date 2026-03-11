@@ -200,21 +200,14 @@ describe("TOOL_DEFINITIONS", () => {
     expect(tools).toContain("agent_skill_list");
     expect(tools).toContain("agent_skill_write");
     expect(tools).toContain("agent_skill_delete");
-    expect(tools).toContain("mux_global_agents_read");
-    expect(tools).toContain("mux_global_agents_write");
+    expect(tools).toContain("mux_agents_read");
+    expect(tools).toContain("mux_agents_write");
     expect(tools).toContain("mux_config_read");
     expect(tools).toContain("mux_config_write");
   });
 
-  it("excludes skills catalog tools by default", () => {
+  it("includes skills catalog tools", () => {
     const tools = getAvailableTools("openai:gpt-4o");
-
-    expect(tools).not.toContain("skills_catalog_search");
-    expect(tools).not.toContain("skills_catalog_read");
-  });
-
-  it("includes skills catalog tools when explicitly enabled", () => {
-    const tools = getAvailableTools("openai:gpt-4o", { enableSkillsCatalogTools: true });
 
     expect(tools).toContain("skills_catalog_search");
     expect(tools).toContain("skills_catalog_read");

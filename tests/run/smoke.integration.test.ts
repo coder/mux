@@ -11,6 +11,7 @@ import * as path from "path";
 import * as fs from "fs/promises";
 import * as os from "os";
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
+import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
 
 const RUN_PATH = path.resolve(__dirname, "../../src/cli/run.ts");
 
@@ -76,6 +77,8 @@ async function runMuxRun(
   });
 }
 
+const SMOKE_TEST_MODEL = KNOWN_MODELS.HAIKU.id;
+
 describeIntegration("mux run smoke tests", () => {
   let testDir: string;
   let muxRoot: string;
@@ -108,18 +111,14 @@ describeIntegration("mux run smoke tests", () => {
     }
   });
 
+  function buildSmokeRunArgs(prompt: string): string[] {
+    return ["--dir", testDir, "--model", SMOKE_TEST_MODEL, "--thinking", "off", prompt];
+  }
+
   test("simple echo prompt completes successfully", async () => {
-    // Use claude-haiku for speed, thinking off for determinism
+    // Use Haiku for speed, thinking off for determinism.
     const result = await runMuxRun(
-      [
-        "--dir",
-        testDir,
-        "--model",
-        "anthropic:claude-haiku-4-5",
-        "--thinking",
-        "off",
-        "Say exactly 'HELLO_MUX_TEST' and nothing else. Do not use any tools.",
-      ],
+      buildSmokeRunArgs("Say exactly 'HELLO_MUX_TEST' and nothing else. Do not use any tools."),
       { timeoutMs: 45000, muxRoot }
     );
 
@@ -135,15 +134,9 @@ describeIntegration("mux run smoke tests", () => {
     const testContent = "mux-run-integration-test";
 
     const result = await runMuxRun(
-      [
-        "--dir",
-        testDir,
-        "--model",
-        "anthropic:claude-haiku-4-5",
-        "--thinking",
-        "off",
-        `Create a file called "${testFileName}" with the content "${testContent}" using the bash tool. Do not explain, just create the file.`,
-      ],
+      buildSmokeRunArgs(
+        `Create a file called "${testFileName}" with the content "${testContent}" using the bash tool. Do not explain, just create the file.`
+      ),
       { timeoutMs: 45000, muxRoot }
     );
 
@@ -166,15 +159,9 @@ describeIntegration("mux run smoke tests", () => {
 
   test("set_exit_code tool sets process exit code", async () => {
     const result = await runMuxRun(
-      [
-        "--dir",
-        testDir,
-        "--model",
-        "anthropic:claude-haiku-4-5",
-        "--thinking",
-        "off",
-        "Use the set_exit_code tool to set the exit code to 150. Do not explain, just call the tool.",
-      ],
+      buildSmokeRunArgs(
+        "Use the set_exit_code tool to set the exit code to 150. Do not explain, just call the tool."
+      ),
       { timeoutMs: 45000, muxRoot }
     );
 

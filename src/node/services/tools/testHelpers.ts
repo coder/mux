@@ -5,6 +5,7 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { Config } from "@/node/config";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import type { MuxToolScope } from "@/common/types/toolScope";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 
@@ -53,7 +54,12 @@ function getTestInitStateManager(): InitStateManager {
  */
 export function createTestToolConfig(
   tempDir: string,
-  options?: { workspaceId?: string; sessionsDir?: string; runtime?: Runtime }
+  options?: {
+    workspaceId?: string;
+    sessionsDir?: string;
+    runtime?: Runtime;
+    muxScope?: MuxToolScope;
+  }
 ): ToolConfiguration {
   return {
     cwd: tempDir,
@@ -61,6 +67,10 @@ export function createTestToolConfig(
     runtime: options?.runtime ?? new LocalRuntime(tempDir),
     runtimeTempDir: tempDir,
     workspaceId: options?.workspaceId ?? "test-workspace",
+    muxScope: options?.muxScope ?? {
+      type: "global",
+      muxHome: tempDir,
+    },
   };
 }
 

@@ -1461,6 +1461,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const visibleRows = workspaces.filter((workspace) =>
                                   visibleRowIds.has(workspace.id)
                                 );
+                                const visibleRowsById = new Map(
+                                  visibleRows.map((workspace) => [workspace.id, workspace])
+                                );
                                 const visibleChildrenByParent = new Map<
                                   string,
                                   FrontendWorkspaceMetadata[]
@@ -1488,11 +1491,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   const parentId = workspace.parentWorkspaceId;
                                   if (!parentId) {
-                                    rowMetaByVisibleWorkspaceId.set(workspace.id, baseRowMeta);
+                                    rowMetaByVisibleWorkspaceId.set(workspace.id, {
+                                      ...baseRowMeta,
+                                      ancestorTrunks: [],
+                                    });
                                     continue;
                                   }
 
                                   const siblings = visibleChildrenByParent.get(parentId) ?? [];
+                                  const siblingIndex = siblings.findIndex(
+                                    (sibling) => sibling.id === workspace.id
+                                  );
                                   let connectorPosition: AgentRowRenderMeta["connectorPosition"] =
                                     "single";
                                   if (siblings.length > 1) {
@@ -1502,9 +1511,61 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         : "middle";
                                   }
 
+                                  let lastRunningSiblingIndex = -1;
+                                  for (let index = siblings.length - 1; index >= 0; index -= 1) {
+                                    if (siblings[index]?.taskStatus === "running") {
+                                      lastRunningSiblingIndex = index;
+                                      break;
+                                    }
+                                  }
+
+                                  const connectorStartsAtParent = siblingIndex === 0;
+                                  const sharedTrunkActiveThroughRow =
+                                    siblingIndex >= 0 &&
+                                    lastRunningSiblingIndex >= 0 &&
+                                    siblingIndex <= lastRunningSiblingIndex;
+                                  const sharedTrunkActiveBelowRow =
+                                    siblingIndex >= 0 &&
+                                    lastRunningSiblingIndex >= 0 &&
+                                    siblingIndex < lastRunningSiblingIndex;
+
+                                  const ancestorTrunks: Array<{ depth: number; active: boolean }> =
+                                    [];
+                                  const visitedAncestorIds = new Set<string>();
+                                  let ancestorId: string | undefined = parentId;
+                                  while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
+                                    visitedAncestorIds.add(ancestorId);
+
+                                    const ancestorWorkspace = visibleRowsById.get(ancestorId);
+                                    if (!ancestorWorkspace) {
+                                      break;
+                                    }
+
+                                    const ancestorMeta =
+                                      rowMetaByVisibleWorkspaceId.get(ancestorId) ??
+                                      baseRowMetaByWorkspaceId.get(ancestorId);
+                                    const ancestorDepth = depthByWorkspaceId[ancestorId] ?? 0;
+                                    if (
+                                      ancestorDepth > 0 &&
+                                      ancestorMeta?.connectorPosition === "middle"
+                                    ) {
+                                      ancestorTrunks.push({
+                                        depth: ancestorDepth,
+                                        active: ancestorMeta.sharedTrunkActiveBelowRow,
+                                      });
+                                    }
+
+                                    ancestorId = ancestorWorkspace.parentWorkspaceId;
+                                  }
+                                  ancestorTrunks.sort((left, right) => left.depth - right.depth);
+
                                   rowMetaByVisibleWorkspaceId.set(workspace.id, {
                                     ...baseRowMeta,
                                     connectorPosition,
+                                    connectorStartsAtParent,
+                                    sharedTrunkActiveThroughRow,
+                                    sharedTrunkActiveBelowRow,
+                                    ancestorTrunks,
                                   });
                                 }
 

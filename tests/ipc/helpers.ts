@@ -29,7 +29,7 @@ import { detectDefaultTrunkBranch } from "../../src/node/git";
 import type { TestEnvironment } from "./setup";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import type { OrpcTestClient } from "./orpcTestClient";
-import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
+import { INTEGRATION_TEST_MODEL, shouldRunIntegrationTests } from "../testUtils";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 import type { WorkspaceSendMessageOutput } from "@/common/orpc/schemas";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -125,8 +125,8 @@ type SendMessageWithModelOptions = Omit<SendMessageOptionsWithAgentFallback, "mo
   fileParts?: Array<{ url: string; mediaType: string }>;
 };
 
-const DEFAULT_MODEL_ID = KNOWN_MODELS.SONNET.id;
-const DEFAULT_PROVIDER = KNOWN_MODELS.SONNET.provider;
+const DEFAULT_MODEL_ID = INTEGRATION_TEST_MODEL;
+const DEFAULT_PROVIDER = DEFAULT_MODEL_ID.slice(0, DEFAULT_MODEL_ID.indexOf(":"));
 
 export async function sendMessage(
   source: OrpcSource,
@@ -138,7 +138,11 @@ export async function sendMessage(
 
   // options is now required by the oRPC schema; build with defaults if not provided
   const resolvedOptions: SendMessageOptions & { fileParts?: FilePart[] } = {
-    model: options?.model ?? WORKSPACE_DEFAULTS.model,
+    // Keep provider-backed integration runs pinned to one shared Sonnet model even
+    // when the product default shifts, while preserving the workspace default for
+    // non-integration test coverage.
+    model:
+      options?.model ?? (shouldRunIntegrationTests() ? DEFAULT_MODEL_ID : WORKSPACE_DEFAULTS.model),
     // Keep integration helper sends deterministic: default to exec so tests exercise
     // provider/model behavior directly instead of Auto routing.
     agentId: options?.agentId ?? "exec",
@@ -183,7 +187,7 @@ export async function sendMessage(
 }
 
 /**
- * Send a message with an explicit model id (defaults to SONNET).
+ * Send a message with an explicit model id (defaults to the shared Sonnet integration model).
  */
 export async function sendMessageWithModel(
   source: OrpcSource,

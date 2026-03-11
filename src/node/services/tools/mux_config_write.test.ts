@@ -6,6 +6,7 @@ import type { ToolExecutionOptions } from "ai";
 import * as jsonc from "jsonc-parser";
 
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import type { MuxToolScope } from "@/common/types/toolScope";
 
 import { createMuxConfigWriteTool } from "./mux_config_write";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
@@ -38,7 +39,8 @@ type MuxConfigWriteResult = MuxConfigWriteSuccess | MuxConfigWriteError;
 async function createWriteTool(
   muxHomeDir: string,
   workspaceId: string,
-  onConfigChanged?: () => void
+  onConfigChanged?: () => void,
+  muxScope: MuxToolScope = { type: "global", muxHome: muxHomeDir }
 ) {
   const workspaceSessionDir = path.join(muxHomeDir, "sessions", workspaceId);
   await fs.mkdir(workspaceSessionDir, { recursive: true });
@@ -46,6 +48,7 @@ async function createWriteTool(
   const config = createTestToolConfig(muxHomeDir, {
     workspaceId,
     sessionsDir: workspaceSessionDir,
+    muxScope,
   });
   config.onConfigChanged = onConfigChanged;
 

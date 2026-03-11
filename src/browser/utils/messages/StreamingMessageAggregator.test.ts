@@ -514,7 +514,7 @@ describe("StreamingMessageAggregator", () => {
   });
 
   describe("todo lifecycle", () => {
-    test("should preserve todos when stream ends", () => {
+    test("should preserve incomplete todos when stream ends", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       // Start a stream
@@ -575,6 +575,132 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getCurrentTodos()).toHaveLength(2);
     });
 
+    test("marks in-progress todos completed when propose_plan succeeds", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      aggregator.handleToolCallStart({
+        messageId: "msg1",
+        toolCallId: "tool1",
+        toolName: "todo_write",
+        args: {
+          todos: [
+            { content: "Inspected relevant files", status: "completed" },
+            { content: "Writing the plan", status: "in_progress" },
+            { content: "Wait for approval", status: "pending" },
+          ],
+        },
+        tokens: 10,
+        timestamp: Date.now(),
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        toolCallId: "tool1",
+        toolName: "todo_write",
+        result: { success: true },
+        timestamp: Date.now(),
+      });
+
+      aggregator.handleToolCallStart({
+        messageId: "msg1",
+        toolCallId: "tool2",
+        toolName: "propose_plan",
+        args: {},
+        tokens: 1,
+        timestamp: Date.now(),
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        toolCallId: "tool2",
+        toolName: "propose_plan",
+        result: {
+          success: true,
+          planPath: "/tmp/plan.md",
+          message: "Plan proposed. Waiting for user approval.",
+        },
+        timestamp: Date.now(),
+      });
+
+      expect(aggregator.getCurrentTodos()).toEqual([
+        { content: "Inspected relevant files", status: "completed" },
+        { content: "Writing the plan", status: "completed" },
+        { content: "Wait for approval", status: "pending" },
+      ]);
+    });
+
+    test("should clear fully completed todos when the final stream ends", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      aggregator.handleToolCallStart({
+        messageId: "msg1",
+        toolCallId: "tool1",
+        toolName: "todo_write",
+        args: {
+          todos: [
+            { content: "Do task 1", status: "completed" },
+            { content: "Do task 2", status: "completed" },
+          ],
+        },
+        tokens: 10,
+        timestamp: Date.now(),
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        toolCallId: "tool1",
+        toolName: "todo_write",
+        result: { success: true },
+        timestamp: Date.now(),
+      });
+
+      expect(aggregator.getCurrentTodos()).toHaveLength(2);
+
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: "test-workspace",
+        messageId: "msg1",
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+        parts: [],
+      });
+
+      expect(aggregator.getCurrentTodos()).toHaveLength(0);
+    });
+
     test("should preserve todos when stream aborts", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
@@ -625,7 +751,7 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getCurrentTodos()).toHaveLength(1);
     });
 
-    test("should reconstruct todos on reload regardless of active stream", () => {
+    test("should keep completed todos on reload only while reconnecting to an active stream", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const historicalMessage = {
@@ -663,10 +789,143 @@ describe("StreamingMessageAggregator", () => {
 
       // Scenario 2: Reload without active stream (hasActiveStream = false)
       aggregator2.loadHistoricalMessages([historicalMessage], false);
-      expect(aggregator2.getCurrentTodos()).toHaveLength(2);
+      expect(aggregator2.getCurrentTodos()).toHaveLength(0);
     });
 
-    test("should reconstruct agentStatus and todos when no active stream", () => {
+    test("preserves completed todos on idle reload when they came from a partial assistant message", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const historicalMessage = {
+        id: "msg-partial",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "tool1",
+            toolName: "todo_write",
+            state: "output-available" as const,
+            input: {
+              todos: [
+                { content: "Recovered task 1", status: "completed" },
+                { content: "Recovered task 2", status: "completed" },
+              ],
+            },
+            output: { success: true },
+          },
+        ],
+        metadata: {
+          partial: true,
+          historySequence: 11,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+      };
+
+      aggregator.loadHistoricalMessages([historicalMessage], false);
+
+      expect(aggregator.getCurrentTodos()).toHaveLength(2);
+    });
+
+    test("does not clear completed todos when appending older history without derived-state replay", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const completedHistoricalMessage = {
+        id: "msg1",
+        role: "assistant" as const,
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "tool1",
+            toolName: "todo_write",
+            state: "output-available" as const,
+            input: {
+              todos: [
+                { content: "Historical task 1", status: "completed" },
+                { content: "Historical task 2", status: "completed" },
+              ],
+            },
+            output: { success: true },
+          },
+        ],
+        metadata: {
+          historySequence: 10,
+          timestamp: Date.now(),
+          model: "claude-3-5-sonnet-20241022",
+        },
+      };
+
+      aggregator.loadHistoricalMessages([completedHistoricalMessage], true);
+      expect(aggregator.getCurrentTodos()).toHaveLength(2);
+
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("older-user", "user", "Older history", {
+            historySequence: 1,
+            timestamp: 1,
+          }),
+        ],
+        false,
+        { mode: "append", skipDerivedState: true }
+      );
+
+      expect(aggregator.getCurrentTodos()).toHaveLength(2);
+    });
+
+    test("does not clear completed todos during replay when an active stream is already tracked", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-live",
+        historySequence: 20,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      aggregator.handleToolCallStart({
+        messageId: "msg-live",
+        toolCallId: "tool-live",
+        toolName: "todo_write",
+        args: {
+          todos: [
+            { content: "Live task 1", status: "completed" },
+            { content: "Live task 2", status: "completed" },
+          ],
+        },
+        tokens: 10,
+        timestamp: Date.now(),
+        type: "tool-call-start",
+        workspaceId: "test-workspace",
+      });
+
+      aggregator.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: "test-workspace",
+        messageId: "msg-live",
+        toolCallId: "tool-live",
+        toolName: "todo_write",
+        result: { success: true },
+        timestamp: Date.now(),
+      });
+
+      expect(aggregator.getCurrentTodos()).toHaveLength(2);
+
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("replayed-user", "user", "Replay window", {
+            historySequence: 21,
+            timestamp: 21,
+          }),
+        ],
+        false,
+        { mode: "append" }
+      );
+
+      expect(aggregator.getCurrentTodos()).toHaveLength(2);
+    });
+
+    test("should reconstruct agentStatus and incomplete todos when no active stream", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const historicalMessage = {
@@ -680,7 +939,7 @@ describe("StreamingMessageAggregator", () => {
             toolName: "todo_write",
             state: "output-available" as const,
             input: {
-              todos: [{ content: "Task 1", status: "completed" }],
+              todos: [{ content: "Task 1", status: "in_progress" }],
             },
             output: { success: true },
           },
@@ -1571,6 +1830,83 @@ describe("StreamingMessageAggregator", () => {
       });
 
       expect(aggregator.isCompacting()).toBe(true);
+    });
+    test("does not treat non-compact agent streams as compacting even when the latest user message is /compact", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const compactionRequestMessage = {
+        id: "msg1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request" as const,
+            rawCommand: "/compact",
+            parsed: { model: "anthropic:claude-3-5-haiku-20241022" },
+          },
+        },
+      };
+
+      aggregator.loadHistoricalMessages([compactionRequestMessage], true);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "continue-stream",
+        historySequence: 2,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        agentId: "exec",
+        mode: "exec",
+      });
+
+      expect(aggregator.isCompacting()).toBe(false);
+    });
+
+    test("does not reuse a completed compaction request when older stream-start events omit agentId", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const compactionRequestMessage = {
+        id: "msg1",
+        role: "user" as const,
+        parts: [{ type: "text" as const, text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request" as const,
+            rawCommand: "/compact",
+            parsed: { model: "anthropic:claude-3-5-haiku-20241022" },
+          },
+        },
+      };
+      const compactionSummaryMessage = createMuxMessage(
+        "summary-1",
+        "assistant",
+        "Compacted summary",
+        {
+          historySequence: 2,
+          timestamp: Date.now(),
+          compactionBoundary: true,
+          muxMetadata: { type: "compaction-summary" },
+        }
+      );
+
+      aggregator.loadHistoricalMessages([compactionRequestMessage, compactionSummaryMessage], true);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "continue-stream",
+        historySequence: 3,
+        model: "anthropic:claude-3-5-haiku-20241022",
+        startTime: Date.now(),
+        mode: "exec",
+      });
+
+      expect(aggregator.isCompacting()).toBe(false);
     });
   });
 

@@ -663,6 +663,48 @@ describe("sub-agent row render metadata", () => {
     expect(metadataByWorkspaceId.get("parent")?.rowKind).toBe("primary");
   });
 
+  it("animates the shared trunk through the lowest running child", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("child-1", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("child-2", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("child-3", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("child-4", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+    ];
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+
+    expect(metadataByWorkspaceId.get("child-1")?.connectorStartsAtParent).toBe(true);
+    expect(metadataByWorkspaceId.get("child-2")?.connectorStartsAtParent).toBe(false);
+
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-3")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-4")?.sharedTrunkActiveThroughRow).toBe(false);
+
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveBelowRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveBelowRow).toBe(true);
+    expect(metadataByWorkspaceId.get("child-3")?.sharedTrunkActiveBelowRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-4")?.sharedTrunkActiveBelowRow).toBe(false);
+  });
+
+  it("does not animate shared trunk segments when no children are running", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("child-1", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("child-2", { parentWorkspaceId: "parent", taskStatus: "awaiting_report" }),
+    ];
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveThroughRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveThroughRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-1")?.sharedTrunkActiveBelowRow).toBe(false);
+    expect(metadataByWorkspaceId.get("child-2")?.sharedTrunkActiveBelowRow).toBe(false);
+  });
+
   it("assigns single connector position for an only child", () => {
     const flattened = [
       createWorkspace("parent"),
@@ -826,6 +868,77 @@ describe("sub-agent row render metadata", () => {
     );
     expect(expandedMeta.get("parent")?.hasHiddenCompletedChildren).toBe(false);
     expect(expandedMeta.get("parent")?.visibleCompletedChildrenCount).toBe(1);
+  });
+
+  it("propagates ancestor trunk continuation metadata for nested rows", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("child-a", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("gc-1", { parentWorkspaceId: "child-a", taskStatus: "queued" }),
+      createWorkspace("gc-2", { parentWorkspaceId: "child-a", taskStatus: "queued" }),
+      createWorkspace("child-b", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+    ];
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+
+    expect(metadataByWorkspaceId.get("child-a")?.connectorPosition).toBe("middle");
+    expect(metadataByWorkspaceId.get("child-b")?.connectorPosition).toBe("last");
+    expect(metadataByWorkspaceId.get("gc-1")?.ancestorTrunks).toEqual([
+      { depth: 1, active: false },
+    ]);
+    expect(metadataByWorkspaceId.get("gc-2")?.ancestorTrunks).toEqual([
+      { depth: 1, active: false },
+    ]);
+  });
+
+  it("does not propagate ancestor trunk metadata when parent branch does not continue", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("child-a", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("gc-1", { parentWorkspaceId: "child-a", taskStatus: "queued" }),
+      createWorkspace("gc-2", { parentWorkspaceId: "child-a", taskStatus: "queued" }),
+    ];
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+
+    expect(metadataByWorkspaceId.get("child-a")?.connectorPosition).toBe("single");
+    expect(metadataByWorkspaceId.get("gc-1")?.ancestorTrunks).toEqual([]);
+    expect(metadataByWorkspaceId.get("gc-2")?.ancestorTrunks).toEqual([]);
+  });
+
+  it("marks ancestor trunk continuation as active through nested rows when lower siblings run", () => {
+    const flattenedWithRunningSibling = [
+      createWorkspace("parent"),
+      createWorkspace("child-a", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("gc-1", { parentWorkspaceId: "child-a", taskStatus: "queued" }),
+      createWorkspace("child-b", { parentWorkspaceId: "parent", taskStatus: "running" }),
+    ];
+
+    const runningDepthByWorkspaceId = computeWorkspaceDepthMap(flattenedWithRunningSibling);
+    const runningMetadataByWorkspaceId = computeAgentRowRenderMeta(
+      flattenedWithRunningSibling,
+      runningDepthByWorkspaceId
+    );
+    expect(runningMetadataByWorkspaceId.get("gc-1")?.ancestorTrunks).toEqual([
+      { depth: 1, active: true },
+    ]);
+
+    const flattenedWithoutRunningSibling = [
+      createWorkspace("parent"),
+      createWorkspace("child-a", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+      createWorkspace("gc-1", { parentWorkspaceId: "child-a", taskStatus: "queued" }),
+      createWorkspace("child-b", { parentWorkspaceId: "parent", taskStatus: "queued" }),
+    ];
+    const inactiveDepthByWorkspaceId = computeWorkspaceDepthMap(flattenedWithoutRunningSibling);
+    const inactiveMetadataByWorkspaceId = computeAgentRowRenderMeta(
+      flattenedWithoutRunningSibling,
+      inactiveDepthByWorkspaceId
+    );
+    expect(inactiveMetadataByWorkspaceId.get("gc-1")?.ancestorTrunks).toEqual([
+      { depth: 1, active: false },
+    ]);
   });
 
   it("preserves mixed active+reported child ordering while filtering", () => {

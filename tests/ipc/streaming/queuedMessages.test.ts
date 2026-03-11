@@ -9,6 +9,7 @@ import {
   resolveOrpcClient,
   StreamCollector,
   configureTestRetries,
+  HAIKU_MODEL,
 } from "../helpers";
 import { isQueuedMessageChanged, isRestoreToInput } from "@/common/orpc/types";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -460,7 +461,7 @@ describeIntegration("Queued messages", () => {
 
         // Queue messages with different options
         await sendMessage(env, workspaceId, "Message 1", {
-          model: "anthropic:claude-haiku-4-5",
+          model: HAIKU_MODEL,
           thinkingLevel: "off",
         });
         await sendMessage(env, workspaceId, "Message 2", {

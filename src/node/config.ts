@@ -1482,8 +1482,33 @@ ${jsonString}`;
       return [];
     }
 
-    // Filter invalid entries to avoid crashes when iterating secrets.
-    return value.filter((entry): entry is Secret => Config.isSecret(entry));
+    const sanitizedSecrets: Secret[] = [];
+
+    for (const entry of value) {
+      // Filter invalid entries to avoid crashes when iterating secrets.
+      if (!Config.isSecret(entry)) {
+        continue;
+      }
+
+      // Preserve key/value when persisted data includes malformed injectAll values.
+      // This keeps existing secrets usable while ignoring invalid inject-all flags.
+      const entryWithInjectAll = entry as Secret & { injectAll?: unknown };
+      if (typeof entryWithInjectAll.injectAll === "boolean") {
+        sanitizedSecrets.push({
+          key: entryWithInjectAll.key,
+          value: entryWithInjectAll.value,
+          injectAll: entryWithInjectAll.injectAll,
+        });
+        continue;
+      }
+
+      sanitizedSecrets.push({
+        key: entryWithInjectAll.key,
+        value: entryWithInjectAll.value,
+      });
+    }
+
+    return sanitizedSecrets;
   }
 
   private static mergeSecretsByKey(primary: Secret[], secondary: Secret[]): Secret[] {
@@ -1585,12 +1610,13 @@ ${jsonString}`;
    * Get effective secrets for a project.
    *
    * Project secrets define which env vars are injected into this project/workspace.
-   * Global secrets are only used as a shared value store and are injected only when
-   * a project secret references them via `{ secret: "GLOBAL_KEY" }`.
+   * Global secrets can be injected for all projects when `injectAll` is enabled,
+   * and are also used as a shared value store for `{ secret: "GLOBAL_KEY" }` references.
    */
   getEffectiveSecrets(projectPath: string): Secret[] {
     const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
+    const globalSecrets = config[Config.GLOBAL_SECRETS_KEY] ?? [];
     const projectSecrets = config[normalizedProjectPath] ?? [];
 
     // Keep global reference resolution synchronous so getEffectiveSecrets remains fast and side-effect free.
@@ -1652,7 +1678,28 @@ ${jsonString}`;
       }
     }
 
-    return projectSecrets.map((secret) => {
+    // Normalize duplicate global keys with last-writer semantics before evaluating injectAll.
+    // This keeps inject behavior aligned with value resolution when the same key appears
+    // multiple times in persisted data.
+    const finalGlobalSecretsByKey = new Map<string, Secret>();
+    for (const secret of globalSecrets) {
+      finalGlobalSecretsByKey.set(secret.key, secret);
+    }
+
+    const injectedGlobalSecrets: Secret[] = [];
+    for (const secret of finalGlobalSecretsByKey.values()) {
+      if (secret.injectAll !== true) {
+        continue;
+      }
+
+      const resolvedValue = globalSecretsByKey.get(secret.key);
+      // Allow empty-string global secrets by checking for undefined explicitly.
+      if (resolvedValue !== undefined) {
+        injectedGlobalSecrets.push({ key: secret.key, value: resolvedValue });
+      }
+    }
+
+    const resolvedProjectSecrets = projectSecrets.map((secret) => {
       if (!isSecretReferenceValue(secret.value)) {
         return secret;
       }
@@ -1673,6 +1720,26 @@ ${jsonString}`;
 
       return secret;
     });
+
+    const projectKeys = new Set(resolvedProjectSecrets.map((secret) => secret.key));
+    const nonOverriddenGlobalSecrets = injectedGlobalSecrets.filter(
+      (secret) => !projectKeys.has(secret.key)
+    );
+
+    return [...nonOverriddenGlobalSecrets, ...resolvedProjectSecrets];
+  }
+
+  /**
+   * Get globally injected secrets visible to a project.
+   *
+   * This is a read-only view used by project settings to explain inherited environment.
+   * Project-defined keys are excluded because project secrets override injected globals.
+   */
+  getInjectedGlobalSecrets(projectPath: string): Secret[] {
+    const projectSecrets = this.getProjectSecrets(projectPath);
+    const projectKeys = new Set(projectSecrets.map((secret) => secret.key));
+
+    return this.getEffectiveSecrets(projectPath).filter((secret) => !projectKeys.has(secret.key));
   }
 
   /**

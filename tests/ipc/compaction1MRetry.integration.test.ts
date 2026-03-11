@@ -5,15 +5,16 @@
  * the backend automatically retries with 1M context enabled for models that support it.
  *
  * Pre-seeds ~250k tokens of conversation history, then issues a compaction request
- * with Opus 4.6 (default 200k limit, supports 1M). If the 1M retry fires correctly,
- * the compaction should succeed rather than returning context_exceeded.
+ * with the shared Sonnet integration model (default 200k limit, supports 1M).
+ * If the 1M retry fires correctly, the compaction should succeed rather than
+ * returning context_exceeded.
  */
 
 import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./setup";
 import { createStreamCollector, resolveOrpcClient } from "./helpers";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
-import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
+import { INTEGRATION_TEST_MODEL } from "../testUtils";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -81,7 +82,7 @@ describeIntegration("compaction 1M context retry", () => {
         const collector = createStreamCollector(env.orpc, workspaceId);
         collector.start();
 
-        const opusModel = `anthropic:${KNOWN_MODELS.OPUS.providerModelId}`;
+        const integrationModel = INTEGRATION_TEST_MODEL;
 
         // Send compaction request — use the same pattern as production /compact.
         // Crucially, do NOT enable 1M context in providerOptions; the retry should add it.
@@ -92,7 +93,7 @@ describeIntegration("compaction 1M context retry", () => {
             "Please provide a detailed summary of this conversation. " +
             "Capture all key decisions, context, and open questions.",
           options: {
-            model: opusModel,
+            model: integrationModel,
             thinkingLevel: "off",
             agentId: "compact",
             // No providerOptions.anthropic.use1MContext here — the retry should inject it

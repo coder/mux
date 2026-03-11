@@ -130,7 +130,7 @@ describe("buildSystemMessage", () => {
     mockHomedir?.mockRestore();
   });
 
-  test("includes anti-reverification guidance in the subagent report prelude", async () => {
+  test("includes trusted subagent report guidance in the prelude", async () => {
     const metadata: WorkspaceMetadata = {
       id: "test-workspace",
       name: "test-workspace",
@@ -142,14 +142,14 @@ describe("buildSystemMessage", () => {
     const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
 
     expect(systemMessage).toContain("<subagent-reports>");
-    expect(systemMessage).toContain("spawn a narrower Explore task instead");
+    expect(systemMessage).toContain(
+      "Trust report findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence."
+    );
+    expect(systemMessage).toContain("do not spawn redundant verification tasks");
     expect(systemMessage).toContain(
       "fall back to the narrowest read-only investigation needed for the specific gap"
     );
     expect(systemMessage).toContain("Such reports count as having read the referenced files.");
-    expect(systemMessage).not.toContain(
-      "Do not redo the same investigation unless the report is ambiguous or contradicts other evidence"
-    );
   });
 
   test("includes general instructions in custom-instructions", async () => {

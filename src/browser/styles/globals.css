@@ -2180,6 +2180,66 @@ input[type="checkbox"] {
   }
 }
 
+/* Animated dashed connector for active sub-agents */
+@keyframes connector-dash-scroll {
+  from {
+    transform: translateY(-6px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.subagent-connector-active {
+  /* Remove solid background; dashes rendered by ::before pseudo-element */
+  background: none !important;
+  overflow: hidden !important;
+}
+
+.subagent-connector-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  /* Extra height of one dash cycle (6px) so translateY animation has no gaps */
+  height: calc(100% + 6px);
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--connector-color) 0px,
+    var(--connector-color) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  animation: connector-dash-scroll 0.4s linear infinite;
+}
+
+
+@keyframes connector-elbow-dash-scroll {
+  from {
+    stroke-dashoffset: 6;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.subagent-connector-elbow-active {
+  fill: none;
+  stroke: var(--connector-color);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  stroke-dasharray: 3 3;
+  animation: connector-elbow-dash-scroll 0.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-connector-active::before,
+  .subagent-connector-elbow-active {
+    animation: none;
+  }
+}
+
 /* Section color picker - react-colorful sizing */
 .section-color-picker .react-colorful {
   width: 150px;

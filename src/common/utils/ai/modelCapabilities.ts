@@ -10,6 +10,7 @@ interface RawModelCapabilitiesData {
   supports_audio_input?: boolean;
   supports_video_input?: boolean;
   max_pdf_size_mb?: number;
+  litellm_provider?: string;
   [key: string]: unknown;
 }
 
@@ -63,11 +64,18 @@ function generateLookupKeys(modelString: string): string[] {
 
 function extractModelCapabilities(data: RawModelCapabilitiesData): ModelCapabilities {
   const maxPdfSizeMb = typeof data.max_pdf_size_mb === "number" ? data.max_pdf_size_mb : undefined;
+  const provider = typeof data.litellm_provider === "string" ? data.litellm_provider : undefined;
 
   return {
     // Some providers omit supports_pdf_input but still include a max_pdf_size_mb field.
     // Treat maxPdfSizeMb as a strong signal that PDF input is supported.
-    supportsPdfInput: data.supports_pdf_input === true || maxPdfSizeMb !== undefined,
+    // OpenAI's vision-capable models also accept PDFs, but our local GPT-5 metadata in
+    // models-extra.ts currently omits supports_pdf_input. Infer support here so users
+    // don't get a false "does not support PDF input" block for models like openai:gpt-5.4.
+    supportsPdfInput:
+      data.supports_pdf_input === true ||
+      maxPdfSizeMb !== undefined ||
+      (provider === "openai" && data.supports_vision === true && data.supports_pdf_input !== false),
     supportsVision: data.supports_vision === true,
     supportsAudioInput: data.supports_audio_input === true,
     supportsVideoInput: data.supports_video_input === true,

@@ -20,8 +20,8 @@ import type {
   FileEditReplaceStringToolResultSchema,
   MuxConfigReadToolResultSchema,
   MuxConfigWriteToolResultSchema,
-  MuxGlobalAgentsReadToolResultSchema,
-  MuxGlobalAgentsWriteToolResultSchema,
+  MuxAgentsReadToolResultSchema,
+  MuxAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
@@ -135,17 +135,13 @@ export type MuxConfigReadToolResult = z.infer<typeof MuxConfigReadToolResultSche
 export type MuxConfigWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_write.schema>;
 export type MuxConfigWriteToolResult = z.infer<typeof MuxConfigWriteToolResultSchema>;
 
-// mux_global_agents_read tool types
-export type MuxGlobalAgentsReadToolArgs = z.infer<
-  typeof TOOL_DEFINITIONS.mux_global_agents_read.schema
->;
-export type MuxGlobalAgentsReadToolResult = z.infer<typeof MuxGlobalAgentsReadToolResultSchema>;
+// mux_agents_read tool types
+export type MuxAgentsReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_agents_read.schema>;
+export type MuxAgentsReadToolResult = z.infer<typeof MuxAgentsReadToolResultSchema>;
 
-// mux_global_agents_write tool types
-export type MuxGlobalAgentsWriteToolArgs = z.infer<
-  typeof TOOL_DEFINITIONS.mux_global_agents_write.schema
->;
-export type MuxGlobalAgentsWriteToolResult = z.infer<typeof MuxGlobalAgentsWriteToolResultSchema>;
+// mux_agents_write tool types
+export type MuxAgentsWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_agents_write.schema>;
+export type MuxAgentsWriteToolResult = z.infer<typeof MuxAgentsWriteToolResultSchema>;
 
 export interface FileEditDiffSuccessBase extends ToolOutputUiOnlyFields {
   success: true;

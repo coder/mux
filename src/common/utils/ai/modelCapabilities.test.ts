@@ -34,6 +34,13 @@ describe("getModelCapabilities", () => {
     expect(caps).not.toBeNull();
   });
 
+  it("infers PDF support for OpenAI vision models when models-extra omits the flag", () => {
+    const caps = getModelCapabilities("openai:gpt-5.4");
+    expect(caps).not.toBeNull();
+    expect(caps?.supportsPdfInput).toBe(true);
+    expect(caps?.supportsVision).toBe(true);
+  });
+
   it("returns maxPdfSizeMb when present in model metadata", () => {
     const caps = getModelCapabilities("google:gemini-1.5-flash");
     expect(caps).not.toBeNull();
@@ -49,6 +56,12 @@ describe("getModelCapabilities", () => {
 describe("getSupportedInputMediaTypes", () => {
   it("includes pdf when model supports_pdf_input is true", () => {
     const supported = getSupportedInputMediaTypes("anthropic:claude-sonnet-4-5");
+    expect(supported).not.toBeNull();
+    expect(supported?.has("pdf")).toBe(true);
+  });
+
+  it("includes pdf for OpenAI vision models that rely on the fallback", () => {
+    const supported = getSupportedInputMediaTypes("openai:gpt-5.4");
     expect(supported).not.toBeNull();
     expect(supported?.has("pdf")).toBe(true);
   });

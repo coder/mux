@@ -554,6 +554,31 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     }
   };
   let globalSecretsState: Secret[] = [...globalSecrets];
+  const getInjectedGlobalSecretKeys = (projectPath: string): string[] => {
+    const normalizedProjectPath = projectPath.trim();
+    if (!normalizedProjectPath) {
+      return [];
+    }
+
+    const projectScopedSecrets = projectSecrets.get(normalizedProjectPath) ?? [];
+    const projectScopedKeys = new Set(projectScopedSecrets.map((secret) => secret.key));
+
+    // Match config semantics: for duplicate global keys, the latest entry decides injectAll.
+    const latestGlobalByKey = new Map<string, Secret>();
+    for (const secret of globalSecretsState) {
+      latestGlobalByKey.set(secret.key, secret);
+    }
+
+    const injectedKeys: string[] = [];
+    for (const [key, secret] of latestGlobalByKey) {
+      if (secret.injectAll === true && !projectScopedKeys.has(key)) {
+        injectedKeys.push(key);
+      }
+    }
+
+    return injectedKeys;
+  };
+
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
   let serverAuthSessionsState: ServerAuthSession[] = initialServerAuthSessions.map((session) => ({
@@ -1018,6 +1043,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
         return Promise.resolve(globalSecretsState);
       },
+      getInjectedGlobals: (input: { projectPath: string }) =>
+        Promise.resolve(getInjectedGlobalSecretKeys(input.projectPath)),
       update: (input: { projectPath?: string; secrets: Secret[] }) => {
         const projectPath = typeof input.projectPath === "string" ? input.projectPath.trim() : "";
 

@@ -939,13 +939,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           (meta) => meta.projectPath === launchProjectPath
         );
 
-        if (cancelled || projectWorkspaces.length === 0) return;
+        if (cancelled) return;
 
-        // Select the first workspace in the project.
-        // Use functional update to avoid race: user may have clicked a workspace
-        // while this async call was in flight.
-        const metadata = projectWorkspaces[0];
-        setSelectedWorkspace((current) => current ?? toWorkspaceSelection(metadata));
+        if (projectWorkspaces.length > 0) {
+          // Select the first workspace in the project.
+          // Use functional update to avoid race: user may have clicked a workspace
+          // while this async call was in flight.
+          const metadata = projectWorkspaces[0];
+          setSelectedWorkspace((current) => current ?? toWorkspaceSelection(metadata));
+          return;
+        }
+
+        // If --add-project created a project but there are no workspaces yet, route
+        // directly to the project creation view so first-time users can start
+        // chatting immediately instead of landing on the empty dashboard.
+        navigateToProject(launchProjectPath);
       } catch (error) {
         if (!cancelled) {
           // Ignore errors (e.g. method not found if running against old backend)
@@ -970,6 +978,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     pendingNewWorkspaceProject,
     workspaceMetadata,
     setSelectedWorkspace,
+    navigateToProject,
   ]);
 
   // Self-heal: if the initial route targets a workspace that no longer exists

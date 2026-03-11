@@ -7,7 +7,7 @@ import * as path from "node:path";
 
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 
-import { AIService } from "./aiService";
+import { AIService, resolveMuxProjectRootForHostFs } from "./aiService";
 import { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 import {
   normalizeAnthropicBaseURL,
@@ -31,7 +31,9 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
-import type { LanguageModel } from "ai";
+import { MUX_HELP_CHAT_AGENT_ID } from "@/common/constants/muxChat";
+
+import type { LanguageModel, Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -39,9 +41,11 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
 import type { DevToolsService } from "./devToolsService";
+import type { MCPServerManager } from "./mcpServerManager";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
+import * as toolAssembly from "./toolAssembly";
 import * as toolsModule from "@/common/utils/tools/tools";
 import * as providerOptionsModule from "@/common/utils/ai/providerOptions";
 import * as system1ToolWrapperModule from "./system1ToolWrapper";
@@ -65,6 +69,67 @@ describe("AIService", () => {
   it("should create an AIService instance", () => {
     expect(service).toBeDefined();
     expect(service).toBeInstanceOf(AIService);
+  });
+});
+
+describe("resolveMuxProjectRootForHostFs", () => {
+  const projectPath = "/home/user/projects/my-app";
+  const workspacePath = "/home/user/.mux/src/my-app/feature-branch";
+
+  function createMetadata(runtimeConfig: WorkspaceMetadata["runtimeConfig"]): WorkspaceMetadata {
+    return {
+      id: "workspace-id",
+      name: "feature-branch",
+      projectName: "my-app",
+      projectPath,
+      runtimeConfig,
+    };
+  }
+
+  it("returns workspacePath for local runtime", () => {
+    expect(resolveMuxProjectRootForHostFs(createMetadata({ type: "local" }), workspacePath)).toBe(
+      workspacePath
+    );
+  });
+
+  it("returns workspacePath for worktree runtime", () => {
+    expect(
+      resolveMuxProjectRootForHostFs(
+        createMetadata({ type: "worktree", srcBaseDir: "/home/user/.mux/src" }),
+        workspacePath
+      )
+    ).toBe(workspacePath);
+  });
+
+  it("returns workspacePath for devcontainer runtime", () => {
+    expect(
+      resolveMuxProjectRootForHostFs(
+        createMetadata({ type: "devcontainer", configPath: ".devcontainer/devcontainer.json" }),
+        workspacePath
+      )
+    ).toBe(workspacePath);
+  });
+
+  it("returns projectPath for ssh runtime", () => {
+    expect(
+      resolveMuxProjectRootForHostFs(
+        createMetadata({
+          type: "ssh",
+          host: "remote",
+          srcBaseDir: "/home/remote/.mux/src",
+        }),
+        "/remote/workspace/path"
+      )
+    ).toBe(projectPath);
+  });
+
+  it("returns projectPath for docker runtime", () => {
+    expect(
+      resolveMuxProjectRootForHostFs(
+        createMetadata({ type: "docker", image: "ubuntu:22.04" }),
+        "/src"
+      )
+    ).toBe(projectPath);
   });
 });
 
@@ -1089,6 +1154,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     service: AIService;
     planPayloadMessageIds: string[][];
     preparedPayloadMessageIds: string[][];
+    preparedToolNamesForSentinel: string[][];
     startStreamCalls: unknown[][];
   }
 
@@ -1147,7 +1213,11 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   function createHarness(
     muxHomePath: string,
     metadata: WorkspaceMetadata,
-    options?: { routeProvider?: ProviderName }
+    options?: {
+      routeProvider?: ProviderName;
+      allTools?: Record<string, Tool>;
+      postPolicyTools?: Record<string, Tool>;
+    }
   ): StreamMessageHarness {
     const config = new Config(muxHomePath);
     const historyService = new HistoryService(config);
@@ -1157,6 +1227,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const planPayloadMessageIds: string[][] = [];
     const preparedPayloadMessageIds: string[][] = [];
+    const preparedToolNamesForSentinel: string[][] = [];
     const startStreamCalls: unknown[][] = [];
 
     const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
@@ -1177,7 +1248,6 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         taskDepth: 0,
         shouldDisableTaskToolsForDepth: false,
         effectiveToolPolicy: undefined,
-        toolNamesForSentinel: [],
       },
     };
     spyOn(agentResolution, "resolveAgentForStream").mockImplementation(() =>
@@ -1208,13 +1278,20 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
       preparedPayloadMessageIds.push(args.messagesWithSentinel.map((message) => message.id));
+      preparedToolNamesForSentinel.push(args.toolNamesForSentinel);
       const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
         ReturnType<typeof messagePipeline.prepareMessagesForProvider>
       >;
       return Promise.resolve(preparedMessages);
     });
 
-    spyOn(toolsModule, "getToolsForModel").mockResolvedValue({});
+    const allTools = options?.allTools ?? {};
+    spyOn(toolsModule, "getToolsForModel").mockResolvedValue(allTools);
+    if (options?.postPolicyTools) {
+      spyOn(toolAssembly, "applyToolPolicyAndExperiments").mockResolvedValue(
+        options.postPolicyTools
+      );
+    }
     spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
 
     const fakeModel = Object.create(null) as LanguageModel;
@@ -1292,6 +1369,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       service,
       planPayloadMessageIds,
       preparedPayloadMessageIds,
+      preparedToolNamesForSentinel,
       startStreamCalls,
     };
   }
@@ -1454,6 +1532,44 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(receivedWrapOptions?.system1Model).toBeUndefined();
   });
 
+  it("derives sentinel tool names from assembled post-policy tools", async () => {
+    using muxHome = new DisposableTempDir("ai-service-sentinel-tool-names");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-sentinel-tools";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for tool-name extraction test
+    const stubTool: Tool = {} as never;
+    const finalTools: Record<string, Tool> = {
+      bash: stubTool,
+      my_mcp_tool: stubTool,
+    };
+    const allTools: Record<string, Tool> = {
+      web_search: stubTool,
+      my_mcp_tool: stubTool,
+      bash: stubTool,
+    };
+    const harness = createHarness(muxHome.path, metadata, {
+      allTools,
+      postPolicyTools: finalTools,
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      muxProviderOptions: {
+        openai: { wireFormat: "chatCompletions" },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.preparedToolNamesForSentinel).toEqual([["bash", "my_mcp_tool"]]);
+    expect(harness.preparedToolNamesForSentinel[0]).not.toContain("web_search");
+  });
+
   it("falls back safely when boundary metadata is malformed", async () => {
     using muxHome = new DisposableTempDir("ai-service-slice-malformed-boundary");
     const projectPath = path.join(muxHome.path, "project");
@@ -1510,6 +1626,294 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
     expect(openaiOptions.previousResponseId).toBeUndefined();
     expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
+  });
+});
+
+describe("AIService.streamMessage mux help agent suppression", () => {
+  function createWorkspaceMetadata(workspaceId: string, projectPath: string): WorkspaceMetadata {
+    return {
+      id: workspaceId,
+      name: "workspace-under-test",
+      projectName: "project-under-test",
+      projectPath,
+      runtimeConfig: { type: "local" },
+    };
+  }
+
+  function createHarness(
+    muxHomePath: string,
+    metadata: WorkspaceMetadata,
+    agentScope: "built-in" | "project"
+  ) {
+    const config = new Config(muxHomePath);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const service = new AIService(config, historyService, initStateManager, providerService);
+
+    const buildStreamSystemContextArgs: Array<
+      Parameters<typeof streamContextBuilder.buildStreamSystemContext>[0]
+    > = [];
+    const toolConfigCalls: Array<Parameters<typeof toolsModule.getToolsForModel>[1]> = [];
+    const mcpToolCalls: Array<Parameters<typeof toolsModule.getToolsForModel>[5]> = [];
+    const listServersCalls: Array<{ projectPath: string; overrides: unknown }> = [];
+    const getToolsForWorkspaceCalls: Array<{
+      workspaceId: string;
+      projectPath: string;
+      workspacePath: string;
+      projectSecrets?: Record<string, string>;
+    }> = [];
+
+    const projectSecrets: ReturnType<Config["getEffectiveSecrets"]> = [
+      { key: "PROJECT_TOKEN", value: "secret-value" },
+    ];
+    const getEffectiveSecretsSpy = spyOn(config, "getEffectiveSecrets").mockReturnValue(
+      projectSecrets
+    );
+
+    const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
+      success: true,
+      data: {
+        effectiveAgentId: MUX_HELP_CHAT_AGENT_ID,
+        agentDefinition: {
+          id: MUX_HELP_CHAT_AGENT_ID,
+          scope: agentScope,
+          frontmatter: { name: "Mux" },
+          body: "Mux agent body",
+        },
+        agentDiscoveryPath: metadata.projectPath,
+        isSubagentWorkspace: false,
+        agentIsPlanLike: false,
+        effectiveMode: "exec",
+        taskSettings: DEFAULT_TASK_SETTINGS,
+        taskDepth: 0,
+        shouldDisableTaskToolsForDepth: false,
+        effectiveToolPolicy: undefined,
+      },
+    };
+    spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);
+
+    spyOn(streamContextBuilder, "buildPlanInstructions").mockResolvedValue({
+      effectiveAdditionalInstructions: undefined,
+      planFilePath: path.join(metadata.projectPath, "plan.md"),
+      planContentForTransition: undefined,
+    });
+
+    spyOn(streamContextBuilder, "buildStreamSystemContext").mockImplementation((args) => {
+      buildStreamSystemContextArgs.push(args);
+      return Promise.resolve({
+        agentSystemPrompt: "test-agent-prompt",
+        systemMessage: "test-system-message",
+        systemMessageTokens: 1,
+        agentDefinitions: undefined,
+        availableSkills: undefined,
+      });
+    });
+
+    spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
+      const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
+        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
+      >;
+      return Promise.resolve(preparedMessages);
+    });
+
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub MCP tool for streamMessage regression coverage
+    const stubMcpTool: Tool = {} as never;
+    const loadedMcpTools: Record<string, Tool> = { mcp_test_tool: stubMcpTool };
+    const listedServers = {};
+    const mcpServerManager = {
+      listServers: mock((projectPath: string, overrides: unknown) => {
+        listServersCalls.push({ projectPath, overrides });
+        return Promise.resolve(listedServers);
+      }),
+      getToolsForWorkspace: mock(
+        (options: {
+          workspaceId: string;
+          projectPath: string;
+          workspacePath: string;
+          projectSecrets?: Record<string, string>;
+        }) => {
+          getToolsForWorkspaceCalls.push({
+            workspaceId: options.workspaceId,
+            projectPath: options.projectPath,
+            workspacePath: options.workspacePath,
+            projectSecrets: options.projectSecrets,
+          });
+          return {
+            tools: loadedMcpTools,
+            stats: {
+              configuredServerCount: 1,
+              activeServerCount: 1,
+              failedServerCount: 0,
+              autoFallbackCount: 0,
+              hasStdio: true,
+              hasHttp: false,
+              hasSse: false,
+              transportMode: "stdio-only",
+            },
+          };
+        }
+      ),
+    } as unknown as MCPServerManager;
+    service.setMCPServerManager(mcpServerManager);
+
+    spyOn(toolsModule, "getToolsForModel").mockImplementation(
+      (_modelString, toolConfig, _workspaceId, _initStateManager, _toolInstructions, mcpTools) => {
+        toolConfigCalls.push(toolConfig);
+        mcpToolCalls.push(mcpTools);
+        return Promise.resolve({});
+      }
+    );
+    spyOn(toolAssembly, "applyToolPolicyAndExperiments").mockImplementation((args) =>
+      Promise.resolve(args.allTools)
+    );
+    spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
+
+    const fakeModel = Object.create(null) as LanguageModel;
+    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in mux help agent test harness");
+    }
+
+    const resolveAndCreateModelResult: Awaited<
+      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
+    > = {
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: "openai:gpt-5.2",
+        canonicalModelString: "openai:gpt-5.2",
+        canonicalProviderName: "openai",
+        canonicalModelId: "gpt-5.2",
+        routedThroughGateway: false,
+      },
+    };
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
+      resolveAndCreateModelResult
+    );
+
+    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
+      success: true,
+      data: metadata,
+    });
+
+    spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
+
+    spyOn(config, "findWorkspace").mockReturnValue({
+      workspacePath: metadata.projectPath,
+      projectPath: metadata.projectPath,
+    });
+
+    spyOn(historyService, "commitPartial").mockResolvedValue({
+      success: true,
+      data: undefined,
+    });
+
+    spyOn(historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
+      message.metadata = {
+        ...(message.metadata ?? {}),
+        historySequence: 11,
+      };
+
+      return Promise.resolve({ success: true, data: undefined });
+    });
+
+    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
+    const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
+
+    spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
+    spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
+      path.join(metadata.projectPath, ".tmp-stream")
+    );
+    spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
+    spyOn(streamManager, "startStream").mockResolvedValue({
+      success: true,
+      data: streamToken,
+    });
+
+    return {
+      service,
+      projectSecrets,
+      listedServers,
+      loadedMcpTools,
+      buildStreamSystemContextArgs,
+      toolConfigCalls,
+      mcpToolCalls,
+      listServersCalls,
+      getToolsForWorkspaceCalls,
+      getEffectiveSecretsSpy,
+    };
+  }
+
+  async function streamAndAssertSuccess(
+    harness: ReturnType<typeof createHarness>,
+    workspaceId: string
+  ): Promise<void> {
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("suppresses secrets and MCP only for the built-in mux help agent", async () => {
+    using muxHome = new DisposableTempDir("ai-service-built-in-mux-help-agent");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-built-in-mux-help";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, "built-in");
+
+    await streamAndAssertSuccess(harness, workspaceId);
+
+    expect(harness.getEffectiveSecretsSpy).not.toHaveBeenCalled();
+    expect(harness.listServersCalls).toHaveLength(0);
+    expect(harness.getToolsForWorkspaceCalls).toHaveLength(0);
+    expect(harness.buildStreamSystemContextArgs).toHaveLength(1);
+    expect(harness.buildStreamSystemContextArgs[0]?.mcpServers).toBeUndefined();
+    expect(harness.toolConfigCalls).toHaveLength(1);
+    expect(harness.toolConfigCalls[0]?.secrets).toEqual({});
+    expect(harness.mcpToolCalls).toEqual([undefined]);
+  });
+
+  it("keeps secrets and MCP enabled for project-scoped agents that reuse the mux id", async () => {
+    using muxHome = new DisposableTempDir("ai-service-project-mux-help-agent");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-project-mux-help";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, "project");
+
+    await streamAndAssertSuccess(harness, workspaceId);
+
+    expect(harness.getEffectiveSecretsSpy).toHaveBeenCalledTimes(1);
+    expect(harness.getEffectiveSecretsSpy).toHaveBeenCalledWith(projectPath);
+    expect(harness.listServersCalls).toEqual([{ projectPath, overrides: undefined }]);
+    expect(harness.buildStreamSystemContextArgs).toHaveLength(1);
+    expect(harness.buildStreamSystemContextArgs[0]?.mcpServers).toEqual(harness.listedServers);
+    expect(harness.getToolsForWorkspaceCalls).toEqual([
+      {
+        workspaceId,
+        projectPath,
+        workspacePath: projectPath,
+        projectSecrets: { PROJECT_TOKEN: "secret-value" },
+      },
+    ]);
+    expect(harness.toolConfigCalls).toHaveLength(1);
+    expect(harness.toolConfigCalls[0]?.secrets).toEqual({ PROJECT_TOKEN: "secret-value" });
+    expect(harness.mcpToolCalls).toEqual([harness.loadedMcpTools]);
+    expect(harness.projectSecrets).toEqual([{ key: "PROJECT_TOKEN", value: "secret-value" }]);
   });
 });
 
@@ -1587,7 +1991,6 @@ describe("AIService.streamMessage model parameter overrides", () => {
         taskDepth: 0,
         shouldDisableTaskToolsForDepth: false,
         effectiveToolPolicy: undefined,
-        toolNamesForSentinel: [],
       },
     };
     spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);

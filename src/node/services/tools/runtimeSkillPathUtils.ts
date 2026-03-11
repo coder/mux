@@ -1,11 +1,8 @@
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 
+import { quoteRuntimeProbePath } from "./runtimePathShellQuote";
 import { isAbsolutePathAny } from "./skillFileUtils";
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
 
 function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
@@ -104,37 +101,94 @@ resolve_real_allow_missing() {
   done
 }
 
-SKILL_DIR=${shellQuote(skillDir)}
-TARGET=${shellQuote(targetPath)}
+is_absolute_probe_path() {
+  case "$1" in
+    /*|[A-Za-z]:/*|[A-Za-z]:\\*|\\\\*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_target_allow_missing() {
+  _candidate="$1"
+  _visited=""
+  _depth=0
+
+  while [ "$_depth" -lt 40 ]; do
+    printf '%s' "$_visited" | grep -F -x -- "$_candidate" >/dev/null 2>&1 && return 1
+    _visited=$(printf '%s\n%s\n' "$_visited" "$_candidate")
+
+    if test -L "$_candidate"; then
+      _link_target=$(readlink "$_candidate" 2>/dev/null) || return 1
+      [ -n "$_link_target" ] || return 1
+
+      if is_absolute_probe_path "$_link_target"; then
+        _candidate="$_link_target"
+      else
+        _candidate=$(dirname "$_candidate")/$_link_target
+      fi
+
+      _depth=$((_depth + 1))
+      continue
+    fi
+
+    resolve_real_allow_missing "$_candidate"
+    return $?
+  done
+
+  return 1
+}
+
+resolve_target_dir_resolution() {
+  _target_path="$1"
+  _target_dir=$(dirname "$_target_path")
+
+  _real_target_dir=$(cd "$_target_dir" 2>/dev/null && pwd -P)
+  if [ -n "$_real_target_dir" ]; then
+    printf 'direct\n'
+    return 0
+  fi
+
+  _real_target_dir=$(resolve_real_allow_missing "$_target_dir")
+  if [ -n "$_real_target_dir" ]; then
+    printf 'via-missing-ancestor\n'
+    return 0
+  fi
+
+  printf 'direct\n'
+}
+
+SKILL_DIR=${quoteRuntimeProbePath(skillDir)}
+TARGET=${quoteRuntimeProbePath(targetPath)}
 
 if test -L "$SKILL_DIR"; then printf 'true\n'; else printf 'false\n'; fi
 
 REAL_SKILL_DIR=$(cd "$SKILL_DIR" 2>/dev/null && pwd -P)
-TARGET_DIR=$(dirname "$TARGET")
-TARGET_BASE=$(basename "$TARGET")
-
-REAL_TARGET_DIR=$(cd "$TARGET_DIR" 2>/dev/null && pwd -P)
-if [ -n "$REAL_TARGET_DIR" ]; then
-  TARGET_DIR_RESOLUTION="direct"
-else
-  REAL_TARGET_DIR=$(resolve_real_allow_missing "$TARGET_DIR")
-  if [ -n "$REAL_TARGET_DIR" ]; then
-    TARGET_DIR_RESOLUTION="via-missing-ancestor"
-  else
-    TARGET_DIR_RESOLUTION="direct"
-  fi
+if [ -z "$REAL_SKILL_DIR" ]; then
+  REAL_SKILL_DIR=$(resolve_real_allow_missing "$SKILL_DIR")
 fi
 
-if [ -z "$REAL_SKILL_DIR" ] || [ -z "$REAL_TARGET_DIR" ]; then
+if test -L "$TARGET"; then
+  printf 'true\n'
+else
+  printf 'false\n'
+fi
+
+REAL_TARGET_PATH=$(resolve_target_allow_missing "$TARGET")
+if [ -n "$REAL_TARGET_PATH" ]; then
+  TARGET_DIR_RESOLUTION=$(resolve_target_dir_resolution "$REAL_TARGET_PATH")
+else
+  TARGET_DIR_RESOLUTION=$(resolve_target_dir_resolution "$TARGET")
+fi
+
+if [ -z "$REAL_SKILL_DIR" ] || [ -z "$REAL_TARGET_PATH" ]; then
   printf 'false\n'
 else
-  case "$REAL_TARGET_DIR" in
+  case "$REAL_TARGET_PATH" in
     "$REAL_SKILL_DIR"|"$REAL_SKILL_DIR"/*) printf 'true\n' ;;
     *) printf 'false\n' ;;
   esac
 fi
 
-if test -L "$TARGET_DIR/$TARGET_BASE"; then printf 'true\n'; else printf 'false\n'; fi
 printf '%s\n' "$TARGET_DIR_RESOLUTION"
 `.trim();
 
@@ -166,9 +220,9 @@ printf '%s\n' "$TARGET_DIR_RESOLUTION"
   }
 
   return {
-    skillDirSymlink: booleanLines[0] === "true",
-    withinRoot: booleanLines[1] === "true",
-    leafSymlink: booleanLines[2] === "true",
+    skillDirSymlink: outputLines[0] === "true",
+    leafSymlink: outputLines[1] === "true",
+    withinRoot: outputLines[2] === "true",
     targetDirResolution,
   };
 }
@@ -181,18 +235,26 @@ export async function resolveContainedSkillFilePathOnRuntime(
   const resolvedTarget = resolveSkillFilePathForRuntime(runtime, skillDir, filePath);
   const probe = await inspectContainmentOnRuntime(runtime, skillDir, resolvedTarget.resolvedPath);
 
-  // Do not reject symlinked skill directories here.
-  // Skill discovery intentionally supports symlinked skill dirs; containment is enforced by
-  // comparing fully-resolved real paths to ensure the target stays inside the resolved root.
+  // Do not reject symlinked skill directories or leaf files here.
+  // Runtime containment is defined by the fully resolved target path staying inside the resolved
+  // root; callers that want a stricter mutating-file policy must reject leaf symlinks separately.
   if (!probe.withinRoot) {
     throw new Error(
       `Invalid filePath (path escapes skill directory after symlink resolution): ${filePath}`
     );
   }
 
-  if (probe.leafSymlink) {
-    throw new Error(`Target file is a symbolic link and cannot be accessed: ${filePath}`);
-  }
-
   return resolvedTarget;
+}
+
+export async function ensureRuntimePathWithinWorkspace(
+  runtime: Runtime,
+  workspacePath: string,
+  targetPath: string,
+  label: string
+): Promise<void> {
+  const probe = await inspectContainmentOnRuntime(runtime, workspacePath, targetPath);
+  if (!probe.withinRoot) {
+    throw new Error(`${label} resolves outside workspace root after symlink resolution.`);
+  }
 }

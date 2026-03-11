@@ -6,6 +6,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { getErrorMessage } from "@/common/utils/errors";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 
 /**
  * Build dynamic agent_skill_read tool description with available skills.
@@ -65,7 +66,20 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
       }
 
       try {
-        const resolved = await readAgentSkill(config.runtime, workspacePath, parsedName.data);
+        const skillCtx = resolveSkillStorageContext({
+          runtime: config.runtime,
+          workspacePath,
+          muxScope: config.muxScope ?? null,
+        });
+        const resolved = await readAgentSkill(
+          skillCtx.runtime,
+          skillCtx.workspacePath,
+          parsedName.data,
+          {
+            roots: skillCtx.roots,
+            containment: skillCtx.containment,
+          }
+        );
         return {
           success: true,
           skill: resolved.package,

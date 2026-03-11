@@ -103,6 +103,12 @@ if (shouldRunIntegrationTests() && !shouldRunSuite) {
   );
 }
 
+if (!shouldRunSuite) {
+  // Jest still errors on an entirely empty file even when the matrix suite is skipped,
+  // so keep one placeholder skip when no configured models survive the env filtering.
+  test.skip("skips when no integration models are configured", () => {});
+}
+
 const TEST_TIMEOUT_MS = 60_000;
 
 const ERROR_MARKER = "MUX_SYSTEM1_KEEP_RANGES_TEST_ERROR_MARKER";

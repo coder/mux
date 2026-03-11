@@ -2,17 +2,45 @@
  * CLI entry point for the mux oRPC server.
  * Uses ServerService for server lifecycle management.
  */
+import "source-map-support/register";
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import { ServerLockfile } from "@/node/services/serverLockfile";
+import { log } from "@/node/services/log";
 import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
 import { VERSION } from "@/version";
 import { getParseOptions } from "./argv";
 import { resolveServerAuthToken } from "./serverAuthToken";
+import { appendServerCrashLogSync } from "./serverCrashLogging";
+
+// Server-mode crashes can terminate the process before the async logger flushes,
+// so these top-level hooks mirror fatal details into mux.log synchronously.
+process.on("warning", (warning) => {
+  log.warn("Server process warning", warning);
+});
+
+process.on("uncaughtExceptionMonitor", (error, origin) => {
+  // Use the monitor hook instead of adding our own unhandledRejection listener.
+  // In Node, installing an unhandledRejection handler changes fatal promise
+  // rejections into non-fatal events; the monitor preserves the default crash
+  // while still giving server-mode users a synchronous breadcrumb in mux.log.
+  appendServerCrashLogSync({
+    event: "Fatal process error",
+    detail: error,
+    context: { origin },
+  });
+});
+
+process.on("beforeExit", (code) => {
+  appendServerCrashLogSync({
+    event: "Process beforeExit",
+    context: { code },
+  });
+});
 
 const program = new Command();
 program
@@ -185,6 +213,10 @@ const mockWindow: BrowserWindow = {
 
     // Force exit after timeout if cleanup hangs
     const forceExitTimer = setTimeout(() => {
+      appendServerCrashLogSync({
+        event: "Server cleanup timed out",
+        context: { timeoutMs: 5000 },
+      });
       console.log("Cleanup timed out, forcing exit...");
       process.exit(1);
     }, 5000);
@@ -202,6 +234,10 @@ const mockWindow: BrowserWindow = {
       clearTimeout(forceExitTimer);
       process.exit(0);
     } catch (err) {
+      appendServerCrashLogSync({
+        event: "Server cleanup failed",
+        detail: err,
+      });
       console.error("Cleanup error:", err);
       clearTimeout(forceExitTimer);
       process.exit(1);
@@ -211,6 +247,10 @@ const mockWindow: BrowserWindow = {
   process.on("SIGINT", () => void cleanup());
   process.on("SIGTERM", () => void cleanup());
 })().catch((error) => {
+  appendServerCrashLogSync({
+    event: "Failed to initialize server",
+    detail: error,
+  });
   console.error("Failed to initialize server:", error);
   process.exit(1);
 });

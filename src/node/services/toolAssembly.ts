@@ -189,6 +189,7 @@ export function captureMcpToolTelemetry(opts: {
       startedServerCount: 0,
       failedServerCount: 0,
       autoFallbackCount: 0,
+      failedServerNames: [],
       hasStdio: false,
       hasHttp: false,
       hasSse: false,

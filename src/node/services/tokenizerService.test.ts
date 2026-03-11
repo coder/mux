@@ -77,7 +77,6 @@ describe("TokenizerService", () => {
       expect(result).toBe(mockResult);
       expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
         enableAgentReport: false,
-        enableSkillsCatalogTools: false,
       });
       expect(persistSpy).toHaveBeenCalledWith(
         "test-workspace",
@@ -97,7 +96,7 @@ describe("TokenizerService", () => {
       persistSpy.mockRestore();
     });
 
-    test("passes enableSkillsCatalogTools based on workspace ID", async () => {
+    test("passes tool availability options to calculateTokenStats", async () => {
       const messages = [createMuxMessage("msg1", "user", "Hello")];
       const mockResult = {
         consumers: [{ name: "User", tokens: 1, percentage: 100 }],
@@ -117,11 +116,9 @@ describe("TokenizerService", () => {
 
       expect(statsSpy).toHaveBeenNthCalledWith(1, messages, "gpt-4", null, {
         enableAgentReport: false,
-        enableSkillsCatalogTools: true,
       });
       expect(statsSpy).toHaveBeenNthCalledWith(2, messages, "gpt-4", null, {
         enableAgentReport: false,
-        enableSkillsCatalogTools: false,
       });
 
       statsSpy.mockRestore();
@@ -144,7 +141,6 @@ describe("TokenizerService", () => {
 
       expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
         enableAgentReport: true,
-        enableSkillsCatalogTools: false,
       });
 
       statsSpy.mockRestore();

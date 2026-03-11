@@ -1,9 +1,13 @@
 import { tool } from "ai";
 import { z } from "zod";
 import type { ToolFactory } from "@/common/utils/tools/tools";
+import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { readFileString } from "@/node/utils/runtime/helpers";
+import { log } from "@/node/services/log";
+import { readTodosForSessionDir } from "@/node/services/todos/todoStorage";
 import { RuntimeError } from "@/node/runtime/Runtime";
+import { readFileString } from "@/node/utils/runtime/helpers";
+import { setTodosForSessionDir } from "./todo";
 
 // Schema for propose_plan - empty object (no input parameters)
 // Defined locally to avoid type inference issues with `as const` in TOOL_DEFINITIONS
@@ -64,6 +68,28 @@ export const createProposePlanTool: ToolFactory = (config) => {
           });
         } catch {
           // File stat failed, skip recording (shouldn't happen since we just read it)
+        }
+      }
+
+      if (config.workspaceId && config.workspaceSessionDir) {
+        try {
+          const existingTodos = await readTodosForSessionDir(config.workspaceSessionDir);
+          const completedTodos = completeInProgressTodoItems(existingTodos);
+          if (completedTodos !== existingTodos) {
+            // A successful propose_plan ends the planning turn immediately, so persist the
+            // completed todo state even though the model does not get another todo_write turn.
+            await setTodosForSessionDir(
+              config.workspaceId,
+              config.workspaceSessionDir,
+              completedTodos
+            );
+          }
+        } catch (error) {
+          // Keep propose_plan best-effort: stale todo persistence should not block plan approval.
+          log.warn("propose_plan: failed to sync todo completion after successful proposal", {
+            workspaceId: config.workspaceId,
+            error,
+          });
         }
       }
 

@@ -14,7 +14,7 @@ import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/t
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import type { MuxToolScope } from "@/common/types/toolScope";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
@@ -27,8 +27,8 @@ import { createAgentSkillWriteTool } from "@/node/services/tools/agent_skill_wri
 import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_delete";
 import { createSkillsCatalogSearchTool } from "@/node/services/tools/skills_catalog_search";
 import { createSkillsCatalogReadTool } from "@/node/services/tools/skills_catalog_read";
-import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
-import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
+import { createMuxAgentsReadTool } from "@/node/services/tools/mux_agents_read";
+import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write";
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
@@ -41,7 +41,6 @@ import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalT
 import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
 import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
-import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -86,6 +85,8 @@ export interface ToolConfiguration {
   workspaceSessionDir?: string;
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
+  /** Pre-resolved mux-managed resource scope (global ~/.mux vs project root). */
+  muxScope?: MuxToolScope;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => void;
   /** Callback to notify that provider/config was written (triggers hot-reload). */
@@ -340,8 +341,8 @@ export async function getToolsForModel(
   // Non-runtime tools execute immediately (no init wait needed)
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const nonRuntimeTools: Record<string, Tool> = {
-    mux_global_agents_read: createMuxGlobalAgentsReadTool(config),
-    mux_global_agents_write: createMuxGlobalAgentsWriteTool(config),
+    mux_agents_read: createMuxAgentsReadTool(config),
+    mux_agents_write: createMuxAgentsWriteTool(config),
     agent_skill_list: createAgentSkillListTool(config),
     agent_skill_write: createAgentSkillWriteTool(config),
     agent_skill_delete: createAgentSkillDeleteTool(config),
@@ -362,7 +363,7 @@ export async function getToolsForModel(
     todo_read: createTodoReadTool(config),
     status_set: createStatusSetTool(config),
     notify: createNotifyTool(config),
-    ...(workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
+    ...(config.analyticsService
       ? {
           analytics_query: createAnalyticsQueryTool(config),
         }
@@ -454,11 +455,13 @@ export async function getToolsForModel(
 
   // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
   // Include MCP tools even if they're not in getAvailableTools().
-  const catalogOptions = getToolAvailabilityOptions({ workspaceId });
   const allowlistedToolNames = new Set(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
-      enableSkillsCatalogTools: catalogOptions.enableSkillsCatalogTools,
+      enableAnalyticsQuery: Boolean(config.analyticsService),
+      // Mux global tools are always created; tool policy (agent frontmatter)
+      // controls which agents can actually use them.
+      enableMuxGlobalAgentsTools: true,
     })
   );
   for (const toolName of Object.keys(mcpTools ?? {})) {

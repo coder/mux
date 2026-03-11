@@ -352,32 +352,44 @@ export function setupTestDom(options?: { enableTutorial?: boolean }): () => void
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Get the current git status from a workspace element's data-git-status attribute.
- * Returns null if the attribute is missing or cannot be parsed.
+ * Get the current git status for a workspace row.
+ * Falls back to the shared GitStatusStore when inline data attributes are absent.
  */
 export function getGitStatusFromElement(element: HTMLElement): Partial<GitStatus> | null {
   const statusAttr = element.getAttribute("data-git-status");
-  if (!statusAttr) return null;
-  try {
-    return JSON.parse(statusAttr) as Partial<GitStatus>;
-  } catch {
+  if (statusAttr) {
+    try {
+      return JSON.parse(statusAttr) as Partial<GitStatus>;
+    } catch {
+      return null;
+    }
+  }
+
+  const workspaceId = element.getAttribute("data-workspace-id");
+  if (!workspaceId) {
     return null;
   }
+
+  const store = useGitStatusStoreRaw();
+  return store.getStatus(workspaceId);
 }
 
 /**
- * Wait for the git status indicator to appear in the sidebar workspace row.
- * The workspace row displays git status via data-git-status attribute.
+ * Wait for a workspace row to render and for git status to be available in the store.
  */
 export async function waitForGitStatusElement(
   container: HTMLElement,
   workspaceId: string,
   timeoutMs: number = 30_000
 ): Promise<HTMLElement> {
+  const store = useGitStatusStoreRaw();
+
   return waitFor(
     () => {
-      const el = container.querySelector(`[data-workspace-id="${workspaceId}"][data-git-status]`);
+      const el = container.querySelector(`[data-workspace-id="${workspaceId}"]`);
       if (!el) throw new Error("Git status element not found");
+      const status = store.getStatus(workspaceId);
+      if (!status) throw new Error("Git status not yet available");
       return el as HTMLElement;
     },
     { timeout: timeoutMs }
@@ -388,20 +400,19 @@ export async function waitForGitStatusElement(
  * Wait for git status to match a condition.
  */
 async function waitForGitStatus(
-  container: HTMLElement,
+  _container: HTMLElement,
   workspaceId: string,
   predicate: (status: Partial<GitStatus>) => boolean,
   description: string,
   timeoutMs: number
 ): Promise<GitStatus> {
+  const store = useGitStatusStoreRaw();
   let lastStatus: Partial<GitStatus> | null = null;
 
   await waitFor(
     () => {
-      const el = container.querySelector(`[data-workspace-id="${workspaceId}"][data-git-status]`);
-      if (!el) throw new Error("Git status element not found");
-      lastStatus = getGitStatusFromElement(el as HTMLElement);
-      if (!lastStatus) throw new Error("Could not parse git status");
+      lastStatus = store.getStatus(workspaceId);
+      if (!lastStatus) throw new Error("Git status not yet available");
       if (!predicate(lastStatus)) {
         throw new Error(`Expected ${description}, got: ${JSON.stringify(lastStatus)}`);
       }

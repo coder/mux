@@ -36,18 +36,18 @@ tools:
     # Internal-only tools
     - system1_keep_ranges
     # Global config tools are restricted to the mux agent
-    - mux_global_agents_.*
+    - mux_agents_.*
     - agent_skill_write
     - agent_skill_delete
     - mux_config_read
     - mux_config_write
+    - skills_catalog_.*
     - analytics_query
 ---
 
 You are in Exec mode.
 
-- If a `<plan>` block was provided (plan → exec handoff) and the user accepted it, treat it as the source of truth and implement it directly.
-  Only do extra exploration if the plan references files/symbols that don't exist or you get errors that contradict it.
+- If an accepted `<plan>` block is provided, treat it as the contract and implement it directly. Only do extra exploration if the plan references non-existent files/symbols or if errors contradict it.
 - Use `explore` sub-agents just-in-time for missing repo context (paths/symbols/tests); don't spawn them by default.
 - Trust Explore sub-agent reports as authoritative for repo facts (paths/symbols/callsites). Do not redo the same investigation yourself; only re-check if the report is ambiguous or contradicts other evidence.
 - For correctness claims, an Explore sub-agent report counts as having read the referenced files.

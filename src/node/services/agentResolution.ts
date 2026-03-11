@@ -9,37 +9,32 @@
  * - Inheritance chain resolution + plan-like detection
  * - Task nesting depth enforcement
  * - Tool policy composition (agent → caller)
- * - Sentinel tool name computation for agent transition detection
  */
 
-import * as os from "os";
-import { AgentIdSchema } from "@/common/orpc/schemas";
 import { MUX_HELP_CHAT_AGENT_ID } from "@/common/constants/muxChat";
-import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
-import type { ErrorEvent } from "@/common/types/stream";
-import type { WorkspaceMetadata } from "@/common/types/workspace";
-import type { ProjectsConfig } from "@/common/types/project";
-import type { Result } from "@/common/types/result";
-import { Ok, Err } from "@/common/types/result";
+import { AgentIdSchema } from "@/common/orpc/schemas";
 import type { SendMessageError } from "@/common/types/errors";
-import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
-import { getToolsForModel } from "@/common/utils/tools/tools";
+import type { Result } from "@/common/types/result";
+import { Err, Ok } from "@/common/types/result";
+import type { ErrorEvent } from "@/common/types/stream";
+import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+import type { ProjectsConfig } from "@/common/types/project";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
+import { getErrorMessage } from "@/common/utils/errors";
+import { type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
   readAgentDefinition,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
-import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import type { InitStateManager } from "./initStateManager";
+import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
+import { log } from "./log";
+import { getTaskDepthFromConfig } from "./taskUtils";
 import { createAssistantMessageId } from "./utils/messageIds";
 import { createErrorEvent } from "./utils/sendMessageError";
-import { getTaskDepthFromConfig } from "./taskUtils";
-import { log } from "./log";
-import { getErrorMessage } from "@/common/utils/errors";
 
 /** Options for agent resolution. */
 export interface ResolveAgentOptions {
@@ -51,15 +46,12 @@ export interface ResolveAgentOptions {
   requestedAgentId: string | undefined;
   /** When true, skip workspace-specific agents (for "unbricking" broken agent files). */
   disableWorkspaceAgents: boolean;
-  modelString: string;
   /** Caller-supplied tool policy (applied AFTER agent policy for further restriction). */
   callerToolPolicy: ToolPolicy | undefined;
   /** Loaded config from Config.loadConfigOrDefault(). */
   cfg: ProjectsConfig;
   /** Emit an error event on the AIService EventEmitter (for disabled-agent subagent errors). */
   emitError: (event: ErrorEvent) => void;
-  /** For sentinel tool name computation. */
-  initStateManager: InitStateManager;
 }
 
 /** Result of agent resolution — all computed values needed by the stream pipeline. */
@@ -77,8 +69,6 @@ export interface AgentResolutionResult {
   shouldDisableTaskToolsForDepth: boolean;
   /** Composed tool policy: agent → caller (in application order). */
   effectiveToolPolicy: ToolPolicy | undefined;
-  /** Tool names for agent transition sentinel injection in message preparation. */
-  toolNamesForSentinel: string[];
 }
 
 /**
@@ -86,8 +76,8 @@ export interface AgentResolutionResult {
  *
  * This is the first major phase of `streamMessage()` after workspace/runtime setup.
  * It determines which agent definition to use, whether plan mode is active, and what
- * tools are available (via policy). The result feeds into message preparation,
- * system prompt construction, and tool assembly.
+ * tools are available (via policy). The result feeds into system prompt construction
+ * and tool assembly.
  *
  * Returns `Err` only when a disabled agent is requested in a subagent workspace
  * (top-level workspaces silently fall back to exec).
@@ -102,11 +92,9 @@ export async function resolveAgentForStream(
     workspacePath,
     requestedAgentId: rawAgentId,
     disableWorkspaceAgents,
-    modelString,
     callerToolPolicy,
     cfg,
     emitError,
-    initStateManager,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -239,28 +227,6 @@ export async function resolveAgentForStream(
       ? [...agentToolPolicyForComposition, ...(callerToolPolicy ?? [])]
       : undefined;
 
-  // --- Sentinel tool names for agent transition detection ---
-  // Creates a throwaway runtime to compute the tool name list that the message pipeline
-  // uses for mode-transition sentinel injection. This avoids depending on the real
-  // tool assembly (which happens later) while still respecting tool policy.
-  const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
-  const earlyAllTools = await getToolsForModel(
-    modelString,
-    {
-      cwd: process.cwd(),
-      runtime: earlyRuntime,
-      runtimeTempDir: os.tmpdir(),
-      secrets: {},
-      planFileOnly: agentIsPlanLike,
-    },
-    "", // Empty workspace ID for early stub config
-    initStateManager,
-    undefined,
-    undefined
-  );
-  const earlyTools = applyToolPolicy(earlyAllTools, effectiveToolPolicy);
-  const toolNamesForSentinel = Object.keys(earlyTools);
-
   return Ok({
     effectiveAgentId,
     agentDefinition,
@@ -272,6 +238,5 @@ export async function resolveAgentForStream(
     taskDepth,
     shouldDisableTaskToolsForDepth,
     effectiveToolPolicy,
-    toolNamesForSentinel,
   });
 }

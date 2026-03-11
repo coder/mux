@@ -1,11 +1,4 @@
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  waitFor,
-  type RenderResult,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, type RenderResult } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
@@ -13,12 +6,12 @@ import {
   useWorkspaceStoreRaw as getWorkspaceStoreRaw,
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
+import { getPinnedTodoExpandedKey } from "@/common/constants/storage";
 import type { TodoItem } from "@/common/types/tools";
 import { PinnedTodoList } from "./PinnedTodoList";
 
 interface MockWorkspaceState {
   todos: TodoItem[];
-  canInterrupt: boolean;
 }
 
 const workspaceStates = new Map<string, MockWorkspaceState>();
@@ -38,7 +31,7 @@ function buildWorkspaceState(workspaceId: string, state: MockWorkspaceState): Wo
     name: workspaceId,
     messages: [],
     queuedMessage: null,
-    canInterrupt: state.canInterrupt,
+    canInterrupt: false,
     isCompacting: false,
     isStreamStarting: false,
     awaitingUserQuestion: false,
@@ -66,18 +59,6 @@ function buildWorkspaceState(workspaceId: string, state: MockWorkspaceState): Wo
 
 function seedWorkspaceState(workspaceId: string, state: MockWorkspaceState): void {
   workspaceStates.set(workspaceId, state);
-}
-
-function updateWorkspaceState(workspaceId: string, nextState: Partial<MockWorkspaceState>): void {
-  const currentState = workspaceStates.get(workspaceId);
-  if (!currentState) {
-    throw new Error(`Missing mock workspace state for ${workspaceId}`);
-  }
-
-  workspaceStates.set(workspaceId, { ...currentState, ...nextState });
-  for (const subscriber of getWorkspaceSubscribers(workspaceId)) {
-    subscriber();
-  }
 }
 
 function subscribeKey(workspaceId: string, callback: () => void): () => void {
@@ -140,77 +121,56 @@ describe("PinnedTodoList", () => {
   });
 
   test("renders expanded by default when todos exist", () => {
-    seedWorkspaceState("ws-expanded", { todos: defaultTodos, canInterrupt: true });
+    seedWorkspaceState("ws-expanded", { todos: defaultTodos });
 
     const renderResult = renderPinnedTodoList("ws-expanded");
 
     expect(renderResult.getByText("Add tests")).toBeTruthy();
   });
 
-  test("manual header click collapses and re-expands", () => {
-    seedWorkspaceState("ws-toggle", { todos: defaultTodos, canInterrupt: true });
+  test("renders nothing when there are no todos", () => {
+    seedWorkspaceState("ws-empty", { todos: [] });
 
-    const renderResult = renderPinnedTodoList("ws-toggle");
+    const renderResult = renderPinnedTodoList("ws-empty");
+
+    expect(renderResult.container.firstChild).toBeNull();
+  });
+
+  test("reads a persisted collapsed state on mount", () => {
+    const workspaceId = "ws-collapsed";
+    seedWorkspaceState(workspaceId, { todos: defaultTodos });
+    globalThis.localStorage.setItem(getPinnedTodoExpandedKey(workspaceId), JSON.stringify(false));
+
+    const renderResult = renderPinnedTodoList(workspaceId);
+
+    expect(renderResult.queryByText("Add tests")).toBeNull();
+  });
+
+  test("manual header click collapses and re-expands while persisting state", () => {
+    const workspaceId = "ws-toggle";
+    seedWorkspaceState(workspaceId, { todos: defaultTodos });
+
+    const renderResult = renderPinnedTodoList(workspaceId);
 
     fireEvent.click(getHeader(renderResult));
     expect(renderResult.queryByText("Add tests")).toBeNull();
+    expect(readPersistedState(getPinnedTodoExpandedKey(workspaceId), true)).toBe(false);
 
     fireEvent.click(getHeader(renderResult));
     expect(renderResult.getByText("Add tests")).toBeTruthy();
+    expect(readPersistedState(getPinnedTodoExpandedKey(workspaceId), false)).toBe(true);
   });
 
-  test("auto-collapses when canInterrupt transitions from true to false", async () => {
-    seedWorkspaceState("ws-streaming", { todos: defaultTodos, canInterrupt: true });
-
-    const renderResult = renderPinnedTodoList("ws-streaming");
-    expect(renderResult.getByText("Add tests")).toBeTruthy();
-
-    act(() => {
-      updateWorkspaceState("ws-streaming", { canInterrupt: false });
-    });
-
-    await waitFor(() => {
-      expect(renderResult.queryByText("Add tests")).toBeNull();
-    });
-
-    fireEvent.click(getHeader(renderResult));
-    expect(renderResult.getByText("Add tests")).toBeTruthy();
-  });
-
-  test("does not persist a collapsed state when streaming ends without todos", () => {
-    seedWorkspaceState("ws-empty", { todos: [], canInterrupt: true });
-
-    const renderResult = renderPinnedTodoList("ws-empty");
-    expect(renderResult.container.firstChild).toBeNull();
-
-    act(() => {
-      updateWorkspaceState("ws-empty", { canInterrupt: false });
-    });
-
-    expect(readPersistedState("pinnedTodoExpanded:ws-empty", true)).toBe(true);
-  });
-
-  test("does not auto-collapse on initial mount when the workspace is already idle", () => {
-    seedWorkspaceState("ws-idle", { todos: defaultTodos, canInterrupt: false });
-
-    const renderResult = renderPinnedTodoList("ws-idle");
-
-    expect(renderResult.getByText("Add tests")).toBeTruthy();
-  });
-
-  test("persists expansion state per workspace instead of globally", async () => {
-    seedWorkspaceState("ws-a", { todos: defaultTodos, canInterrupt: false });
-    seedWorkspaceState("ws-b", { todos: defaultTodos, canInterrupt: false });
+  test("persists expansion state per workspace instead of globally", () => {
+    seedWorkspaceState("ws-a", { todos: defaultTodos });
+    seedWorkspaceState("ws-b", { todos: defaultTodos });
 
     const firstRender = renderPinnedTodoList("ws-a");
     fireEvent.click(getHeader(firstRender));
 
-    await waitFor(() => {
-      expect(firstRender.queryByText("Add tests")).toBeNull();
-    });
-
-    expect(readPersistedState("pinnedTodoExpanded:ws-a", true)).toBe(false);
-    expect(readPersistedState("pinnedTodoExpanded:ws-b", true)).toBe(true);
+    expect(firstRender.queryByText("Add tests")).toBeNull();
+    expect(readPersistedState(getPinnedTodoExpandedKey("ws-a"), true)).toBe(false);
+    expect(readPersistedState(getPinnedTodoExpandedKey("ws-b"), true)).toBe(true);
 
     firstRender.unmount();
     const secondRender = renderPinnedTodoList("ws-b");

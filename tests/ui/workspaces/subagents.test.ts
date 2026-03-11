@@ -3,10 +3,10 @@
  *
  * Validates that:
  * - Completed child sub-agents (taskStatus=reported) are hidden by default.
- * - Double-clicking the parent row reveals completed children.
+ * - Double-clicking any workspace row enters rename mode.
+ * - The overflow menu exposes Show/Hide sub-agent actions.
  * - Keyboard users can still expand/collapse completed children from the row.
- * - Double-clicking a workspace without completed children still enters rename mode.
- * - Double-clicking again hides completed children.
+ * - Expanded chevron indicators render only when the status dot is hidden.
  */
 
 import "../dom";
@@ -22,7 +22,11 @@ import {
 } from "../../ipc/helpers";
 
 import { detectDefaultTrunkBranch } from "@/node/git";
+import { HistoryService } from "@/node/services/historyService";
+import { createMuxMessage } from "@/common/types/message";
+import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 import { installDom } from "../dom";
 import { cleanupView, setupWorkspaceView } from "../helpers";
@@ -32,6 +36,66 @@ function getWorkspaceRow(container: HTMLElement, workspaceId: string): HTMLEleme
   return container.querySelector(
     `[data-workspace-id="${workspaceId}"][role="button"]`
   ) as HTMLElement | null;
+}
+
+function getSubagentConnector(container: HTMLElement, workspaceId: string): HTMLElement | null {
+  // Find all connector elements and match by shared parent with the target workspace row.
+  // This avoids fragile sibling/parent traversal assumptions.
+  const connectors = container.querySelectorAll('[data-testid="subagent-connector"]');
+  for (const connector of connectors) {
+    const wrapper = connector.parentElement;
+    if (!wrapper) continue;
+    if (wrapper.querySelector(`[data-workspace-id="${workspaceId}"]`)) {
+      return connector as HTMLElement;
+    }
+  }
+  return null;
+}
+
+async function findWorkspaceActionsButton(params: {
+  container: HTMLElement;
+  title: string;
+}): Promise<HTMLButtonElement> {
+  return waitFor(
+    () => {
+      const button = params.container.querySelector(
+        `button[aria-label="Workspace actions for ${params.title}"]`
+      ) as HTMLButtonElement | null;
+      if (!button) {
+        throw new Error(`Workspace actions button not found for ${params.title}`);
+      }
+      return button;
+    },
+    { timeout: 10_000 }
+  );
+}
+
+async function findMenuItem(label: string): Promise<HTMLButtonElement> {
+  return waitFor(
+    () => {
+      const buttons = Array.from(document.querySelectorAll("button")) as HTMLButtonElement[];
+      const menuItem = buttons.find((button) => button.textContent?.includes(label));
+      if (!menuItem) {
+        throw new Error(`Menu item not found: ${label}`);
+      }
+      return menuItem;
+    },
+    { timeout: 10_000 }
+  );
+}
+
+function getAncestorTrunkSegments(container: HTMLElement, workspaceId: string): HTMLElement[] {
+  const connector = getSubagentConnector(container, workspaceId);
+  if (!connector) {
+    return [];
+  }
+
+  const wrapper = connector.parentElement;
+  if (!wrapper) {
+    return [];
+  }
+
+  return Array.from(wrapper.querySelectorAll('[data-testid="ancestor-trunk"]')) as HTMLElement[];
 }
 
 async function createWorkspaceWithTitle(params: {
@@ -60,7 +124,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
     await preloadTestModules();
   });
 
-  test("completed children with stale interrupted status stay hidden by default and toggle with parent expansion", async () => {
+  test("double-click renames parent rows and overflow menu toggles completed sub-agents", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
 
@@ -178,21 +242,53 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
-      expect(
-        renderedView.container.querySelector(
-          `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
-        )
-      ).toBeNull();
-      expect(
-        renderedView.container.querySelector(
-          `button[aria-label="Collapse completed sub-agents for ${parentDisplayTitle}"]`
-        )
-      ).toBeNull();
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
       expect(parentRow.getAttribute("aria-keyshortcuts")).toBe("ArrowRight ArrowLeft");
 
-      // Scenario 2: double-clicking the parent reveals both completed children.
+      // Scenario 2: double-clicking the parent always enters rename mode.
       fireEvent.doubleClick(parentRow);
+
+      await waitFor(
+        () => {
+          const editInput = renderedView.container.querySelector(
+            `input[aria-label="Edit title for workspace ${parentDisplayTitle}"]`
+          );
+          if (!editInput) {
+            throw new Error("Expected rename input to appear after double-clicking parent row");
+          }
+        },
+        { timeout: 10_000 }
+      );
+      expect(getWorkspaceRow(renderedView.container, interruptedCompletedChild.id)).toBeNull();
+      expect(getWorkspaceRow(renderedView.container, reportedChild.id)).toBeNull();
+
+      const renameInput = renderedView.container.querySelector(
+        `input[aria-label="Edit title for workspace ${parentDisplayTitle}"]`
+      ) as HTMLInputElement | null;
+      expect(renameInput).not.toBeNull();
+      fireEvent.keyDown(renameInput!, { key: "Escape" });
+
+      await waitFor(
+        () => {
+          const editInput = renderedView.container.querySelector(
+            `input[aria-label="Edit title for workspace ${parentDisplayTitle}"]`
+          );
+          if (editInput) {
+            throw new Error("Expected rename input to close after pressing Escape");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      const parentActionsButton = await findWorkspaceActionsButton({
+        container: renderedView.container,
+        title: parentDisplayTitle,
+      });
+
+      // Scenario 3: the overflow menu shows "Show sub-agents" while collapsed.
+      fireEvent.click(parentActionsButton);
+      const showSubAgentsButton = await findMenuItem("Show sub-agents");
+      fireEvent.click(showSubAgentsButton);
 
       await waitFor(
         () => {
@@ -212,29 +308,17 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("true");
 
-      const parentActionsButton = renderedView.container.querySelector(
-        `button[aria-label="Workspace actions for ${parentDisplayTitle}"]`
-      ) as HTMLButtonElement | null;
-      expect(parentActionsButton).not.toBeNull();
-      const parentActionsIcon = parentActionsButton?.querySelector("svg");
-      expect(parentActionsIcon).not.toBeNull();
-      fireEvent.doubleClick(parentActionsIcon!);
-      expect(parentRow.getAttribute("aria-expanded")).toBe("true");
-      expect(getWorkspaceRow(renderedView.container, interruptedCompletedChild.id)).not.toBeNull();
-      expect(getWorkspaceRow(renderedView.container, reportedChild.id)).not.toBeNull();
+      // Expanded rows with hidden status dots should show the completed-children indicator.
       expect(
-        renderedView.container.querySelector(
-          `input[aria-label="Edit title for workspace ${parentDisplayTitle}"]`
+        parentRow.querySelector(
+          `[data-testid="completed-children-expanded-indicator-${parentWorkspace.id}"]`
         )
-      ).toBeNull();
+      ).not.toBeNull();
 
-      fireEvent.keyDown(parentActionsButton!, { key: "ArrowLeft" });
-      expect(parentRow.getAttribute("aria-expanded")).toBe("true");
-      expect(getWorkspaceRow(renderedView.container, interruptedCompletedChild.id)).not.toBeNull();
-      expect(getWorkspaceRow(renderedView.container, reportedChild.id)).not.toBeNull();
-
-      // Scenario 3: keyboard users can still reveal and hide completed children from the row.
-      fireEvent.keyDown(parentRow, { key: "ArrowLeft" });
+      // Scenario 4: the overflow menu switches to "Hide sub-agents" when expanded.
+      fireEvent.click(parentActionsButton);
+      const hideSubAgentsButton = await findMenuItem("Hide sub-agents");
+      fireEvent.click(hideSubAgentsButton);
 
       await waitFor(
         () => {
@@ -243,19 +327,18 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
             interruptedCompletedChild.id
           );
           if (interruptedCompletedRow) {
-            throw new Error(
-              "Expected interrupted completed child to be hidden after keyboard collapsing"
-            );
+            throw new Error("Expected interrupted completed child to be hidden after collapsing");
           }
           const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
           if (reportedRow) {
-            throw new Error("Expected reported child to be hidden after keyboard collapsing");
+            throw new Error("Expected reported child to be hidden after collapsing");
           }
         },
         { timeout: 10_000 }
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
 
+      // Scenario 5: keyboard users can still reveal and hide completed children from the row.
       fireEvent.keyDown(parentRow, { key: "ArrowRight" });
 
       await waitFor(
@@ -278,8 +361,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("true");
 
-      // Scenario 4: double-clicking the parent again hides both completed children.
-      fireEvent.doubleClick(parentRow);
+      fireEvent.keyDown(parentRow, { key: "ArrowLeft" });
 
       await waitFor(
         () => {
@@ -288,11 +370,13 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
             interruptedCompletedChild.id
           );
           if (interruptedCompletedRow) {
-            throw new Error("Expected interrupted completed child to be hidden after collapsing");
+            throw new Error(
+              "Expected interrupted completed child to be hidden after keyboard collapsing"
+            );
           }
           const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
           if (reportedRow) {
-            throw new Error("Expected reported child to be hidden after collapsing");
+            throw new Error("Expected reported child to be hidden after keyboard collapsing");
           }
         },
         { timeout: 10_000 }
@@ -373,6 +457,121 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("expanded rows hide chevron indicator when status dot is visible", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const selectedWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Selected Agent",
+        branchPrefix: "subagent-selected-anchor",
+      });
+      workspaceIdsToRemove.push(selectedWorkspace.id);
+
+      const parentWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Unread Parent Agent",
+        branchPrefix: "subagent-unread-parent",
+      });
+      workspaceIdsToRemove.push(parentWorkspace.id);
+
+      const reportedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Completed Child",
+        branchPrefix: "subagent-unread-reported",
+      });
+      workspaceIdsToRemove.push(reportedChild.id);
+
+      const completedAt = new Date().toISOString();
+      await env.config.addWorkspace(repoPath, {
+        ...reportedChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "reported",
+        reportedAt: completedAt,
+      });
+
+      const historyService = new HistoryService(env.config);
+      const appendResult = await historyService.appendToHistory(
+        parentWorkspace.id,
+        createMuxMessage("parent-unread-message", "user", "Mark this workspace unread")
+      );
+      if (!appendResult.success) {
+        throw new Error(`Failed to seed unread history: ${appendResult.error}`);
+      }
+
+      cleanupDom = installDom();
+      updatePersistedState(getWorkspaceLastReadKey(parentWorkspace.id), 0);
+
+      view = renderApp({ apiClient: env.orpc, metadata: selectedWorkspace });
+      await setupWorkspaceView(view, selectedWorkspace, selectedWorkspace.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      const parentRow = await waitFor(
+        () => {
+          const row = getWorkspaceRow(renderedView.container, parentWorkspace.id);
+          if (!row) {
+            throw new Error("Parent workspace row not found");
+          }
+          return row;
+        },
+        { timeout: 10_000 }
+      );
+
+      fireEvent.keyDown(parentRow, { key: "ArrowRight" });
+
+      await waitFor(
+        () => {
+          const reportedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
+          if (!reportedRow) {
+            throw new Error("Expected completed child to be visible after expansion");
+          }
+        },
+        { timeout: 10_000 }
+      );
+      expect(parentRow.getAttribute("aria-expanded")).toBe("true");
+      expect(
+        parentRow.querySelector(
+          `[data-testid="completed-children-expanded-indicator-${parentWorkspace.id}"]`
+        )
+      ).toBeNull();
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);
@@ -477,13 +676,14 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         },
         { timeout: 10_000 }
       );
-      expect(
-        renderedView.container.querySelector(
-          `button[aria-label="Expand completed sub-agents for ${parentDisplayTitle}"]`
-        )
-      ).toBeNull();
       expect(parentRow.getAttribute("aria-expanded")).toBe("false");
-      fireEvent.doubleClick(parentRow);
+      const parentActionsButton = await findWorkspaceActionsButton({
+        container: renderedView.container,
+        title: parentDisplayTitle,
+      });
+      fireEvent.click(parentActionsButton);
+      const showSubAgentsButton = await findMenuItem("Show sub-agents");
+      fireEvent.click(showSubAgentsButton);
 
       await waitFor(
         () => {
@@ -500,6 +700,358 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         'button[aria-label^="Expand workspaces older than "]'
       );
       expect(ageTierExpandButton).toBeNull();
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("renders active connector classes for running sub-agents", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const parentWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Connector Parent",
+        branchPrefix: "subagent-connector-parent",
+      });
+      workspaceIdsToRemove.push(parentWorkspace.id);
+
+      const runningChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Running Child",
+        branchPrefix: "subagent-connector-running",
+      });
+      workspaceIdsToRemove.push(runningChild.id);
+
+      await env.config.addWorkspace(repoPath, {
+        ...runningChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "running",
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: parentWorkspace });
+      await setupWorkspaceView(view, parentWorkspace, parentWorkspace.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      await waitFor(
+        () => {
+          const childRow = getWorkspaceRow(renderedView.container, runningChild.id);
+          if (!childRow) {
+            throw new Error("Expected running child row to be visible");
+          }
+
+          const connector = getSubagentConnector(renderedView.container, runningChild.id);
+          if (!connector) {
+            throw new Error("Expected running child connector to be rendered");
+          }
+
+          const activeSegments = connector.querySelectorAll("span.subagent-connector-active");
+          if (activeSegments.length === 0) {
+            throw new Error("Expected active connector segments for running child");
+          }
+
+          const animatedElbow = connector.querySelector("path.subagent-connector-elbow-active");
+          if (!animatedElbow) {
+            throw new Error("Expected animated connector elbow for running child");
+          }
+        },
+        { timeout: 10_000 }
+      );
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("renders ancestor trunk continuity for nested rows across active and inactive branches", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const activeParent = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Nested Parent",
+        branchPrefix: "subagent-ancestor-active-parent",
+      });
+      workspaceIdsToRemove.push(activeParent.id);
+
+      const activeLowerSibling = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Lower Sibling",
+        branchPrefix: "subagent-ancestor-active-sibling",
+      });
+      workspaceIdsToRemove.push(activeLowerSibling.id);
+
+      const activeNestedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Nested Child",
+        branchPrefix: "subagent-ancestor-active-child",
+      });
+      workspaceIdsToRemove.push(activeNestedChild.id);
+
+      const activeGrandchild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Active Nested Grandchild",
+        branchPrefix: "subagent-ancestor-active-grandchild",
+      });
+      workspaceIdsToRemove.push(activeGrandchild.id);
+
+      const inactiveParent = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Nested Parent",
+        branchPrefix: "subagent-ancestor-inactive-parent",
+      });
+      workspaceIdsToRemove.push(inactiveParent.id);
+
+      const inactiveLowerSibling = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Lower Sibling",
+        branchPrefix: "subagent-ancestor-inactive-sibling",
+      });
+      workspaceIdsToRemove.push(inactiveLowerSibling.id);
+
+      const inactiveNestedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Nested Child",
+        branchPrefix: "subagent-ancestor-inactive-child",
+      });
+      workspaceIdsToRemove.push(inactiveNestedChild.id);
+
+      const inactiveGrandchild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Inactive Nested Grandchild",
+        branchPrefix: "subagent-ancestor-inactive-grandchild",
+      });
+      workspaceIdsToRemove.push(inactiveGrandchild.id);
+
+      await env.config.addWorkspace(repoPath, {
+        ...activeNestedChild,
+        parentWorkspaceId: activeParent.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...activeGrandchild,
+        parentWorkspaceId: activeNestedChild.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...activeLowerSibling,
+        parentWorkspaceId: activeParent.id,
+        taskStatus: "running",
+      });
+
+      await env.config.addWorkspace(repoPath, {
+        ...inactiveNestedChild,
+        parentWorkspaceId: inactiveParent.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...inactiveGrandchild,
+        parentWorkspaceId: inactiveNestedChild.id,
+        taskStatus: "queued",
+      });
+      await env.config.addWorkspace(repoPath, {
+        ...inactiveLowerSibling,
+        parentWorkspaceId: inactiveParent.id,
+        taskStatus: "queued",
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: activeParent });
+      await setupWorkspaceView(view, activeParent, activeParent.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      await waitFor(
+        () => {
+          if (!getWorkspaceRow(renderedView.container, activeGrandchild.id)) {
+            throw new Error("Expected active nested grandchild row to be visible");
+          }
+          if (!getWorkspaceRow(renderedView.container, inactiveGrandchild.id)) {
+            throw new Error("Expected inactive nested grandchild row to be visible");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      const activeAncestorTrunks = getAncestorTrunkSegments(
+        renderedView.container,
+        activeGrandchild.id
+      );
+      expect(activeAncestorTrunks.length).toBeGreaterThan(0);
+      expect(activeAncestorTrunks[0]?.getAttribute("data-trunk-active")).toBe("true");
+
+      const inactiveAncestorTrunks = getAncestorTrunkSegments(
+        renderedView.container,
+        inactiveGrandchild.id
+      );
+      expect(inactiveAncestorTrunks.length).toBeGreaterThan(0);
+      expect(inactiveAncestorTrunks[0]?.getAttribute("data-trunk-active")).toBe("false");
+
+      const peerAncestorTrunks = getAncestorTrunkSegments(
+        renderedView.container,
+        activeLowerSibling.id
+      );
+      expect(peerAncestorTrunks).toHaveLength(0);
+    } finally {
+      if (view && cleanupDom) {
+        await cleanupView(view, cleanupDom);
+      } else if (cleanupDom) {
+        cleanupDom();
+      }
+
+      for (const workspaceId of workspaceIdsToRemove.reverse()) {
+        try {
+          await env.orpc.workspace.remove({ workspaceId, options: { force: true } });
+        } catch {
+          // Best effort cleanup.
+        }
+      }
+
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  }, 90_000);
+
+  test("does not render active connector classes for non-running sub-agents", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+
+    const workspaceIdsToRemove: string[] = [];
+    let view: RenderedApp | undefined;
+    let cleanupDom: (() => void) | undefined;
+
+    try {
+      await trustProject(env, repoPath);
+      const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+      const parentWorkspace = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Connector Parent",
+        branchPrefix: "subagent-connector-parent-queued",
+      });
+      workspaceIdsToRemove.push(parentWorkspace.id);
+
+      const queuedChild = await createWorkspaceWithTitle({
+        env,
+        projectPath: repoPath,
+        trunkBranch,
+        title: "Queued Child",
+        branchPrefix: "subagent-connector-queued",
+      });
+      workspaceIdsToRemove.push(queuedChild.id);
+
+      await env.config.addWorkspace(repoPath, {
+        ...queuedChild,
+        parentWorkspaceId: parentWorkspace.id,
+        taskStatus: "queued",
+      });
+
+      cleanupDom = installDom();
+      view = renderApp({ apiClient: env.orpc, metadata: parentWorkspace });
+      await setupWorkspaceView(view, parentWorkspace, parentWorkspace.id);
+
+      if (!view) {
+        throw new Error("View did not initialize");
+      }
+      const renderedView = view;
+
+      // Wait for the queued child row to appear in the sidebar.
+      await waitFor(
+        () => {
+          const childRow = getWorkspaceRow(renderedView.container, queuedChild.id);
+          if (!childRow) {
+            throw new Error("Expected queued child row to be visible");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      // A queued sub-agent should NOT have active connector segments
+      // (only "running" status triggers the active animation).
+      const activeSegments = renderedView.container.querySelectorAll(
+        "span.subagent-connector-active"
+      );
+      expect(activeSegments.length).toBe(0);
+
+      const animatedElbows = renderedView.container.querySelectorAll(
+        "path.subagent-connector-elbow-active"
+      );
+      expect(animatedElbows.length).toBe(0);
     } finally {
       if (view && cleanupDom) {
         await cleanupView(view, cleanupDom);

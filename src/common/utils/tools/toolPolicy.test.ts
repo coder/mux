@@ -1,4 +1,4 @@
-import { applyToolPolicy, type ToolPolicy } from "./toolPolicy";
+import { applyToolPolicy, applyToolPolicyToNames, type ToolPolicy } from "./toolPolicy";
 import { tool } from "ai";
 import { z } from "zod";
 
@@ -284,5 +284,58 @@ describe("applyToolPolicy", () => {
       const result = applyToolPolicy(mockTools, policy);
       expect(Object.keys(result)).toEqual(Object.keys(mockTools));
     });
+  });
+});
+
+describe("applyToolPolicyToNames", () => {
+  const toolNames = Object.keys(mockTools);
+
+  test("returns all names when policy is undefined", () => {
+    expect(applyToolPolicyToNames(toolNames)).toEqual(toolNames);
+  });
+
+  test("returns all names when policy is empty", () => {
+    expect(applyToolPolicyToNames(toolNames, [])).toEqual(toolNames);
+  });
+
+  test("disables a specific tool name", () => {
+    const policy: ToolPolicy = [{ regex_match: "bash", action: "disable" }];
+
+    expect(applyToolPolicyToNames(toolNames, policy)).toEqual(
+      toolNames.filter((name) => name !== "bash")
+    );
+  });
+
+  test("applies regex matching", () => {
+    const policy: ToolPolicy = [{ regex_match: "file_edit_.*", action: "disable" }];
+
+    expect(applyToolPolicyToNames(toolNames, policy)).toEqual(
+      toolNames.filter((name) => !name.startsWith("file_edit_"))
+    );
+  });
+
+  test("uses last-wins semantics", () => {
+    const policy: ToolPolicy = [
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "bash", action: "enable" },
+    ];
+
+    expect(applyToolPolicyToNames(toolNames, policy)).toEqual(["bash"]);
+  });
+
+  test("treats require as enable", () => {
+    const policy: ToolPolicy = [
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "file_read", action: "require" },
+    ];
+
+    expect(applyToolPolicyToNames(toolNames, policy)).toEqual(["file_read"]);
+  });
+
+  test("preserves original order in filtered results", () => {
+    const orderedNames = ["web_search", "file_read", "bash", "file_edit_insert"];
+    const policy: ToolPolicy = [{ regex_match: "file_.*", action: "disable" }];
+
+    expect(applyToolPolicyToNames(orderedNames, policy)).toEqual(["web_search", "bash"]);
   });
 });

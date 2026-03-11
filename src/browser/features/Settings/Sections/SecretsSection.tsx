@@ -6,6 +6,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Button } from "@/browser/components/Button/Button";
 import { Input } from "@/browser/components/Input/Input";
+import { Switch } from "@/browser/components/Switch/Switch";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { OnePasswordPicker } from "../Components/OnePasswordPicker";
 import {
@@ -110,6 +111,7 @@ function secretsEqual(a: Secret[], b: Secret[]): boolean {
     if (!left || !right) return false;
     if (left.key !== right.key) return false;
     if (!secretValuesEqual(left.value, right.value)) return false;
+    if (!!left.injectAll !== !!right.injectAll) return false;
   }
   return true;
 }
@@ -138,10 +140,15 @@ export const SecretsSection: React.FC = () => {
 
   const [opAccountName, setOpAccountName] = useState("");
   const [opAvailabilityVersion, setOpAvailabilityVersion] = useState(0);
+  const [injectedGlobalSecretKeys, setInjectedGlobalSecretKeys] = useState<string[]>([]);
 
   // Track the last plaintext value per row index so toggling Source back to
   // "Value" restores the user's input instead of clearing it.
   const lastLiteralValuesRef = useRef<Map<number, string>>(new Map());
+
+  // Ignore stale async loads after the user switches projects or scope so older
+  // responses cannot overwrite state for the latest selection.
+  const loadSecretsRequestVersionRef = useRef(0);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -149,6 +156,12 @@ export const SecretsSection: React.FC = () => {
 
   const scopeLabel = scope === "global" ? "Global" : "Project";
   const showSourceColumn = scope === "project" || opAvailable;
+  const secretGridColumns =
+    scope === "global"
+      ? showSourceColumn
+        ? "grid-cols-[1fr_auto_1fr_auto_auto_auto]"
+        : "grid-cols-[1fr_1fr_auto_auto_auto]"
+      : "grid-cols-[1fr_auto_1fr_auto_auto]";
 
   // When re-opened with a new project hint (e.g., clicking the secrets button again
   // for a different project), sync the scope and clear the one-shot hint.
@@ -183,22 +196,35 @@ export const SecretsSection: React.FC = () => {
     .slice()
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
+  const sortedInjectedGlobalSecretKeys = injectedGlobalSecretKeys
+    .slice()
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
   const loadSecrets = useCallback(async () => {
+    const requestVersion = loadSecretsRequestVersionRef.current + 1;
+    loadSecretsRequestVersionRef.current = requestVersion;
+
+    const isStaleRequest = () => loadSecretsRequestVersionRef.current !== requestVersion;
+
     if (!api) {
       setLoadedSecrets([]);
       setSecrets([]);
+      setInjectedGlobalSecretKeys([]);
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
       setError(null);
+      setLoading(false);
       return;
     }
 
     if (scope === "project" && !currentProjectPath) {
       setLoadedSecrets([]);
       setSecrets([]);
+      setInjectedGlobalSecretKeys([]);
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
       setError(null);
+      setLoading(false);
       return;
     }
 
@@ -206,24 +232,71 @@ export const SecretsSection: React.FC = () => {
     setError(null);
 
     try {
-      const nextSecrets = await api.secrets.get(
-        scope === "project" ? { projectPath: currentProjectPath } : {}
-      );
-      setLoadedSecrets(nextSecrets);
-      setSecrets(nextSecrets);
+      if (scope === "project") {
+        const projectPath = currentProjectPath;
+        if (!projectPath) {
+          setLoadedSecrets([]);
+          setSecrets([]);
+          setInjectedGlobalSecretKeys([]);
+          setVisibleSecrets(new Set());
+          setError(null);
+          setLoading(false);
+          return;
+        }
+
+        const nextSecrets = await api.secrets.get({ projectPath });
+        if (isStaleRequest()) {
+          return;
+        }
+        setLoadedSecrets(nextSecrets);
+        setSecrets(nextSecrets);
+
+        try {
+          const injectedKeys = await api.secrets.getInjectedGlobals({ projectPath });
+          if (isStaleRequest()) {
+            return;
+          }
+          setInjectedGlobalSecretKeys(injectedKeys);
+        } catch (err) {
+          if (isStaleRequest()) {
+            return;
+          }
+          const message = err instanceof Error ? err.message : "Failed to load injected globals";
+          setInjectedGlobalSecretKeys([]);
+          setError(`Secrets loaded, but failed to load injected globals: ${message}`);
+        }
+      } else {
+        const nextSecrets = await api.secrets.get({});
+        if (isStaleRequest()) {
+          return;
+        }
+        setLoadedSecrets(nextSecrets);
+        setSecrets(nextSecrets);
+        setInjectedGlobalSecretKeys([]);
+      }
+
+      if (isStaleRequest()) {
+        return;
+      }
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
       lastLiteralValuesRef.current = new Map();
     } catch (err) {
+      if (isStaleRequest()) {
+        return;
+      }
       const message = err instanceof Error ? err.message : "Failed to load secrets";
       setLoadedSecrets([]);
       setSecrets([]);
+      setInjectedGlobalSecretKeys([]);
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
       lastLiteralValuesRef.current = new Map();
       setError(message);
     } finally {
-      setLoading(false);
+      if (!isStaleRequest()) {
+        setLoading(false);
+      }
     }
   }, [api, currentProjectPath, scope]);
 
@@ -396,6 +469,18 @@ export const SecretsSection: React.FC = () => {
     });
   }, []);
 
+  const updateSecretInjectAll = useCallback((index: number, checked: boolean) => {
+    setSecrets((prev) => {
+      const next = [...prev];
+      const existing = next[index] ?? { key: "", value: "" };
+      next[index] = {
+        ...existing,
+        injectAll: checked || undefined,
+      };
+      return next;
+    });
+  }, []);
+
   const updateSecretValueKind = useCallback(
     (index: number, kind: "literal" | "global") => {
       setSecrets((prev) => {
@@ -486,6 +571,21 @@ export const SecretsSection: React.FC = () => {
 
       if (scope === "global") {
         setGlobalSecretKeys(validSecrets.map((s) => s.key));
+        setInjectedGlobalSecretKeys([]);
+      } else {
+        const projectPath = currentProjectPath;
+        if (!projectPath) {
+          setInjectedGlobalSecretKeys([]);
+        } else {
+          try {
+            const injectedKeys = await api.secrets.getInjectedGlobals({ projectPath });
+            setInjectedGlobalSecretKeys(injectedKeys);
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to refresh injected globals";
+            setError(`Secrets saved, but failed to refresh injected globals: ${message}`);
+          }
+        }
       }
       setVisibleSecrets(new Set());
       setOpPickerIndex(null);
@@ -532,7 +632,7 @@ export const SecretsSection: React.FC = () => {
             Scope: <span className="text-foreground">{scopeLabel}</span>
           </p>
           <p className="text-muted mt-1 text-xs">
-            Global secrets are shared storage only; they are not injected by default.
+            Toggle Inject on a global secret to automatically inject it into every project.
           </p>
           <p className="text-muted mt-1 text-xs">
             Project secrets control injection. Use Type: Global to reference a global value.
@@ -585,6 +685,36 @@ export const SecretsSection: React.FC = () => {
         </div>
       )}
 
+      {scope === "project" && currentProjectPath && (
+        <div className="space-y-2">
+          <div>
+            <div className="text-foreground text-sm">Injected from Global</div>
+            <div className="text-muted text-xs">
+              Read-only. Project secrets override injected globals when keys match.
+            </div>
+          </div>
+
+          {sortedInjectedGlobalSecretKeys.length === 0 ? (
+            <div className="text-muted border-border-medium rounded-md border border-dashed px-3 py-2 text-xs">
+              No global secrets are currently injected into this project.
+            </div>
+          ) : (
+            <div className="border-border-medium bg-background-secondary rounded-md border px-3 py-2">
+              <div className="flex flex-wrap gap-1.5">
+                {sortedInjectedGlobalSecretKeys.map((key) => (
+                  <code
+                    key={key}
+                    className="bg-modal-bg border-border-medium text-foreground inline-flex items-center rounded border px-2 py-0.5 font-mono text-[12px]"
+                  >
+                    {key}
+                  </code>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {error && (
         <div className="bg-destructive/10 text-destructive flex items-center gap-2 rounded-md px-3 py-2 text-sm">
           {error}
@@ -606,16 +736,13 @@ export const SecretsSection: React.FC = () => {
         </div>
       ) : (
         <div
-          className={`[&>label]:text-muted grid ${
-            showSourceColumn
-              ? "grid-cols-[1fr_auto_1fr_auto_auto]"
-              : "grid-cols-[1fr_1fr_auto_auto]"
-          } items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]`}
+          className={`[&>label]:text-muted grid ${secretGridColumns} items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]`}
         >
           <label>Key</label>
           {showSourceColumn && <label>Source</label>}
           <label>Value</label>
           <div />
+          {scope === "global" && <label className="text-center">Inject</label>}
           <div />
 
           {secrets.map((secret, index) => {
@@ -753,6 +880,19 @@ export const SecretsSection: React.FC = () => {
                   >
                     <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
                   </button>
+                )}
+
+                {scope === "global" && (
+                  <div className="flex items-center justify-center self-center">
+                    <Switch
+                      size="sm"
+                      checked={!!secret.injectAll}
+                      onCheckedChange={(checked) => updateSecretInjectAll(index, checked)}
+                      disabled={saving}
+                      aria-label="Inject into all projects"
+                      title="Inject into all projects"
+                    />
+                  </div>
                 )}
 
                 <button

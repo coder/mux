@@ -23,6 +23,7 @@ export const SecretSchema = z
   .object({
     key: z.string(),
     value: SecretValueSchema,
+    injectAll: z.boolean().optional(),
   })
   .meta({
     description: "A key-value pair for storing sensitive configuration",

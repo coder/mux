@@ -23,6 +23,7 @@ import type {
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
+import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
@@ -315,7 +316,8 @@ export class StreamingMessageAggregator {
   >();
 
   // Current TODO list (updated when todo_write succeeds)
-  // Session-scoped: persists across streams, reconstructed from history on reload
+  // Incomplete lists persist across streams and reloads; fully completed lists clear
+  // once the final stream finishes so stale plans do not linger in the UI.
   private currentTodos: TodoItem[] = [];
 
   // Current agent status (updated when status_set is called)
@@ -699,10 +701,10 @@ export class StreamingMessageAggregator {
    *
    * Clears:
    * - Active stream tracking (this.activeStreams)
-   * - Current TODOs (this.currentTodos) - reconstructed from history on reload
    * - Transient agentStatus (from displayStatus) - restored to persisted value
    *
    * Preserves:
+   * - currentTodos (incomplete lists stay visible; handleStreamEnd may clear fully completed lists)
    * - lastCompletedStreamStats - timing stats from this stream for display after completion
    */
   private cleanupStreamState(messageId: string): void {
@@ -949,6 +951,7 @@ export class StreamingMessageAggregator {
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
     );
 
+    let shouldClearCompletedTodosOnIdleReplay = false;
     if (!opts?.skipDerivedState) {
       // Replay historical messages in order to reconstruct derived state
       for (const message of chronologicalMessages) {
@@ -962,10 +965,24 @@ export class StreamingMessageAggregator {
         }
 
         if (message.role === "assistant") {
+          let assistantUpdatedTodos = false;
           for (const part of message.parts) {
             if (isDynamicToolPart(part) && part.state === "output-available") {
               this.processToolResult(part.toolName, part.input, part.output, context);
+              if (
+                part.toolName === "todo_write" &&
+                hasSuccessResult(part.output) &&
+                part.input != null &&
+                typeof part.input === "object" &&
+                Array.isArray((part.input as { todos?: unknown }).todos)
+              ) {
+                assistantUpdatedTodos = true;
+              }
             }
+          }
+
+          if (!hasActiveStream && assistantUpdatedTodos) {
+            shouldClearCompletedTodosOnIdleReplay = message.metadata?.partial !== true;
           }
         }
       }
@@ -978,6 +995,19 @@ export class StreamingMessageAggregator {
         this.agentStatus = persistedStatus;
         this.lastStatusUrl = persistedStatus.url;
       }
+    }
+
+    // Mirror live stream-end cleanup for idle reloads: a completed plan should not reappear
+    // just because we reconstructed it from historical tool output after a successful final stream.
+    if (
+      !opts?.skipDerivedState &&
+      !hasActiveStream &&
+      this.activeStreams.size === 0 &&
+      shouldClearCompletedTodosOnIdleReplay &&
+      this.currentTodos.length > 0 &&
+      this.currentTodos.every((todo) => todo.status === "completed")
+    ) {
+      this.currentTodos = [];
     }
 
     this.invalidateCache();
@@ -1117,23 +1147,48 @@ export class StreamingMessageAggregator {
     return this.pendingStreamModel;
   }
 
-  private getLatestCompactionRequest(): CompactionRequestData | null {
-    if (this.pendingCompactionRequest) {
-      return this.pendingCompactionRequest;
-    }
-
+  private getLatestHistoricalCompactionRequest(): CompactionRequestData | null {
+    let sawCompletedCompaction = false;
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
+      if (message.role === "assistant" && this.isCompactionBoundarySummaryMessage(message)) {
+        // A completed summary closes the earlier /compact request, so later auto-continue
+        // streams must not inherit a stale "compacting" UI state from that older turn.
+        sawCompletedCompaction = true;
+        continue;
+      }
       if (message.role !== "user") continue;
       const muxMetadata = message.metadata?.muxMetadata;
       if (muxMetadata?.type === "compaction-request") {
-        return muxMetadata.parsed;
+        return sawCompletedCompaction ? null : muxMetadata.parsed;
       }
       return null;
     }
 
     return null;
+  }
+
+  private getLatestUnresolvedCompactionRequest(): CompactionRequestData | null {
+    return this.pendingCompactionRequest ?? this.getLatestHistoricalCompactionRequest();
+  }
+
+  private resolveStreamStartCompaction(data: StreamStartEvent): {
+    isCompacting: boolean;
+    hasCompactionContinue: boolean;
+  } {
+    // Keep stream classification separate from stream context construction so
+    // continue turns after /compact do not inherit stale UI state from history.
+    const streamSignalsCompaction = data.agentId === "compact" || data.mode === "compact";
+    if (!streamSignalsCompaction && data.agentId != null) {
+      return { isCompacting: false, hasCompactionContinue: false };
+    }
+
+    const compactionRequest = this.getLatestUnresolvedCompactionRequest();
+    return {
+      isCompacting: streamSignalsCompaction || compactionRequest !== null,
+      hasCompactionContinue: Boolean(compactionRequest?.followUpContent),
+    };
   }
 
   private setPendingStreamStartTime(time: number | null): void {
@@ -1456,14 +1511,7 @@ export class StreamingMessageAggregator {
 
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
-    // Detect compaction via stream mode (most authoritative).
-    // For backwards compat (older stream-start events without mode), fall back to the
-    // triggering compaction request metadata (pending or last user message).
-    const compactionRequest = this.getLatestCompactionRequest();
-    const isCompacting = data.mode === "compact" || compactionRequest !== null;
-
-    // Capture compaction-continue metadata before clearing pending request state.
-    const hasCompactionContinue = Boolean(compactionRequest?.followUpContent);
+    const { isCompacting, hasCompactionContinue } = this.resolveStreamStartCompaction(data);
 
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
@@ -1631,7 +1679,7 @@ export class StreamingMessageAggregator {
         ? { hasContinueMessage: activeStream.hasCompactionContinue }
         : undefined;
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
 
       const isFinal = this.activeStreams.size === 0;
@@ -1683,9 +1731,19 @@ export class StreamingMessageAggregator {
 
       this.messages.set(data.messageId, message);
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
     }
+    // Keep incomplete plans available across stream boundaries, but clear a fully completed
+    // plan once the workspace has no active streams so finished work does not linger.
+    if (
+      this.activeStreams.size === 0 &&
+      this.currentTodos.length > 0 &&
+      this.currentTodos.every((todo) => todo.status === "completed")
+    ) {
+      this.currentTodos = [];
+    }
+
     // Assistant message is now stable (completed or reconnected) - invalidate all caches.
     this.markMessageDirty(data.messageId);
   }
@@ -1724,7 +1782,7 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
       // Assistant message is now stable (aborted) - invalidate all caches.
       this.markMessageDirty(data.messageId);
@@ -1754,7 +1812,7 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Clean up stream-scoped state (active stream tracking, TODOs)
+      // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
       // Assistant message is now stable (errored) - invalidate all caches.
       this.markMessageDirty(data.messageId);
@@ -1921,8 +1979,9 @@ export class StreamingMessageAggregator {
     output: unknown,
     _context: "streaming" | "historical"
   ): void {
-    // Update TODO state if this was a successful todo_write
-    // TODOs are session-scoped: update during both live streaming and historical reload
+    // Update TODO state if this was a successful todo_write.
+    // We still reconstruct from history so interrupted/incomplete plans survive reloads;
+    // final completed plans are cleared later when the last active stream ends.
     if (
       toolName === "todo_write" &&
       hasSuccessResult(output) &&
@@ -1934,6 +1993,13 @@ export class StreamingMessageAggregator {
       if (Array.isArray(args.todos) && !this.todosEqual(this.currentTodos, args.todos)) {
         // Only update if todos actually changed (prevents flickering from reference changes)
         this.currentTodos = args.todos;
+      }
+    }
+
+    if (toolName === "propose_plan" && hasSuccessResult(output) && this.currentTodos.length > 0) {
+      const completedTodos = completeInProgressTodoItems(this.currentTodos);
+      if (completedTodos !== this.currentTodos) {
+        this.currentTodos = completedTodos;
       }
     }
 

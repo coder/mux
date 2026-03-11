@@ -2,7 +2,6 @@ import { useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
-import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
@@ -11,7 +10,6 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
-import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
 import { SubAgentListItem } from "./SubAgentListItem";
 
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -26,6 +24,9 @@ import {
   Sparkles,
   PenLine,
   MessageCircleQuestionMark,
+  Eye,
+  EyeOff,
+  ChevronDown,
 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
@@ -148,11 +149,31 @@ function getVisualState(opts: {
   return opts.isUnread ? "idle" : "seen";
 }
 
-function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
-  const shouldHideDot = !props.isDraft && (props.state === "seen" || props.state === "hidden");
+function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: boolean): boolean {
+  if (isDraft) {
+    return true;
+  }
+  if (state === "hidden") {
+    return false;
+  }
+  if (state === "seen") {
+    return isSubAgent === true;
+  }
+  return true;
+}
+
+function StatusDot(props: {
+  state: VisualState;
+  isDraft?: boolean;
+  isSubAgent?: boolean;
+  overlay?: React.ReactNode;
+}) {
+  const hasVisibleDot = isStatusDotVisible(props.state, props.isDraft, props.isSubAgent);
+  const usesSubAgentConnectorDot =
+    props.isSubAgent === true && (props.state === "idle" || props.state === "seen");
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
-  ) : shouldHideDot ? (
+  ) : !hasVisibleDot ? (
     <span className="block h-3 w-3 opacity-0" />
   ) : (
     <span
@@ -160,7 +181,10 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
         "block h-3 w-3",
         props.state === "active" &&
           "bg-content-success border-surface-green workspace-status-dot-active",
-        props.state === "idle" && "bg-surface-invert-secondary border-surface-tertiary",
+        usesSubAgentConnectorDot && "bg-border-light border-border-light h-2 w-2",
+        props.state === "idle" &&
+          props.isSubAgent !== true &&
+          "bg-surface-invert-secondary border-surface-tertiary",
         props.state === "error" && "bg-content-destructive border-surface-destructive",
         props.state === "question" && "bg-border-pending border-surface-sky",
         "rounded-full border-[3.5px]"
@@ -177,6 +201,11 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean }) {
       className="relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
     >
       {dot}
+      {props.overlay && (
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          {props.overlay}
+        </span>
+      )}
     </div>
   );
 }
@@ -341,7 +370,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const isDisabled = isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
-  const gitStatus = useGitStatus(workspaceId);
 
   // Get title edit context — manages inline title editing state across the sidebar
   const {
@@ -487,6 +515,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isSelected,
     hasError,
   });
+  const isSubAgentRow = rowRenderMeta?.rowKind === "subagent";
+  const showsVisibleStatusDot = isStatusDotVisible(visualState, false, isSubAgentRow);
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
@@ -497,6 +527,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
   const canToggleCompletedChildren = hasCompletedChildren && onToggleCompletedChildren != null;
   const isCompletedChildrenExpanded = completedChildrenExpanded === true;
+  const showCompletedChildrenIndicator =
+    canToggleCompletedChildren && isCompletedChildrenExpanded && !showsVisibleStatusDot;
   const toggleCompletedChildren = () => {
     if (!canToggleCompletedChildren) {
       return false;
@@ -571,13 +603,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           if (doubleClickTarget?.closest("button,input,textarea,[contenteditable='true']")) {
             return;
           }
-          // Completed-child rows no longer render a dedicated chevron, so the row
-          // itself owns the pointer expand/collapse gesture. Rows without completed
-          // children keep double-click rename as their fallback affordance.
-          if (toggleCompletedChildren()) {
-            event.stopPropagation();
-            return;
-          }
           startEditing();
           event.stopPropagation();
         }}
@@ -587,8 +612,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           // Only treat these shortcuts as row-level controls when the row itself is
           // focused so child buttons keep their own keyboard behavior.
           if (e.target !== e.currentTarget) return;
-          // Keep completed-child expansion reachable from the same focusable row now
-          // that the visible chevron control is gone.
+          // Keep completed-child expansion reachable from the same focusable row.
+          // The chevron is only a visual indicator, not an interactive control.
           if (
             e.key === "ArrowRight" &&
             canToggleCompletedChildren &&
@@ -634,9 +659,20 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
         data-section-id={sectionId ?? ""}
-        data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        <StatusDot state={visualState} />
+        <StatusDot
+          state={visualState}
+          isSubAgent={isSubAgentRow}
+          overlay={
+            showCompletedChildrenIndicator ? (
+              <ChevronDown
+                aria-hidden="true"
+                className="text-muted h-3 w-3"
+                data-testid={`completed-children-expanded-indicator-${workspaceId}`}
+              />
+            ) : undefined
+          }
+        />
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
         {isInitializing ? (
@@ -741,6 +777,16 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     linkSharingEnabled={linkSharingEnabled === true}
                     isMuxHelpChat={isMuxHelpChat}
                   />
+                  {canToggleCompletedChildren && (
+                    <PositionedMenuItem
+                      icon={isCompletedChildrenExpanded ? <EyeOff /> : <Eye />}
+                      label={isCompletedChildrenExpanded ? "Hide sub-agents" : "Show sub-agents"}
+                      onClick={() => {
+                        toggleCompletedChildren();
+                        ctxMenu.close();
+                      }}
+                    />
+                  )}
                   <PositionedMenuItem
                     icon={<Sparkles />}
                     label="Generate new title"
@@ -781,7 +827,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           <div
             className={cn(
               // Keep the title column shrinkable on narrow/mobile viewports so the
-              // right-side git indicator never forces horizontal sidebar scrolling.
+              // right-side status badges never force horizontal sidebar scrolling.
               "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5"
             )}
           >
@@ -828,13 +874,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     </TooltipContent>
                   </Tooltip>
                 )}
-                <GitStatusIndicator
-                  gitStatus={gitStatus}
-                  workspaceId={workspaceId}
-                  projectPath={projectPath}
-                  tooltipPosition="right"
-                  isWorking={isWorking}
-                />
               </div>
             )}
           </div>
@@ -890,11 +929,23 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
   if (rowMeta?.rowKind === "subagent") {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
+    const isElbowActive = props.metadata.taskStatus === "running";
+    const indentLeft = getItemPaddingLeft(props.depth);
+    const ancestorTrunks = rowMeta.ancestorTrunks.map((trunk) => ({
+      left: getItemPaddingLeft(trunk.depth) - 4,
+      active: trunk.active,
+    }));
+
     return (
       <SubAgentListItem
         connectorPosition={rowMeta.connectorPosition}
-        indentLeft={getItemPaddingLeft(props.depth)}
+        connectorStartsAtParent={rowMeta.connectorStartsAtParent}
+        sharedTrunkActiveThroughRow={rowMeta.sharedTrunkActiveThroughRow}
+        sharedTrunkActiveBelowRow={rowMeta.sharedTrunkActiveBelowRow}
+        ancestorTrunks={ancestorTrunks}
+        indentLeft={indentLeft}
         isSelected={props.isSelected}
+        isElbowActive={isElbowActive}
       >
         <RegularAgentListItemInner {...props} />
       </SubAgentListItem>

@@ -16,6 +16,7 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { readTodosForSessionDir } from "@/node/services/todos/todoStorage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
@@ -969,6 +970,10 @@ export class WorkspaceService extends EventEmitter {
   // can tag the stream, letting the frontend suppress notifications for maintenance work.
   private readonly idleCompactingWorkspaces = new Set<string>();
 
+  // Monotonic per-workspace stream generations prevent delayed stop-side metadata writes
+  // from older streams from clobbering a newer streaming=true snapshot after async awaits.
+  private readonly streamingGenerations = new Map<string, number>();
+
   // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
   //
   // Why this lives here: archive/remove are the user-facing lifecycle operations that should
@@ -1101,6 +1106,10 @@ export class WorkspaceService extends EventEmitter {
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
+        this.streamingGenerations.set(
+          data.workspaceId,
+          (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1
+        );
         void this.updateStreamingStatus(data.workspaceId, true, data.model, data.agentId);
       }
     });
@@ -1113,13 +1122,29 @@ export class WorkspaceService extends EventEmitter {
 
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
-        void this.updateStreamingStatus(data.workspaceId, false);
+        const generation = this.streamingGenerations.get(data.workspaceId) ?? 0;
+        void this.updateStreamingStatus(
+          data.workspaceId,
+          false,
+          undefined,
+          undefined,
+          undefined,
+          generation
+        );
       }
     });
 
     this.aiService.on("error", (data: unknown) => {
       if (isErrorEvent(data)) {
-        void this.updateStreamingStatus(data.workspaceId, false);
+        const generation = this.streamingGenerations.get(data.workspaceId) ?? 0;
+        void this.updateStreamingStatus(
+          data.workspaceId,
+          false,
+          undefined,
+          undefined,
+          undefined,
+          generation
+        );
       }
     });
 
@@ -1187,7 +1212,9 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     streaming: boolean,
     model?: string,
-    agentId?: string
+    agentId?: string,
+    hasTodos?: boolean,
+    expectedGeneration?: number
   ): Promise<void> {
     try {
       let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
@@ -1208,11 +1235,28 @@ export class WorkspaceService extends EventEmitter {
           thinkingLevel = aiSettings?.thinkingLevel;
         }
       }
+      if (!streaming && hasTodos === undefined) {
+        // Stop snapshots need an authoritative todo bit even for background workspaces,
+        // and centralizing the read here preserves the fire-and-forget abort/error handlers.
+        const sessionDir = this.config.getSessionDir(workspaceId);
+        const todos = await readTodosForSessionDir(sessionDir);
+        hasTodos = todos.length > 0;
+      }
+      if (
+        !streaming &&
+        expectedGeneration !== undefined &&
+        expectedGeneration !== (this.streamingGenerations.get(workspaceId) ?? 0)
+      ) {
+        // A newer stream has started since this stop was initiated, so dropping the stale
+        // streaming=false write preserves the active stream's metadata snapshot.
+        return;
+      }
       const snapshot = await this.extensionMetadata.setStreaming(
         workspaceId,
         streaming,
         model,
-        thinkingLevel
+        thinkingLevel,
+        hasTodos
       );
       // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
       // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
@@ -1239,8 +1283,16 @@ export class WorkspaceService extends EventEmitter {
     // can lose the race against the frontend's lastRead (set via Date.now()
     // after the IPC round-trip). Using a fresh timestamp here ensures the
     // completion recency is strictly after any earlier lastRead write.
+    const generation = this.streamingGenerations.get(workspaceId) ?? 0;
     await this.updateRecencyTimestamp(workspaceId, Date.now());
-    await this.updateStreamingStatus(workspaceId, false);
+    await this.updateStreamingStatus(
+      workspaceId,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      generation
+    );
   }
 
   private createInitLogger(workspaceId: string) {

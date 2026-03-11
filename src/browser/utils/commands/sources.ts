@@ -1,4 +1,4 @@
-import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
+import { THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
@@ -47,7 +47,7 @@ export interface BuildSourcesParams {
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   /** In-app confirmation dialog (replaces window.confirm) */
   confirmDialog: (opts: ConfirmDialogOptions) => Promise<boolean>;
-  theme: ThemeMode;
+  themePreference: ThemePreference;
   selectedWorkspaceState?: WorkspaceState | null;
   selectedWorkspace: {
     projectPath: string;
@@ -80,7 +80,7 @@ export interface BuildSourcesParams {
   onNavigateWorkspace: (dir: "next" | "prev") => void;
   onOpenWorkspaceInTerminal: (workspaceId: string, runtimeConfig?: RuntimeConfig) => void;
   onToggleTheme: () => void;
-  onSetTheme: (theme: ThemeMode) => void;
+  onSetTheme: (theme: ThemePreference) => void;
   onOpenSettings?: (section?: string) => void;
 
   // Layout slots
@@ -720,7 +720,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
     // Add command for each theme the user isn't currently using
     for (const opt of THEME_OPTIONS) {
-      if (p.theme !== opt.value) {
+      if (p.themePreference !== opt.value) {
         list.push({
           id: CommandIds.themeSet(opt.value),
           title: `Use ${opt.label} Theme`,

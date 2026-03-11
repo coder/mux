@@ -27,7 +27,7 @@ import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
-import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
+import { useTheme, type ThemePreference } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
@@ -109,11 +109,11 @@ function AppInner() {
     navigateToAnalytics,
     navigateFromAnalytics,
   } = useRouter();
-  const { theme, setTheme, toggleTheme } = useTheme();
+  const { themePreference, setTheme, toggleTheme } = useTheme();
   const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
   const { confirm: confirmDialog } = useConfirmDialog();
   const setThemePreference = useCallback(
-    (nextTheme: ThemeMode) => {
+    (nextTheme: ThemePreference) => {
       setTheme(nextTheme);
     },
     [setTheme]
@@ -590,7 +590,7 @@ function AppInner() {
     userProjects,
     workspaceMetadata,
     selectedWorkspace,
-    theme,
+    themePreference,
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,

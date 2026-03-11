@@ -20,6 +20,7 @@ import { log } from "@/node/services/log";
  * - lastModel: Last model used in this workspace
  * - lastThinkingLevel: Last thinking/reasoning level used in this workspace
  * - agentStatus: Most recent status_set payload (for sidebar progress in background workspaces)
+ * - hasTodos: Whether the workspace still had todos when streaming last stopped
  *
  * File location: ~/.mux/extensionMetadata.json
  *
@@ -83,6 +84,9 @@ export class ExtensionMetadataService {
       lastModel: entry.lastModel ?? null,
       lastThinkingLevel: entry.lastThinkingLevel ?? null,
       agentStatus: this.coerceAgentStatus(entry.agentStatus),
+      // Persisted metadata is loaded via JSON.parse without per-field validation,
+      // so only surface hasTodos when it still satisfies the snapshot contract.
+      ...(typeof entry.hasTodos === "boolean" ? { hasTodos: entry.hasTodos } : {}),
     };
   }
 
@@ -181,7 +185,8 @@ export class ExtensionMetadataService {
     workspaceId: string,
     streaming: boolean,
     model?: string,
-    thinkingLevel?: ExtensionMetadata["lastThinkingLevel"]
+    thinkingLevel?: ExtensionMetadata["lastThinkingLevel"],
+    hasTodos?: boolean
   ): Promise<WorkspaceActivitySnapshot> {
     return this.withSerializedMutation(async () => {
       const data = await this.load();
@@ -194,6 +199,7 @@ export class ExtensionMetadataService {
           lastModel: model ?? null,
           lastThinkingLevel: thinkingLevel ?? null,
           agentStatus: null,
+          ...(hasTodos !== undefined ? { hasTodos } : {}),
           lastStatusUrl: null,
         };
       } else {
@@ -203,6 +209,9 @@ export class ExtensionMetadataService {
         }
         if (thinkingLevel !== undefined) {
           data.workspaces[workspaceId].lastThinkingLevel = thinkingLevel;
+        }
+        if (hasTodos !== undefined) {
+          data.workspaces[workspaceId].hasTodos = hasTodos;
         }
       }
 

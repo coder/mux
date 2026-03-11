@@ -22,7 +22,6 @@ import {
   expandProjects,
   setWorkspaceDrafts,
 } from "./storyHelpers";
-import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { within, userEvent, waitFor } from "@storybook/test";
 
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
@@ -512,20 +511,14 @@ export const LongWorkspaceNames: AppStory = {
 };
 
 /**
- * Git status indicator variations showing line deltas and commit divergence.
- * Demonstrates both modes (toggle in tooltip) with various states:
- * - Clean: no changes
- * - Ahead: local commits with line additions
- * - Behind: only behind remote (shows muted ↓N in line-delta mode)
- * - Dirty: uncommitted changes
- * - Diverged: ahead, behind, and dirty with large line counts (tests abbreviation)
+ * Sidebar rows should not render git status indicators.
+ * This story seeds diverse git states to ensure rows remain visually stable
+ * even when workspace git data changes.
  */
 export const GitStatusVariations: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        window.localStorage.setItem(GIT_STATUS_INDICATOR_MODE_KEY, JSON.stringify("line-delta"));
-
         const workspaces = [
           createWorkspace({
             id: "ws-clean",
@@ -566,7 +559,6 @@ export const GitStatusVariations: AppStory = {
           }),
         ];
 
-        // Line deltas show in line-delta mode; ahead/behind show in divergence mode
         const gitStatus = new Map<string, GitStatusFixture>([
           ["ws-clean", {}],
           [
@@ -598,37 +590,28 @@ export const GitStatusVariations: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    // Wait for git status to render (fetched async via GitStatusStore polling)
     await waitFor(() => {
       const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]');
       if (!row) throw new Error("ws-diverged row not found");
-      within(row).getByText("+12.3k");
     });
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
-    const plus = within(row).getByText("+12.3k");
 
-    // Click to open the divergence details dialog.
-    await userEvent.click(plus);
-
+    // Select the diverged workspace and wait for top-bar git status to render so
+    // we assert absence in the sidebar only after git status has refreshed.
+    await userEvent.click(row);
     await waitFor(() => {
-      within(document.body).getByText("Git divergence details");
-    });
-
-    const dialog = within(document.body).getByRole("dialog", {
-      name: "Git divergence details",
-    });
-    await userEvent.click(within(dialog).getByText("Commits"));
-
-    // Verify indicator switches to divergence view for the same workspace row
-    await waitFor(() => {
-      const updatedRow = canvasElement.querySelector<HTMLElement>(
-        '[data-workspace-id="ws-diverged"]'
+      const controls = document.body.querySelectorAll(
+        'button[aria-label="View git divergence details"]'
       );
-      if (!updatedRow) throw new Error("ws-diverged row not found");
-      within(updatedRow).getByText("↑3");
-      within(updatedRow).getByText("↓2");
+      if (controls.length === 0) {
+        throw new Error("Top-bar git divergence control not rendered yet");
+      }
     });
+
+    if (within(row).queryByLabelText("View git divergence details") !== null) {
+      throw new Error("Sidebar rows should not render git divergence indicators");
+    }
   },
 };
 

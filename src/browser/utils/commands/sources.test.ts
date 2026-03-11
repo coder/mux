@@ -32,7 +32,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   });
   const params: Parameters<typeof buildCoreSources>[0] = {
     userProjects,
-    theme: "dark",
+    themePreference: "dark",
     workspaceMetadata,
     selectedWorkspace: {
       projectPath: "/repo/a",
@@ -88,6 +88,28 @@ test("buildCoreSources includes create/switch workspace actions", () => {
   expect(titles.includes("Right Sidebar: Focus Terminal")).toBe(true);
   expect(titles.includes("New Terminal Window")).toBe(true);
   expect(titles.includes("Open Terminal Window for Workspace…")).toBe(true);
+});
+
+test("appearance commands offer auto when a manual theme is selected", () => {
+  const sources = mk({ themePreference: "dark" });
+  const actions = sources.flatMap((source) => source());
+
+  const autoAction = actions.find((action) => action.id === "appearance:theme:set:auto");
+  expect(autoAction?.title).toBe("Use Auto Theme");
+  expect(actions.some((action) => action.id === "appearance:theme:set:dark")).toBe(false);
+});
+
+test("appearance commands omit auto when auto preference is already selected", () => {
+  const sources = mk({ themePreference: "auto" });
+  const actions = sources.flatMap((source) => source());
+
+  const themeSetCommandIds = actions
+    .map((action) => action.id)
+    .filter((id) => id.startsWith("appearance:theme:set:"));
+
+  expect(themeSetCommandIds).toContain("appearance:theme:set:dark");
+  expect(themeSetCommandIds).toContain("appearance:theme:set:light");
+  expect(themeSetCommandIds).not.toContain("appearance:theme:set:auto");
 });
 
 test("buildCoreSources adds thinking effort command", () => {
