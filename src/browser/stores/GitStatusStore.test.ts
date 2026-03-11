@@ -88,7 +88,7 @@ function createRuntimeStatusStoreMock(initialStatus: RuntimeStatus | null) {
 
 function getFetchCallCount(): number {
   return mockExecuteBash.mock.calls.filter((call) => {
-    const args = call[0] as { script?: string } | undefined;
+    const args = (call as unknown[])[0] as { script?: string } | undefined;
     return args?.script === GIT_FETCH_SCRIPT;
   }).length;
 }
