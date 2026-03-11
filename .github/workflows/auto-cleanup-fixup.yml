@@ -1,6 +1,7 @@
 # Reacts to CI failures on the auto-cleanup PR and attempts a minimal fix.
-# Companion to auto-cleanup.yml. Prompt lives in:
-# .github/prompts/auto-cleanup-fixup.md
+# Companion to auto-cleanup.yml, so it uses the same dedicated Anthropic key to
+# keep auto-cleanup spend isolated from terminal-bench.
+# Prompt lives in: .github/prompts/auto-cleanup-fixup.md
 
 name: Auto-Cleanup Fixup
 
@@ -26,12 +27,13 @@ jobs:
       - name: Check required secrets
         id: precheck
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Keep the runtime env name stable while routing spend to a dedicated key.
+          ANTHROPIC_API_KEY: ${{ secrets.AUTO_CLEANUP_ANTHROPIC_API_KEY }}
           MUX_APP_ID: ${{ secrets.MUX_APP_ID }}
           MUX_APP_PRIVATE_KEY: ${{ secrets.MUX_APP_PRIVATE_KEY }}
         run: |
           missing=0
-          [ -z "$ANTHROPIC_API_KEY" ] && echo "Skipping (missing ANTHROPIC_API_KEY)." && missing=1
+          [ -z "$ANTHROPIC_API_KEY" ] && echo "Skipping (missing AUTO_CLEANUP_ANTHROPIC_API_KEY)." && missing=1
           [ -z "$MUX_APP_ID" ] && echo "Skipping (missing MUX_APP_ID)." && missing=1
           [ -z "$MUX_APP_PRIVATE_KEY" ] && echo "Skipping (missing MUX_APP_PRIVATE_KEY)." && missing=1
 
@@ -109,7 +111,7 @@ jobs:
       - name: Fix CI failure with mux
         if: ${{ steps.precheck.outputs.enabled == 'true' && steps.circuit.outputs.should_run == 'true' }}
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.AUTO_CLEANUP_ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |

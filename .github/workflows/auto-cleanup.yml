@@ -1,12 +1,12 @@
 # Periodically cleans up the codebase and maintains a refactor PR.
-# SETUP: Add ANTHROPIC_API_KEY and MUX_APP_PRIVATE_KEY to repository secrets.
-# SETUP: Add MUX_APP_ID to repository secrets.
+# SETUP: Add AUTO_CLEANUP_ANTHROPIC_API_KEY, MUX_APP_PRIVATE_KEY, and MUX_APP_ID
+# to repository secrets so auto-cleanup spend stays isolated from terminal-bench.
 
 name: Auto-Cleanup
 
 on:
   schedule:
-    - cron: '0 */4 * * *' # Every 4 hours
+    - cron: "0 */4 * * *" # Every 4 hours
   workflow_dispatch:
 
 permissions:
@@ -20,12 +20,13 @@ jobs:
       - name: Check required secrets
         id: precheck
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Keep the runtime env name stable while routing spend to a dedicated key.
+          ANTHROPIC_API_KEY: ${{ secrets.AUTO_CLEANUP_ANTHROPIC_API_KEY }}
           MUX_APP_ID: ${{ secrets.MUX_APP_ID }}
           MUX_APP_PRIVATE_KEY: ${{ secrets.MUX_APP_PRIVATE_KEY }}
         run: |
           missing=0
-          [ -z "$ANTHROPIC_API_KEY" ] && echo "Skipping (missing ANTHROPIC_API_KEY)." && missing=1
+          [ -z "$ANTHROPIC_API_KEY" ] && echo "Skipping (missing AUTO_CLEANUP_ANTHROPIC_API_KEY)." && missing=1
           [ -z "$MUX_APP_ID" ] && echo "Skipping (missing MUX_APP_ID)." && missing=1
           [ -z "$MUX_APP_PRIVATE_KEY" ] && echo "Skipping (missing MUX_APP_PRIVATE_KEY)." && missing=1
 
@@ -64,7 +65,7 @@ jobs:
       - name: Cleanup with mux
         if: ${{ steps.precheck.outputs.enabled == 'true' }}
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.AUTO_CLEANUP_ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           bunx mux@next run \
