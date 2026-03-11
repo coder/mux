@@ -25,7 +25,7 @@ import type { BashOutputEvent } from "@/common/types/stream";
 import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS, SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 import type { ProviderName } from "@/common/constants/providers";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
@@ -344,7 +344,12 @@ async function maybeFilterBashOutput(
     const system1 = await getSystem1Model();
     if (!system1) return undefined;
 
-    const system1RouteProvider = system1Ctx.modelString ? undefined : opts.routeProvider;
+    // When System1 uses an explicit model, derive route provider from any
+    // explicit gateway prefix so buildProviderOptions uses gateway-appropriate
+    // config. Fall back to the primary stream's route provider otherwise.
+    const system1RouteProvider = system1Ctx.modelString
+      ? getExplicitGatewayPrefix(system1Ctx.modelString)
+      : opts.routeProvider;
     const system1ProviderOptions = buildProviderOptions(
       system1.modelString,
       system1Ctx.thinkingLevel,
