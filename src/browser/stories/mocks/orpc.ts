@@ -1453,10 +1453,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         for (const id of input.workspaceIds) {
           statuses[id] = runtimeStatuses.get(id) ?? "unsupported";
         }
-        return Promise.resolve({ success: true as const, data: statuses });
+        return Promise.resolve(statuses);
       },
-      stopRuntime: () =>
-        Promise.resolve({ success: true as const, data: { success: true, error: null } }),
+      stopRuntime: () => Promise.resolve({ success: true as const, data: undefined }),
       onChat: async function* (input: { workspaceId: string }, options?: { signal?: AbortSignal }) {
         if (!onChat) {
           // Default mock behavior: subscriptions should remain open.

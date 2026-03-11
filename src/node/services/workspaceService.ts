@@ -50,7 +50,6 @@ import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
-import type { Runtime } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import {
   getDevcontainerContainerName,
@@ -186,7 +185,7 @@ interface ArchiveMergedInProjectResult {
 }
 
 interface ExecuteBashOptions {
-  timeout_secs?: number;
+  timeout_secs?: number | null;
   cwdMode?: "default" | "repo-root" | null;
   repoRootProjectPath?: string | null;
   executionTarget?: "runtime" | "host-workspace";

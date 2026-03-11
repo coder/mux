@@ -39,12 +39,10 @@ import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
 import { PopoverError } from "../PopoverError/PopoverError";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
-import { DevcontainerIcon } from "../icons/RuntimeIcons/RuntimeIcons";
 
 import { SkillIndicator } from "../SkillIndicator/SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
-import { RUNTIME_STATUS_ICON_CLASS } from "@/browser/utils/runtimeUi";
 
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
@@ -424,17 +422,17 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
         <div className="flex items-center gap-1">
           <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
-          {isRuntimeRunning && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div
-                  className={cn("flex items-center", RUNTIME_STATUS_ICON_CLASS.devcontainerRunning)}
-                >
-                  <DevcontainerIcon className="h-3 w-3" />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Container running</TooltipContent>
-            </Tooltip>
+          {isDevcontainerWorkspace && (
+            <span
+              className={cn(
+                "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
+                isRuntimeRunning
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "bg-muted/50 text-muted-foreground"
+              )}
+            >
+              {isRuntimeRunning ? "Devcontainer Running" : "Devcontainer Stopped"}
+            </span>
           )}
           <GitStatusIndicator
             gitStatus={gitStatus}
