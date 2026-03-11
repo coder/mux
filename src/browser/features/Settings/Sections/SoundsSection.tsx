@@ -160,24 +160,30 @@ export function SoundsSection() {
       return;
     }
 
-    const result = await api.projects.pickAudioFile({});
-    if (result.filePath == null) {
-      return;
-    }
+    try {
+      const result = await api.projects.pickAudioFile({});
+      if (result.filePath == null) {
+        return;
+      }
 
-    const importedAsset = await api.eventSounds.importFromLocalPath({ localPath: result.filePath });
-
-    applySettingsUpdate((prev) => {
-      const current = getEventSoundConfig(prev, key);
-      return updateEventSoundConfig(prev, key, {
-        ...current,
-        source: {
-          kind: "managed",
-          assetId: importedAsset.assetId,
-          label: importedAsset.originalName,
-        },
+      const importedAsset = await api.eventSounds.importFromLocalPath({
+        localPath: result.filePath,
       });
-    });
+
+      applySettingsUpdate((prev) => {
+        const current = getEventSoundConfig(prev, key);
+        return updateEventSoundConfig(prev, key, {
+          ...current,
+          source: {
+            kind: "managed",
+            assetId: importedAsset.assetId,
+            label: importedAsset.originalName,
+          },
+        });
+      });
+    } catch {
+      // Best-effort only.
+    }
   };
 
   const handleUpload = async (key: EventSoundKey, file: File) => {

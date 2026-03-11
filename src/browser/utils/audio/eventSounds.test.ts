@@ -31,6 +31,11 @@ describe("eventSounds", () => {
     originalLocalStorage = globalThis.localStorage;
 
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    Object.defineProperty(globalThis.window, "api", {
+      value: undefined,
+      writable: true,
+      configurable: true,
+    });
     globalThis.document = globalThis.window.document;
     globalThis.Audio = MockAudio as unknown as typeof Audio;
     globalThis.localStorage = globalThis.window.localStorage;
@@ -83,6 +88,49 @@ describe("eventSounds", () => {
 
     expect(lastAudioSource).toBe(
       "https://coder.example.com/@u/ws/apps/mux/assets/event-sounds/22222222-2222-2222-2222-222222222222.wav?token=stored-token"
+    );
+  });
+
+  test("uses API server status in desktop mode to build playback URL", async () => {
+    window.location.href = "file:///app/index.html";
+    Object.defineProperty(window, "api", {
+      value: {},
+      writable: true,
+      configurable: true,
+    });
+
+    const settings: EventSoundSettings = {
+      agent_review_ready: {
+        enabled: true,
+        source: {
+          kind: "managed",
+          assetId: "33333333-3333-3333-3333-333333333333.wav",
+        },
+      },
+    };
+
+    playEventSound(settings, "agent_review_ready", {
+      server: {
+        getApiServerStatus: () =>
+          Promise.resolve({
+            running: true,
+            baseUrl: "http://127.0.0.1:55525",
+            bindHost: "127.0.0.1",
+            port: 55525,
+            networkBaseUrls: [],
+            token: "desktop-token",
+            configuredBindHost: null,
+            configuredPort: null,
+            configuredServeWebUi: false,
+          }),
+      },
+    } as unknown as Parameters<typeof playEventSound>[2]);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(lastAudioSource).toBe(
+      "http://127.0.0.1:55525/assets/event-sounds/33333333-3333-3333-3333-333333333333.wav?token=desktop-token"
     );
   });
 });
