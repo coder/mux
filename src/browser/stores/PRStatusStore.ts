@@ -22,7 +22,11 @@ import type {
 } from "@/common/types/links";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { createLRUCache } from "@/browser/utils/lruCache";
-import { canRunPassiveRuntimeCommand } from "@/browser/utils/runtimeExecutionPolicy";
+import {
+  canRunPassiveRuntimeCommand,
+  onPassiveRuntimeEligible,
+  type PassiveRuntimeDeps,
+} from "@/browser/utils/runtimeExecutionPolicy";
 /**
  * Parse a GitHub PR URL to extract owner, repo, and number.
  * Returns null if the URL is not a valid GitHub PR URL.
@@ -165,6 +169,7 @@ export class PRStatusStore {
   // Workspace-based PR detection (keyed by workspaceId)
   private workspacePRSubscriptions = new MapStore<string, WorkspacePRCacheEntry>();
   private workspacePRCache = new Map<string, WorkspacePRCacheEntry>();
+  private runtimeRetryUnsubscribers = new Map<string, () => void>();
 
   // Track active subscriptions per workspace so we only refresh workspaces that are actually visible.
   private workspaceSubscriptionCounts = new Map<string, number>();
@@ -178,10 +183,22 @@ export class PRStatusStore {
   // Like GitStatusStore: batch immediate refreshes triggered by subscriptions.
   private immediateUpdateQueued = false;
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
-  private readonly runtimeStatusStore: Pick<RuntimeStatusStore, "getStatus">;
+  private readonly runtimeStatusStore: PassiveRuntimeDeps;
 
-  constructor(runtimeStatusStore: Pick<RuntimeStatusStore, "getStatus"> = getRuntimeStatusStore()) {
-    this.runtimeStatusStore = runtimeStatusStore;
+  constructor(runtimeStatusStore?: PassiveRuntimeDeps);
+  constructor(runtimeStatusStore?: Pick<RuntimeStatusStore, "getStatus">);
+  constructor(
+    runtimeStatusStore:
+      | PassiveRuntimeDeps
+      | Pick<RuntimeStatusStore, "getStatus"> = getRuntimeStatusStore()
+  ) {
+    this.runtimeStatusStore = {
+      getStatus: (workspaceId) => runtimeStatusStore.getStatus(workspaceId),
+      subscribeKey:
+        "subscribeKey" in runtimeStatusStore
+          ? (workspaceId, listener) => runtimeStatusStore.subscribeKey(workspaceId, listener)
+          : () => () => undefined,
+    };
     this.refreshController = new RefreshController({
       onRefresh: () => this.refreshAll(),
       onRefreshError: (failure) => {
@@ -212,6 +229,12 @@ export class PRStatusStore {
     }
 
     this.workspaceMetadata = metadata;
+    for (const [id, unsubscribe] of this.runtimeRetryUnsubscribers) {
+      if (!metadata.has(id)) {
+        unsubscribe();
+        this.runtimeRetryUnsubscribers.delete(id);
+      }
+    }
     this.refreshController.bindListeners();
     this.refreshController.requestImmediate();
   }
@@ -251,6 +274,8 @@ export class PRStatusStore {
       const next = (this.workspaceSubscriptionCounts.get(workspaceId) ?? 1) - 1;
       if (next <= 0) {
         this.workspaceSubscriptionCounts.delete(workspaceId);
+        this.runtimeRetryUnsubscribers.get(workspaceId)?.();
+        this.runtimeRetryUnsubscribers.delete(workspaceId);
       } else {
         this.workspaceSubscriptionCounts.set(workspaceId, next);
       }
@@ -593,6 +618,26 @@ export class PRStatusStore {
             this.runtimeStatusStore.getStatus(workspaceId)
           )
         ) {
+          // Arm a one-shot retry so the workspace gets a PR refresh once the
+          // runtime becomes passively runnable again.
+          if (!this.runtimeRetryUnsubscribers.has(workspaceId)) {
+            let firedSynchronously = false;
+            const unsubscribe = onPassiveRuntimeEligible(
+              workspaceId,
+              metadata.runtimeConfig,
+              this.runtimeStatusStore,
+              () => {
+                firedSynchronously = true;
+                this.runtimeRetryUnsubscribers.delete(workspaceId);
+                // Clear PR cache so TTL doesn't suppress the deferred retry.
+                this.workspacePRCache.delete(workspaceId);
+                this.refreshController.requestImmediate();
+              }
+            );
+            if (!firedSynchronously) {
+              this.runtimeRetryUnsubscribers.set(workspaceId, unsubscribe);
+            }
+          }
           continue;
         }
 
@@ -610,6 +655,10 @@ export class PRStatusStore {
     this.isActive = false;
     this.mergeQueueRefreshPending.clear();
     this.mergeQueueRefreshInFlight.clear();
+    for (const unsubscribe of this.runtimeRetryUnsubscribers.values()) {
+      unsubscribe();
+    }
+    this.runtimeRetryUnsubscribers.clear();
     this.refreshController.dispose();
   }
 }
