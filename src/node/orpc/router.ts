@@ -82,6 +82,7 @@ import {
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+import { discoverApiKeys, importDiscoveredKey } from "@/node/services/keyDiscoveryService";
 
 const RAW_QUERY_USER_ERROR_PATTERNS = [
   /^parser error:/i,
@@ -1241,6 +1242,36 @@ export const router = (authToken?: string) => {
             signal?.removeEventListener("abort", onAbort);
             unsubscribe();
           }
+        }),
+    },
+    keyDiscovery: {
+      discover: t
+        .input(schemas.keyDiscovery.discover.input)
+        .output(schemas.keyDiscovery.discover.output)
+        .handler(() => discoverApiKeys()),
+      import: t
+        .input(schemas.keyDiscovery.import.input)
+        .output(schemas.keyDiscovery.import.output)
+        .handler(async ({ context, input }) => {
+          const result = await importDiscoveredKey(
+            context.config,
+            {
+              provider: input.provider,
+              source: input.source,
+            },
+            {
+              isProviderAllowed: (provider) =>
+                !context.policyService.isEnforced() ||
+                context.policyService.isProviderAllowed(provider),
+            }
+          );
+
+          if (!result.success) {
+            return { success: false as const, error: result.error };
+          }
+
+          context.providerService.notifyConfigChanged();
+          return { success: true as const, data: undefined };
         }),
     },
     policy: {

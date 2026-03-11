@@ -220,6 +220,8 @@ export {
   mcpOauth,
   mcp,
   secrets,
+  DiscoveredKeySchema,
+  keyDiscovery,
   ProviderConfigInfoSchema,
   ProviderModelEntrySchema,
   muxGateway,

@@ -189,6 +189,27 @@ export const ProviderConfigInfoSchema = z.object({
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);
 
+// Key Discovery (import API keys from other AI tools)
+export const DiscoveredKeySchema = z.object({
+  provider: z.string(),
+  source: z.string(),
+  keyPreview: z.string(),
+});
+
+export const keyDiscovery = {
+  discover: {
+    input: z.void(),
+    output: z.array(DiscoveredKeySchema),
+  },
+  import: {
+    input: z.object({
+      provider: z.string(),
+      source: z.string(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+};
+
 export const providers = {
   setProviderConfig: {
     input: z.object({

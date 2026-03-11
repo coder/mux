@@ -112,6 +112,7 @@ import {
   getModelCapabilities,
   getModelCapabilitiesResolved,
 } from "@/common/utils/ai/modelCapabilities";
+import { getModelProvider } from "@/common/utils/ai/models";
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { trackCommandUsed } from "@/common/telemetry";
@@ -123,6 +124,7 @@ import type { ChatInputProps, ChatInputAPI, QueueDispatchMode } from "./types";
 import { CreationControls } from "./CreationControls";
 import { SEND_DISPATCH_MODES } from "./sendDispatchModes";
 import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
+import { ProviderNotConfiguredBanner } from "./ProviderNotConfiguredBanner";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
@@ -2514,6 +2516,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             activeModel={baseModel}
             codexOauthSet={codexOauthSet}
             onOpenProviders={() => open("providers", { expandProvider: "openai" })}
+          />
+
+          <ProviderNotConfiguredBanner
+            activeModel={baseModel}
+            providersConfig={providersConfig}
+            onOpenProviders={() => {
+              open("providers", { expandProvider: getModelProvider(baseModel) });
+            }}
           />
 
           {/* File path suggestions (@src/foo.ts) */}
