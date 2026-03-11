@@ -117,8 +117,7 @@
             "group": "Integrations",
             "pages": [
               "integrations/vscode-extension",
-              "integrations/acp",
-              "integrations/mux-governor"
+              "integrations/acp"
             ]
           },
           {
