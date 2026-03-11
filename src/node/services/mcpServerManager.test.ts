@@ -1198,7 +1198,6 @@ describe("MCPServerManager", () => {
     });
 
     expect(initial.stats.failedServerCount).toBe(1);
-    expect(initial.stats.failedServerNames).toEqual(["serverB"]);
 
     manager.acquireLease(workspaceId);
 
@@ -1214,9 +1213,77 @@ describe("MCPServerManager", () => {
 
     expect(startServersMock).toHaveBeenCalledTimes(1);
     expect(leased.stats.failedServerCount).toBe(0);
-    expect(leased.stats.failedServerNames).toEqual([]);
+    expect(Object.keys(leased.tools)).toEqual(["servera_tool"]);
   });
 
+  test("getToolsForWorkspace only exposes repo-defined servers for trusted projects", async () => {
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/workspace";
+
+    configService.listServers = mock((_projectPath: string, trusted?: boolean) =>
+      Promise.resolve(
+        trusted
+          ? {
+              global: { transport: "stdio", command: "global-cmd", disabled: false },
+              repo: { transport: "stdio", command: "repo-cmd", disabled: false },
+            }
+          : {
+              global: { transport: "stdio", command: "global-cmd", disabled: false },
+            }
+      )
+    );
+
+    const startServersMock = mock((servers: Record<string, unknown>) =>
+      Promise.resolve({
+        instances: new Map(
+          Object.keys(servers).map((name) => [
+            name,
+            {
+              name,
+              resolvedTransport: "stdio",
+              autoFallbackUsed: false,
+              tools: {
+                tool: { execute: mock(() => Promise.resolve({ ok: true })) } as unknown as Tool,
+              },
+              isClosed: false,
+              close: mock(() => Promise.resolve(undefined)),
+            },
+          ])
+        ),
+        failedServerNames: [],
+      })
+    );
+
+    access.startServers = startServersMock as unknown as typeof access.startServers;
+
+    const runtime = {} satisfies Partial<Runtime>;
+
+    const untrustedResult = await manager.getToolsForWorkspace({
+      workspaceId: "ws-untrusted-mcp",
+      projectPath,
+      runtime: runtime as Runtime,
+      workspacePath,
+      trusted: false,
+    });
+
+    const trustedResult = await manager.getToolsForWorkspace({
+      workspaceId: "ws-trusted-mcp",
+      projectPath,
+      runtime: runtime as Runtime,
+      workspacePath,
+      trusted: true,
+    });
+
+    expect(configService.listServers).toHaveBeenNthCalledWith(1, projectPath, false);
+    expect(configService.listServers).toHaveBeenNthCalledWith(2, projectPath, true);
+    expect(Object.keys(untrustedResult.tools)).toEqual(["global_tool"]);
+    expect(Object.keys(trustedResult.tools).sort()).toEqual(["global_tool", "repo_tool"]);
+
+    const firstStartedServers = startServersMock.mock.calls[0]?.[0];
+    const secondStartedServers = startServersMock.mock.calls[1]?.[0];
+    expect(Object.keys(firstStartedServers ?? {})).toEqual(["global"]);
+    expect(Object.keys(secondStartedServers ?? {}).sort()).toEqual(["global", "repo"]);
+  });
   test("test() includes oauthChallenge when server responds 401 + WWW-Authenticate Bearer", async () => {
     let baseUrl = "";
     let resourceMetadataUrl = "";

@@ -23,6 +23,7 @@ import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { closeServer, createDeferred, renderOAuthCallbackHtml } from "@/node/utils/oauthUtils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -563,7 +564,10 @@ export class McpOauthService {
       return Ok({ serverUrlForDiscovery, serverUrlForStoreKey, transport });
     }
 
-    const servers = await this.mcpConfigService.listServers(input.projectPath);
+    const servers = await this.mcpConfigService.listServers(
+      input.projectPath,
+      isProjectTrusted(this.config, input.projectPath)
+    );
     const server = servers[input.serverName];
     if (!server) {
       return Err("MCP server not found");

@@ -29,6 +29,7 @@ describe("ProjectAddForm", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     cleanupDom?.();
     cleanupDom = null;
     currentClientMock = {};

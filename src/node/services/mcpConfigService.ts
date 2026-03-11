@@ -217,12 +217,18 @@ export class MCPConfigService {
    * List configured servers.
    *
    * - When no projectPath is provided: returns global servers from <muxHome>/mcp.jsonc
-   * - When projectPath is provided: merges global + <projectPath>/.mux/mcp.jsonc (override wins)
+   * - When projectPath is provided and trusted=false: returns only global servers
+   * - When projectPath is provided and trusted=true: merges global + <projectPath>/.mux/mcp.jsonc
    */
-  async listServers(projectPath?: string): Promise<Record<string, MCPServerInfo>> {
+  async listServers(projectPath?: string, trusted = false): Promise<Record<string, MCPServerInfo>> {
     const globalCfg = await this.getGlobalConfig();
 
     if (!projectPath) {
+      return globalCfg.servers;
+    }
+
+    if (!trusted) {
+      log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
       return globalCfg.servers;
     }
 

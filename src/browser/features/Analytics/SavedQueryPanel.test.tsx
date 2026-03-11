@@ -110,6 +110,7 @@ describe("SavedQueryPanel", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
   });

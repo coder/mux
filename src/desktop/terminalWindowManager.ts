@@ -7,7 +7,7 @@
 
 import { app, BrowserWindow, shell } from "electron";
 import * as path from "path";
-import { normalizeLocalhostProxyUrl } from "@/common/utils/localhostProxyUrl";
+import { normalizeAndValidateExternalUrl } from "@/desktop/utils/normalizeAndValidateExternalUrl";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 
@@ -59,15 +59,19 @@ export class TerminalWindowManager {
       backgroundColor: "#1e1e1e",
     });
 
-    const normalizeExternalUrl = (url: string): string =>
-      normalizeLocalhostProxyUrl({
+    const openExternalUrl = (url: string): void => {
+      const externalUrl = normalizeAndValidateExternalUrl({
         url,
         localhostProxyTemplate,
       });
+      if (externalUrl != null) {
+        void shell.openExternal(externalUrl);
+      }
+    };
 
     // Open all external links in default browser.
     terminalWindow.webContents.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(normalizeExternalUrl(url));
+      openExternalUrl(url);
       return { action: "deny" };
     });
 
@@ -77,7 +81,7 @@ export class TerminalWindowManager {
       // Prevent navigation away from app origin, open externally instead.
       if (targetOrigin !== currentOrigin) {
         event.preventDefault();
-        void shell.openExternal(normalizeExternalUrl(url));
+        openExternalUrl(url);
       }
     });
 

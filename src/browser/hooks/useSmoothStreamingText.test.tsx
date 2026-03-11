@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import {
@@ -22,8 +22,6 @@ describe("useSmoothStreamingText", () => {
 
     originalRequestAnimationFrame = globalThis.requestAnimationFrame;
     originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
-
-    vi.useFakeTimers();
 
     rafHandleCounter = 0;
     currentTimeMs = 0;
@@ -49,8 +47,6 @@ describe("useSmoothStreamingText", () => {
     cleanup();
 
     rafCallbacks.clear();
-
-    vi.useRealTimers();
 
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;

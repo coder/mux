@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import React from "react";
 import { ThinkingProvider } from "./ThinkingContext";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import {
   getModelKey,
@@ -10,20 +11,10 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
-import type { APIClient } from "@/browser/contexts/API";
 import type { RecursivePartial } from "@/browser/testUtils";
-
-const currentClientMock: RecursivePartial<APIClient> = {};
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: currentClientMock as APIClient,
-    status: "connected" as const,
-    error: null,
-  }),
-  APIProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
-
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+
+let currentClientMock: RecursivePartial<APIClient> = {};
 
 // Setup basic DOM environment for testing-library
 const dom = new GlobalWindow();
@@ -52,16 +43,31 @@ const TestComponent: React.FC<TestProps> = (props) => {
   );
 };
 
+function renderWithAPI(children: React.ReactNode) {
+  return render(<APIProvider client={currentClientMock as APIClient}>{children}</APIProvider>);
+}
+
 describe("ThinkingContext", () => {
   // Make getDefaultModel deterministic.
   // (getDefaultModel reads from the global "model-default" localStorage key.)
   beforeEach(() => {
+    currentClientMock = {
+      workspace: {
+        updateAgentAISettings: mock(() =>
+          Promise.resolve({
+            success: true as const,
+            data: undefined,
+          })
+        ),
+      },
+    };
     window.localStorage.clear();
     window.localStorage.setItem("model-default", JSON.stringify("openai:default"));
   });
 
   afterEach(() => {
     cleanup();
+    currentClientMock = {};
   });
 
   test("switching models does not remount children", async () => {
@@ -83,7 +89,7 @@ describe("ThinkingContext", () => {
       return <div data-testid="child">{thinkingLevel}</div>;
     };
 
-    const view = render(
+    const view = renderWithAPI(
       <ThinkingProvider workspaceId={workspaceId}>
         <Child />
       </ThinkingProvider>
@@ -110,7 +116,7 @@ describe("ThinkingContext", () => {
     updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
     updatePersistedState(getThinkingLevelByModelKey("openai:gpt-5.2"), "low");
 
-    const view = render(
+    const view = renderWithAPI(
       <ThinkingProvider workspaceId={workspaceId}>
         <TestComponent workspaceId={workspaceId} />
       </ThinkingProvider>
@@ -146,7 +152,7 @@ describe("ThinkingContext", () => {
       return <div data-testid="thinking-project">{thinkingLevel}</div>;
     };
 
-    const view = render(
+    const view = renderWithAPI(
       <ThinkingProvider projectPath={projectPath}>
         <ProjectChild />
       </ThinkingProvider>

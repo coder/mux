@@ -52,6 +52,7 @@ describe("SavedQuerySqlDialog", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
   });

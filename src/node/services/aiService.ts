@@ -96,6 +96,7 @@ import {
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -923,6 +924,9 @@ export class AIService extends EventEmitter {
       const isBuiltInMuxHelpAgent =
         effectiveAgentId === MUX_HELP_CHAT_AGENT_ID && agentDefinition.scope === "built-in";
 
+      const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
+      const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
+
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
       let mcpOverrides: WorkspaceMCPOverrides | undefined;
@@ -937,11 +941,18 @@ export class AIService extends EventEmitter {
         mcpOverrides = undefined;
       }
 
-      // Fetch MCP server config for system prompt (before building message)
-      // Pass overrides to filter out disabled servers
+      // Fetch MCP server config for system prompt (before building message).
+      // The built-in mux help agent must not see project MCP inventory, even outside the
+      // dedicated mux-help workspace; project-scoped overrides of the same ID keep normal access.
       const mcpServers =
-        this.mcpServerManager && !isBuiltInMuxHelpAgent
-          ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides)
+        this.mcpServerManager &&
+        workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID &&
+        !isBuiltInMuxHelpAgent
+          ? await this.mcpServerManager.listServers(
+              metadata.projectPath,
+              mcpOverrides,
+              projectTrusted
+            )
           : undefined;
 
       // Build plan-aware instructions and determine plan→exec transition content.
@@ -1018,6 +1029,7 @@ export class AIService extends EventEmitter {
             projectPath: metadata.projectPath,
             runtime,
             workspacePath,
+            trusted: projectTrusted,
             overrides: mcpOverrides,
             projectSecrets: await secretsToRecord(projectSecrets, this.opResolver),
           });
@@ -1115,10 +1127,7 @@ export class AIService extends EventEmitter {
           availableSubagents: agentDefinitions,
           availableSkills,
           // Trust gating: only run hooks/scripts when the full shared workspace runtime is trusted.
-          trusted: isWorkspaceTrustedForSharedExecution(
-            metadata,
-            this.config.loadConfigOrDefault().projects
-          ),
+          trusted: sharedExecutionTrusted,
         },
         workspaceId,
         this.initStateManager,

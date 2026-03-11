@@ -238,6 +238,7 @@ describe("ProposePlanToolCall", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     // Restore original globals instead of setting to undefined
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;

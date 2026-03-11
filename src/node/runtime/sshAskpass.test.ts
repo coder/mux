@@ -46,12 +46,14 @@ describe("sshAskpass", () => {
 
     test("does not leak temp dir when script bootstrap fails", async () => {
       const tmpBefore = await listAskpassTempDirs();
-      const accessSpy = spyOn(fs.promises, "access").mockRejectedValueOnce(
-        new Error("ENOENT: script missing")
-      );
-      const writeFileSpy = spyOn(fs.promises, "writeFile").mockRejectedValueOnce(
-        new Error("EACCES: permission denied")
-      );
+      const missingScriptError = new Error("ENOENT: script missing");
+      const permissionDeniedError = new Error("EACCES: permission denied");
+      const accessSpy = spyOn(fs.promises, "access").mockImplementationOnce(() => {
+        throw missingScriptError;
+      });
+      const writeFileSpy = spyOn(fs.promises, "writeFile").mockImplementationOnce(() => {
+        throw permissionDeniedError;
+      });
 
       let leakedDirs: string[] = [];
 

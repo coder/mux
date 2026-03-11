@@ -81,6 +81,7 @@ describe("OutputTab", () => {
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     mockApi = null;
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;

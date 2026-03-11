@@ -5,9 +5,10 @@ import {
 } from "@/common/types/tools";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import {
+  FileToolPathValidationError,
   generateDiff,
+  resolvePathWithinCwd,
   validateFileSize,
-  validateAndCorrectPath,
   validatePlanModeAccess,
 } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
@@ -48,17 +49,12 @@ export async function executeFileEditOperation<TMetadata>({
   FileEditErrorResult | (FileEditDiffSuccessBase & TMetadata)
 > {
   try {
-    // Validate and auto-correct redundant path prefix
-    const { correctedPath: validatedPath, warning: pathWarning } = validateAndCorrectPath(
-      filePath,
-      config.cwd,
-      config.runtime
-    );
+    const {
+      correctedPath: validatedPath,
+      warning: pathWarning,
+      resolvedPath,
+    } = resolvePathWithinCwd(filePath, config.cwd, config.runtime, config);
     filePath = validatedPath;
-
-    // Use runtime's normalizePath method to resolve paths correctly for both local and SSH runtimes
-    // This ensures path resolution uses runtime-specific semantics instead of Node.js path module
-    const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
 
     // Validate plan mode access restrictions
     const planModeError = await validatePlanModeAccess(filePath, config);
@@ -158,6 +154,13 @@ export async function executeFileEditOperation<TMetadata>({
       ...(pathWarning && { warning: pathWarning }),
     };
   } catch (error) {
+    if (error instanceof FileToolPathValidationError) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+
     if (error && typeof error === "object" && "code" in error) {
       const nodeError = error as { code?: string };
       if (nodeError.code === "ENOENT") {
