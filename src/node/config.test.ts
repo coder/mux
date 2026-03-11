@@ -457,7 +457,7 @@ describe("Config", () => {
       });
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.routePriority).toEqual(["direct"]);
+      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
       expect(loaded.routeOverrides).toEqual({
         "anthropic:claude-sonnet-4-6": "mux-gateway",
       });
@@ -465,11 +465,44 @@ describe("Config", () => {
       expect(readRawConfig()).toMatchObject({
         muxGatewayEnabled: true,
         muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
-        routePriority: ["direct"],
+        routePriority: ["mux-gateway", "direct"],
         routeOverrides: {
           "anthropic:claude-sonnet-4-6": "mux-gateway",
         },
       });
+    });
+
+    it("seeds routePriority from other configured gateways for legacy configs", () => {
+      writeRawConfig({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+      });
+      writeProvidersConfig({
+        openrouter: { apiKey: "test-openrouter-key" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["openrouter", "direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-sonnet-4-6": "mux-gateway",
+      });
+    });
+
+    it("excludes mux-gateway from seeded priority when legacy muxGatewayEnabled is false", () => {
+      writeRawConfig({
+        muxGatewayEnabled: false,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+      });
+      writeProvidersConfig({
+        "mux-gateway": { couponCode: "test-coupon" },
+        openrouter: { apiKey: "test-openrouter-key" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["openrouter", "direct"]);
+      expect(loaded.routeOverrides).toBeUndefined();
     });
 
     it("does not rewrite configs that already include routePriority", () => {

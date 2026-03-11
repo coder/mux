@@ -385,7 +385,14 @@ export class Config {
           (parsed.muxGatewayModels != null || parsed.muxGatewayEnabled != null) &&
           !Array.isArray(parsed.routePriority)
         ) {
-          parsed.routePriority = ["direct"];
+          let nextPriority = this.seedRoutePriorityFromProviders() ?? ["direct"];
+          if (parsed.muxGatewayEnabled === false) {
+            nextPriority = nextPriority.filter((route) => route !== "mux-gateway");
+            if (nextPriority.length === 0) {
+              nextPriority = ["direct"];
+            }
+          }
+          parsed.routePriority = nextPriority;
           configModified = true;
 
           if (parsed.muxGatewayEnabled !== false) {
