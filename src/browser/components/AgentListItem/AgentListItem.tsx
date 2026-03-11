@@ -41,9 +41,7 @@ import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContex
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
-import { DevcontainerIcon } from "../icons/RuntimeIcons/RuntimeIcons";
 import { useAPI } from "@/browser/contexts/API";
-import { RUNTIME_STATUS_ICON_CLASS } from "@/browser/utils/runtimeUi";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -892,21 +890,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                       {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
                       commands
                     </TooltipContent>
-                  </Tooltip>
-                )}
-                {isRuntimeRunning && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div
-                        className={cn(
-                          "flex items-center",
-                          RUNTIME_STATUS_ICON_CLASS.devcontainerRunning
-                        )}
-                      >
-                        <DevcontainerIcon className="h-3 w-3" />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">Container running</TooltipContent>
                   </Tooltip>
                 )}
               </div>
