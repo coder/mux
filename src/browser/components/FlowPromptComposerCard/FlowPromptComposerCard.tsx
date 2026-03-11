@@ -23,6 +23,7 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { UserMessageContent } from "@/browser/features/Messages/UserMessageContent";
 import { DiffRenderer } from "@/browser/features/Shared/DiffRenderer";
+import { cn } from "@/common/lib/utils";
 
 type FlowPromptPreviewKind = "diff" | "contents" | "cleared" | "raw";
 
@@ -206,6 +207,13 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
     : props.state.autoSendMode === "end-of-turn"
       ? "Auto-send on"
       : "Manual";
+  const actionGridColumnsClassName = props.state.exists
+    ? "sm:grid-cols-2 lg:grid-cols-4"
+    : "sm:grid-cols-2";
+  const autoSendControlClassName = props.state.exists
+    ? "sm:col-span-2 lg:col-span-4"
+    : "sm:col-span-2";
+  const actionButtonClassName = "w-full justify-center gap-1.5 px-2.5";
   const handleAutoSendModeChange = (value: string) => {
     if (value === "off" || value === "end-of-turn") {
       props.onAutoSendModeChange(value);
@@ -226,7 +234,7 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
       <button
         type="button"
         onClick={props.onToggleCollapsed}
-        className="group mx-auto flex w-full max-w-4xl items-center gap-2 px-2 py-1.5 text-xs transition-colors"
+        className="group mx-auto flex w-full max-w-4xl min-w-0 items-center gap-2 px-2 py-1.5 text-xs transition-colors"
         aria-label={
           isCollapsed ? "Expand Flow Prompting composer" : "Collapse Flow Prompting composer"
         }
@@ -239,12 +247,12 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
               : "text-muted group-hover:text-secondary size-3.5 transition-colors"
           }
         />
-        <span className="text-muted group-hover:text-secondary transition-colors">
+        <span className="text-muted group-hover:text-secondary min-w-0 flex-1 truncate transition-colors">
           <span className="font-medium">Flow Prompting</span>
           <span>{` · ${collapsedStatusText}`}</span>
         </span>
-        {hasPreview ? <span className="bg-accent h-1.5 w-1.5 rounded-full" /> : null}
-        <div className="ml-auto">
+        {hasPreview ? <span className="bg-accent h-1.5 w-1.5 shrink-0 rounded-full" /> : null}
+        <div className="shrink-0">
           {isCollapsed ? (
             <ChevronRight className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
           ) : (
@@ -256,77 +264,9 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
         <div className="border-border mx-auto max-w-4xl space-y-2 border-t py-2">
           <div className="border-border-medium bg-background-secondary/60 rounded-md border px-2.5 py-2">
             <div className="flex flex-col gap-2.5">
-              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                <div className="text-foreground flex items-center gap-2 text-sm font-medium">
-                  <FileText className="h-4 w-4 shrink-0" />
-                  Flow Prompting
-                </div>
-                <div className="flex w-full flex-wrap items-center justify-end gap-1.5 lg:w-auto lg:shrink-0 lg:justify-start">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-muted shrink-0 text-[11px] font-medium tracking-wide uppercase">
-                      Auto-send
-                    </span>
-                    <Select
-                      value={props.state.autoSendMode}
-                      onValueChange={handleAutoSendModeChange}
-                      disabled={isAutoSendChanging}
-                    >
-                      <SelectTrigger className="border-border-medium bg-background w-32 text-[11px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="off">Off</SelectItem>
-                        <SelectItem value="end-of-turn">End-of-turn</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    className="gap-1.5 px-2.5"
-                    onClick={props.onSendNow}
-                    disabled={!hasPreview || isSendingNow}
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                    {isSendingNow ? "Sending…" : "Send now"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="gap-1.5 px-2.5"
-                    onClick={handleCopyPath}
-                    disabled={!canCopyPath}
-                  >
-                    {copied ? (
-                      <ClipboardCheck className="h-3.5 w-3.5" />
-                    ) : (
-                      <Clipboard className="h-3.5 w-3.5" />
-                    )}
-                    {copied ? "Copied path" : "Copy path"}
-                  </Button>
-                  {props.state.exists ? (
-                    <>
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        className="gap-1.5 px-2.5"
-                        onClick={props.onOpen}
-                      >
-                        <SquarePen className="h-3.5 w-3.5" />
-                        Open prompt
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        className="gap-1.5 px-2.5"
-                        onClick={props.onDisable}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Disable
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
+              <div className="text-foreground flex items-center gap-2 text-sm font-medium">
+                <FileText className="h-4 w-4 shrink-0" />
+                Flow Prompting
               </div>
               {/*
                 Keep the status copy full-width and move the long file path behind an explicit
@@ -336,6 +276,81 @@ export const FlowPromptComposerCard: React.FC<FlowPromptComposerCardProps> = (pr
               <div className="min-w-0 space-y-1">
                 <p className="text-muted text-[11px] leading-4">{statusText}</p>
                 {props.error ? <p className="text-xs text-red-400">{props.error}</p> : null}
+              </div>
+              {/*
+                Keep the controls in their own grid so medium-width chat panes do not force the
+                buttons to fight the title row or overflow between breakpoints.
+              */}
+              <div className={cn("grid gap-1.5", actionGridColumnsClassName)}>
+                <div
+                  className={cn(
+                    "border-border-medium bg-background grid gap-1.5 rounded-md border px-2 py-1.5 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center",
+                    autoSendControlClassName
+                  )}
+                >
+                  <span className="text-muted shrink-0 text-[11px] font-medium tracking-wide uppercase">
+                    Auto-send
+                  </span>
+                  <Select
+                    value={props.state.autoSendMode}
+                    onValueChange={handleAutoSendModeChange}
+                    disabled={isAutoSendChanging}
+                  >
+                    <SelectTrigger className="border-border-medium bg-background w-full text-[11px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="off">Off</SelectItem>
+                      <SelectItem value="end-of-turn">End-of-turn</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  className={actionButtonClassName}
+                  onClick={props.onSendNow}
+                  disabled={!hasPreview || isSendingNow}
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {isSendingNow ? "Sending…" : "Send now"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className={actionButtonClassName}
+                  onClick={handleCopyPath}
+                  disabled={!canCopyPath}
+                >
+                  {copied ? (
+                    <ClipboardCheck className="h-3.5 w-3.5" />
+                  ) : (
+                    <Clipboard className="h-3.5 w-3.5" />
+                  )}
+                  {copied ? "Copied path" : "Copy path"}
+                </Button>
+                {props.state.exists ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      className={actionButtonClassName}
+                      onClick={props.onOpen}
+                    >
+                      <SquarePen className="h-3.5 w-3.5" />
+                      Open prompt
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className={actionButtonClassName}
+                      onClick={props.onDisable}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Disable
+                    </Button>
+                  </>
+                ) : null}
               </div>
               {preview ? (
                 <div className="border-border-medium bg-background rounded-md border">
