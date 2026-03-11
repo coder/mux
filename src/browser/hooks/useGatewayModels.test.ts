@@ -8,19 +8,70 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createElement, type ComponentProps, type ReactNode } from "react";
-import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { copyFile, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type * as APIModule from "@/browser/contexts/API";
+import type { APIClient } from "@/browser/contexts/API";
 import { requireTestModule } from "@/browser/testUtils";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import type * as UseGatewayModelsModule from "./useGatewayModels";
 
+let APIProvider!: typeof APIModule.APIProvider;
 let isGatewayFormat!: typeof UseGatewayModelsModule.isGatewayFormat;
 let isProviderSupported!: typeof UseGatewayModelsModule.isProviderSupported;
 let migrateGatewayModel!: typeof UseGatewayModelsModule.migrateGatewayModel;
 let pendingGatewayEnrollments!: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
 let toGatewayModel!: typeof UseGatewayModelsModule.toGatewayModel;
 let useGateway!: typeof UseGatewayModelsModule.useGateway;
+let isolatedModulePaths: string[] = [];
+
+const hooksDir = dirname(fileURLToPath(import.meta.url));
+const contextsDir = join(hooksDir, "../contexts");
+
+async function importIsolatedGatewayModelsModule() {
+  const suffix = randomUUID();
+  const isolatedApiPath = join(contextsDir, `API.real.${suffix}.tsx`);
+  const isolatedHookPath = join(hooksDir, `useGatewayModels.real.${suffix}.ts`);
+
+  await copyFile(join(contextsDir, "API.tsx"), isolatedApiPath);
+
+  const hookSource = await readFile(join(hooksDir, "useGatewayModels.ts"), "utf8");
+  const isolatedHookSource = hookSource.replace(
+    'from "@/browser/contexts/API";',
+    `from "../contexts/API.real.${suffix}.tsx";`
+  );
+
+  if (isolatedHookSource === hookSource) {
+    throw new Error("Failed to rewrite useGatewayModels API import for the isolated test copy");
+  }
+
+  await writeFile(isolatedHookPath, isolatedHookSource);
+
+  ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
+    isolatedApiPath
+  ));
+  ({
+    isGatewayFormat,
+    isProviderSupported,
+    migrateGatewayModel,
+    pendingGatewayEnrollments,
+    toGatewayModel,
+    useGateway,
+  } = requireTestModule<{
+    isGatewayFormat: typeof UseGatewayModelsModule.isGatewayFormat;
+    isProviderSupported: typeof UseGatewayModelsModule.isProviderSupported;
+    migrateGatewayModel: typeof UseGatewayModelsModule.migrateGatewayModel;
+    pendingGatewayEnrollments: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
+    toGatewayModel: typeof UseGatewayModelsModule.toGatewayModel;
+    useGateway: typeof UseGatewayModelsModule.useGateway;
+  }>(isolatedHookPath));
+
+  return [isolatedApiPath, isolatedHookPath];
+}
 
 interface GatewayTestApiClient {
   config: Pick<APIClient["config"], "updateMuxGatewayPrefs">;
@@ -90,26 +141,12 @@ function renderUseGatewayHook() {
 }
 
 describe("useGateway", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     void mock.module("@/browser/hooks/useProvidersConfig", () => ({
       useProvidersConfig: useProvidersConfigMock,
     }));
 
-    ({
-      isGatewayFormat,
-      isProviderSupported,
-      migrateGatewayModel,
-      pendingGatewayEnrollments,
-      toGatewayModel,
-      useGateway,
-    } = requireTestModule<{
-      isGatewayFormat: typeof UseGatewayModelsModule.isGatewayFormat;
-      isProviderSupported: typeof UseGatewayModelsModule.isProviderSupported;
-      migrateGatewayModel: typeof UseGatewayModelsModule.migrateGatewayModel;
-      pendingGatewayEnrollments: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
-      toGatewayModel: typeof UseGatewayModelsModule.toGatewayModel;
-      useGateway: typeof UseGatewayModelsModule.useGateway;
-    }>("@/browser/hooks/useGatewayModels"));
+    isolatedModulePaths = await importIsolatedGatewayModelsModule();
     mock.restore();
 
     globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
@@ -132,13 +169,18 @@ describe("useGateway", () => {
     };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
     mock.restore();
     pendingGatewayEnrollments.clear();
     currentApiClient = null;
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
+
+    for (const modulePath of isolatedModulePaths) {
+      await rm(modulePath, { force: true });
+    }
+    isolatedModulePaths = [];
   });
 
   const flushAsyncWork = async () => {
@@ -420,22 +462,19 @@ describe("useGateway", () => {
 });
 
 describe("pure utility functions", () => {
-  beforeEach(() => {
-    ({
-      isGatewayFormat,
-      isProviderSupported,
-      migrateGatewayModel,
-      pendingGatewayEnrollments,
-      toGatewayModel,
-      useGateway,
-    } = requireTestModule<{
-      isGatewayFormat: typeof UseGatewayModelsModule.isGatewayFormat;
-      isProviderSupported: typeof UseGatewayModelsModule.isProviderSupported;
-      migrateGatewayModel: typeof UseGatewayModelsModule.migrateGatewayModel;
-      pendingGatewayEnrollments: typeof UseGatewayModelsModule.pendingGatewayEnrollments;
-      toGatewayModel: typeof UseGatewayModelsModule.toGatewayModel;
-      useGateway: typeof UseGatewayModelsModule.useGateway;
-    }>("@/browser/hooks/useGatewayModels"));
+  beforeEach(async () => {
+    isolatedModulePaths = await importIsolatedGatewayModelsModule();
+    mock.restore();
+  });
+
+  afterEach(async () => {
+    mock.restore();
+    pendingGatewayEnrollments.clear();
+
+    for (const modulePath of isolatedModulePaths) {
+      await rm(modulePath, { force: true });
+    }
+    isolatedModulePaths = [];
   });
   test("isGatewayFormat detects mux-gateway: prefix", () => {
     expect(isGatewayFormat("mux-gateway:anthropic/claude-opus-4-5")).toBe(true);
