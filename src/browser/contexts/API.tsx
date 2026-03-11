@@ -496,8 +496,13 @@ function ManagedAPIProvider(props: Omit<APIProviderProps, "client">) {
 
     const client = state.client;
     const cleanup = state.cleanup;
+    let effectDisposed = false;
 
     const markConnectionHealthy = () => {
+      if (effectDisposed) {
+        return;
+      }
+
       consecutivePingFailuresRef.current = 0;
       forceReconnectInProgressRef.current = false;
       if (state.status === "degraded") {
@@ -506,6 +511,10 @@ function ManagedAPIProvider(props: Omit<APIProviderProps, "client">) {
     };
 
     const checkLiveness = async () => {
+      if (effectDisposed) {
+        return;
+      }
+
       const timeSinceLastInboundFrameMs = Date.now() - lastInboundBrowserFrameAtRef.current;
       const hasRecentInboundTraffic =
         lastInboundBrowserFrameAtRef.current > 0 &&
@@ -542,15 +551,30 @@ function ManagedAPIProvider(props: Omit<APIProviderProps, "client">) {
         // Handle both resolve/reject explicitly to avoid an unhandled rejection chain.
         void pingPromise.then(finalizeLivenessProbe, finalizeLivenessProbe);
 
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Ping timeout")), LIVENESS_TIMEOUT_MS)
-        );
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error("Ping timeout")), LIVENESS_TIMEOUT_MS);
+          });
 
-        await Promise.race([pingPromise, timeoutPromise]);
+          await Promise.race([pingPromise, timeoutPromise]);
+        } finally {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+        }
+
+        if (effectDisposed) {
+          return;
+        }
 
         // Ping succeeded - reset failure count and restore connected state if degraded
         markConnectionHealthy();
       } catch {
+        if (effectDisposed) {
+          return;
+        }
+
         // Ping failed
         consecutivePingFailuresRef.current++;
 
@@ -563,6 +587,9 @@ function ManagedAPIProvider(props: Omit<APIProviderProps, "client">) {
             `[APIProvider] Liveness ping failed ${consecutivePingFailuresRef.current} times; reconnecting...`
           );
           cleanup();
+          if (effectDisposed) {
+            return;
+          }
           connect(authToken);
           return;
         }
@@ -579,7 +606,10 @@ function ManagedAPIProvider(props: Omit<APIProviderProps, "client">) {
     const intervalId = setInterval(() => {
       void checkLiveness();
     }, LIVENESS_INTERVAL_MS);
-    return () => clearInterval(intervalId);
+    return () => {
+      effectDisposed = true;
+      clearInterval(intervalId);
+    };
   }, [state, props.createWebSocket, connect, authToken]);
 
   const authenticate = useCallback(

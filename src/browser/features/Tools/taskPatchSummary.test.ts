@@ -40,4 +40,22 @@ describe("formatGitPatchArtifactSummary", () => {
       })
     ).toBe("Patch: ready (1 ready, 1 skipped, 1 failed; 2 commits)");
   });
+
+  test("falls back to legacy single-project commit counts", () => {
+    expect(
+      formatGitPatchArtifactSummary({
+        status: "ready",
+        commitCount: 1,
+      })
+    ).toBe("Patch: ready (1 commit)");
+  });
+
+  test("falls back to legacy top-level errors for failed summaries", () => {
+    expect(
+      formatGitPatchArtifactSummary({
+        status: "failed",
+        error: "legacy patch generation failed",
+      })
+    ).toBe("Patch: failed (legacy patch generation failed)");
+  });
 });

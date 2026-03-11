@@ -22,6 +22,7 @@ import { execBuffered } from "@/node/utils/runtime/helpers";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import {
   getSubagentGitPatchMboxPath,
+  matchesProjectArtifactProjectPath,
   upsertSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
 import { shellQuote } from "@/common/utils/shell";
@@ -155,7 +156,7 @@ function replaceProjectArtifact(params: {
     ...params.artifact,
     updatedAtMs: params.updatedAtMs,
     projectArtifacts: params.artifact.projectArtifacts.map((projectArtifact) =>
-      projectArtifact.projectPath === params.nextProjectArtifact.projectPath
+      matchesProjectArtifactProjectPath(projectArtifact, params.nextProjectArtifact.projectPath)
         ? params.nextProjectArtifact
         : projectArtifact
     ),

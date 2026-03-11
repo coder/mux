@@ -143,6 +143,45 @@ describe("subagentGitPatchArtifacts", () => {
     expect(updated?.updatedAtMs).toBe(appliedAtMs);
   });
 
+  test("markSubagentGitPatchArtifactApplied matches normalized legacy single-project artifacts", async () => {
+    const workspaceId = "parent-1";
+    const childTaskId = "child-legacy";
+    const artifactsPath = getSubagentGitPatchArtifactsFilePath(testDir);
+    await fsPromises.writeFile(
+      artifactsPath,
+      JSON.stringify(
+        {
+          version: 1,
+          artifactsByChildTaskId: {
+            [childTaskId]: {
+              childTaskId,
+              parentWorkspaceId: workspaceId,
+              createdAtMs: 123,
+              status: "ready",
+              commitCount: 1,
+              mboxPath: "/tmp/legacy-series.mbox",
+            },
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const appliedAtMs = 456;
+    const updated = await markSubagentGitPatchArtifactApplied({
+      workspaceId,
+      workspaceSessionDir: testDir,
+      childTaskId,
+      projectPath: "/tmp/project-a",
+      appliedAtMs,
+    });
+
+    expect(updated?.projectArtifacts).toHaveLength(1);
+    expect(updated?.projectArtifacts[0]?.appliedAtMs).toBe(appliedAtMs);
+  });
+
   test("normalizes version 1 artifacts into one-project patch sets", async () => {
     const childTaskId = "child-1";
     const artifactsPath = getSubagentGitPatchArtifactsFilePath(testDir);

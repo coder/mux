@@ -15,6 +15,7 @@ import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import {
   getSubagentGitPatchMboxPath,
   markSubagentGitPatchArtifactApplied,
+  matchesProjectArtifactProjectPath,
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
 import { log } from "@/node/services/log";
@@ -952,10 +953,11 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         );
       }
 
+      const requestedProjectPath = args.project_path;
       const projectArtifacts =
-        args.project_path != null
-          ? artifact.projectArtifacts.filter(
-              (projectArtifact) => projectArtifact.projectPath === args.project_path
+        requestedProjectPath != null
+          ? artifact.projectArtifacts.filter((projectArtifact) =>
+              matchesProjectArtifactProjectPath(projectArtifact, requestedProjectPath)
             )
           : artifact.projectArtifacts;
 

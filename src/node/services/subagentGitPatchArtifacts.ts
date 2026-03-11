@@ -35,8 +35,23 @@ const SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_NAME = "subagent-patches.json";
 const SUBAGENT_GIT_PATCH_DIR_NAME = "subagent-patches";
 const SUBAGENT_GIT_PATCH_MBOX_FILE_NAME = "series.mbox";
 const LEGACY_SINGLE_PROJECT_NAME = "project";
-const LEGACY_SINGLE_PROJECT_PATH = "__legacy_single_project__";
+const LEGACY_SINGLE_PROJECT_PATH = "";
 const LEGACY_SINGLE_PROJECT_STORAGE_KEY = "legacy-single-project";
+
+export function isLegacySingleProjectArtifact(
+  artifact: Pick<SubagentGitProjectPatchArtifact, "projectPath" | "storageKey">
+): boolean {
+  return (
+    artifact.projectPath.length === 0 && artifact.storageKey === LEGACY_SINGLE_PROJECT_STORAGE_KEY
+  );
+}
+
+export function matchesProjectArtifactProjectPath(
+  artifact: Pick<SubagentGitProjectPatchArtifact, "projectPath" | "storageKey">,
+  projectPath: string
+): boolean {
+  return artifact.projectPath === projectPath || isLegacySingleProjectArtifact(artifact);
+}
 
 function createEmptyArtifactsFile(): SubagentGitPatchArtifactsFile {
   return { version: SUBAGENT_GIT_PATCH_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
@@ -360,7 +375,7 @@ export async function markSubagentGitPatchArtifactApplied(params: {
         ...existing,
         updatedAtMs: params.appliedAtMs,
         projectArtifacts: existing.projectArtifacts.map((artifact) =>
-          artifact.projectPath === params.projectPath
+          matchesProjectArtifactProjectPath(artifact, params.projectPath)
             ? {
                 ...artifact,
                 appliedAtMs: params.appliedAtMs,
