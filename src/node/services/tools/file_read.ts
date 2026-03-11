@@ -32,6 +32,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
           planFileOnly: config.planFileOnly,
           planFilePath: config.planFilePath,
           allowConfiguredPlanFileOutsideCwd: true,
+          extraReadFilePathsOutsideCwd: config.ancestorPlanFilePaths,
         });
         filePath = validatedPath;
 

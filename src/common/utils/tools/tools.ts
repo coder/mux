@@ -79,6 +79,8 @@ export interface ToolConfiguration {
   planFileOnly?: boolean;
   /** Plan file path - only this file can be edited when planFileOnly is true. */
   planFilePath?: string;
+  /** Additional exact plan files surfaced in the prompt and allowlisted for file_read only. */
+  ancestorPlanFilePaths?: string[];
   /**
    * Optional callback for emitting UI-only workspace chat events.
    * Used for streaming bash stdout/stderr to the UI without sending it to the model.

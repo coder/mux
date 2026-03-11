@@ -992,13 +992,15 @@ export class AIService extends EventEmitter {
         agentDiscoveryPath,
         isSubagentWorkspace,
         effectiveAdditionalInstructions,
+        planFilePath,
         modelString,
         cfg,
         providersConfig: this.providerService.getConfig(),
         mcpServers,
         muxScope,
       });
-      const { agentSystemPrompt, agentDefinitions, availableSkills } = streamSystemContext;
+      const { agentSystemPrompt, agentDefinitions, availableSkills, ancestorPlanFilePaths } =
+        streamSystemContext;
       let systemMessageTokens = streamSystemContext.systemMessageTokens;
       let systemMessage = streamSystemContext.systemMessage;
 
@@ -1107,6 +1109,7 @@ export class AIService extends EventEmitter {
           },
           workspaceSessionDir: this.config.getSessionDir(workspaceId),
           planFilePath,
+          ancestorPlanFilePaths,
           workspaceId,
           muxScope,
           // Only child workspaces (tasks) can report to a parent.

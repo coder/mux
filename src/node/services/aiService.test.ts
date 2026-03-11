@@ -1257,6 +1257,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       systemMessageTokens: 1,
       agentDefinitions: undefined,
       availableSkills: undefined,
+      ancestorPlanFilePaths: [],
     });
 
     spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
@@ -1600,6 +1601,7 @@ describe("AIService.streamMessage mux help agent suppression", () => {
         systemMessageTokens: 1,
         agentDefinitions: undefined,
         availableSkills: undefined,
+        ancestorPlanFilePaths: [],
       });
     });
 
@@ -1905,6 +1907,7 @@ describe("AIService.streamMessage multi-project trust gating", () => {
       systemMessageTokens: 1,
       agentDefinitions: undefined,
       availableSkills: undefined,
+      ancestorPlanFilePaths: [],
     });
 
     spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
@@ -2151,6 +2154,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
       systemMessageTokens: 1,
       agentDefinitions: undefined,
       availableSkills: undefined,
+      ancestorPlanFilePaths: [],
     });
 
     spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {

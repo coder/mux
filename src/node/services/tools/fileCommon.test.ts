@@ -224,6 +224,40 @@ describe("fileCommon", () => {
         })
       ).toThrow("restricted to the workspace directory");
     });
+    it("allows an exact ancestor plan file outside cwd when it is explicitly allowlisted", () => {
+      const ancestorPlanPath = "/home/user/.mux/plans/ancestor.md";
+
+      const result = resolvePathWithinCwd(ancestorPlanPath, cwd, runtime, {
+        extraReadFilePathsOutsideCwd: [ancestorPlanPath],
+      });
+
+      expect(result.correctedPath).toBe(ancestorPlanPath);
+      expect(result.resolvedPath).toBe(ancestorPlanPath);
+    });
+
+    it("rejects the same ancestor plan path without the explicit allowlist", () => {
+      expect(() => resolvePathWithinCwd("/home/user/.mux/plans/ancestor.md", cwd, runtime)).toThrow(
+        "restricted to the workspace directory"
+      );
+    });
+
+    it("keeps rejecting relative-path escapes even when the ancestor plan is allowlisted", () => {
+      const ancestorPlanPath = "/workspace/plans/ancestor.md";
+
+      expect(() =>
+        resolvePathWithinCwd("../plans/ancestor.md", cwd, runtime, {
+          extraReadFilePathsOutsideCwd: [ancestorPlanPath],
+        })
+      ).toThrow("restricted to the workspace directory");
+    });
+
+    it("requires extra outside-cwd file allowlist entries to be absolute", () => {
+      expect(() =>
+        resolvePathWithinCwd("/home/user/.mux/plans/ancestor.md", cwd, runtime, {
+          extraReadFilePathsOutsideCwd: ["relative/ancestor.md"],
+        })
+      ).toThrow("extraReadFilePathsOutsideCwd must be absolute");
+    });
   });
 
   describe("validateNoRedundantPrefix", () => {

@@ -80,6 +80,7 @@ async function buildSystemContextForTest(args: {
   cfg: ProjectsConfig;
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions?: string;
+  planFilePath?: string;
 }) {
   return buildStreamSystemContext({
     runtime: args.runtime,
@@ -90,6 +91,7 @@ async function buildSystemContextForTest(args: {
     agentDiscoveryPath: args.workspacePath,
     isSubagentWorkspace: args.isSubagentWorkspace,
     effectiveAdditionalInstructions: args.effectiveAdditionalInstructions,
+    planFilePath: args.planFilePath,
     modelString: "openai:gpt-5.2",
     cfg: args.cfg,
     providersConfig: null,
@@ -267,7 +269,11 @@ describe("buildStreamSystemContext", () => {
       effectiveAdditionalInstructions: "Caller-specific note",
     });
 
+    expect(result.ancestorPlanFilePaths).toEqual([parentPlanPath]);
     expect(result.systemMessage).toContain("Ancestor plan file paths (nearest parent first):");
+    expect(result.systemMessage).toContain(
+      "If useful for broader context, you may read these ancestor/parent plan files:"
+    );
     expect(result.systemMessage).toContain(`- parent-workspace: ${parentPlanPath}`);
     expect(result.systemMessage).toContain("Caller-specific note");
     expect(result.systemMessage.indexOf(parentPlanPath)).toBeLessThan(
@@ -309,6 +315,7 @@ describe("buildStreamSystemContext", () => {
       isSubagentWorkspace: true,
     });
 
+    expect(result.ancestorPlanFilePaths).toEqual([childPlanPath, parentPlanPath]);
     expect(result.systemMessage).toContain(`- child-workspace: ${childPlanPath}`);
     expect(result.systemMessage).toContain(`- parent-workspace: ${parentPlanPath}`);
     expect(result.systemMessage.indexOf(childPlanPath)).toBeLessThan(
@@ -344,6 +351,7 @@ describe("buildStreamSystemContext", () => {
       effectiveAdditionalInstructions: "Top-level note",
     });
 
+    expect(result.ancestorPlanFilePaths).toEqual([]);
     expect(result.systemMessage).not.toContain("Ancestor plan file paths (nearest parent first):");
     expect(result.systemMessage).toContain("Top-level note");
   });
@@ -379,8 +387,47 @@ describe("buildStreamSystemContext", () => {
       effectiveAdditionalInstructions: "Existing note",
     });
 
+    expect(result.ancestorPlanFilePaths).toEqual([]);
     expect(result.systemMessage).not.toContain("Ancestor plan file paths (nearest parent first):");
     expect(result.systemMessage).toContain("Existing note");
+  });
+
+  test("dedupes ancestor plan paths that are already covered by the active plan file", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    await fs.mkdir(projectPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+
+    const metadata = createWorkspaceMetadata({
+      id: "child-ws",
+      name: "child-workspace",
+      projectName: "project",
+      projectPath,
+      parentWorkspaceId: "parent-ws",
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [
+        { id: "parent-ws", name: "parent-workspace" },
+        { id: metadata.id, name: metadata.name, parentWorkspaceId: metadata.parentWorkspaceId },
+      ],
+    });
+
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const result = await buildSystemContextForTest({
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: true,
+      planFilePath: parentPlanPath,
+    });
+
+    expect(result.ancestorPlanFilePaths).toEqual([]);
+    expect(result.systemMessage).not.toContain("Ancestor plan file paths (nearest parent first):");
+    expect(result.systemMessage).not.toContain(parentPlanPath);
   });
 
   test("truncates cyclic ancestry without crashing", async () => {
@@ -415,6 +462,7 @@ describe("buildStreamSystemContext", () => {
       isSubagentWorkspace: true,
     });
 
+    expect(result.ancestorPlanFilePaths).toEqual([parentPlanPath]);
     expect(result.systemMessage).toContain("Ancestor plan file paths (nearest parent first):");
     expect(result.systemMessage).toContain(`- parent-workspace: ${parentPlanPath}`);
     expect(result.systemMessage).not.toContain(

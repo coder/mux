@@ -321,6 +321,7 @@ interface ResolvePathWithinCwdOptions {
   planFileOnly?: boolean;
   planFilePath?: string;
   allowConfiguredPlanFileOutsideCwd?: boolean;
+  extraReadFilePathsOutsideCwd?: string[];
 }
 
 export function resolvePathWithinCwd(
@@ -330,6 +331,8 @@ export function resolvePathWithinCwd(
   planModeConfig?: ResolvePathWithinCwdOptions
 ): { correctedPath: string; resolvedPath: string; warning?: string } {
   const { correctedPath, warning } = validateAndCorrectPath(filePath, cwd, runtime);
+  const resolvedPath = runtime.normalizePath(correctedPath, cwd);
+  const correctedPathIsAbsolute = isRuntimeAbsolutePath(correctedPath, runtime);
   const canBypassCwdForConfiguredPlanFile =
     planModeConfig?.planFileOnly === true ||
     planModeConfig?.allowConfiguredPlanFileOutsideCwd === true;
@@ -338,10 +341,24 @@ export function resolvePathWithinCwd(
     planModeConfig?.planFilePath != null &&
     correctedPath === planModeConfig.planFilePath;
 
-  // Keep the exception narrow by only bypassing cwd enforcement for the exact configured
-  // plan file path. Reads can opt in outside plan mode so compaction/context resets do not
-  // strand the agent away from the configured plan file under mux home.
-  if (!isExactConfiguredPlanFileOutsideCwd) {
+  const normalizedExtraReadFilePathsOutsideCwd =
+    planModeConfig?.extraReadFilePathsOutsideCwd
+      ?.map((allowedFilePath) => allowedFilePath.trim())
+      .filter((allowedFilePath) => allowedFilePath.length > 0)
+      .map((allowedFilePath) => {
+        assert(
+          isRuntimeAbsolutePath(allowedFilePath, runtime),
+          `extraReadFilePathsOutsideCwd must be absolute: '${allowedFilePath}'`
+        );
+        return runtime.normalizePath(allowedFilePath, cwd);
+      }) ?? [];
+  const isExactExtraReadFilePathOutsideCwd =
+    correctedPathIsAbsolute && normalizedExtraReadFilePathsOutsideCwd.includes(resolvedPath);
+
+  // Keep the exception narrow by only bypassing cwd enforcement for exact allowlisted plan files.
+  // Reads can opt in outside plan mode so compaction/context resets do not strand the agent away
+  // from plan context under mux home, but relative-path escapes must still stay inside cwd.
+  if (!isExactConfiguredPlanFileOutsideCwd && !isExactExtraReadFilePathOutsideCwd) {
     const cwdValidation = validatePathInCwd(correctedPath, cwd, runtime);
     if (cwdValidation) {
       throw new FileToolPathValidationError(cwdValidation.error);
@@ -350,7 +367,7 @@ export function resolvePathWithinCwd(
 
   return {
     correctedPath,
-    resolvedPath: runtime.normalizePath(correctedPath, cwd),
+    resolvedPath,
     warning,
   };
 }

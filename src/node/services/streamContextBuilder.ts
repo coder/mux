@@ -225,6 +225,8 @@ export interface BuildStreamSystemContextOptions {
   agentDiscoveryPath: string;
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions: string | undefined;
+  /** Active workspace plan file path already allowlisted separately for reads. */
+  planFilePath?: string;
   modelString: string;
   cfg: ProjectsConfig;
   providersConfig?: ProvidersConfigMap | null;
@@ -244,6 +246,8 @@ export interface StreamSystemContextResult {
   agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
   /** Available skills for tool descriptions. */
   availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
+  /** Exact ancestor plan files surfaced in the prompt and allowlisted for file_read. */
+  ancestorPlanFilePaths: string[];
 }
 
 const MAX_ANCESTOR_PLAN_PATH_HOPS = 32;
@@ -257,6 +261,11 @@ interface WorkspaceConfigLookupEntry {
 interface AncestorPlanPathEntry {
   workspaceName: string;
   planFilePath: string;
+}
+
+interface AncestorPlanContext {
+  entries: AncestorPlanPathEntry[];
+  ancestorPlanFilePaths: string[];
 }
 
 function buildWorkspaceConfigLookup(cfg: ProjectsConfig): Map<string, WorkspaceConfigLookupEntry> {
@@ -287,25 +296,27 @@ function formatAncestorPlanPathInstructions(
 
   return [
     "Ancestor plan file paths (nearest parent first):",
+    "If useful for broader context, you may read these ancestor/parent plan files:",
     ...entries.map((entry) => `- ${entry.workspaceName}: ${entry.planFilePath}`),
   ].join("\n");
 }
 
-// Keep ancestor plan paths in the system prompt only so queued user prompts stay unchanged.
-function resolveAncestorPlanPathInstructions(args: {
+function resolveAncestorPlanContext(args: {
   metadata: WorkspaceMetadata;
   workspaceId: string;
+  workspacePath: string;
   runtime: Runtime;
   cfg: ProjectsConfig;
   isSubagentWorkspace: boolean;
-}): string | undefined {
+  planFilePath?: string;
+}): AncestorPlanContext {
   if (!args.isSubagentWorkspace) {
-    return undefined;
+    return { entries: [], ancestorPlanFilePaths: [] };
   }
 
   const parentWorkspaceId = args.metadata.parentWorkspaceId;
   if (!parentWorkspaceId) {
-    return undefined;
+    return { entries: [], ancestorPlanFilePaths: [] };
   }
 
   const workspaceLookup = buildWorkspaceConfigLookup(args.cfg);
@@ -359,7 +370,38 @@ function resolveAncestorPlanPathInstructions(args: {
     currentWorkspaceId = currentWorkspace.parentWorkspaceId;
   }
 
-  return formatAncestorPlanPathInstructions(ancestorEntries);
+  const excludedPlanFilePath =
+    args.planFilePath == null
+      ? undefined
+      : args.runtime.normalizePath(args.planFilePath, args.workspacePath);
+  const filteredEntries: AncestorPlanPathEntry[] = [];
+  const ancestorPlanFilePaths: string[] = [];
+  const seenPlanFilePaths = new Set<string>();
+
+  // Keep the prompt text and file_read allowlist on the same exact-file source of truth.
+  for (const entry of ancestorEntries) {
+    const normalizedPlanFilePath = args.runtime.normalizePath(
+      entry.planFilePath,
+      args.workspacePath
+    );
+    if (normalizedPlanFilePath === excludedPlanFilePath) {
+      continue;
+    }
+    if (seenPlanFilePaths.has(normalizedPlanFilePath)) {
+      continue;
+    }
+    seenPlanFilePaths.add(normalizedPlanFilePath);
+    filteredEntries.push({
+      workspaceName: entry.workspaceName,
+      planFilePath: normalizedPlanFilePath,
+    });
+    ancestorPlanFilePaths.push(normalizedPlanFilePath);
+  }
+
+  return {
+    entries: filteredEntries,
+    ancestorPlanFilePaths,
+  };
 }
 
 function mergeAdditionalInstructions(
@@ -396,6 +438,7 @@ export async function buildStreamSystemContext(
     agentDiscoveryPath,
     isSubagentWorkspace,
     effectiveAdditionalInstructions,
+    planFilePath,
     modelString,
     cfg,
     providersConfig,
@@ -461,15 +504,17 @@ export async function buildStreamSystemContext(
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
   }
 
-  const ancestorPlanPathInstructions = resolveAncestorPlanPathInstructions({
+  const ancestorPlanContext = resolveAncestorPlanContext({
     metadata,
     workspaceId,
+    workspacePath,
     runtime,
     cfg,
     isSubagentWorkspace,
+    planFilePath,
   });
   const mergedAdditionalInstructions = mergeAdditionalInstructions(
-    ancestorPlanPathInstructions,
+    formatAncestorPlanPathInstructions(ancestorPlanContext.entries),
     effectiveAdditionalInstructions
   );
 
@@ -495,6 +540,7 @@ export async function buildStreamSystemContext(
     systemMessageTokens,
     agentDefinitions,
     availableSkills,
+    ancestorPlanFilePaths: ancestorPlanContext.ancestorPlanFilePaths,
   };
 }
 
