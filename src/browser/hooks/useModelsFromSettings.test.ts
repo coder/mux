@@ -15,14 +15,30 @@ function countOccurrences(haystack: string[], needle: string): number {
 }
 
 let providersConfig: ProvidersConfigMap | null = null;
+let routePriority: string[] = ["direct"];
+let routeOverrides: Record<string, string> = {};
 
 const useProvidersConfigMock = mock(() => ({
   config: providersConfig,
   refresh: () => Promise.resolve(),
 }));
 
+const useRoutingMock = mock(() => ({
+  routePriority,
+  routeOverrides,
+  resolveRoute: () => ({ route: "direct", isAuto: true, displayName: "Direct" }),
+  availableRoutes: () => [],
+  setRoutePreferences: () => {},
+  setRoutePriority: () => {},
+  setRouteOverride: () => {},
+}));
+
 void mock.module("@/browser/hooks/useProvidersConfig", () => ({
   useProvidersConfig: useProvidersConfigMock,
+}));
+
+void mock.module("@/browser/hooks/useRouting", () => ({
+  useRouting: useRoutingMock,
 }));
 
 void mock.module("@/browser/contexts/API", () => ({
@@ -113,6 +129,8 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     globalThis.document = globalThis.window.document;
     globalThis.window.localStorage.clear();
     providersConfig = null;
+    routePriority = ["direct"];
+    routeOverrides = {};
   });
 
   afterEach(() => {
@@ -210,6 +228,8 @@ describe("useModelsFromSettings provider availability gating", () => {
     globalThis.document = globalThis.window.document;
     globalThis.window.localStorage.clear();
     providersConfig = null;
+    routePriority = ["direct"];
+    routeOverrides = {};
   });
 
   afterEach(() => {
@@ -246,6 +266,8 @@ describe("useModelsFromSettings provider availability gating", () => {
         couponCodeSet: true,
       },
     };
+    routePriority = ["mux-gateway", "direct"];
+    routeOverrides = {};
 
     const { result } = renderHook(() => useModelsFromSettings());
 
