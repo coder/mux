@@ -95,6 +95,7 @@ function AppLoaderInner() {
       workspaceStoreInstance.syncWorkspaces(workspaceContext.workspaceMetadata);
       gitStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
       runtimeStatusStore.syncWorkspaces(workspaceContext.workspaceMetadata);
+      getPRStatusStoreInstance().syncWorkspaces(workspaceContext.workspaceMetadata);
 
       // Wire up file-modification subscription (idempotent - only subscribes once)
       gitStatusStore.subscribeToFileModifications((listener) =>

@@ -20,7 +20,9 @@ import type {
   GitHubPRLinkWithStatus,
   MergeQueueEntry,
 } from "@/common/types/links";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { createLRUCache } from "@/browser/utils/lruCache";
+import { canRunPassiveRuntimeCommand } from "@/browser/utils/runtimeExecutionPolicy";
 /**
  * Parse a GitHub PR URL to extract owner, repo, and number.
  * Returns null if the URL is not a valid GitHub PR URL.
@@ -34,6 +36,10 @@ import { MapStore } from "./MapStore";
 import { RefreshController } from "@/browser/utils/RefreshController";
 import { repoRootBashOptions } from "@/browser/utils/executeBash";
 import { useSyncExternalStore } from "react";
+import {
+  useRuntimeStatusStoreRaw as getRuntimeStatusStore,
+  type RuntimeStatusStore,
+} from "./RuntimeStatusStore";
 
 // Cache TTL: PR status is refreshed at most every 5 seconds
 const STATUS_CACHE_TTL_MS = 5 * 1000;
@@ -171,8 +177,11 @@ export class PRStatusStore {
 
   // Like GitStatusStore: batch immediate refreshes triggered by subscriptions.
   private immediateUpdateQueued = false;
+  private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
+  private readonly runtimeStatusStore: Pick<RuntimeStatusStore, "getStatus">;
 
-  constructor() {
+  constructor(runtimeStatusStore: Pick<RuntimeStatusStore, "getStatus"> = getRuntimeStatusStore()) {
+    this.runtimeStatusStore = runtimeStatusStore;
     this.refreshController = new RefreshController({
       onRefresh: () => this.refreshAll(),
       onRefreshError: (failure) => {
@@ -195,6 +204,16 @@ export class PRStatusStore {
     if (this.workspaceSubscriptionCounts.size > 0) {
       this.refreshController.requestImmediate();
     }
+  }
+
+  syncWorkspaces(metadata: Map<string, FrontendWorkspaceMetadata>): void {
+    if (!this.isActive && metadata.size > 0) {
+      this.isActive = true;
+    }
+
+    this.workspaceMetadata = metadata;
+    this.refreshController.bindListeners();
+    this.refreshController.requestImmediate();
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -564,6 +583,19 @@ export class PRStatusStore {
     for (const workspaceId of workspaceIds) {
       const cached = this.workspacePRCache.get(workspaceId);
       if (this.shouldFetchWorkspace(cached, now)) {
+        // Skip passive PR refresh for devcontainer workspaces whose runtime is
+        // not already running, to avoid waking stopped containers.
+        const metadata = this.workspaceMetadata.get(workspaceId);
+        if (
+          metadata &&
+          !canRunPassiveRuntimeCommand(
+            metadata.runtimeConfig,
+            this.runtimeStatusStore.getStatus(workspaceId)
+          )
+        ) {
+          continue;
+        }
+
         refreshes.push(this.detectWorkspacePR(workspaceId));
       }
     }
