@@ -100,7 +100,6 @@ Use this index to find a page's:
   - **Integrations**
     - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx` — Pair Mux workspaces with VS Code and Cursor editors
     - ACP (Editor Integrations) (`/integrations/acp`) → `references/docs/integrations/acp.mdx` — Connect Mux to Zed, Neovim, and JetBrains via the Agent Client Protocol
-    - Mux Governor (`/integrations/mux-governor`) → `references/docs/integrations/mux-governor.mdx` — Our upcoming enterprise platform for Mux.
   - **Reference**
     - Debugging (`/reference/debugging`) → `references/docs/reference/debugging.mdx` — View live backend logs and diagnose issues
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
