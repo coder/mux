@@ -1551,6 +1551,17 @@ export class WorkspaceService extends EventEmitter {
       });
   }
 
+  private maybeClearInFlightFlowPromptUpdate(
+    workspaceId: string,
+    message: WorkspaceChatMessage
+  ): void {
+    if (message.type !== "stream-error" && message.type !== "stream-abort") {
+      return;
+    }
+
+    this.flowPromptService.clearInFlightUpdate(workspaceId);
+  }
+
   private shouldClearAgentStatusFromChatMessage(message: WorkspaceChatMessage): boolean {
     return (
       message.type === "message" && message.role === "user" && message.metadata?.synthetic !== true
@@ -1586,6 +1597,7 @@ export class WorkspaceService extends EventEmitter {
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
       this.maybeFinalizeAcceptedFlowPromptUpdate(event.workspaceId, event.message);
+      this.maybeClearInFlightFlowPromptUpdate(event.workspaceId, event.message);
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
       }
@@ -1624,6 +1636,7 @@ export class WorkspaceService extends EventEmitter {
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
       this.maybeFinalizeAcceptedFlowPromptUpdate(event.workspaceId, event.message);
+      this.maybeClearInFlightFlowPromptUpdate(event.workspaceId, event.message);
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
       }

@@ -929,6 +929,47 @@ describe("WorkspaceService sendMessage status clearing", () => {
       "flow-prompt-fingerprint"
     );
   });
+  test("registerSession clears in-flight Flow Prompting state when the turn fails", () => {
+    const clearInFlightUpdate = spyOn(
+      (
+        workspaceService as unknown as {
+          flowPromptService: {
+            clearInFlightUpdate: (workspaceId: string) => void;
+          };
+        }
+      ).flowPromptService,
+      "clearInFlightUpdate"
+    ).mockImplementation(() => undefined);
+
+    const workspaceId = "flow-prompt-failure-workspace";
+    const sessionEmitter = new EventEmitter();
+    const listenerSession = {
+      onChatEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("chat-event", listener);
+        return () => sessionEmitter.off("chat-event", listener);
+      },
+      onMetadataEvent: (listener: (event: unknown) => void) => {
+        sessionEmitter.on("metadata-event", listener);
+        return () => sessionEmitter.off("metadata-event", listener);
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      dispose: () => {},
+    } as unknown as AgentSession;
+
+    workspaceService.registerSession(workspaceId, listenerSession);
+
+    sessionEmitter.emit("chat-event", {
+      workspaceId,
+      message: {
+        type: "stream-error",
+        messageId: "assistant-error",
+        error: "context exceeded",
+        errorType: "context_exceeded",
+      },
+    });
+
+    expect(clearInFlightUpdate).toHaveBeenCalledWith(workspaceId);
+  });
 });
 
 describe("WorkspaceService Flow Prompting update ordering", () => {
