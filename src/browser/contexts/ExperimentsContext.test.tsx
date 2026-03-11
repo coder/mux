@@ -1,10 +1,10 @@
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import type { ExperimentValue } from "@/common/orpc/types";
 import { requireTestModule, type RecursivePartial } from "@/browser/testUtils";
 import type * as APIModule from "./API";
@@ -17,6 +17,7 @@ let currentClientMock: RecursivePartial<APIClient> = {};
 
 let APIProvider!: typeof APIModule.APIProvider;
 let ExperimentsProvider!: typeof ExperimentsContextModule.ExperimentsProvider;
+let useExperiment!: typeof ExperimentsContextModule.useExperiment;
 let useExperimentValue!: typeof ExperimentsContextModule.useExperimentValue;
 let isolatedModuleDir: string | null = null;
 
@@ -25,7 +26,9 @@ const contextsDir = dirname(fileURLToPath(import.meta.url));
 // Import unique temp copies of the real modules so leaked Bun mock.module registrations and
 // module cache entries from earlier suites cannot replace the API/Experiments implementations.
 async function importIsolatedExperimentModules() {
-  const tempDir = await mkdtemp(join(contextsDir, ".experiments-context-test-"));
+  const isolatedModulesRoot = join(process.cwd(), ".tmp");
+  await mkdir(isolatedModulesRoot, { recursive: true });
+  const tempDir = await mkdtemp(join(isolatedModulesRoot, "experiments-context-test-"));
   const isolatedApiPath = join(tempDir, "API.real.tsx");
   const isolatedExperimentsPath = join(tempDir, "ExperimentsContext.real.tsx");
 
@@ -46,8 +49,9 @@ async function importIsolatedExperimentModules() {
   ({ APIProvider } = requireTestModule<{ APIProvider: typeof APIModule.APIProvider }>(
     isolatedApiPath
   ));
-  ({ ExperimentsProvider, useExperimentValue } = requireTestModule<{
+  ({ ExperimentsProvider, useExperiment, useExperimentValue } = requireTestModule<{
     ExperimentsProvider: typeof ExperimentsContextModule.ExperimentsProvider;
+    useExperiment: typeof ExperimentsContextModule.useExperiment;
     useExperimentValue: typeof ExperimentsContextModule.useExperimentValue;
   }>(isolatedExperimentsPath));
 
@@ -228,9 +232,11 @@ describe("ExperimentsProvider", () => {
     };
 
     render(
-      <ExperimentsProvider>
-        <div />
-      </ExperimentsProvider>
+      <APIProvider client={currentClientMock as APIClient}>
+        <ExperimentsProvider>
+          <div />
+        </ExperimentsProvider>
+      </APIProvider>
     );
 
     await waitFor(() => {
@@ -261,9 +267,11 @@ describe("ExperimentsProvider", () => {
     }
 
     const { getByTestId } = render(
-      <ExperimentsProvider>
-        <Toggle />
-      </ExperimentsProvider>
+      <APIProvider client={currentClientMock as APIClient}>
+        <ExperimentsProvider>
+          <Toggle />
+        </ExperimentsProvider>
+      </APIProvider>
     );
 
     fireEvent.click(getByTestId("toggle"));

@@ -6,7 +6,6 @@ import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
 import { ensurePrivateDir } from "@/node/utils/fs";
-import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -193,10 +192,6 @@ export function resolveMuxProjectRootForHostFs(
   const runtimeType = metadata.runtimeConfig.type;
   return runtimeType === "ssh" || runtimeType === "docker" ? metadata.projectPath : workspacePath;
 }
-
-type WorkspaceProjectsMetadata = WorkspaceMetadata & {
-  projects?: Array<{ projectPath: string; projectName: string }>;
-};
 
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
@@ -925,14 +920,7 @@ export class AIService extends EventEmitter {
         effectiveAgentId === MUX_HELP_CHAT_AGENT_ID && agentDefinition.scope === "built-in";
 
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
-      const workspaceProjects = (metadata as WorkspaceProjectsMetadata).projects;
-      const sharedExecutionTrusted =
-        (workspaceProjects?.length ?? 0) > 1
-          ? workspaceProjects.every(
-              (project) =>
-                cfg.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ?? false
-            )
-          : projectTrusted;
+      const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
