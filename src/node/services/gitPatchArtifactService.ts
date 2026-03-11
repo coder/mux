@@ -147,22 +147,32 @@ function buildPendingPatchArtifact(params: {
   };
 }
 
-function replaceProjectArtifact(params: {
+export function upsertProjectArtifact(params: {
   artifact: SubagentGitPatchArtifact;
   nextProjectArtifact: SubagentGitProjectPatchArtifact;
   updatedAtMs: number;
 }): SubagentGitPatchArtifact {
-  return {
-    ...params.artifact,
-    updatedAtMs: params.updatedAtMs,
-    projectArtifacts: params.artifact.projectArtifacts.map((projectArtifact) =>
-      matchesProjectArtifactProjectPathForUpdate(
+  let didMatchExistingArtifact = false;
+  const projectArtifacts = params.artifact.projectArtifacts.map((projectArtifact) => {
+    if (
+      !matchesProjectArtifactProjectPathForUpdate(
         projectArtifact,
         params.nextProjectArtifact.projectPath
       )
-        ? params.nextProjectArtifact
-        : projectArtifact
-    ),
+    ) {
+      return projectArtifact;
+    }
+
+    didMatchExistingArtifact = true;
+    return params.nextProjectArtifact;
+  });
+
+  return {
+    ...params.artifact,
+    updatedAtMs: params.updatedAtMs,
+    projectArtifacts: didMatchExistingArtifact
+      ? projectArtifacts
+      : [...projectArtifacts, params.nextProjectArtifact],
   };
 }
 
@@ -566,7 +576,7 @@ export class GitPatchArtifactService {
                 taskBaseCommitShaByProjectPath: ws.taskBaseCommitShaByProjectPath,
               }),
             });
-          return replaceProjectArtifact({
+          return upsertProjectArtifact({
             artifact: pendingArtifact,
             nextProjectArtifact,
             updatedAtMs: Date.now(),

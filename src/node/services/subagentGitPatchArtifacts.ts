@@ -207,8 +207,10 @@ function normalizeArtifactsByChildTaskId(
   artifactsByChildTaskId: Record<string, unknown>,
   version: number | undefined
 ): Record<string, SubagentGitPatchArtifact> {
-  const normalizedEntries = Object.entries(artifactsByChildTaskId).map(
-    ([childTaskId, artifact]) => {
+  const normalizedEntries: Array<readonly [string, SubagentGitPatchArtifact]> = [];
+
+  for (const [childTaskId, artifact] of Object.entries(artifactsByChildTaskId)) {
+    try {
       if (!artifact || typeof artifact !== "object") {
         throw new Error(`Invalid subagent git patch artifact for task ${childTaskId}`);
       }
@@ -218,9 +220,14 @@ function normalizeArtifactsByChildTaskId(
           ? normalizeLegacyArtifact(artifact as LegacySubagentGitPatchArtifactV1)
           : normalizeSubagentGitPatchArtifact(artifact as SubagentGitPatchArtifact);
 
-      return [childTaskId, { ...normalizedArtifact, childTaskId }] as const;
+      normalizedEntries.push([childTaskId, { ...normalizedArtifact, childTaskId }] as const);
+    } catch (error) {
+      log.error("Skipping invalid subagent git patch artifact entry", {
+        childTaskId,
+        error,
+      });
     }
-  );
+  }
 
   return Object.fromEntries(normalizedEntries);
 }

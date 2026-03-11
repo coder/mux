@@ -182,6 +182,48 @@ describe("subagentGitPatchArtifacts", () => {
     expect(updated?.projectArtifacts[0]?.appliedAtMs).toBe(appliedAtMs);
   });
 
+  test("skips malformed artifact entries while preserving valid ones", async () => {
+    const childTaskId = "child-valid";
+    const artifactsPath = getSubagentGitPatchArtifactsFilePath(testDir);
+    await fsPromises.writeFile(
+      artifactsPath,
+      JSON.stringify(
+        {
+          version: 2,
+          artifactsByChildTaskId: {
+            [childTaskId]: {
+              childTaskId,
+              parentWorkspaceId: "parent-1",
+              createdAtMs: 123,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/tmp/project-a",
+                  projectName: "project-a",
+                  storageKey: "project-a",
+                  status: "ready",
+                  commitCount: 1,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 1,
+            },
+            broken: null,
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const file = await readSubagentGitPatchArtifactsFile(testDir);
+    expect(file.artifactsByChildTaskId[childTaskId]?.status).toBe("ready");
+    expect(file.artifactsByChildTaskId.broken).toBeUndefined();
+  });
+
   test("normalizes version 1 artifacts into one-project patch sets", async () => {
     const childTaskId = "child-1";
     const artifactsPath = getSubagentGitPatchArtifactsFilePath(testDir);
