@@ -478,6 +478,16 @@ describe("buildProviderOptions - OpenAI", () => {
     return undefined;
   };
 
+  test("keeps provider-level parallel tool calls enabled for Responses models", () => {
+    const result = buildProviderOptions("openai:gpt-5.2", "medium", undefined, undefined, {
+      openai: { wireFormat: "responses" },
+    });
+    const openai = getOpenAIOptions(result);
+
+    expect(openai).toBeDefined();
+    expect(openai!.parallelToolCalls).toBe(true);
+  });
+
   describe("store option", () => {
     test("should include store: false when muxProviderOptions sets store to false", () => {
       const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {

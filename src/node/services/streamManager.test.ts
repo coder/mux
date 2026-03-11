@@ -5,7 +5,8 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
 import * as aiSdk from "ai";
-import { APICallError, RetryError, type ModelMessage } from "ai";
+import { APICallError, RetryError, tool, type ModelMessage, type Tool } from "ai";
+import { z } from "zod";
 import * as modelStatsModule from "@/common/utils/tokens/modelStats";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
@@ -438,6 +439,171 @@ describe("StreamManager - stopWhen configuration", () => {
         steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
       })
     ).toBe(false);
+  });
+});
+
+describe("StreamManager - sequential tool execution", () => {
+  interface Deferred<T> {
+    promise: Promise<T>;
+    resolve: (value: T | PromiseLike<T>) => void;
+    reject: (reason?: unknown) => void;
+  }
+
+  interface StreamRequestConfigForTests {
+    model: unknown;
+    messages: ModelMessage[];
+    system?: string;
+    tools?: Record<string, Tool>;
+    providerOptions?: Record<string, unknown>;
+    headers?: Record<string, string | undefined>;
+    maxOutputTokens?: number;
+    streamCallSettings?: Record<string, unknown>;
+    hasQueuedMessage?: () => boolean;
+    toolPolicy?: ToolPolicy;
+    toolChoice?: { type: "tool"; toolName: string };
+  }
+
+  type BuildStreamRequestConfig = (...args: unknown[]) => StreamRequestConfigForTests;
+  type CreateStreamResult = (
+    request: StreamRequestConfigForTests,
+    abortController: AbortController
+  ) => unknown;
+
+  function createDeferred<T>(): Deferred<T> {
+    let resolve: Deferred<T>["resolve"] | undefined;
+    let reject: Deferred<T>["reject"] | undefined;
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve;
+      reject = promiseReject;
+    });
+
+    if (!resolve || !reject) {
+      throw new Error("createDeferred failed to initialize promise controls");
+    }
+
+    return { promise, resolve, reject };
+  }
+
+  function getRequestHelpers(streamManager: StreamManager): {
+    buildRequestConfig: BuildStreamRequestConfig;
+    createStreamResult: CreateStreamResult;
+  } {
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | BuildStreamRequestConfig
+      | undefined;
+    const createStreamResultMethod = Reflect.get(streamManager, "createStreamResult") as
+      | CreateStreamResult
+      | undefined;
+
+    expect(typeof buildRequestConfig).toBe("function");
+    expect(typeof createStreamResultMethod).toBe("function");
+
+    if (!buildRequestConfig || !createStreamResultMethod) {
+      throw new Error("Expected StreamManager private helpers to exist");
+    }
+
+    return {
+      buildRequestConfig,
+      createStreamResult: (request, abortController) =>
+        createStreamResultMethod.call(streamManager, request, abortController),
+    };
+  }
+
+  test("passes sequentially wrapped tools to streamText", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+    const executionLog: string[] = [];
+    const started = {
+      a: createDeferred<void>(),
+      b: createDeferred<void>(),
+    };
+    const release = {
+      a: createDeferred<void>(),
+      b: createDeferred<void>(),
+    };
+
+    const tools = {
+      a: tool({
+        description: "Tool A",
+        inputSchema: z.object({}),
+        execute: async () => {
+          executionLog.push("start A");
+          started.a.resolve();
+          await release.a.promise;
+          executionLog.push("end A");
+          return { tool: "A" };
+        },
+      }),
+      b: tool({
+        description: "Tool B",
+        inputSchema: z.object({}),
+        execute: async () => {
+          executionLog.push("start B");
+          started.b.resolve();
+          await release.b.promise;
+          executionLog.push("end B");
+          return { tool: "B" };
+        },
+      }),
+    };
+
+    const streamTextSpy = spyOn(aiSdk, "streamText").mockReturnValue({
+      fullStream: (async function* asyncGenerator() {
+        yield* [] as unknown[];
+        await Promise.resolve();
+      })(),
+      usage: Promise.resolve(undefined),
+      providerMetadata: Promise.resolve(undefined),
+      totalUsage: Promise.resolve(undefined),
+      steps: Promise.resolve([]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+
+    const request = buildRequestConfig(
+      model,
+      KNOWN_MODELS.SONNET.id,
+      [{ role: "user", content: "hello" }],
+      "system",
+      tools,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      () => false,
+      undefined,
+      undefined
+    );
+    createStreamResult(request, new AbortController());
+
+    expect(streamTextSpy).toHaveBeenCalledTimes(1);
+    const capturedTools = streamTextSpy.mock.calls[0]?.[0]?.tools as
+      | StreamRequestConfigForTests["tools"]
+      | undefined;
+    expect(capturedTools).toBeDefined();
+    expect(capturedTools).not.toBe(tools);
+    expect(capturedTools!.a).not.toBe(tools.a);
+    expect(capturedTools!.b).not.toBe(tools.b);
+
+    const resultsPromise = Promise.all([
+      capturedTools!.a.execute!({}, {} as never),
+      capturedTools!.b.execute!({}, {} as never),
+    ]);
+
+    await started.a.promise;
+    await Promise.resolve();
+    expect(executionLog).toEqual(["start A"]);
+
+    release.a.resolve();
+    await started.b.promise;
+    await Promise.resolve();
+    expect(executionLog).toEqual(["start A", "end A", "start B"]);
+
+    release.b.resolve();
+    const results = await resultsPromise;
+
+    expect(results).toEqual([{ tool: "A" }, { tool: "B" }]);
+    expect(executionLog).toEqual(["start A", "end A", "start B", "end B"]);
   });
 });
 

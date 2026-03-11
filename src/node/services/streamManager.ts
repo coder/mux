@@ -56,6 +56,7 @@ import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/me
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats, getModelStatsResolved } from "@/common/utils/tokens/modelStats";
+import { withSequentialExecution } from "@/node/services/tools/withSequentialExecution";
 import type { ResolvedCallSettingsOverrides } from "@/common/config/schemas/modelParameters";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -1179,7 +1180,9 @@ export class StreamManager extends EventEmitter {
       model,
       messages: finalMessages,
       system: finalSystem,
-      tools: finalTools,
+      // Keep provider-level parallel tool planning enabled, but serialize sibling
+      // execute() handlers inside this stream so shared mutable state cannot race.
+      tools: withSequentialExecution(finalTools),
       providerOptions: finalProviderOptions,
       headers,
       maxOutputTokens: effectiveMaxOutputTokens,
