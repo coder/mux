@@ -793,10 +793,10 @@ export class WorkspaceFlowPromptService extends EventEmitter {
         const snapshot = await this.readPromptSnapshot(workspaceId);
         const persisted = await this.readPersistedState(workspaceId);
 
-        if (monitor && snapshot.contentFingerprint !== monitor.pendingFingerprint) {
-          const shouldClearPending =
-            snapshot.contentFingerprint == null ||
-            snapshot.contentFingerprint === persisted.lastSentFingerprint;
+        const currentFingerprint =
+          snapshot.contentFingerprint ?? computeFingerprint(snapshot.content);
+        if (monitor && currentFingerprint !== monitor.pendingFingerprint) {
+          const shouldClearPending = currentFingerprint === persisted.lastSentFingerprint;
           if (shouldClearPending) {
             monitor.pendingFingerprint = null;
           }

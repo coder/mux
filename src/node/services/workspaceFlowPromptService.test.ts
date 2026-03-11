@@ -825,6 +825,107 @@ test("refreshMonitor reruns once when a save lands during an in-flight refresh",
   expect(refreshedState.updatePreviewText).toContain("Updated context line 20");
 });
 
+test("refreshMonitor keeps a queued clear update pending until the clear is accepted", async () => {
+  const workspaceId = "workspace-clear-pending";
+  const emptyFingerprint = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+  const service = new WorkspaceFlowPromptService({
+    getSessionDir: () => "/tmp/flow-prompt-session",
+  } as unknown as Config);
+
+  spyOn(
+    service as unknown as {
+      readPromptSnapshot: (workspaceId: string) => Promise<{
+        workspaceId: string;
+        path: string;
+        exists: boolean;
+        content: string;
+        hasNonEmptyContent: boolean;
+        modifiedAtMs: number | null;
+        contentFingerprint: string | null;
+      }>;
+    },
+    "readPromptSnapshot"
+  ).mockResolvedValue({
+    workspaceId,
+    path: "/tmp/workspace/.mux/prompts/feature.md",
+    exists: false,
+    content: "",
+    hasNonEmptyContent: false,
+    modifiedAtMs: null,
+    contentFingerprint: null,
+  });
+  spyOn(
+    service as unknown as {
+      readPersistedState: (workspaceId: string) => Promise<{
+        lastSentContent: string | null;
+        lastSentFingerprint: string | null;
+        autoSendMode: "off" | "end-of-turn";
+        agentScope: string;
+      }>;
+    },
+    "readPersistedState"
+  ).mockResolvedValue({
+    lastSentContent: "Keep following the original flow prompt",
+    lastSentFingerprint: "previous-fingerprint",
+    autoSendMode: "end-of-turn",
+    agentScope: "",
+  });
+
+  const monitors = (
+    service as unknown as {
+      monitors: Map<
+        string,
+        {
+          timer: null;
+          stopped: boolean;
+          refreshing: boolean;
+          refreshPromise: Promise<unknown> | null;
+          queuedRefresh: boolean;
+          queuedRefreshEmitEvents: boolean;
+          pendingFingerprint: string | null;
+          inFlightFingerprint: string | null;
+          lastState: null;
+          activeChatSubscriptions: number;
+          lastOpenedAtMs: number | null;
+          lastKnownActivityAtMs: number | null;
+        }
+      >;
+    }
+  ).monitors;
+  monitors.set(workspaceId, {
+    timer: null,
+    stopped: false,
+    refreshing: false,
+    refreshPromise: null,
+    queuedRefresh: false,
+    queuedRefreshEmitEvents: false,
+    pendingFingerprint: emptyFingerprint,
+    inFlightFingerprint: null,
+    lastState: null,
+    activeChatSubscriptions: 0,
+    lastOpenedAtMs: null,
+    lastKnownActivityAtMs: null,
+  });
+
+  const refreshMonitor = (
+    service as unknown as {
+      refreshMonitor: (
+        workspaceId: string,
+        emitEvents: boolean
+      ) => Promise<{
+        hasPendingUpdate: boolean;
+        updatePreviewText: string | null;
+      }>;
+    }
+  ).refreshMonitor.bind(service);
+
+  const state = await refreshMonitor(workspaceId, true);
+
+  expect(state.hasPendingUpdate).toBe(true);
+  expect(state.updatePreviewText).toContain("flow prompt file is now empty");
+  expect(monitors.get(workspaceId)?.pendingFingerprint).toBe(emptyFingerprint);
+});
+
 it("includes the queued preview text in state while a flow prompt update is pending", () => {
   const workspaceId = "workspace-1";
   const service = new WorkspaceFlowPromptService({
