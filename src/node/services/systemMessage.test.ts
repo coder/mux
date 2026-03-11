@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { buildSystemMessage, extractToolInstructions } from "./systemMessage";
+import { buildSystemMessage, extractToolInstructions, readToolInstructions } from "./systemMessage";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
@@ -56,6 +56,28 @@ From agent: Read files carefully.
     });
 
     expect(result.bash).toContain("From context: Use fd for finding.");
+    expect(result.bash).not.toContain("From global");
+  });
+
+  test("keeps every matching context tool section before falling back to global", () => {
+    const globalInstructions = `## Tool: bash
+From global: Use rg for searching.
+`;
+    const contextInstructions = `## Tool: bash
+From primary repo: Prefer git status --short.
+
+## Tool: bash
+From secondary repo: Prefer rg --files before find.
+`;
+
+    const result = extractToolInstructions(globalInstructions, contextInstructions, modelString);
+
+    expect(result.bash).toBe(
+      [
+        "From primary repo: Prefer git status --short.",
+        "From secondary repo: Prefer rg --files before find.",
+      ].join("\n\n")
+    );
     expect(result.bash).not.toContain("From global");
   });
 
@@ -114,6 +136,40 @@ describe("buildSystemMessage", () => {
     // Create a local runtime for tests
     runtime = new LocalRuntime(tempDir);
   });
+
+  async function createMultiProjectFixture(): Promise<{
+    metadata: WorkspaceMetadata;
+    primaryWorkspaceRepoDir: string;
+    secondaryWorkspaceRepoDir: string;
+  }> {
+    const primaryProjectDir = path.join(tempDir, "primary-project");
+    const secondaryProjectDir = path.join(tempDir, "secondary-project");
+    const primaryWorkspaceRepoDir = path.join(tempDir, "primary-workspace-repo");
+    const secondaryWorkspaceRepoDir = path.join(tempDir, "secondary-workspace-repo");
+
+    await fs.mkdir(primaryProjectDir, { recursive: true });
+    await fs.mkdir(secondaryProjectDir, { recursive: true });
+    await fs.mkdir(primaryWorkspaceRepoDir, { recursive: true });
+    await fs.mkdir(secondaryWorkspaceRepoDir, { recursive: true });
+    await fs.symlink(primaryWorkspaceRepoDir, path.join(workspaceDir, "primary"));
+    await fs.symlink(secondaryWorkspaceRepoDir, path.join(workspaceDir, "secondary"));
+
+    return {
+      metadata: {
+        id: "test-workspace",
+        name: "test-workspace",
+        projectName: "primary",
+        projectPath: primaryProjectDir,
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+        projects: [
+          { projectName: "primary", projectPath: primaryProjectDir },
+          { projectName: "secondary", projectPath: secondaryProjectDir },
+        ],
+      },
+      primaryWorkspaceRepoDir,
+      secondaryWorkspaceRepoDir,
+    };
+  }
 
   afterEach(async () => {
     // Clean up temp directory
@@ -174,6 +230,72 @@ Use clear examples.
     const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
     expect(customInstructions).toContain("Always be helpful.");
     expect(customInstructions).toContain("Use clear examples.");
+  });
+
+  test("includes generic instructions from every project repo in a multi-project workspace", async () => {
+    const { metadata, primaryWorkspaceRepoDir, secondaryWorkspaceRepoDir } =
+      await createMultiProjectFixture();
+
+    await fs.writeFile(
+      path.join(primaryWorkspaceRepoDir, "AGENTS.md"),
+      `# Primary Instructions
+Use the primary project context.
+`
+    );
+    await fs.writeFile(
+      path.join(secondaryWorkspaceRepoDir, "AGENTS.md"),
+      `# Secondary Instructions
+Include the secondary project context too.
+`
+    );
+
+    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Use the primary project context.");
+    expect(customInstructions).toContain("Include the secondary project context too.");
+  });
+
+  test("preserves bash tool instructions from every multi-project context source", async () => {
+    const { metadata, primaryWorkspaceRepoDir, secondaryWorkspaceRepoDir } =
+      await createMultiProjectFixture();
+
+    await fs.writeFile(
+      path.join(globalDir, "AGENTS.md"),
+      `# Global Instructions
+## Tool: bash
+From global: this should only apply when context has no bash section.
+`
+    );
+    await fs.writeFile(
+      path.join(primaryWorkspaceRepoDir, "AGENTS.md"),
+      `# Primary Instructions
+## Tool: bash
+From primary repo: prefer git status --short.
+`
+    );
+    await fs.writeFile(
+      path.join(secondaryWorkspaceRepoDir, "AGENTS.md"),
+      `# Secondary Instructions
+## Tool: bash
+From secondary repo: prefer rg --files before find.
+`
+    );
+
+    const toolInstructions = await readToolInstructions(
+      metadata,
+      runtime,
+      workspaceDir,
+      "anthropic:claude-sonnet-4-20250514"
+    );
+
+    expect(toolInstructions.bash).toBe(
+      [
+        "From primary repo: prefer git status --short.",
+        "From secondary repo: prefer rg --files before find.",
+      ].join("\n\n")
+    );
+    expect(toolInstructions.bash).not.toContain("From global");
   });
 
   test("includes model-specific section when regex matches active model", async () => {

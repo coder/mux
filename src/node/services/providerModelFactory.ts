@@ -374,10 +374,8 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
   return `${trimmed}/v1`;
 }
 
-// Canonical definition lives in providerOptions; import for local use + re-export for backward compat.
 import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
 import { getErrorMessage } from "@/common/utils/errors";
-export { ANTHROPIC_1M_CONTEXT_HEADER };
 
 /**
  * Build headers for Anthropic provider, optionally including the 1M context beta header.

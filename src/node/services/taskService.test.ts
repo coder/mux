@@ -14,7 +14,11 @@ import { upsertSubagentReportArtifact } from "@/node/services/subagentReportArti
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
+import { ContainerManager } from "@/node/multiProject/containerManager";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import * as runtimeFactory from "@/node/runtime/runtimeFactory";
+import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { defaultModel } from "@/common/utils/ai/models";
 import type { PlanSubagentExecutorRouting } from "@/common/types/tasks";
@@ -168,6 +172,7 @@ function createWorkspaceServiceMocks(
     getInfo: ReturnType<typeof mock>;
     replaceHistory: ReturnType<typeof mock>;
     updateAgentStatus: ReturnType<typeof mock>;
+    isExperimentEnabled: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -179,6 +184,7 @@ function createWorkspaceServiceMocks(
   getInfo: ReturnType<typeof mock>;
   replaceHistory: ReturnType<typeof mock>;
   updateAgentStatus: ReturnType<typeof mock>;
+  isExperimentEnabled: ReturnType<typeof mock>;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -194,6 +200,7 @@ function createWorkspaceServiceMocks(
     overrides?.replaceHistory ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const updateAgentStatus =
     overrides?.updateAgentStatus ?? mock((): Promise<void> => Promise.resolve());
+  const isExperimentEnabled = overrides?.isExperimentEnabled ?? mock(() => false);
 
   return {
     workspaceService: {
@@ -205,6 +212,7 @@ function createWorkspaceServiceMocks(
       getInfo,
       replaceHistory,
       updateAgentStatus,
+      isExperimentEnabled,
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,
@@ -214,6 +222,7 @@ function createWorkspaceServiceMocks(
     getInfo,
     replaceHistory,
     updateAgentStatus,
+    isExperimentEnabled,
   };
 }
 
@@ -675,6 +684,323 @@ describe("TaskService", () => {
     } finally {
       forkSpy.mockRestore();
     }
+  }, 20_000);
+
+  test("configures MultiProjectRuntime envResolver before queued task background init", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const primaryProjectPath = await createTestProject(rootDir, "repo-primary");
+    const secondaryProjectPath = await createTestProject(rootDir, "repo-secondary");
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath: primaryProjectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath: primaryProjectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_exec_task-queued";
+    const projects = [
+      {
+        projectPath: primaryProjectPath,
+        projectName: path.basename(primaryProjectPath),
+      },
+      {
+        projectPath: secondaryProjectPath,
+        projectName: path.basename(secondaryProjectPath),
+      },
+    ];
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          primaryProjectPath,
+          {
+            trusted: true,
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                projects,
+              },
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, queuedWorkspaceName),
+                id: queuedTaskId,
+                name: queuedWorkspaceName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                parentWorkspaceId: parentId,
+                taskStatus: "queued",
+                taskPrompt: "start queued task",
+                taskTrunkBranch: "main",
+                projects,
+              },
+            ],
+          },
+        ],
+        [secondaryProjectPath, { trusted: true, workspaces: [] }],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    await config.updateProjectSecrets(primaryProjectPath, [
+      { key: "PRIMARY_SECRET", value: "primary-secret" },
+    ]);
+    await config.updateProjectSecrets(secondaryProjectPath, [
+      { key: "SECONDARY_SECRET", value: "secondary-secret" },
+    ]);
+
+    const targetRuntime = new MultiProjectRuntime(
+      new ContainerManager(config.srcDir),
+      [
+        {
+          projectPath: primaryProjectPath,
+          projectName: path.basename(primaryProjectPath),
+          runtime: {
+            getWorkspacePath: mock(() => path.join(primaryProjectPath, queuedWorkspaceName)),
+            initWorkspace: mock(() => Promise.resolve({ success: true })),
+          } as unknown as WorktreeRuntime,
+        },
+        {
+          projectPath: secondaryProjectPath,
+          projectName: path.basename(secondaryProjectPath),
+          runtime: {
+            getWorkspacePath: mock(() => path.join(secondaryProjectPath, queuedWorkspaceName)),
+            initWorkspace: mock(() => Promise.resolve({ success: true })),
+          } as unknown as WorktreeRuntime,
+        },
+      ],
+      queuedWorkspaceName
+    );
+
+    const forkSpy = spyOn(forkOrchestrator, "orchestrateFork").mockResolvedValue({
+      success: true,
+      data: {
+        workspacePath: path.join(config.srcDir, "_workspaces", queuedWorkspaceName),
+        trunkBranch: "main",
+        forkedRuntimeConfig: runtimeConfig,
+        targetRuntime,
+        forkedFromSource: true,
+        sourceRuntimeConfigUpdated: false,
+        projects,
+      },
+    });
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+
+    try {
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+      await taskService.initialize();
+
+      expect(forkSpy).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith(
+        queuedTaskId,
+        "start queued task",
+        expect.anything(),
+        expect.objectContaining({ allowQueuedAgentTask: true })
+      );
+      expect(runBackgroundInitSpy).toHaveBeenCalledTimes(1);
+
+      const firstBackgroundInitCall = runBackgroundInitSpy.mock.calls[0];
+      assert(firstBackgroundInitCall, "Expected queued task to trigger background init");
+      const [runtimeArg, initParams] = firstBackgroundInitCall;
+      expect(runtimeArg).toBe(targetRuntime);
+      expect(initParams.env).toEqual({ PRIMARY_SECRET: "primary-secret" });
+      assert(
+        runtimeArg instanceof MultiProjectRuntime,
+        "Expected queued task runtime to be multi-project"
+      );
+      assert(runtimeArg.envResolver, "Expected MultiProjectRuntime.envResolver to be configured");
+      expect(await runtimeArg.envResolver(primaryProjectPath)).toEqual({
+        PRIMARY_SECRET: "primary-secret",
+      });
+      expect(await runtimeArg.envResolver(secondaryProjectPath)).toEqual({
+        SECONDARY_SECRET: "secondary-secret",
+      });
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+      forkSpy.mockRestore();
+    }
+  }, 20_000);
+
+  test("interrupts queued tasks when the primary project loses trust before dequeue", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_exec_task-queued";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(projectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+              },
+              {
+                path: runtime.getWorkspacePath(projectPath, queuedWorkspaceName),
+                id: queuedTaskId,
+                name: queuedWorkspaceName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                parentWorkspaceId: parentId,
+                taskStatus: "queued",
+                taskPrompt: "start queued task",
+                taskTrunkBranch: "main",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "Expected queued task project to exist before revoking trust");
+      project.trusted = false;
+      return cfg;
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await taskService.initialize();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const queuedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === queuedTaskId);
+    expect(queuedTask?.taskStatus).toBe("interrupted");
+  }, 20_000);
+
+  test("interrupts queued multi-project tasks when a secondary project loses trust", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const primaryProjectPath = await createTestProject(rootDir, "repo-primary");
+    const secondaryProjectPath = await createTestProject(rootDir, "repo-secondary");
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath: primaryProjectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath: primaryProjectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_exec_task-queued";
+    const projects = [
+      {
+        projectPath: primaryProjectPath,
+        projectName: path.basename(primaryProjectPath),
+      },
+      {
+        projectPath: secondaryProjectPath,
+        projectName: path.basename(secondaryProjectPath),
+      },
+    ];
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          primaryProjectPath,
+          {
+            trusted: true,
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                projects,
+              },
+              {
+                path: runtime.getWorkspacePath(primaryProjectPath, queuedWorkspaceName),
+                id: queuedTaskId,
+                name: queuedWorkspaceName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+                parentWorkspaceId: parentId,
+                taskStatus: "queued",
+                taskPrompt: "start queued task",
+                taskTrunkBranch: "main",
+                projects,
+              },
+            ],
+          },
+        ],
+        [secondaryProjectPath, { trusted: true, workspaces: [] }],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    await config.editConfig((cfg) => {
+      const secondaryProject = cfg.projects.get(secondaryProjectPath);
+      assert(secondaryProject, "Expected secondary project to exist before revoking trust");
+      secondaryProject.trusted = false;
+      return cfg;
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await taskService.initialize();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const queuedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === queuedTaskId);
+    expect(queuedTask?.taskStatus).toBe("interrupted");
   }, 20_000);
 
   test("does not run init hooks for queued tasks until they start", async () => {

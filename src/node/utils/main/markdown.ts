@@ -50,15 +50,22 @@ function collectSectionBounds(
   return { bounds, lines };
 }
 
-function extractSectionByHeading(markdown: string, headingMatcher: HeadingMatcher): string | null {
-  if (!markdown) return null;
+function extractSectionsByHeading(markdown: string, headingMatcher: HeadingMatcher): string[] {
+  if (!markdown) return [];
 
   const { bounds, lines } = collectSectionBounds(markdown, headingMatcher);
-  if (bounds.length === 0) return null;
+  if (bounds.length === 0) return [];
 
-  const { contentStartLine, endLine } = bounds[0];
-  const slice = lines.slice(contentStartLine, endLine).join("\n").trim();
-  return slice.length > 0 ? slice : null;
+  return bounds
+    .map(({ contentStartLine, endLine }) =>
+      lines.slice(contentStartLine, endLine).join("\n").trim()
+    )
+    .filter((slice) => slice.length > 0);
+}
+
+function extractSectionByHeading(markdown: string, headingMatcher: HeadingMatcher): string | null {
+  const [firstMatch] = extractSectionsByHeading(markdown, headingMatcher);
+  return firstMatch ?? null;
 }
 
 function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatcher): string {
@@ -118,16 +125,18 @@ export function extractModelSection(markdown: string, modelId: string): string |
 }
 
 /**
- * Extract the content under a heading titled "Tool: <tool_name>" (case-insensitive).
+ * Extract the content under every heading titled "Tool: <tool_name>" (case-insensitive),
+ * preserving source order so flattened multi-project instruction blobs keep each repo's rules.
  */
 export function extractToolSection(markdown: string, toolName: string): string | null {
   if (!markdown || !toolName) return null;
 
   const expectedHeading = `tool: ${toolName}`.toLowerCase();
-  return extractSectionByHeading(
+  const matches = extractSectionsByHeading(
     markdown,
     (headingText) => headingText.toLowerCase() === expectedHeading
   );
+  return matches.length > 0 ? matches.join("\n\n") : null;
 }
 
 export function stripScopedInstructionSections(markdown: string): string {

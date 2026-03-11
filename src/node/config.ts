@@ -953,12 +953,13 @@ export class Config {
   }
 
   /**
-   * Find a workspace path and project path by workspace ID
-   * @returns Object with workspace/project paths and available workspace metadata, or null
+   * Find a workspace by ID.
+   * @returns Stored config project key plus a separate attribution project path, or null
    */
   findWorkspace(workspaceId: string): {
     workspacePath: string;
     projectPath: string;
+    attributionProjectPath?: string;
     workspaceName?: string;
     parentWorkspaceId?: string;
   } | null {
@@ -966,11 +967,16 @@ export class Config {
 
     for (const [projectPath, project] of config.projects) {
       for (const workspace of project.workspaces) {
+        const attributionProjectPath = workspace.projects?.[0]?.projectPath ?? projectPath;
+
         // NEW FORMAT: Check config first (primary source of truth after migration)
         if (workspace.id === workspaceId) {
           return {
             workspacePath: workspace.path,
+            // Keep the stored config bucket key so mutation callers can round-trip into
+            // config.projects.get(projectPath), even for multi-project workspaces under _multi.
             projectPath,
+            attributionProjectPath,
             workspaceName: workspace.name,
             parentWorkspaceId: workspace.parentWorkspaceId,
           };
@@ -992,6 +998,7 @@ export class Config {
                 return {
                   workspacePath: workspace.path,
                   projectPath,
+                  attributionProjectPath,
                   workspaceName: undefined,
                   parentWorkspaceId: undefined,
                 };
@@ -1007,6 +1014,7 @@ export class Config {
             return {
               workspacePath: workspace.path,
               projectPath,
+              attributionProjectPath,
               workspaceName: undefined,
               parentWorkspaceId: undefined,
             };
@@ -1081,6 +1089,13 @@ export class Config {
         const workspaceBasename =
           workspace.path.split("/").pop() ?? workspace.path.split("\\").pop() ?? "unknown";
 
+        const workspaceProjects = workspace.projects?.length ? workspace.projects : undefined;
+        const primaryWorkspaceProject = workspaceProjects?.[0];
+        const resolvedProjectPath = primaryWorkspaceProject?.projectPath ?? projectPath;
+        const resolvedProjectName = workspaceProjects
+          ? workspaceProjects.map((projectRef) => projectRef.projectName).join("+")
+          : projectName;
+
         try {
           // NEW FORMAT: If workspace has metadata in config, use it directly
           if (workspace.id && workspace.name) {
@@ -1088,8 +1103,8 @@ export class Config {
               id: workspace.id,
               name: workspace.name,
               title: workspace.title,
-              projectName,
-              projectPath,
+              projectName: resolvedProjectName,
+              projectPath: resolvedProjectPath,
               // GUARANTEE: All workspaces must have createdAt (assign now if missing)
               createdAt: workspace.createdAt ?? new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
@@ -1114,6 +1129,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              projects: workspaceProjects,
               sectionId: workspace.sectionId,
             };
 
@@ -1142,6 +1158,11 @@ export class Config {
               configModified = true;
             }
 
+            if (!workspace.projects && metadata.projects) {
+              workspace.projects = metadata.projects;
+              configModified = true;
+            }
+
             // Populate containerName for Docker workspaces (computed from project path and workspace name)
             if (
               metadata.runtimeConfig?.type === "docker" &&
@@ -1149,7 +1170,7 @@ export class Config {
             ) {
               metadata.runtimeConfig = {
                 ...metadata.runtimeConfig,
-                containerName: getDockerContainerName(projectPath, metadata.name),
+                containerName: getDockerContainerName(metadata.projectPath, metadata.name),
               };
             }
 
@@ -1169,8 +1190,9 @@ export class Config {
 
             // Ensure required fields are present
             if (!metadata.name) metadata.name = workspaceBasename;
-            if (!metadata.projectPath) metadata.projectPath = projectPath;
-            if (!metadata.projectName) metadata.projectName = projectName;
+            if (!metadata.projectPath) metadata.projectPath = resolvedProjectPath;
+            if (!metadata.projectName) metadata.projectName = resolvedProjectName;
+            metadata.projects ??= workspaceProjects;
 
             // GUARANTEE: All workspaces must have createdAt
             metadata.createdAt ??= new Date().toISOString();
@@ -1217,6 +1239,11 @@ export class Config {
             workspace.runtimeConfig = metadata.runtimeConfig;
             configModified = true;
 
+            if (!workspace.projects && metadata.projects) {
+              workspace.projects = metadata.projects;
+              configModified = true;
+            }
+
             workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
             metadataFound = true;
           }
@@ -1227,8 +1254,8 @@ export class Config {
             const metadata: WorkspaceMetadata = {
               id: legacyId,
               name: workspaceBasename,
-              projectName,
-              projectPath,
+              projectName: resolvedProjectName,
+              projectPath: resolvedProjectPath,
               // GUARANTEE: All workspaces must have createdAt
               createdAt: new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig
@@ -1253,6 +1280,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              projects: workspaceProjects,
               sectionId: workspace.sectionId,
             };
 
@@ -1272,8 +1300,8 @@ export class Config {
           const metadata: WorkspaceMetadata = {
             id: legacyId,
             name: workspaceBasename,
-            projectName,
-            projectPath,
+            projectName: resolvedProjectName,
+            projectPath: resolvedProjectPath,
             // GUARANTEE: All workspaces must have createdAt (even in error cases)
             createdAt: new Date().toISOString(),
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
@@ -1296,6 +1324,7 @@ export class Config {
             taskThinkingLevel: workspace.taskThinkingLevel,
             taskPrompt: workspace.taskPrompt,
             taskTrunkBranch: workspace.taskTrunkBranch,
+            projects: workspaceProjects,
             sectionId: workspace.sectionId,
           };
 
@@ -1359,6 +1388,7 @@ export class Config {
         taskTrunkBranch: metadata.taskTrunkBranch,
         archivedAt: metadata.archivedAt,
         unarchivedAt: metadata.unarchivedAt,
+        projects: metadata.projects,
         sectionId: metadata.sectionId,
       };
 

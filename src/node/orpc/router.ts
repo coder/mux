@@ -1,5 +1,6 @@
 import { os, ORPCError } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ORPCContext } from "./context";
 import { OnePasswordService } from "@/node/services/onePasswordService";
 import {
@@ -2796,6 +2797,35 @@ export const router = (authToken?: string) => {
           }
           return { success: true, metadata: result.data.metadata };
         }),
+      createMultiProject: t
+        .input(schemas.workspace.createMultiProject.input)
+        .output(schemas.workspace.createMultiProject.output)
+        .handler(async ({ context, input }) => {
+          if (
+            !context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)
+          ) {
+            throw new ORPCError("BAD_REQUEST", {
+              message: "Multi-project workspaces experiment is disabled",
+            });
+          }
+
+          const result = await context.workspaceService.createMultiProject(
+            input.projects.map((project) => ({
+              projectPath: stripTrailingSlashes(project.projectPath),
+              projectName: project.projectName,
+            })),
+            input.branchName,
+            input.trunkBranch,
+            input.title,
+            input.runtimeConfig
+          );
+
+          if (!result.success) {
+            throw new Error(result.error);
+          }
+
+          return result.data;
+        }),
       remove: t
         .input(schemas.workspace.remove.input)
         .output(schemas.workspace.remove.output)
@@ -4305,6 +4335,12 @@ export const router = (authToken?: string) => {
         .output(schemas.experiments.getAll.output)
         .handler(({ context }) => {
           return context.experimentsService.getAll();
+        }),
+      setOverride: t
+        .input(schemas.experiments.setOverride.input)
+        .output(schemas.experiments.setOverride.output)
+        .handler(async ({ context, input }) => {
+          await context.experimentsService.setOverride(input.experimentId, input.enabled);
         }),
       reload: t
         .input(schemas.experiments.reload.input)

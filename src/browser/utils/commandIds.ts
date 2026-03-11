@@ -22,6 +22,7 @@ export const CommandIds = {
     `${COMMAND_ID_PREFIXES.WS_SWITCH}${workspaceId}` as const,
   workspaceNew: () => "ws:new" as const,
   workspaceNewInProject: () => "ws:new-in-project" as const,
+  workspaceNewMultiProject: () => "ws:new-multi-project" as const,
   workspaceRemove: () => "ws:remove" as const,
   workspaceRemoveAny: () => "ws:remove-any" as const,
   workspaceEditTitle: () => "ws:edit-title" as const,

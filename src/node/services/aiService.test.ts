@@ -13,12 +13,13 @@ import {
   normalizeAnthropicBaseURL,
   buildAnthropicHeaders,
   buildAppAttributionHeaders,
-  ANTHROPIC_1M_CONTEXT_HEADER,
   type ProviderModelFactory,
 } from "./providerModelFactory";
+import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
 import { HistoryService } from "./historyService";
 import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { Config } from "@/node/config";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -40,8 +41,10 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
+import { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
 import type { MCPServerManager } from "./mcpServerManager";
+import { TelemetryService } from "@/node/services/telemetryService";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
@@ -1914,6 +1917,258 @@ describe("AIService.streamMessage mux help agent suppression", () => {
     expect(harness.toolConfigCalls[0]?.secrets).toEqual({ PROJECT_TOKEN: "secret-value" });
     expect(harness.mcpToolCalls).toEqual([harness.loadedMcpTools]);
     expect(harness.projectSecrets).toEqual([{ key: "PROJECT_TOKEN", value: "secret-value" }]);
+  });
+});
+
+describe("AIService.streamMessage multi-project trust gating", () => {
+  interface TrustGatingHarness {
+    service: AIService;
+    config: Config;
+    getToolsForModelSpy: ReturnType<typeof spyOn<typeof toolsModule, "getToolsForModel">>;
+  }
+
+  function createTrustMetadata(workspaceId: string, projectPaths: string[]): WorkspaceMetadata {
+    const [primaryProjectPath, secondaryProjectPath] = projectPaths;
+    if (!primaryProjectPath) {
+      throw new Error("Expected at least one project path");
+    }
+
+    return {
+      id: workspaceId,
+      name: "workspace-trust-gating",
+      projectName: "project-a",
+      projectPath: primaryProjectPath,
+      projects: secondaryProjectPath
+        ? [
+            { projectPath: primaryProjectPath, projectName: "project-a" },
+            { projectPath: secondaryProjectPath, projectName: "project-b" },
+          ]
+        : undefined,
+      runtimeConfig: { type: "local" },
+    };
+  }
+
+  function createHarness(
+    muxHomePath: string,
+    metadata: WorkspaceMetadata,
+    multiProjectExperimentEnabled = true
+  ): TrustGatingHarness {
+    const config = new Config(muxHomePath);
+    const historyService = new HistoryService(config);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    const experimentsService = new ExperimentsService({
+      telemetryService: new TelemetryService(muxHomePath),
+      muxHome: muxHomePath,
+    });
+    spyOn(experimentsService, "isExperimentEnabled").mockImplementation((experimentId) =>
+      experimentId === EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+        ? multiProjectExperimentEnabled
+        : false
+    );
+    const service = new AIService(
+      config,
+      historyService,
+      initStateManager,
+      providerService,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      experimentsService
+    );
+
+    const resolvedAgentResult: Awaited<ReturnType<typeof agentResolution.resolveAgentForStream>> = {
+      success: true,
+      data: {
+        effectiveAgentId: "exec",
+        agentDefinition: {
+          id: "exec",
+          scope: "built-in",
+          frontmatter: { name: "Exec" },
+          body: "Exec agent body",
+        },
+        agentDiscoveryPath: metadata.projectPath,
+        isSubagentWorkspace: false,
+        agentIsPlanLike: false,
+        effectiveMode: "exec",
+        taskSettings: DEFAULT_TASK_SETTINGS,
+        taskDepth: 0,
+        shouldDisableTaskToolsForDepth: false,
+        effectiveToolPolicy: undefined,
+      },
+    };
+    spyOn(agentResolution, "resolveAgentForStream").mockResolvedValue(resolvedAgentResult);
+
+    spyOn(streamContextBuilder, "buildPlanInstructions").mockResolvedValue({
+      effectiveAdditionalInstructions: undefined,
+      planFilePath: path.join(metadata.projectPath, "plan.md"),
+      planContentForTransition: undefined,
+    });
+
+    spyOn(streamContextBuilder, "buildStreamSystemContext").mockResolvedValue({
+      agentSystemPrompt: "test-agent-prompt",
+      systemMessage: "test-system-message",
+      systemMessageTokens: 1,
+      agentDefinitions: undefined,
+      availableSkills: undefined,
+    });
+
+    spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((args) => {
+      const preparedMessages = args.messagesWithSentinel as unknown as Awaited<
+        ReturnType<typeof messagePipeline.prepareMessagesForProvider>
+      >;
+      return Promise.resolve(preparedMessages);
+    });
+
+    const getToolsForModelSpy = spyOn(toolsModule, "getToolsForModel").mockResolvedValue({});
+    spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
+
+    const fakeModel = Object.create(null) as LanguageModel;
+    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in trust gating test harness");
+    }
+
+    const resolveAndCreateModelResult: Awaited<
+      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
+    > = {
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: "openai:gpt-5.2",
+        canonicalModelString: "openai:gpt-5.2",
+        canonicalProviderName: "openai",
+        canonicalModelId: "gpt-5.2",
+        routedThroughGateway: false,
+      },
+    };
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
+      resolveAndCreateModelResult
+    );
+
+    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
+      success: true,
+      data: metadata,
+    });
+
+    spyOn(initStateManager, "waitForInit").mockResolvedValue(undefined);
+
+    spyOn(config, "findWorkspace").mockReturnValue({
+      workspacePath: metadata.projectPath,
+      projectPath: metadata.projectPath,
+    });
+
+    spyOn(historyService, "commitPartial").mockResolvedValue({
+      success: true,
+      data: undefined,
+    });
+
+    spyOn(historyService, "appendToHistory").mockImplementation((_workspaceId, message) => {
+      message.metadata = {
+        ...(message.metadata ?? {}),
+        historySequence: 11,
+      };
+
+      return Promise.resolve({ success: true, data: undefined });
+    });
+
+    const streamManager = (service as unknown as { streamManager: StreamManager }).streamManager;
+    const streamToken = "stream-token" as ReturnType<StreamManager["generateStreamToken"]>;
+
+    spyOn(streamManager, "generateStreamToken").mockReturnValue(streamToken);
+    spyOn(streamManager, "createTempDirForStream").mockResolvedValue(
+      path.join(metadata.projectPath, ".tmp-stream")
+    );
+    spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
+    spyOn(streamManager, "startStream").mockResolvedValue({
+      success: true,
+      data: streamToken,
+    });
+
+    return { service, config, getToolsForModelSpy };
+  }
+
+  async function streamOnce(harness: TrustGatingHarness, workspaceId: string): Promise<void> {
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result.success).toBe(true);
+  }
+
+  function trustedFromFirstGetToolsCall(
+    getToolsForModelSpy: TrustGatingHarness["getToolsForModelSpy"]
+  ): boolean | undefined {
+    const toolConfig = getToolsForModelSpy.mock.calls[0]?.[1];
+    if (!toolConfig || typeof toolConfig !== "object") {
+      throw new Error("Expected getToolsForModel to receive a tool configuration object");
+    }
+
+    return (toolConfig as { trusted?: boolean }).trusted;
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("marks multi-project tool execution untrusted when any secondary project is untrusted", async () => {
+    using muxHome = new DisposableTempDir("ai-service-multi-project-trust-gating");
+    const projectAPath = path.join(muxHome.path, "project-a");
+    const projectBPath = path.join(muxHome.path, "project-b");
+    await fs.mkdir(projectAPath, { recursive: true });
+    await fs.mkdir(projectBPath, { recursive: true });
+
+    const workspaceId = "workspace-multi-project-trust";
+    const metadata = createTrustMetadata(workspaceId, [projectAPath, projectBPath]);
+    const harness = createHarness(muxHome.path, metadata);
+
+    await harness.config.editConfig((cfg) => {
+      cfg.projects.set(projectAPath, { workspaces: [], trusted: true });
+      cfg.projects.set(projectBPath, { workspaces: [], trusted: false });
+      return cfg;
+    });
+
+    await streamOnce(harness, workspaceId);
+
+    expect(harness.getToolsForModelSpy).toHaveBeenCalledTimes(1);
+    expect(trustedFromFirstGetToolsCall(harness.getToolsForModelSpy)).toBe(false);
+  });
+
+  it("fails closed before tool setup when the multi-project experiment is disabled", async () => {
+    using muxHome = new DisposableTempDir("ai-service-multi-project-experiment-disabled");
+    const projectAPath = path.join(muxHome.path, "project-a");
+    const projectBPath = path.join(muxHome.path, "project-b");
+    await fs.mkdir(projectAPath, { recursive: true });
+    await fs.mkdir(projectBPath, { recursive: true });
+
+    const workspaceId = "workspace-multi-project-disabled";
+    const metadata = createTrustMetadata(workspaceId, [projectAPath, projectBPath]);
+    const harness = createHarness(muxHome.path, metadata, false);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: {
+        type: "unknown",
+        raw: `Workspace ${workspaceId} reached multi-project AI runtime execution while ${EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES} is disabled`,
+      },
+    });
+    expect(harness.getToolsForModelSpy).not.toHaveBeenCalled();
   });
 });
 

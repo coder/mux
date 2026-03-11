@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { useRouter } from "./contexts/RouterContext";
 import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/globals.css";
@@ -8,6 +8,7 @@ import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal/ProjectCreateModal";
+import { MultiProjectWorkspaceCreateModal } from "./components/MultiProjectWorkspaceCreateModal/MultiProjectWorkspaceCreateModal";
 import { AIView } from "./components/AIView/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary/ErrorBoundary";
 import {
@@ -81,7 +82,12 @@ import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
+import assert from "@/common/utils/assert";
+import { createProjectRefs } from "@/common/utils/multiProject";
+import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { LandingPage } from "@/browser/features/LandingPage/LandingPage";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
@@ -140,6 +146,9 @@ function AppInner() {
       listener: true,
     }
   );
+
+  const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
+  const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Left sidebar is drag-resizable (mirrors RightSidebar). Width is persisted globally;
   // collapse remains a separate toggle and the drag handle is hidden in mobile-touch overlay mode.
@@ -484,6 +493,83 @@ function AppInner() {
     [startWorkspaceCreation]
   );
 
+  const openNewMultiProjectWorkspaceFromPalette = useCallback(() => {
+    if (!multiProjectWorkspacesEnabled) {
+      return;
+    }
+    setMultiProjectWorkspaceModalOpen(true);
+  }, [multiProjectWorkspacesEnabled]);
+
+  useEffect(() => {
+    if (multiProjectWorkspacesEnabled || !isMultiProjectWorkspaceModalOpen) {
+      return;
+    }
+
+    setMultiProjectWorkspaceModalOpen(false);
+  }, [isMultiProjectWorkspaceModalOpen, multiProjectWorkspacesEnabled]);
+
+  const createMultiProjectWorkspace = useCallback(
+    async (projectPaths: string[]) => {
+      assert(
+        projectPaths.length >= 2,
+        "createMultiProjectWorkspace requires at least two projects"
+      );
+      if (!api) {
+        throw new Error("Not connected to server");
+      }
+
+      const [primaryProjectPath] = projectPaths;
+      assert(primaryProjectPath, "createMultiProjectWorkspace requires a primary project");
+
+      const branchResult = await api.projects.listBranches({ projectPath: primaryProjectPath });
+      const candidateBranches = branchResult.branches.filter(
+        (branch): branch is string => typeof branch === "string"
+      );
+      const trunkBranch =
+        (branchResult.recommendedTrunk && candidateBranches.includes(branchResult.recommendedTrunk)
+          ? branchResult.recommendedTrunk
+          : candidateBranches[0]) ?? null;
+      if (!trunkBranch) {
+        const primaryProjectName =
+          primaryProjectPath.split("/").pop() ??
+          primaryProjectPath.split("\\").pop() ??
+          primaryProjectPath;
+        throw new Error(
+          `No branches found for ${primaryProjectName}. Initialize a git repository before creating a multi-project workspace.`
+        );
+      }
+
+      // Multi-project container names must stay unique and path-separator-free.
+      const projects = createProjectRefs(projectPaths);
+
+      const metadata = await api.workspace.createMultiProject({
+        projects,
+        branchName: `multi-${Date.now().toString(36)}`,
+        trunkBranch,
+      });
+
+      // Make the synthetic section visible immediately after creation.
+      updatePersistedState<string[]>(
+        EXPANDED_PROJECTS_KEY,
+        (prev) => {
+          const expanded = Array.isArray(prev) ? prev : [];
+          return expanded.includes(MULTI_PROJECT_SIDEBAR_SECTION_ID)
+            ? expanded
+            : [...expanded, MULTI_PROJECT_SIDEBAR_SECTION_ID];
+        },
+        []
+      );
+
+      // Inline workspace creation bookkeeping (main removed the extracted callback)
+      workspaceStore.addWorkspace(metadata);
+      setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
+      telemetry.workspaceCreated(metadata.id, getRuntimeTypeForTelemetry(metadata.runtimeConfig));
+      setSelectedWorkspace(toWorkspaceSelection(metadata));
+      setMultiProjectWorkspaceModalOpen(false);
+    },
+    [api, setSelectedWorkspace, setWorkspaceMetadata, telemetry, workspaceStore]
+  );
+
   const archiveMergedWorkspacesInProjectFromPalette = useCallback(
     async (projectPath: string): Promise<void> => {
       const trimmedProjectPath = projectPath.trim();
@@ -607,6 +693,8 @@ function AppInner() {
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
+    onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,
+    multiProjectWorkspacesEnabled,
     onArchiveMergedWorkspacesInProject: archiveMergedWorkspacesInProjectFromPalette,
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
@@ -1128,6 +1216,18 @@ function AppInner() {
             beginWorkspaceCreation(normalizedPath);
           }}
         />
+        {multiProjectWorkspacesEnabled && (
+          <MultiProjectWorkspaceCreateModal
+            isOpen={isMultiProjectWorkspaceModalOpen}
+            onClose={() => setMultiProjectWorkspaceModalOpen(false)}
+            projectOptions={Array.from(userProjects.keys()).map((projectPath) => ({
+              projectPath,
+              projectName:
+                projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Unnamed Project",
+            }))}
+            onConfirm={createMultiProjectWorkspace}
+          />
+        )}
         <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
         <SshPromptDialog />

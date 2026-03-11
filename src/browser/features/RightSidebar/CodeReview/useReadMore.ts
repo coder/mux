@@ -8,12 +8,14 @@ import type { DiffHunk } from "@/common/types/review";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewReadMoreKey } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import {
   readFileLines,
   formatAsContextLines,
   getOldFileRef,
   LINES_PER_EXPANSION,
 } from "@/browser/utils/review/readFileLines";
+import { resolveRepoRootProjectPath } from "@/browser/utils/executeBash";
 
 /** Expansion state for a single hunk */
 interface ReadMoreState {
@@ -51,6 +53,11 @@ interface UseReadMoreResult {
 export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
   const { hunk, hunkId, workspaceId, diffBase, includeUncommitted } = options;
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceMetadata();
+  const repoRootProjectPath = resolveRepoRootProjectPath(
+    workspaceMetadata.get(workspaceId),
+    hunk.filePath
+  );
 
   // Persisted state: how many lines expanded up/down per hunk
   const [readMoreMap, setReadMoreMap] = usePersistedState<Record<string, ReadMoreState>>(
@@ -92,21 +99,37 @@ export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
     const startLine = Math.max(1, hunk.oldStart - readMore.up);
     const endLine = hunk.oldStart - 1;
 
-    void readFileLines(api, workspaceId, hunk.filePath, startLine, endLine, gitRef).then(
-      (lines) => {
-        if (cancelled) return;
-        setUpLoading(false);
-        if (lines) {
-          setUpContent(formatAsContextLines(lines));
-          setAtBOF(startLine === 1 && lines.length < readMore.up);
-        }
+    void readFileLines(
+      api,
+      workspaceId,
+      workspaceMetadata.get(workspaceId),
+      hunk.filePath,
+      startLine,
+      endLine,
+      gitRef,
+      repoRootProjectPath
+    ).then((lines) => {
+      if (cancelled) return;
+      setUpLoading(false);
+      if (lines) {
+        setUpContent(formatAsContextLines(lines));
+        setAtBOF(startLine === 1 && lines.length < readMore.up);
       }
-    );
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [api, readMore.up, hunk.oldStart, hunk.filePath, workspaceId, gitRef]);
+  }, [
+    api,
+    readMore.up,
+    hunk.oldStart,
+    hunk.filePath,
+    workspaceId,
+    workspaceMetadata,
+    gitRef,
+    repoRootProjectPath,
+  ]);
 
   // Load downward expansion content
   useEffect(() => {
@@ -122,21 +145,38 @@ export function useReadMore(options: UseReadMoreOptions): UseReadMoreResult {
     const startLine = hunkEnd + 1;
     const endLine = hunkEnd + readMore.down;
 
-    void readFileLines(api, workspaceId, hunk.filePath, startLine, endLine, gitRef).then(
-      (lines) => {
-        if (cancelled) return;
-        setDownLoading(false);
-        if (lines) {
-          setDownContent(formatAsContextLines(lines));
-          setAtEOF(lines.length < readMore.down);
-        }
+    void readFileLines(
+      api,
+      workspaceId,
+      workspaceMetadata.get(workspaceId),
+      hunk.filePath,
+      startLine,
+      endLine,
+      gitRef,
+      repoRootProjectPath
+    ).then((lines) => {
+      if (cancelled) return;
+      setDownLoading(false);
+      if (lines) {
+        setDownContent(formatAsContextLines(lines));
+        setAtEOF(lines.length < readMore.down);
       }
-    );
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [api, readMore.down, hunk.oldStart, hunk.oldLines, hunk.filePath, workspaceId, gitRef]);
+  }, [
+    api,
+    readMore.down,
+    hunk.oldStart,
+    hunk.oldLines,
+    hunk.filePath,
+    workspaceId,
+    workspaceMetadata,
+    gitRef,
+    repoRootProjectPath,
+  ]);
 
   // Expand/collapse handlers
   const handleExpandUp = useCallback(

@@ -5,7 +5,7 @@ import { sortSectionsByLinkedList } from "@/common/utils/sections";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
 import { createHash, randomBytes } from "crypto";
-import { validateProjectPath, isGitRepository } from "@/node/utils/pathUtils";
+import { validateProjectPath, isGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -823,8 +823,9 @@ export class ProjectService {
 
   async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
     try {
+      const normalizedPath = stripTrailingSlashes(projectPath);
       let config = this.config.loadConfigOrDefault();
-      let projectConfig = config.projects.get(projectPath);
+      let projectConfig = config.projects.get(normalizedPath);
 
       if (!projectConfig) {
         return Err({ type: "project_not_found" as const });
@@ -881,7 +882,7 @@ export class ProjectService {
         if (projectConfig.workspaces.some((workspace) => !workspace.id)) {
           const allWorkspaceMetadata = await this.config.getAllWorkspaceMetadata();
           for (const metadata of allWorkspaceMetadata) {
-            if (metadata.projectPath !== projectPath) {
+            if (metadata.projectPath !== normalizedPath) {
               continue;
             }
             workspaceIdsByPath.set(metadata.namedWorkspacePath, metadata.id);
@@ -909,24 +910,55 @@ export class ProjectService {
         }
 
         config = this.config.loadConfigOrDefault();
-        projectConfig = config.projects.get(projectPath);
+        projectConfig = config.projects.get(normalizedPath);
         if (!projectConfig) {
           return Err({ type: "project_not_found" as const });
         }
         counts = getProjectWorkspaceCounts(projectConfig.workspaces);
       }
 
+      // Also count multi-project workspace references to this project from OTHER project buckets.
+      // Multi-project workspaces can be stored under _multi (interactive creation) or under
+      // any project bucket (task/fork creation via taskService).
+      let crossProjectActiveCount = 0;
+      let crossProjectArchivedCount = 0;
+      for (const [configKey, otherConfig] of config.projects) {
+        if (configKey === normalizedPath) {
+          // Project workspaces in this bucket are already counted above.
+          continue;
+        }
+
+        const referencingWorkspaces = otherConfig.workspaces.filter((workspace) =>
+          workspace.projects?.some(
+            (project) => stripTrailingSlashes(project.projectPath) === normalizedPath
+          )
+        );
+
+        if (referencingWorkspaces.length === 0) {
+          continue;
+        }
+
+        const referencingWorkspaceCounts = getProjectWorkspaceCounts(referencingWorkspaces);
+        crossProjectActiveCount += referencingWorkspaceCounts.activeCount;
+        crossProjectArchivedCount += referencingWorkspaceCounts.archivedCount;
+      }
+
+      counts = {
+        activeCount: counts.activeCount + crossProjectActiveCount,
+        archivedCount: counts.archivedCount + crossProjectArchivedCount,
+      };
+
       if (counts.activeCount + counts.archivedCount > 0) {
         return Err({ type: "workspace_blockers" as const, ...counts });
       }
 
-      config.projects.delete(projectPath);
+      config.projects.delete(normalizedPath);
       await this.config.saveConfig(config);
 
       try {
-        await this.config.updateProjectSecrets(projectPath, []);
+        await this.config.updateProjectSecrets(normalizedPath, []);
       } catch (error) {
-        log.error(`Failed to clean up secrets for project ${projectPath}:`, error);
+        log.error(`Failed to clean up secrets for project ${normalizedPath}:`, error);
       }
 
       return Ok(undefined);

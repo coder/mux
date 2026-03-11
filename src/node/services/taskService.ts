@@ -18,6 +18,7 @@ import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/r
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
@@ -42,8 +43,10 @@ import {
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -699,6 +702,28 @@ export class TaskService {
     this.workspaceService.emit("metadata", { workspaceId, metadata });
   }
 
+  private configureMultiProjectRuntimeEnvResolver(runtime: Runtime): void {
+    if (!(runtime instanceof MultiProjectRuntime)) {
+      return;
+    }
+
+    const projectEnvCache = new Map<string, Record<string, string>>();
+    runtime.envResolver = async (runtimeProjectPath: string) => {
+      const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
+      const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
+      if (cachedEnv) {
+        return cachedEnv;
+      }
+
+      const projectEnv = await secretsToRecord(
+        this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
+        this.opResolver
+      );
+      projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
+      return projectEnv;
+    };
+  }
+
   private async editWorkspaceEntry(
     workspaceId: string,
     updater: (workspace: WorkspaceConfigEntry) => void,
@@ -1106,6 +1131,7 @@ export class TaskService {
           taskModelString,
           taskThinkingLevel: effectiveThinkingLevel,
           taskExperiments: args.experiments,
+          projects: parentMeta.projects,
         });
         return config;
       });
@@ -1141,10 +1167,14 @@ export class TaskService {
       config: this.config,
       sourceWorkspaceId: parentWorkspaceId,
       sourceRuntimeConfig: parentRuntimeConfig,
+      parentMetadata: parentMeta,
       allowCreateFallback: true,
       trusted:
         this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(parentMeta.projectPath))
           ?.trusted ?? false,
+      multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
+        EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+      ),
     });
 
     if (forkResult.success && forkResult.data.sourceRuntimeConfigUpdate) {
@@ -1166,7 +1196,12 @@ export class TaskService {
       forkedRuntimeConfig,
       targetRuntime: runtimeForTaskWorkspace,
       forkedFromSource,
+      projects: inheritedProjects,
     } = forkResult.data;
+
+    // Multi-project forks need per-project secrets for each runtime's init hook.
+    this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
+
     const taskBaseCommitSha = await tryReadGitHeadCommitSha(runtimeForTaskWorkspace, workspacePath);
 
     taskQueueDebug("TaskService.create started (workspace created)", {
@@ -1202,6 +1237,7 @@ export class TaskService {
         taskModelString,
         taskThinkingLevel: effectiveThinkingLevel,
         taskExperiments: args.experiments,
+        projects: inheritedProjects,
       });
       return config;
     });
@@ -2412,9 +2448,8 @@ export class TaskService {
 
       // Trust gate: skip dequeued tasks if the project lost trust since queuing.
       const dequeueCfg = this.config.loadConfigOrDefault();
-      const dequeueProjectConfig = dequeueCfg.projects.get(
-        stripTrailingSlashes(taskEntry.projectPath)
-      );
+      const normalizedTaskProjectPath = stripTrailingSlashes(taskEntry.projectPath);
+      const dequeueProjectConfig = dequeueCfg.projects.get(normalizedTaskProjectPath);
       if (!dequeueProjectConfig?.trusted) {
         log.warn("Skipping queued task for untrusted project", {
           taskId,
@@ -2426,10 +2461,70 @@ export class TaskService {
         continue;
       }
 
+      // Multi-project queued tasks persist every constituent project. Re-check those secondary
+      // refs here so trust revocations terminate the task instead of retrying the same fork forever.
+      const untrustedSecondaryProject =
+        Array.isArray(task.projects) && task.projects.length > 1
+          ? task.projects.find((project) => {
+              const normalizedProjectPath = stripTrailingSlashes(project.projectPath);
+              if (normalizedProjectPath === normalizedTaskProjectPath) {
+                return false;
+              }
+              return !(dequeueCfg.projects.get(normalizedProjectPath)?.trusted ?? false);
+            })
+          : undefined;
+      if (untrustedSecondaryProject) {
+        log.warn("Skipping queued multi-project task for untrusted project", {
+          taskId,
+          projectPath: untrustedSecondaryProject.projectPath,
+          projects: task.projects,
+        });
+        taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (secondary untrusted)", {
+          taskId,
+          projectPath: untrustedSecondaryProject.projectPath,
+        });
+        await this.setTaskStatus(taskId, "interrupted");
+        this.rejectWaiters(
+          taskId,
+          new Error(`Task skipped: project ${untrustedSecondaryProject.projectPath} is not trusted`)
+        );
+        continue;
+      }
+
       // If the workspace doesn't exist yet, create it now (fork preferred, else createWorkspace).
       if (!workspaceExists) {
         shouldRunInit = true;
         const initLogger = getInitLogger();
+
+        const parentMetadataResult = await this.aiService.getWorkspaceMetadata(parentId);
+        let parentMetadataForFork = parentMetadataResult.success
+          ? parentMetadataResult.data
+          : undefined;
+
+        if (!parentMetadataForFork && Array.isArray(task.projects) && task.projects.length > 1) {
+          // Queued tasks persist the parent's project refs at queue time. If the parent metadata lookup
+          // fails later (for example, parent workspace deleted while queued), synthesize enough metadata
+          // for orchestrateFork to preserve multi-project behavior instead of falling back to single-project.
+          const primaryProjectRef =
+            task.projects.find(
+              (project) =>
+                stripTrailingSlashes(project.projectPath) ===
+                stripTrailingSlashes(taskEntry.projectPath)
+            ) ?? task.projects[0];
+          const projectName =
+            coerceNonEmptyString(primaryProjectRef?.projectName) ??
+            coerceNonEmptyString(taskEntry.projectPath.split("/").filter(Boolean).at(-1)) ??
+            taskEntry.projectPath;
+
+          parentMetadataForFork = {
+            id: parentId,
+            name: parentWorkspaceName,
+            projectPath: taskEntry.projectPath,
+            projectName,
+            runtimeConfig: parentRuntimeConfig,
+            projects: task.projects,
+          } satisfies WorkspaceMetadata;
+        }
 
         const forkOrchestratorResult = await orchestrateFork({
           sourceRuntime: runtime,
@@ -2440,12 +2535,16 @@ export class TaskService {
           config: this.config,
           sourceWorkspaceId: parentId,
           sourceRuntimeConfig: parentRuntimeConfig,
+          parentMetadata: parentMetadataForFork,
           allowCreateFallback: true,
           preferredTrunkBranch: trunkBranch,
           trusted:
             this.config
               .loadConfigOrDefault()
               .projects.get(stripTrailingSlashes(taskEntry.projectPath))?.trusted ?? false,
+          multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
+            EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+          ),
         });
 
         if (
@@ -2475,6 +2574,7 @@ export class TaskService {
           workspacePath: resolvedWorkspacePath,
           trunkBranch: resolvedTrunkBranch,
           forkedFromSource,
+          projects: inheritedProjects,
         } = forkOrchestratorResult.data;
 
         forkedRuntimeConfig = resolvedForkedRuntimeConfig;
@@ -2497,6 +2597,7 @@ export class TaskService {
             ws.path = workspacePath;
             ws.taskTrunkBranch = trunkBranch;
             ws.runtimeConfig = forkedRuntimeConfig;
+            ws.projects = inheritedProjects;
           },
           { allowMissing: true }
         );
@@ -2531,6 +2632,8 @@ export class TaskService {
           workspacePath,
           trunkBranch,
         });
+        // Multi-project forks need per-project secrets for each runtime's init hook.
+        this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
         const secrets = await secretsToRecord(
           this.config.getEffectiveSecrets(taskEntry.projectPath),
           this.opResolver

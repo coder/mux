@@ -4,6 +4,8 @@
  */
 
 import type { APIClient } from "@/browser/contexts/API";
+import { normalizeRepoRootFilePath, repoRootBashOptions } from "@/browser/utils/executeBash";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 /** Number of lines to expand per click */
 export const LINES_PER_EXPANSION = 20;
@@ -15,21 +17,31 @@ export const LINES_PER_EXPANSION = 20;
 export async function readFileLines(
   api: APIClient | null,
   workspaceId: string,
+  workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined,
   filePath: string,
   startLine: number,
   endLine: number,
-  gitRef: string
+  gitRef: string,
+  repoRootProjectPath?: string | null
 ): Promise<string[] | null> {
   if (!api || startLine < 1 || endLine < startLine) return null;
 
+  const repoRootFilePath = normalizeRepoRootFilePath(
+    workspaceMetadata,
+    filePath,
+    repoRootProjectPath
+  );
   const script = gitRef
-    ? `git show "${gitRef}:${filePath.replace(/"/g, '\\"')}" 2>/dev/null | sed -n '${startLine},${endLine}p'`
+    ? `git show "${gitRef}:${repoRootFilePath.replace(/"/g, '\\"')}" 2>/dev/null | sed -n '${startLine},${endLine}p'`
     : `sed -n '${startLine},${endLine}p' "${filePath.replace(/"/g, '\\"')}"`;
 
+  // Plain reads must stay on the shared container root for sibling-project paths, while
+  // git-ref lookups still need repo-root git context for `git show`. Path-targeted callers pass
+  // the owning project explicitly so multi-project repo-root execution lands in the right checkout.
   const result = await api.workspace.executeBash({
     workspaceId,
     script,
-    options: { timeout_secs: 3 },
+    options: gitRef ? repoRootBashOptions(3, repoRootProjectPath) : { timeout_secs: 3 },
   });
 
   if (!result?.success) return null;

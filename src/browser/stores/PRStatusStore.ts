@@ -32,6 +32,7 @@ function parseGitHubPRUrl(url: string): { owner: string; repo: string; number: n
 }
 import { MapStore } from "./MapStore";
 import { RefreshController } from "@/browser/utils/RefreshController";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 import { useSyncExternalStore } from "react";
 
 // Cache TTL: PR status is refreshed at most every 5 seconds
@@ -285,7 +286,7 @@ export class PRStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId,
         script: `gh pr view --json number,url,state,mergeable,mergeStateStatus,title,isDraft,headRefName,baseRefName,statusCheckRollup 2>/dev/null || echo '{"no_pr":true}'`,
-        options: { timeout_secs: 15 },
+        options: repoRootBashOptions(15),
       });
 
       if (!this.isActive) return;
@@ -489,7 +490,7 @@ export class PRStatusStore {
           `-F number=${prLink.number}`,
           "2>/dev/null",
         ].join(" "),
-        options: { timeout_secs: 10 },
+        options: repoRootBashOptions(10),
       });
 
       if (!this.isActive || !result.success || !result.data.success) {

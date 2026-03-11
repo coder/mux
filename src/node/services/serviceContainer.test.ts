@@ -1,7 +1,8 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import {
   MUX_HELP_CHAT_AGENT_ID,
   MUX_HELP_CHAT_WORKSPACE_ID,
@@ -100,6 +101,58 @@ describe("ServiceContainer", () => {
     expect(muxChatWorkspace?.runtimeConfig).toEqual({ type: "local" });
     expect(muxChatWorkspace?.archivedAt).toBeUndefined();
     expect(muxChatWorkspace?.unarchivedAt).toBeUndefined();
+  });
+
+  it("attributes multi-project stream-end analytics to the primary project path", async () => {
+    const primaryProjectPath = "/fake/project-a";
+    const secondaryProjectPath = "/fake/project-b";
+    const workspaceId = "workspace-1";
+    const workspaceName = "feature-branch";
+    const workspacePath = path.join(config.srcDir, "project-a+project-b", workspaceName);
+
+    await config.editConfig((cfg) => {
+      cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, {
+        workspaces: [
+          {
+            path: workspacePath,
+            id: workspaceId,
+            name: workspaceName,
+            parentWorkspaceId: "parent-workspace",
+            projects: [
+              { projectName: "project-a", projectPath: primaryProjectPath },
+              { projectName: "project-b", projectPath: secondaryProjectPath },
+            ],
+            runtimeConfig: { type: "local" },
+          },
+        ],
+      });
+      return cfg;
+    });
+
+    services = new ServiceContainer(config);
+    const ingestWorkspaceSpy = spyOn(
+      services.analyticsService,
+      "ingestWorkspace"
+    ).mockImplementation(() => undefined);
+
+    services.aiService.emit("stream-end", {
+      type: "stream-end",
+      workspaceId,
+      messageId: "message-1",
+      metadata: { model: "openai:gpt-4o" },
+      parts: [],
+    });
+
+    expect(ingestWorkspaceSpy).toHaveBeenCalledWith(
+      workspaceId,
+      config.getSessionDir(workspaceId),
+      {
+        projectPath: primaryProjectPath,
+        projectName: path.basename(primaryProjectPath),
+        workspaceName,
+        parentWorkspaceId: "parent-workspace",
+      }
+    );
   });
 
   it("keeps non-system legacy workspaces whose IDs also equal mux-chat", async () => {

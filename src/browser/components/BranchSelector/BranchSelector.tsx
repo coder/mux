@@ -8,6 +8,7 @@ import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { invalidateGitStatus, useGitStatus } from "@/browser/stores/GitStatusStore";
 import { createLRUCache } from "@/browser/utils/lruCache";
 import { buildCheckoutCommand, buildRemoteBranchListCommand } from "./branchCommands";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 
 // LRU cache for persisting branch names across app restarts
 const branchCache = createLRUCache<string>({
@@ -87,7 +88,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         const result = await api.workspace.executeBash({
           workspaceId,
           script: `git rev-parse --abbrev-ref HEAD 2>/dev/null`,
-          options: { timeout_secs: 5 },
+          options: repoRootBashOptions(5),
         });
 
         if (cancelled) return;
@@ -124,12 +125,12 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         api.workspace.executeBash({
           workspaceId,
           script: `git branch --sort=-committerdate --format='%(refname:short)' 2>/dev/null | head -${MAX_LOCAL_BRANCHES + 1}`,
-          options: { timeout_secs: 5 },
+          options: repoRootBashOptions(5),
         }),
         api.workspace.executeBash({
           workspaceId,
           script: `git remote 2>/dev/null`,
-          options: { timeout_secs: 5 },
+          options: repoRootBashOptions(5),
         }),
       ]);
 

@@ -25,6 +25,12 @@ import {
   cacheToResult,
 } from "@/browser/utils/fileContentCache";
 import type { ReviewNoteData } from "@/common/types/review";
+import {
+  normalizeRepoRootFilePath,
+  repoRootBashOptions,
+  resolveRepoRootProjectPath,
+} from "@/browser/utils/executeBash";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 
 interface FileViewerTabProps {
   workspaceId: string;
@@ -41,6 +47,17 @@ const DEBOUNCE_MS = 2000;
 
 export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceMetadata();
+  const repoRootProjectPath = resolveRepoRootProjectPath(
+    workspaceMetadata.get(props.workspaceId),
+    props.relativePath
+  );
+
+  const repoRootRelativePath = normalizeRepoRootFilePath(
+    workspaceMetadata.get(props.workspaceId),
+    props.relativePath,
+    repoRootProjectPath
+  );
 
   // Initialize from cache if available
   const initialCached = React.useMemo(() => {
@@ -110,7 +127,10 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
 
     async function fetchFile() {
       try {
-        // Fetch file contents and diff in parallel via bash
+        // Fetch file contents and diff in parallel via bash.
+        // Plain reads must stay on the shared container root so sibling-project paths resolve.
+        // Only the diff script needs repo-root git context, and multi-project callers now point
+        // that repo-root execution at the repo that owns the referenced workspace-relative path.
         const [fileResult, diffResult] = await Promise.all([
           api!.workspace.executeBash({
             workspaceId: props.workspaceId,
@@ -118,7 +138,8 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
           }),
           api!.workspace.executeBash({
             workspaceId: props.workspaceId,
-            script: buildFileDiffScript(props.relativePath),
+            script: buildFileDiffScript(repoRootRelativePath),
+            options: repoRootBashOptions(undefined, repoRootProjectPath),
           }),
         ]);
 
@@ -189,7 +210,14 @@ export const FileViewerTab: React.FC<FileViewerTabProps> = (props) => {
     return () => {
       cancelled = true;
     };
-  }, [api, props.workspaceId, props.relativePath, refreshCounter]);
+  }, [
+    api,
+    props.workspaceId,
+    props.relativePath,
+    refreshCounter,
+    repoRootProjectPath,
+    repoRootRelativePath,
+  ]);
 
   // Check if we have valid cached content for the current file
   const hasValidCache = loaded && loadedPathRef.current === props.relativePath;

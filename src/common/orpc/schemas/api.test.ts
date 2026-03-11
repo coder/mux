@@ -4,6 +4,7 @@ import {
   ProviderConfigInfoSchema,
   ProvidersConfigMapSchema,
   config,
+  workspace,
 } from "./api";
 import type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap } from "../types";
 
@@ -184,6 +185,35 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
     expect(parsed).toEqual(full);
     expect(Object.keys(parsed)).toEqual(Object.keys(full));
+  });
+});
+
+describe("workspace.createMultiProject schema", () => {
+  it("rejects payloads with fewer than two projects", () => {
+    const result = workspace.createMultiProject.input.safeParse({
+      projects: [{ projectPath: "/tmp/project-a", projectName: "project-a" }],
+      branchName: "feature/test",
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("Expected createMultiProject schema validation to fail");
+    }
+    expect(result.error.issues[0]?.message).toBe(
+      "createMultiProject requires at least two projects"
+    );
+  });
+
+  it("accepts payloads with at least two projects", () => {
+    const result = workspace.createMultiProject.input.safeParse({
+      projects: [
+        { projectPath: "/tmp/project-a", projectName: "project-a" },
+        { projectPath: "/tmp/project-b", projectName: "project-b" },
+      ],
+      branchName: "feature/test",
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 

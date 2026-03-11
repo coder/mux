@@ -8,6 +8,7 @@ import {
 } from "@/common/utils/git/parseGitLog";
 import { useAPI } from "@/browser/contexts/API";
 import { getErrorMessage } from "@/common/utils/errors";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 
 const GitBranchDataSchema = z.object({
   showBranch: z.string(),
@@ -222,7 +223,7 @@ printf '__MUX_BRANCH_DATA__BEGIN_DIRTY_FILES__\\n%s\\n__MUX_BRANCH_DATA__END_DIR
       const result = await api.workspace.executeBash({
         workspaceId,
         script,
-        options: { timeout_secs: 5 },
+        options: repoRootBashOptions(5),
       });
 
       if (!result.success) {

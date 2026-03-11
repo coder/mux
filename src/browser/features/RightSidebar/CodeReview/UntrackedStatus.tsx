@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 
 interface UntrackedStatusProps {
   workspaceId: string;
@@ -45,7 +46,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
         const result = await api?.workspace.executeBash({
           workspaceId,
           script: "git ls-files --others --exclude-standard",
-          options: { timeout_secs: 5 },
+          options: repoRootBashOptions(5),
         });
 
         if (cancelled || !result) return;
@@ -93,7 +94,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       const result = await api?.workspace.executeBash({
         workspaceId,
         script: `git add -- ${escapedFiles}`,
-        options: { timeout_secs: 10 },
+        options: repoRootBashOptions(10),
       });
 
       if (result?.success) {

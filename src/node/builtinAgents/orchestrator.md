@@ -2,9 +2,6 @@
 name: Orchestrator
 description: Coordinate sub-agent implementation and apply patches
 base: exec
-ui:
-  requires:
-    - plan
 subagent:
   runnable: false
   append_prompt: |

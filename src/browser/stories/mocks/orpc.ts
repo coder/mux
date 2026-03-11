@@ -1429,6 +1429,23 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           },
         });
       },
+      createMultiProject: (input: {
+        projects: Array<{ projectPath: string; projectName: string }>;
+        branchName: string;
+      }) => {
+        createdWorkspaceCounter += 1;
+        const primaryProject = input.projects[0];
+        const projectName = input.projects.map((project) => project.projectName).join("+");
+        return Promise.resolve({
+          id: `ws-created-${createdWorkspaceCounter}`,
+          name: input.branchName,
+          projectPath: primaryProject?.projectPath ?? "",
+          projectName,
+          projects: input.projects,
+          namedWorkspacePath: `/mock/workspace/_workspaces/${input.branchName}`,
+          runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+        });
+      },
       remove: () => Promise.resolve({ success: true }),
       updateAgentAISettings: () => Promise.resolve({ success: true, data: undefined }),
       updateModeAISettings: () => Promise.resolve({ success: true, data: undefined }),

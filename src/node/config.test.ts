@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
@@ -689,6 +690,39 @@ describe("Config", () => {
       expect(id1).not.toBe(id2);
       expect(id2).not.toBe(id3);
       expect(id1).not.toBe(id3);
+    });
+  });
+
+  describe("findWorkspace", () => {
+    it("preserves the config key while exposing a real attribution path for multi-project workspaces", async () => {
+      const primaryProjectPath = "/fake/project-a";
+      const secondaryProjectPath = "/fake/project-b";
+      const workspacePath = path.join(config.srcDir, "project-a+project-b", "feature-branch");
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-1",
+              name: "feature-branch",
+              projects: [
+                { projectName: "project-a", projectPath: primaryProjectPath },
+                { projectName: "project-b", projectPath: secondaryProjectPath },
+              ],
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      expect(config.findWorkspace("workspace-1")).toEqual({
+        workspacePath,
+        projectPath: MULTI_PROJECT_CONFIG_KEY,
+        attributionProjectPath: primaryProjectPath,
+        workspaceName: "feature-branch",
+        parentWorkspaceId: undefined,
+      });
     });
   });
 

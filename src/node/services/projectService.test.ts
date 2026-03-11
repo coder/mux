@@ -8,6 +8,7 @@ import { Config } from "@/node/config";
 import { Ok } from "@/common/types/result";
 import type { SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import { SshPromptService } from "@/node/services/sshPromptService";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { ProjectService, type CloneEvent } from "./projectService";
 
 async function createLocalGitRepository(rootDir: string, repoName: string): Promise<string> {
@@ -2095,6 +2096,70 @@ exit 1
       expect(result.success).toBe(false);
       if (result.success) throw new Error("Expected failure");
       expect(result.error.type).toBe("workspace_blockers");
+    });
+
+    it("blocks removal when active multi-project workspaces reference the project", async () => {
+      const projectPath = "/fake/project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [] });
+      cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, {
+        workspaces: [
+          {
+            path: "/fake/multi-workspace",
+            projects: [
+              { projectPath, projectName: "project" },
+              { projectPath: "/fake/other", projectName: "other" },
+            ],
+          },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+      if (result.error.type !== "workspace_blockers")
+        throw new Error("Expected workspace blockers");
+      expect(result.error.activeCount).toBe(1);
+      expect(result.error.archivedCount).toBe(0);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(true);
+    });
+
+    it("blocks removal when multi-project workspaces in other project buckets reference the project", async () => {
+      const projectPath = "/fake/project";
+      const otherProjectPath = "/fake/other-project";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [] });
+      cfg.projects.set(otherProjectPath, {
+        workspaces: [
+          {
+            path: "/fake/other-project-multi-workspace",
+            projects: [
+              { projectPath: `${projectPath}/`, projectName: "project" },
+              { projectPath: otherProjectPath, projectName: "other" },
+            ],
+          },
+        ],
+      });
+      await config.saveConfig(cfg);
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected failure");
+      expect(result.error.type).toBe("workspace_blockers");
+      if (result.error.type !== "workspace_blockers") {
+        throw new Error("Expected workspace blockers");
+      }
+      expect(result.error.activeCount).toBe(1);
+      expect(result.error.archivedCount).toBe(0);
+
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(projectPath)).toBe(true);
     });
 
     it("auto-prunes stale workspace entries and removes project", async () => {

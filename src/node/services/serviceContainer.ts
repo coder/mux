@@ -285,13 +285,15 @@ export class ServiceContainer {
 
       const workspaceLookup = this.config.findWorkspace(data.workspaceId);
       const sessionDir = this.config.getSessionDir(data.workspaceId);
+      const analyticsProjectPath =
+        workspaceLookup?.attributionProjectPath ?? workspaceLookup?.projectPath;
       // Newly created sub-agent workspaces are ingested here before a full rebuild,
       // so keep workspaceName + parentWorkspaceId to avoid NULL analytics attribution.
+      // Multi-project workspaces stay stored under _multi in config, but analytics should
+      // still attribute spend to the workspace's first real project path.
       this.analyticsService.ingestWorkspace(data.workspaceId, sessionDir, {
-        projectPath: workspaceLookup?.projectPath,
-        projectName: workspaceLookup?.projectPath
-          ? path.basename(workspaceLookup.projectPath)
-          : undefined,
+        projectPath: analyticsProjectPath,
+        projectName: analyticsProjectPath ? path.basename(analyticsProjectPath) : undefined,
         workspaceName: workspaceLookup?.workspaceName,
         parentWorkspaceId: workspaceLookup?.parentWorkspaceId,
       });

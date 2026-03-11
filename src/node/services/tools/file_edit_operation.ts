@@ -135,7 +135,7 @@ export async function executeFileEditOperation<TMetadata>({
     if (config.recordFileState) {
       try {
         const newStat = await config.runtime.stat(resolvedPath, abortSignal);
-        config.recordFileState(resolvedPath, {
+        await config.recordFileState(resolvedPath, {
           content: operationResult.newContent,
           timestamp: newStat.modifiedTime.getTime(),
         });

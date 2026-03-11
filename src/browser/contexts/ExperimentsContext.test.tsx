@@ -1,8 +1,8 @@
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { ExperimentsProvider, useExperimentValue } from "./ExperimentsContext";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { ExperimentsProvider, useExperiment, useExperimentValue } from "./ExperimentsContext";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import type { ExperimentValue } from "@/common/orpc/types";
 import type { APIClient } from "@/browser/contexts/API";
 import type { RecursivePartial } from "@/browser/testUtils";
@@ -73,5 +73,70 @@ describe("ExperimentsProvider", () => {
     });
 
     expect(getAllMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("syncs existing local overrides to the backend on connect", async () => {
+    globalThis.window.localStorage.setItem(
+      getExperimentKey(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES),
+      JSON.stringify(true)
+    );
+
+    const setOverrideMock = mock(() => Promise.resolve());
+    currentClientMock = {
+      experiments: {
+        getAll: mock(() => Promise.resolve({} satisfies Record<string, ExperimentValue>)),
+        setOverride: setOverrideMock,
+        reload: mock(() => Promise.resolve()),
+      },
+    };
+
+    render(
+      <ExperimentsProvider>
+        <div />
+      </ExperimentsProvider>
+    );
+
+    await waitFor(() => {
+      expect(setOverrideMock).toHaveBeenCalledWith({
+        experimentId: EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
+        enabled: true,
+      });
+    });
+  });
+
+  test("persists backend overrides when a user toggles an experiment", async () => {
+    const setOverrideMock = mock(() => Promise.resolve());
+    currentClientMock = {
+      experiments: {
+        getAll: mock(() => Promise.resolve({} satisfies Record<string, ExperimentValue>)),
+        setOverride: setOverrideMock,
+        reload: mock(() => Promise.resolve()),
+      },
+    };
+
+    function Toggle() {
+      const [enabled, setEnabled] = useExperiment(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
+      return (
+        <button data-testid="toggle" onClick={() => setEnabled(!enabled)}>
+          {String(enabled)}
+        </button>
+      );
+    }
+
+    const { getByTestId } = render(
+      <ExperimentsProvider>
+        <Toggle />
+      </ExperimentsProvider>
+    );
+
+    fireEvent.click(getByTestId("toggle"));
+
+    await waitFor(() => {
+      expect(setOverrideMock).toHaveBeenCalledWith({
+        experimentId: EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
+        enabled: true,
+      });
+      expect(getByTestId("toggle").textContent).toBe("true");
+    });
   });
 });

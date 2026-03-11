@@ -1,6 +1,7 @@
 import { eventIterator } from "@orpc/server";
 import { UIModeSchema } from "../../types/mode";
 import { z } from "zod";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import {
   NameGenerationErrorSchema,
@@ -35,7 +36,11 @@ import {
 } from "./terminal";
 import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
-import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
+import {
+  FrontendWorkspaceMetadataSchema,
+  ProjectRefSchema,
+  WorkspaceActivitySnapshotSchema,
+} from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
   AgentSkillDescriptorSchema,
@@ -82,13 +87,20 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 // Experiments
 export const ExperimentValueSchema = z.object({
   value: z.union([z.string(), z.boolean(), z.null()]),
-  source: z.enum(["posthog", "cache", "disabled"]),
+  source: z.enum(["posthog", "cache", "override", "disabled"]),
 });
 
 export const experiments = {
   getAll: {
     input: z.void(),
     output: z.record(z.string(), ExperimentValueSchema),
+  },
+  setOverride: {
+    input: z.object({
+      experimentId: z.enum(EXPERIMENT_IDS),
+      enabled: z.boolean().nullish(),
+    }),
+    output: z.void(),
   },
   reload: {
     input: z.void(),
@@ -869,6 +881,18 @@ export const workspace = {
       z.object({ success: z.literal(false), error: z.string() }),
     ]),
   },
+  createMultiProject: {
+    input: z.object({
+      projects: z
+        .array(ProjectRefSchema)
+        .min(2, "createMultiProject requires at least two projects"),
+      branchName: z.string(),
+      trunkBranch: z.string().optional(),
+      title: z.string().optional(),
+      runtimeConfig: RuntimeConfigSchema.optional(),
+    }),
+    output: FrontendWorkspaceMetadataSchema,
+  },
   remove: {
     input: z.object({
       workspaceId: z.string(),
@@ -1120,9 +1144,14 @@ export const workspace = {
       args: z.array(z.string()).nullish(),
       options: z
         .object({
-          timeout_secs: z.number().optional(),
+          timeout_secs: z.number().nullish(),
+          // Multi-project script mode defaults to the shared container root; repo-context UI
+          // callers opt into repo-root execution and can point it at the project that owns a
+          // referenced workspace-relative path when they need git/file-path context.
+          cwdMode: z.enum(["default", "repo-root"]).nullish(),
+          repoRootProjectPath: z.string().nullish(),
         })
-        .optional(),
+        .nullish(),
     }),
     output: ResultSchema(BashToolResultSchema, z.string()),
   },

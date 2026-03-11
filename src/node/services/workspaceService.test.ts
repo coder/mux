@@ -26,6 +26,7 @@ import * as todoStorageModule from "@/node/services/todos/todoStorage";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as bashToolModule from "@/node/services/tools/bash";
 import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator";
+import * as runtimeExecHelpers from "@/node/utils/runtime/helpers";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
@@ -1456,6 +1457,170 @@ describe("WorkspaceService executeBash workspace path resolution", () => {
     expect(result.success).toBe(true);
     expect(createBashToolSpy).toHaveBeenCalledTimes(1);
     expect(createBashToolSpy.mock.calls[0]?.[0]?.cwd).toBe("/runtime/workspace-root");
+  });
+});
+
+describe("WorkspaceService getFileCompletions", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let createRuntimeSpy: Mock<typeof runtimeFactory.createRuntime>;
+  let execBufferedSpy: Mock<typeof runtimeExecHelpers.execBuffered>;
+
+  beforeEach(async () => {
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() =>
+        Promise.resolve({ success: false as const, error: "not found" })
+      ),
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as AIService;
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+      loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
+      (_runtimeConfig, options) => {
+        if (!options?.projectPath) {
+          throw new Error("Expected createRuntime projectPath in getFileCompletions test");
+        }
+        const runtimeProjectPath = options.projectPath;
+
+        return {
+          getWorkspacePath: (_projectPath: string, workspaceName: string) =>
+            `/runtime/${path.basename(runtimeProjectPath)}/${workspaceName}`,
+        } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+      }
+    );
+
+    execBufferedSpy = spyOn(runtimeExecHelpers, "execBuffered").mockImplementation(
+      (_runtime, _command, options) =>
+        Promise.reject(new Error(`Unexpected execBuffered call for ${options.cwd}`))
+    );
+  });
+
+  afterEach(async () => {
+    createRuntimeSpy.mockRestore();
+    execBufferedSpy.mockRestore();
+    await cleanupHistory();
+  });
+
+  test("keeps single-project completions unchanged", async () => {
+    interface WorkspaceServiceTestAccess {
+      getInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.getInfo = mock(() =>
+      Promise.resolve({
+        id: "ws-single",
+        name: "ws",
+        projectName: "project-a",
+        projectPath: "/tmp/project-a",
+        namedWorkspacePath: "/persisted/project-a/ws",
+        runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/src" },
+      } satisfies FrontendWorkspaceMetadata)
+    );
+
+    execBufferedSpy.mockResolvedValue({
+      stdout: "src/single.ts\n",
+      stderr: "",
+      exitCode: 0,
+      duration: 1,
+    });
+
+    const result = await workspaceService.getFileCompletions("ws-single", "src/");
+
+    expect(result.paths).toEqual(["src/single.ts"]);
+    expect(execBufferedSpy).toHaveBeenCalledTimes(1);
+    expect(execBufferedSpy.mock.calls[0]?.[2].cwd).toBe("/persisted/project-a/ws");
+  });
+
+  test("aggregates multi-project completions using project-prefixed paths", async () => {
+    interface WorkspaceServiceTestAccess {
+      getInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.getInfo = mock(() =>
+      Promise.resolve({
+        id: "ws-multi",
+        name: "ws",
+        projectName: "project-a",
+        projectPath: "/tmp/project-a",
+        namedWorkspacePath: "/persisted/container/ws",
+        runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/src" },
+        projects: [
+          { projectPath: "/tmp/project-a", projectName: "project-a" },
+          { projectPath: "/tmp/project-b", projectName: "project-b" },
+        ],
+      } satisfies FrontendWorkspaceMetadata)
+    );
+
+    execBufferedSpy.mockImplementation((_runtime, _command, options) => {
+      if (options.cwd === "/runtime/project-a/ws") {
+        return Promise.resolve({
+          stdout: "README.md\nsrc/a.ts\n",
+          stderr: "",
+          exitCode: 0,
+          duration: 1,
+        });
+      }
+
+      if (options.cwd === "/runtime/project-b/ws") {
+        return Promise.resolve({
+          stdout: "src/b.ts\nnested/keep.ts\n",
+          stderr: "",
+          exitCode: 0,
+          duration: 1,
+        });
+      }
+
+      return Promise.reject(new Error(`Unexpected cwd ${options.cwd}`));
+    });
+
+    const result = await workspaceService.getFileCompletions("ws-multi", "", 10);
+
+    expect(result.paths).toContain("project-a/README.md");
+    expect(result.paths).toContain("project-a/src/a.ts");
+    expect(result.paths).toContain("project-b/src/b.ts");
+    expect(result.paths).toContain("project-b/nested/keep.ts");
+    expect(result.paths).not.toContain("src/a.ts");
+    expect(result.paths).toHaveLength(4);
+
+    const completionCwds = execBufferedSpy.mock.calls
+      .map((call) => call[2].cwd)
+      .sort((left, right) => left.localeCompare(right));
+    expect(completionCwds).toEqual(["/runtime/project-a/ws", "/runtime/project-b/ws"]);
   });
 });
 

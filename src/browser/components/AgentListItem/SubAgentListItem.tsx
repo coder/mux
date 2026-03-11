@@ -20,12 +20,6 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
   const connectorColor = props.isSelected ? "var(--color-border)" : "var(--color-border-light)";
   const connectorTurnSizePx = 6;
 
-  // Even when a sub-agent is an only child, we still need the top segment to
-  // visually connect it back to the parent row.
-  const showTopSegment =
-    props.connectorPosition === "middle" ||
-    props.connectorPosition === "last" ||
-    props.connectorPosition === "single";
   // Middle rows must keep the vertical trunk passing through so the connector
   // continues toward the next sub-agent sibling.
   const showPassThroughSegment = props.connectorPosition === "middle";
@@ -67,20 +61,20 @@ export function SubAgentListItem(props: SubAgentListItemProps) {
           } as React.CSSProperties
         }
       >
-        {showTopSegment && (
-          <span
-            className={cn(
-              connectorFillClass,
-              // First siblings extend from the parent row center, while
-              // subsequent siblings continue from the previous row boundary to
-              // avoid overlapping duplicate trunk segments.
-              "absolute left-[6px] w-px",
-              props.connectorStartsAtParent ? "-top-1/2" : "top-0",
-              props.sharedTrunkActiveThroughRow && "subagent-connector-active"
-            )}
-            style={{ bottom: `calc(50% + ${connectorTurnSizePx}px)` }}
-          />
-        )}
+        {/* The top segment is always rendered (every connectorPosition variant
+            needs it) to visually connect this row back to the parent. */}
+        <span
+          className={cn(
+            connectorFillClass,
+            // First siblings extend from the parent row center, while
+            // subsequent siblings continue from the previous row boundary to
+            // avoid overlapping duplicate trunk segments.
+            "absolute left-[6px] w-px",
+            props.connectorStartsAtParent ? "-top-1/2" : "top-0",
+            props.sharedTrunkActiveThroughRow && "subagent-connector-active"
+          )}
+          style={{ bottom: `calc(50% + ${connectorTurnSizePx}px)` }}
+        />
         {showPassThroughSegment && (
           <span
             className={cn(

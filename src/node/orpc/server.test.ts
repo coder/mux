@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -613,6 +613,61 @@ describe("createOrpcServer", () => {
       expect(cookieHeader).toBeTruthy();
       expect(cookieHeader).toContain("mux_session=session-token-http");
       expect(cookieHeader).not.toContain("; Secure");
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("workspace.createMultiProject rejects direct IPC calls when the experiment is disabled", async () => {
+    const createMultiProjectMock = mock(() => {
+      throw new Error("workspaceService.createMultiProject should not be called");
+    });
+    const stubContext: Partial<ORPCContext> = {
+      workspaceService: {
+        createMultiProject: createMultiProjectMock,
+      } as unknown as ORPCContext["workspaceService"],
+      experimentsService: {
+        isExperimentEnabled: () => false,
+      } as unknown as ORPCContext["experimentsService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+      });
+
+      const client = createHttpClient(server.baseUrl, {
+        Authorization: "Bearer test-token",
+      });
+
+      let error: unknown = null;
+      try {
+        await Promise.resolve(
+          client.workspace.createMultiProject({
+            projects: [
+              { projectPath: "/tmp/project-a", projectName: "project-a" },
+              { projectPath: "/tmp/project-b", projectName: "project-b" },
+            ],
+            branchName: "feature-disabled",
+            trunkBranch: "main",
+          })
+        );
+      } catch (caughtError) {
+        error = caughtError;
+      }
+
+      expect(error).toBeTruthy();
+      expect(createMultiProjectMock).not.toHaveBeenCalled();
+      const message =
+        error && typeof error === "object" && "message" in error
+          ? (error as { message?: unknown }).message
+          : "";
+      expect(String(message)).toContain("Multi-project workspaces experiment is disabled");
     } finally {
       await server?.close();
     }

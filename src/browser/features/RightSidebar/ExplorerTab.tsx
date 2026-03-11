@@ -37,6 +37,7 @@ import {
   parseGitCheckIgnoreOutput,
   type GitStatusResult,
 } from "@/browser/utils/fileExplorer";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 import { getErrorMessage } from "@/common/utils/errors";
 
 interface ExplorerTabProps {
@@ -133,6 +134,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
           ? api.workspace.executeBash({
               workspaceId: props.workspaceId,
               script: buildGitIgnoredScript(""),
+              options: repoRootBashOptions(),
             })
           : null;
 
@@ -228,6 +230,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
           const checkIgnoreResult = await api.workspace.executeBash({
             workspaceId: props.workspaceId,
             script: buildGitCheckIgnoreScript(dirsToCheck),
+            options: repoRootBashOptions(),
           });
 
           if (checkIgnoreResult.success && checkIgnoreResult.data.success) {

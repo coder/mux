@@ -6,13 +6,13 @@ import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
 import { ensurePrivateDir } from "@/node/utils/fs";
-import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 import type { MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
@@ -23,9 +23,13 @@ import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { getSrcBaseDir } from "@/common/types/runtime";
+import { ContainerManager } from "@/node/multiProject/containerManager";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
+import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { PolicyService } from "@/node/services/policyService";
@@ -49,6 +53,7 @@ import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggreg
 import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
 
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
@@ -62,6 +67,8 @@ import {
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+import { getProjects, isMultiProject } from "@/common/utils/multiProject";
+import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
@@ -112,7 +119,7 @@ export interface StreamMessageOptions {
   acpPromptId?: string;
   /** Tool names that should be delegated back to ACP clients for this request. */
   delegatedToolNames?: string[];
-  recordFileState?: (filePath: string, state: FileState) => void;
+  recordFileState?: (filePath: string, state: FileState) => Promise<void>;
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   experiments?: SendMessageOptions["experiments"];
@@ -206,6 +213,7 @@ export class AIService extends EventEmitter {
   private readonly providerService: ProviderService;
   private readonly providerModelFactory: ProviderModelFactory;
   private readonly devToolsService?: DevToolsService;
+  private readonly experimentsService?: ExperimentsService;
 
   // Tracks in-flight stream startup (before StreamManager emits stream-start).
   // This enables user interrupts (Esc/Ctrl+C) during the UI "starting..." phase.
@@ -245,7 +253,8 @@ export class AIService extends EventEmitter {
     policyService?: PolicyService,
     telemetryService?: TelemetryService,
     devToolsService?: DevToolsService,
-    opResolver?: ExternalSecretResolver
+    opResolver?: ExternalSecretResolver,
+    experimentsService?: ExperimentsService
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -261,6 +270,7 @@ export class AIService extends EventEmitter {
     this.policyService = policyService;
     this.telemetryService = telemetryService;
     this.opResolver = opResolver;
+    this.experimentsService = experimentsService;
     this.providerService = providerService;
     this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
       this.providerService.getConfig()
@@ -606,6 +616,38 @@ export class AIService extends EventEmitter {
     return wrappedTools;
   }
 
+  private getMultiProjectExecutionDisabledMessage(workspaceId: string): string {
+    return `Workspace ${workspaceId} reached multi-project AI runtime execution while ${EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES} is disabled`;
+  }
+
+  private ensureMultiProjectRuntimeExecutionEnabled(
+    workspaceId: string,
+    metadata: WorkspaceMetadata
+  ): Result<void, SendMessageError> {
+    if (!isMultiProject(metadata)) {
+      return Ok(undefined);
+    }
+
+    // Multi-project execution should already be gated before streamMessage reaches backend runtime
+    // orchestration. If stale workspace ids or future callsites bypass those checks, fail closed
+    // before constructing MultiProjectRuntime or loading shared-project secrets/tools.
+    if (!this.experimentsService) {
+      return Err({
+        type: "unknown",
+        raw: "AIService multi-project execution requires ExperimentsService to enforce the runtime gate",
+      });
+    }
+
+    if (!this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)) {
+      return Err({
+        type: "unknown",
+        raw: this.getMultiProjectExecutionDisabledMessage(workspaceId),
+      });
+    }
+
+    return Ok(undefined);
+  }
+
   /** Stream a message conversation to the AI model. */
   async streamMessage(opts: StreamMessageOptions): Promise<Result<void, SendMessageError>> {
     const {
@@ -760,10 +802,33 @@ export class AIService extends EventEmitter {
       if (!this.config.findWorkspace(workspaceId)) {
         return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
       }
-      const runtime = createRuntime(metadata.runtimeConfig, {
-        projectPath: metadata.projectPath,
-        workspaceName: metadata.name,
-      });
+
+      const multiProjectExecutionGate = this.ensureMultiProjectRuntimeExecutionEnabled(
+        workspaceId,
+        metadata
+      );
+      if (!multiProjectExecutionGate.success) {
+        return multiProjectExecutionGate;
+      }
+
+      const runtime = isMultiProject(metadata)
+        ? new MultiProjectRuntime(
+            new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
+            getProjects(metadata).map((project) => ({
+              projectPath: project.projectPath,
+              projectName: project.projectName,
+              runtime: createRuntime(metadata.runtimeConfig, {
+                projectPath: project.projectPath,
+                workspaceName: metadata.name,
+              }),
+            })),
+            metadata.name
+          )
+        : createRuntime(metadata.runtimeConfig, {
+            projectPath: metadata.projectPath,
+            workspaceName: metadata.name,
+          });
+
       // In-place workspaces (CLI/benchmarks) have projectPath === name
       // Use path directly instead of reconstructing via getWorkspacePath
       const isInPlace = metadata.projectPath === metadata.name;
@@ -934,7 +999,9 @@ export class AIService extends EventEmitter {
       // Load project secrets (system workspace never gets secrets injected)
       const projectSecrets = isBuiltInMuxHelpAgent
         ? []
-        : this.config.getEffectiveSecrets(metadata.projectPath);
+        : isMultiProject(metadata)
+          ? mergeMultiProjectSecrets(metadata, this.config)
+          : this.config.getEffectiveSecrets(metadata.projectPath);
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
@@ -1005,6 +1072,7 @@ export class AIService extends EventEmitter {
         {
           cwd: workspacePath,
           runtime,
+          projects: getProjects(metadata),
           secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv: getMuxEnv(
             metadata.projectPath,
@@ -1046,11 +1114,11 @@ export class AIService extends EventEmitter {
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,
-          // Trust gating: only run hooks/scripts for explicitly trusted projects
-          trusted:
-            this.config
-              .loadConfigOrDefault()
-              .projects.get(stripTrailingSlashes(metadata.projectPath))?.trusted ?? false,
+          // Trust gating: only run hooks/scripts when the full shared workspace runtime is trusted.
+          trusted: isWorkspaceTrustedForSharedExecution(
+            metadata,
+            this.config.loadConfigOrDefault().projects
+          ),
         },
         workspaceId,
         this.initStateManager,

@@ -12,6 +12,7 @@ import { useSyncExternalStore } from "react";
 import { MapStore } from "./MapStore";
 import { isSSHRuntime } from "@/common/types/runtime";
 import { RefreshController } from "@/browser/utils/RefreshController";
+import { repoRootBashOptions } from "@/browser/utils/executeBash";
 
 /**
  * External store for git status of all workspaces.
@@ -335,7 +336,7 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId: metadata.id,
         script,
-        options: { timeout_secs: 5 },
+        options: repoRootBashOptions(5),
       });
 
       if (!result.success) {
@@ -482,7 +483,7 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId,
         script: GIT_FETCH_SCRIPT,
-        options: { timeout_secs: 30 },
+        options: repoRootBashOptions(30),
       });
 
       if (!result.success) {
