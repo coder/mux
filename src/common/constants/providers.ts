@@ -146,6 +146,8 @@ export const PROVIDER_DEFINITIONS = {
     kind: "gateway",
     routes: ["anthropic"],
     passthrough: false,
+    // Bedrock model IDs use dot-separated vendor.model notation.
+    toGatewayModelId: (origin, modelId) => `${origin}.${modelId}`,
   },
   ollama: {
     displayName: "Ollama",

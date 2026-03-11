@@ -174,6 +174,27 @@ describe("ProviderModelFactory routing", () => {
     });
   });
 
+  it("routes Anthropic models through Bedrock when Bedrock is configured and prioritized", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        anthropic: { apiKey: "ant-test", enabled: false },
+        bedrock: { region: "us-east-1" },
+      });
+
+      const projectConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...projectConfig,
+        routePriority: ["bedrock", "direct"],
+      });
+
+      const result = await factory.resolveAndCreateModel("anthropic:claude-sonnet-4-5", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.effectiveModelString).toBe("bedrock:anthropic.claude-sonnet-4-5");
+      expect(result.data.routeProvider).toBe("bedrock");
+    });
+  });
+
   it("skips disabled gateway providers even when credentials exist", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

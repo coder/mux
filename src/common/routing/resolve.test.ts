@@ -156,7 +156,7 @@ describe("resolveRoute", () => {
     expect(resolved.routeModelId).toBe("claude-opus-4-6");
   });
 
-  test("skips bedrock because it cannot auto-construct gateway IDs", () => {
+  test("routes Anthropic models through Bedrock with dot-separated format", () => {
     const resolved = resolveRoute(
       MODEL,
       ["bedrock", "direct"],
@@ -164,7 +164,8 @@ describe("resolveRoute", () => {
       createIsConfigured(["bedrock", "anthropic"])
     );
 
-    expect(resolved.routeProvider).toBe("anthropic");
+    expect(resolved.routeProvider).toBe("bedrock");
+    expect(resolved.routeModelId).toBe("anthropic.claude-opus-4-6");
   });
 });
 
@@ -175,6 +176,10 @@ describe("isModelAvailable", () => {
 
   test("returns true when gateway route is configured", () => {
     expect(isModelAvailable(MODEL, createIsConfigured(["openrouter"]))).toBe(true);
+  });
+
+  test("returns true when Bedrock can route the model", () => {
+    expect(isModelAvailable(MODEL, createIsConfigured(["bedrock"]))).toBe(true);
   });
 
   test("returns true when GitHub Copilot can route an OpenAI model", () => {
@@ -215,7 +220,7 @@ describe("availableRoutes", () => {
   });
 
   test("returns all eligible gateways plus direct with configuration status", () => {
-    const routes = availableRoutes(MODEL, createIsConfigured(["openrouter"]));
+    const routes = availableRoutes(MODEL, createIsConfigured(["openrouter", "bedrock"]));
 
     expect(routes).toEqual([
       {
@@ -226,6 +231,11 @@ describe("availableRoutes", () => {
       {
         route: "openrouter",
         displayName: "OpenRouter",
+        isConfigured: true,
+      },
+      {
+        route: "bedrock",
+        displayName: "Bedrock",
         isConfigured: true,
       },
       {
