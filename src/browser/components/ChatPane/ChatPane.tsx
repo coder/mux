@@ -621,15 +621,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // feel stable; only show the full placeholder when there's no transcript content yet.
   const showTranscriptHydrationPlaceholder = isHydratingTranscript && deferredMessages.length === 0;
   const showRetryBarrier =
-    !isHydratingTranscript && !workspaceState.canInterrupt && hasInterruptedStream;
+    !isHydratingTranscript &&
+    !workspaceState.canInterrupt &&
+    !workspaceState.isStreamStarting &&
+    hasInterruptedStream;
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
     lastActionableMessage?.type === "stream-error" &&
     lastActionableMessage.errorType === "context_exceeded";
-  // Keep RetryBarrier mounted (but visually hidden) while a resumed stream is in flight
-  // so its temporary auto-retry rollback effect can observe terminal stream outcomes.
-  const shouldMountRetryBarrier = hasInterruptedStream && !suppressRetryBarrier;
+  const shouldMountRetryBarrier = !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
   const handleLoadOlderHistory = useCallback(() => {
@@ -647,8 +648,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceId,
     // Allow interrupt keybind even while waiting for stream-start ("starting...").
     canInterrupt:
-      (workspaceState?.canInterrupt ?? false) ||
-      typeof workspaceState?.pendingStreamStartTime === "number",
+      (workspaceState?.canInterrupt ?? false) || (workspaceState?.isStreamStarting ?? false),
     showRetryBarrier,
     chatInputAPI,
     jumpToBottom,
@@ -892,10 +892,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                       })}
                       {/* Show RetryBarrier after the last message if needed */}
                       {shouldMountRetryBarrier && (
-                        <RetryBarrier
-                          workspaceId={workspaceId}
-                          className={!showRetryBarrierUI ? "hidden" : undefined}
-                        />
+                        <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />
                       )}
                     </>
                   </MessageListProvider>

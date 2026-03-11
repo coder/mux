@@ -210,6 +210,94 @@ describe("AgentSession pre-stream errors", () => {
     expect(streamError?.error).toContain(PROVIDER_DISPLAY_NAMES.anthropic);
   });
 
+  async function replayTerminalAuthFailure(
+    workspaceId: string,
+    mode?: { type: "live" }
+  ): Promise<{
+    replayedEvents: WorkspaceChatMessage[];
+    replayInit: ReturnType<typeof mock<(workspaceId: string) => Promise<void>>>;
+  }> {
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const aiService = Object.assign(new EventEmitter(), {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: mock((_history: MuxMessage[]) =>
+        Promise.resolve(Err({ type: "api_key_not_found", provider: "anthropic" }))
+      ) as unknown as (...args: Parameters<AIService["streamMessage"]>) => Promise<unknown>,
+      getStreamInfo: mock((_workspaceId: string) => undefined),
+      replayStream: mock((_workspaceId: string, _opts?: { afterTimestamp?: number }) =>
+        Promise.resolve()
+      ),
+    }) as unknown as AIService;
+    const replayInit = mock((_workspaceId: string) => Promise.resolve());
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager: Object.assign(new EventEmitter(), {
+        replayInit,
+      }) as unknown as InitStateManager,
+      backgroundProcessManager: {
+        cleanup: mock((_workspaceId: string) => Promise.resolve()),
+        setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+          void _queued;
+        }),
+      } as unknown as BackgroundProcessManager,
+    });
+
+    const sendResult = await session.sendMessage("hello", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+    });
+    expect(sendResult.success).toBe(false);
+
+    const replayedEvents: WorkspaceChatMessage[] = [];
+    await session.replayHistory(({ message }) => replayedEvents.push(message), mode);
+    return { replayedEvents, replayInit };
+  }
+
+  it("replays terminal stream-error state before caught-up after a pre-stream failure", async () => {
+    const workspaceId = "ws-replay-terminal-stream-error";
+    const { replayedEvents, replayInit } = await replayTerminalAuthFailure(workspaceId);
+
+    const replayedStreamErrorIndex = replayedEvents.findIndex(
+      (event) => event.type === "stream-error"
+    );
+    const replayedLifecycleIndex = replayedEvents.findIndex(
+      (event) => event.type === "stream-lifecycle"
+    );
+    const caughtUpIndex = replayedEvents.findIndex((event) => event.type === "caught-up");
+    const replayedStreamError = replayedEvents.find(
+      (event): event is StreamErrorMessage => event.type === "stream-error"
+    );
+    const replayedLifecycle = replayedEvents.find(
+      (event): event is Extract<WorkspaceChatMessage, { type: "stream-lifecycle" }> =>
+        event.type === "stream-lifecycle"
+    );
+
+    expect(replayedStreamError?.errorType).toBe("authentication");
+    expect(replayedStreamError?.replay).toBe(true);
+    expect(replayedLifecycle?.phase).toBe("failed");
+    expect(replayedStreamErrorIndex).toBeGreaterThanOrEqual(0);
+    expect(replayedLifecycleIndex).toBeGreaterThan(replayedStreamErrorIndex);
+    expect(caughtUpIndex).toBeGreaterThan(replayedLifecycleIndex);
+    expect(replayInit).toHaveBeenCalledWith(workspaceId);
+  });
+
+  it("does not replay terminal failure state in live mode", async () => {
+    const workspaceId = "ws-live-replay-ignores-terminal-failure";
+    const { replayedEvents, replayInit } = await replayTerminalAuthFailure(workspaceId, {
+      type: "live",
+    });
+
+    expect(replayedEvents.some((event) => event.type === "stream-error")).toBe(false);
+    expect(replayedEvents.some((event) => event.type === "stream-lifecycle")).toBe(false);
+    expect(replayInit).toHaveBeenCalledWith(workspaceId);
+  });
+
   it("schedules auto-retry when runtime startup fails before stream events", async () => {
     const workspaceId = "ws-runtime-start-failed";
 

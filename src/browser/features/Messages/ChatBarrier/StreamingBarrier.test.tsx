@@ -5,6 +5,7 @@ import { GlobalWindow } from "happy-dom";
 interface MockWorkspaceState {
   canInterrupt: boolean;
   isCompacting: boolean;
+  isStreamStarting: boolean;
   awaitingUserQuestion: boolean;
   currentModel: string | null;
   pendingStreamStartTime: number | null;
@@ -15,9 +16,10 @@ interface MockWorkspaceState {
 }
 
 function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): MockWorkspaceState {
-  return {
+  const state: MockWorkspaceState = {
     canInterrupt: true,
     isCompacting: false,
+    isStreamStarting: false,
     awaitingUserQuestion: false,
     currentModel: "openai:gpt-4o-mini",
     pendingStreamStartTime: null,
@@ -27,6 +29,12 @@ function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): Mock
     streamingTPS: undefined,
     ...overrides,
   };
+
+  if (overrides.isStreamStarting === undefined) {
+    state.isStreamStarting = !state.canInterrupt && state.pendingStreamStartTime !== null;
+  }
+
+  return state;
 }
 
 let currentWorkspaceState = createWorkspaceState();

@@ -44,6 +44,9 @@ class StubAggregator implements WorkspaceChatEventAggregator {
     this.calls.push(`handleStreamError:${data.messageId}`);
   }
 
+  handleStreamLifecycle(data: Extract<WorkspaceChatMessage, { type: "stream-lifecycle" }>): void {
+    this.calls.push(`handleStreamLifecycle:${data.phase}`);
+  }
   handleToolCallStart(data: ToolCallStartEvent): void {
     this.calls.push(`handleToolCallStart:${data.toolCallId}`);
   }

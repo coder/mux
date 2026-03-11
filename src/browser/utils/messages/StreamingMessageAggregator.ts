@@ -7,19 +7,22 @@ import type {
 } from "@/common/types/message";
 import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
 
-import type {
-  StreamStartEvent,
-  StreamDeltaEvent,
-  UsageDeltaEvent,
-  StreamEndEvent,
-  StreamAbortEvent,
-  StreamAbortReasonSnapshot,
-  ToolCallStartEvent,
-  ToolCallDeltaEvent,
-  ToolCallEndEvent,
-  ReasoningDeltaEvent,
-  ReasoningEndEvent,
-  RuntimeStatusEvent,
+import {
+  copyStreamLifecycleSnapshot,
+  type StreamStartEvent,
+  type StreamDeltaEvent,
+  type UsageDeltaEvent,
+  type StreamEndEvent,
+  type StreamAbortEvent,
+  type StreamAbortReasonSnapshot,
+  type ToolCallStartEvent,
+  type ToolCallDeltaEvent,
+  type ToolCallEndEvent,
+  type ReasoningDeltaEvent,
+  type ReasoningEndEvent,
+  type RuntimeStatusEvent,
+  type StreamLifecycleEvent,
+  type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
@@ -416,6 +419,10 @@ export class StreamingMessageAggregator {
   // IMPORTANT: We intentionally keep this timestamp until a stream actually starts
   // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
   private pendingStreamStartTime: number | null = null;
+
+  // Canonical backend-owned stream lifecycle. This distinguishes slow startup from a
+  // genuinely interrupted/failed turn, including reconnects while PREPARING is still in flight.
+  private streamLifecycle: StreamLifecycleSnapshot | null = null;
 
   // Last observed stream-abort reason (used to gate auto-retry).
   private lastAbortReason: StreamAbortReasonSnapshot | null = null;
@@ -1157,6 +1164,10 @@ export class StreamingMessageAggregator {
     return this.lastAbortReason;
   }
 
+  getStreamLifecycle(): StreamLifecycleSnapshot | null {
+    return this.streamLifecycle;
+  }
+
   getPendingStreamStartTime(): number | null {
     return this.pendingStreamStartTime;
   }
@@ -1167,6 +1178,30 @@ export class StreamingMessageAggregator {
    */
   getRuntimeStatus(): RuntimeStatusEvent | null {
     return this.runtimeStatus;
+  }
+
+  handleStreamLifecycle(event: StreamLifecycleEvent): void {
+    this.streamLifecycle = copyStreamLifecycleSnapshot(event);
+
+    if (event.phase === "interrupted" && event.abortReason) {
+      this.lastAbortReason = {
+        reason: event.abortReason,
+        at: Date.now(),
+      };
+      return;
+    }
+
+    this.lastAbortReason = null;
+  }
+
+  private clearInFlightStreamLifecycle(): void {
+    if (
+      this.streamLifecycle?.phase === "preparing" ||
+      this.streamLifecycle?.phase === "streaming" ||
+      this.streamLifecycle?.phase === "completing"
+    ) {
+      this.streamLifecycle = null;
+    }
   }
 
   /**
@@ -1539,6 +1574,7 @@ export class StreamingMessageAggregator {
     this.displayedMessageCache.clear();
     this.messageVersions.clear();
     this.interruptingMessageId = null;
+    this.streamLifecycle = null;
     this.lastAbortReason = null;
     this.lastResponseCompletedAt = null;
     this.establishedOldestHistorySequence = null;
@@ -1810,6 +1846,7 @@ export class StreamingMessageAggregator {
     // Clear pending stream start timestamp - abort can arrive before stream-start.
     // This ensures StreamingBarrier exits the "starting..." phase immediately.
     this.setPendingStreamStartTime(null);
+    this.clearInFlightStreamLifecycle();
     this.lastAbortReason = {
       reason: data.abortReason ?? "system",
       at: Date.now(),
@@ -1851,6 +1888,7 @@ export class StreamingMessageAggregator {
     // Clear pending stream start timestamp - error arrived before/instead of stream-start.
     // This ensures StreamingBarrier exits the "starting..." phase immediately.
     this.setPendingStreamStartTime(null);
+    this.clearInFlightStreamLifecycle();
 
     // Direct lookup by messageId
 
@@ -1875,9 +1913,19 @@ export class StreamingMessageAggregator {
       // Assistant message is now stable (errored) - invalidate all caches.
       this.markMessageDirty(data.messageId);
     } else {
+      const existingMessage = this.messages.get(data.messageId);
+      if (existingMessage?.role === "assistant" && existingMessage.metadata) {
+        existingMessage.metadata.partial = true;
+        existingMessage.metadata.error = data.error;
+        existingMessage.metadata.errorType = data.errorType;
+        this.markMessageDirty(data.messageId);
+        return;
+      }
+
       // Pre-stream error (e.g., API key not configured before streaming starts)
-      // Create a synthetic error message since there's no active stream to attach to
-      // Get the highest historySequence from existing messages so this appears at the end
+      // Create a synthetic error message since there's no active stream to attach to.
+      // If replay re-emits the same terminal error later, preserve this message's metadata
+      // instead of regenerating ordering fields that can churn append-replay state.
       const maxSequence = Math.max(
         0,
         ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
@@ -2374,6 +2422,11 @@ export class StreamingMessageAggregator {
 
       // If this is a user message, clear derived state and record timestamp
       if (incomingMessage.role === "user") {
+        // Reset terminal lifecycle snapshots from the previous turn immediately so the next
+        // accepted send never inherits a stale interrupted/failed classification while we wait
+        // for the backend's authoritative PREPARING lifecycle event.
+        this.streamLifecycle = null;
+
         const muxMeta = incomingMessage.metadata?.muxMetadata as
           | { displayStatus?: { emoji: string; message: string } }
           | undefined;

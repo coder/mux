@@ -31,11 +31,11 @@ import {
   isQueuedMessageChanged,
   isRestoreToInput,
 } from "@/common/orpc/types";
-import type {
-  StreamAbortEvent,
-  StreamAbortReasonSnapshot,
-  StreamEndEvent,
-  RuntimeStatusEvent,
+import {
+  type StreamAbortEvent,
+  type StreamAbortReasonSnapshot,
+  type StreamEndEvent,
+  type RuntimeStatusEvent,
 } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage, recomputeUsageCosts } from "@/common/utils/tokens/displayUsage";
@@ -584,6 +584,10 @@ export class WorkspaceStore {
       this.states.bump(workspaceId);
       // Bump usage store so liveUsage is recomputed with new activeStreamId
       this.usageStore.bump(workspaceId);
+    },
+    "stream-lifecycle": (workspaceId, aggregator, data) => {
+      applyWorkspaceChatEventToAggregator(aggregator, data);
+      this.states.bump(workspaceId);
     },
     "stream-delta": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
@@ -1608,6 +1612,7 @@ export class WorkspaceStore {
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
       const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
+      const streamLifecycle = aggregator.getStreamLifecycle();
       // Trust the live aggregator only when it is both active AND has finished
       // replaying historical events (caughtUp). During the replay window after a
       // workspace switch, the aggregator is cleared and re-hydrating; fall back to
@@ -1628,12 +1633,19 @@ export class WorkspaceStore {
       const currentThinkingLevel = useAggregatorState
         ? (aggregator.getCurrentThinkingLevel() ?? null)
         : (activity?.lastThinkingLevel ?? aggregator.getCurrentThinkingLevel() ?? null);
+      const hasAuthoritativeStreamLifecycle =
+        streamLifecycle !== null && streamLifecycle.phase !== "idle";
       const aggregatorRecency = aggregator.getRecencyTimestamp();
       const recencyTimestamp =
         aggregatorRecency === null
           ? (activity?.recency ?? null)
           : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
-      const isStreamStarting = pendingStreamStartTime !== null && !canInterrupt;
+      // Treat the backend lifecycle as authoritative, with pendingStreamStartTime kept only as a
+      // cosmetic fallback for transcript-only crash-recovery sessions that lack any lifecycle.
+      const isStreamStarting =
+        (streamLifecycle?.phase === "preparing" ||
+          (!hasAuthoritativeStreamLifecycle && pendingStreamStartTime !== null)) &&
+        !canInterrupt;
       const isHydratingTranscript =
         isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp;
       const agentStatus = useAggregatorState
@@ -1697,7 +1709,7 @@ export class WorkspaceStore {
    */
   getWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarState {
     const fullState = this.getWorkspaceState(workspaceId);
-    const isStarting = fullState.pendingStreamStartTime !== null && !fullState.canInterrupt;
+    const isStarting = fullState.isStreamStarting;
     const terminalActivity = this.workspaceTerminalActivity.get(workspaceId);
     const terminalActiveCount = terminalActivity?.activeCount ?? 0;
     const terminalSessionCount = terminalActivity?.totalSessions ?? 0;
@@ -3576,7 +3588,7 @@ export class WorkspaceStore {
       }
       pendingEvents.length = 0;
 
-      // Done replaying buffered events
+      // Done replaying buffered events.
       transient.replayingHistory = false;
 
       if (replay === "since" && data.hasOlderHistory === undefined) {
@@ -3630,7 +3642,22 @@ export class WorkspaceStore {
     //
     // This is especially important for workspaces with long histories (100+ messages),
     // where unbuffered rendering would cause visible lag and UI stutter.
+    if (!transient.caughtUp && isStreamError(data) && data.replay === true) {
+      // Show replayed terminal errors immediately so reconnect UIs preserve the same
+      // failure classification/copy as the live session, then replay them again after
+      // history loads so full-replay replacement does not wipe the error back out.
+      applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
+      this.states.bump(workspaceId);
+      transient.pendingStreamEvents.push(data);
+      return;
+    }
+
     if (!transient.caughtUp && this.isBufferedEvent(data)) {
+      if ("type" in data && (data.type === "stream-lifecycle" || data.type === "stream-abort")) {
+        applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects: false });
+        this.states.bump(workspaceId);
+      }
+
       transient.pendingStreamEvents.push(data);
       return;
     }

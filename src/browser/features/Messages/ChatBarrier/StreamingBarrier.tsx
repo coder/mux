@@ -56,15 +56,12 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
   const {
     canInterrupt,
     isCompacting,
+    isStreamStarting: isStarting,
     awaitingUserQuestion,
     currentModel,
-    pendingStreamStartTime,
     pendingStreamModel,
     runtimeStatus,
   } = workspaceState;
-
-  // Determine if we're in "starting" phase (message sent, waiting for stream-start)
-  const isStarting = pendingStreamStartTime !== null && !canInterrupt;
 
   // Compute streaming phase
   const phase: StreamingPhase | null = (() => {

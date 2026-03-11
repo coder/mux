@@ -16,6 +16,7 @@ import {
   isRestoreToInput,
   isRuntimeStatus,
   isStreamAbort,
+  isStreamLifecycle,
   isStreamDelta,
   isStreamEnd,
   isStreamError,
@@ -37,6 +38,7 @@ import type {
   ToolCallStartEvent,
   UsageDeltaEvent,
   RuntimeStatusEvent,
+  StreamLifecycleEvent,
 } from "@/common/types/stream";
 
 export type WorkspaceChatEventUpdateHint = "immediate" | "throttled" | "ignored";
@@ -75,6 +77,8 @@ export interface WorkspaceChatEventAggregator {
   handleDeleteMessage(data: DeleteMessage): void;
 
   handleMessage(data: WorkspaceChatMessage): void;
+
+  handleStreamLifecycle(data: StreamLifecycleEvent): void;
 
   handleRuntimeStatus(data: RuntimeStatusEvent): void;
 
@@ -207,6 +211,11 @@ export function applyWorkspaceChatEventToAggregator(
 
   if (isReasoningEnd(event)) {
     aggregator.handleReasoningEnd(event);
+    return "immediate";
+  }
+
+  if (isStreamLifecycle(event)) {
+    aggregator.handleStreamLifecycle(event);
     return "immediate";
   }
 
