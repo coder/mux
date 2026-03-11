@@ -5,6 +5,7 @@ import { render } from "@testing-library/react";
 
 import {
   TaskApplyGitPatchProjectResultCard,
+  TaskApplyGitPatchToolCall,
   type ParsedProjectResult,
 } from "@/browser/features/Tools/TaskApplyGitPatchToolCall";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
@@ -63,5 +64,33 @@ describe("task_apply_git_patch commit list", () => {
     expect(view.getByText("fix: reconcile project-c changes")).toBeTruthy();
     expect(view.getByText("src/index.ts")).toBeTruthy();
     expect(view.getByText("0f1e2d3")).toBeTruthy();
+  });
+
+  test("renders legacy project results even when projectPath is empty", () => {
+    const view = render(
+      <TooltipProvider>
+        <TaskApplyGitPatchToolCall
+          args={{ task_id: "task-legacy" }}
+          status="completed"
+          result={{
+            success: false,
+            taskId: "task-legacy",
+            dryRun: false,
+            error: "patch failed",
+            projectResults: [
+              {
+                projectPath: "",
+                projectName: "project",
+                status: "failed",
+                error: "legacy patch generation failed",
+              },
+            ],
+          }}
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText("project")).toBeTruthy();
+    expect(view.getByText("legacy patch generation failed")).toBeTruthy();
   });
 });

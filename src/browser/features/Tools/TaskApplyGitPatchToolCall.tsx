@@ -140,14 +140,13 @@ function readProjectResults(result: unknown): ParsedProjectResult[] | undefined 
   for (const projectResult of value) {
     if (!isRecord(projectResult)) continue;
 
-    const projectPath = readNonEmptyString(
-      (projectResult as { projectPath?: unknown }).projectPath
-    );
+    const rawProjectPath = (projectResult as { projectPath?: unknown }).projectPath;
+    const projectPath = typeof rawProjectPath === "string" ? rawProjectPath : undefined;
     const projectName = readNonEmptyString(
       (projectResult as { projectName?: unknown }).projectName
     );
     const status = (projectResult as { status?: unknown }).status;
-    if (!projectPath || !projectName) continue;
+    if (projectPath === undefined || !projectName) continue;
     if (status !== "applied" && status !== "failed" && status !== "skipped") continue;
 
     projectResults.push({
@@ -220,7 +219,9 @@ export const TaskApplyGitPatchProjectResultCard: React.FC<{
     <div className="bg-code-bg flex flex-col gap-2 rounded px-2 py-2 text-[11px] leading-[1.4]">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-text font-medium">{projectResult.projectName}</span>
-        <span className="text-secondary font-mono text-[10px]">{projectResult.projectPath}</span>
+        {projectResult.projectPath.length > 0 && (
+          <span className="text-secondary font-mono text-[10px]">{projectResult.projectPath}</span>
+        )}
         <span className="text-muted rounded border px-1.5 py-0.5 text-[10px] capitalize">
           {projectResult.status}
         </span>
@@ -460,7 +461,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                   <div className="flex flex-col gap-2">
                     {projectResults.map((projectResult) => (
                       <TaskApplyGitPatchProjectResultCard
-                        key={`${projectResult.projectPath}-${projectResult.status}`}
+                        key={`${projectResult.projectName}-${projectResult.projectPath}-${projectResult.status}`}
                         projectResult={projectResult}
                         isDryRun={isDryRun}
                       />
@@ -514,7 +515,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                   <div className="flex flex-col gap-2">
                     {projectResults.map((projectResult) => (
                       <TaskApplyGitPatchProjectResultCard
-                        key={`${projectResult.projectPath}-${projectResult.status}`}
+                        key={`${projectResult.projectName}-${projectResult.projectPath}-${projectResult.status}`}
                         projectResult={projectResult}
                         isDryRun={isDryRun}
                       />
