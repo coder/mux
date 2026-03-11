@@ -44,11 +44,7 @@ import {
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
-import {
-  isValidModelFormat,
-  normalizeSelectedModel,
-  normalizeToCanonical,
-} from "@/common/utils/ai/models";
+import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
