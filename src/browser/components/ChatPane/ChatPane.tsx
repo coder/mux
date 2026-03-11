@@ -717,9 +717,14 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       <div
         ref={chatAreaRef}
         aria-hidden={immersiveHidden || undefined}
-        className="bg-surface-primary flex min-w-96 flex-1 flex-col 
-          [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full 
-          [@media(max-width:768px)]:min-w-0"
+        className={cn(
+          "bg-surface-primary flex min-w-96 flex-1 flex-col",
+          // Immersive review overlays the entire workspace, so hiding the chat pane removes
+          // its layout cost while preserving component state for the return transition.
+          immersiveHidden && "hidden",
+          "[@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full",
+          "[@media(max-width:768px)]:min-w-0"
+        )}
       >
         <PerfRenderMarker id="chat-pane.header">
           <WorkspaceMenuBar

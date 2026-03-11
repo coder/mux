@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  workspace-open:
-    name: Workspace Open Profiles
+  perf-profiles:
+    name: Performance Profiles
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
@@ -28,7 +28,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb
       - uses: ./.github/actions/setup-playwright
-      - name: Run workspace perf profiling scenarios
+      - name: Run perf profiling scenarios
         run: xvfb-run -a make test-e2e-perf
         env:
           ELECTRON_DISABLE_SANDBOX: 1

@@ -457,9 +457,9 @@ test-e2e: ## Run end-to-end tests
 	@$(MAKE) build
 	@MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron $(PLAYWRIGHT_ARGS)
 
-test-e2e-perf: ## Run automated workspace-load perf profiling scenarios
+test-e2e-perf: ## Run automated performance profiling scenarios
 	@$(MAKE) build
-	@MUX_E2E_RUN_PERF=1 MUX_PROFILE_REACT=1 MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron tests/e2e/scenarios/perf.workspaceOpen.spec.ts $(PLAYWRIGHT_ARGS)
+	@MUX_E2E_RUN_PERF=1 MUX_PROFILE_REACT=1 MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron tests/e2e/scenarios/perf*.spec.ts $(PLAYWRIGHT_ARGS)
 
 ## Distribution
 dist: build ## Build distributable packages

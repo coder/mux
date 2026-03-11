@@ -12,13 +12,20 @@ import {
 } from "../utils/perfProfile";
 
 const shouldRunPerfScenarios = process.env.MUX_E2E_RUN_PERF === "1";
-const LARGE_DIFF_FILE_PATH = "src/review/perf-large-diff.ts";
-const LARGE_DIFF_BLOCK_COUNT = 120;
+const LARGE_CHANGE_ROOT = "src/review/perf-large-change";
+// Keep this fixture deliberately large so immersive mark-read profiling exercises the
+// hidden sidebar + file tree work that shows up on branch-sized diffs.
+const LARGE_CHANGE_GROUP_COUNT = 20;
+const LARGE_CHANGE_BUCKETS_PER_GROUP = 10;
+const LARGE_CHANGE_FILES_PER_BUCKET = 5;
+const LARGE_CHANGE_FILE_COUNT =
+  LARGE_CHANGE_GROUP_COUNT * LARGE_CHANGE_BUCKETS_PER_GROUP * LARGE_CHANGE_FILES_PER_BUCKET;
 
 interface LargeReviewDiffSummary {
   kind: "immersive-review-mark-read";
-  filePath: string;
-  blockCount: number;
+  rootPath: string;
+  fileCount: number;
+  directoryCount: number;
   hunkCount: number;
   addedLines: number;
   deletedLines: number;
@@ -36,80 +43,87 @@ function runGitCommand(cwd: string, args: string[]): string {
   );
 }
 
-function buildLargeReviewFixtureSource(blockCount: number, variant: "base" | "modified"): string {
-  const marker = variant === "base" ? "pending" : "ready";
-  const lines = [
-    "export interface PerfReviewSection {",
-    "  id: number;",
-    "  summary: string;",
-    "  checksum: number;",
-    "}",
+function buildLargeReviewFixtureSource(fileIndex: number, variant: "base" | "modified"): string {
+  const fileId = String(fileIndex + 1).padStart(3, "0");
+  const status = variant === "base" ? "pending" : "ready";
+
+  return [
+    `export const reviewProbe${fileId} = {`,
+    `  id: ${fileIndex + 1},`,
+    `  status: "${status}",`,
+    `  checksum: ${5_000 + fileIndex},`,
+    `  summary: "Perf review probe ${fileId}",`,
+    "};",
     "",
-  ];
-
-  for (let index = 0; index < blockCount; index += 1) {
-    const blockId = String(index + 1).padStart(3, "0");
-    lines.push(`export function buildPerfSection${blockId}(): PerfReviewSection {`);
-    lines.push(`  const id = ${index + 1};`);
-    lines.push(`  const checksum = ${5000 + index};`);
-    lines.push(`  const title = "Section ${blockId}";`);
-    lines.push("  const payload = [");
-    lines.push(`    "alpha-${blockId}",`);
-    lines.push(`    "beta-${blockId}",`);
-    lines.push(`    "gamma-${blockId}",`);
-    lines.push(`    "delta-${blockId}",`);
-    lines.push('  ].join(":");');
-    lines.push(`  const summary = \`${"${title}"}:${marker}:${"${payload}"}\`;`);
-    lines.push("  return { id, summary, checksum };");
-    lines.push("}");
-    lines.push("");
-  }
-
-  return `${lines.join("\n")}\n`;
+  ].join("\n");
 }
 
 function seedLargeReviewDiff(workspacePath: string): LargeReviewDiffSummary {
-  const filePath = path.join(workspacePath, ...LARGE_DIFF_FILE_PATH.split("/"));
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const filePaths: string[] = [];
+  let fileIndex = 0;
 
-  fs.writeFileSync(
-    filePath,
-    buildLargeReviewFixtureSource(LARGE_DIFF_BLOCK_COUNT, "base"),
-    "utf-8"
-  );
-  runGitCommand(workspacePath, ["add", LARGE_DIFF_FILE_PATH]);
-  runGitCommand(workspacePath, ["commit", "-q", "-m", "Seed immersive review perf fixture"]);
+  for (let groupIndex = 0; groupIndex < LARGE_CHANGE_GROUP_COUNT; groupIndex += 1) {
+    const groupId = String(groupIndex + 1).padStart(2, "0");
+    for (let bucketIndex = 0; bucketIndex < LARGE_CHANGE_BUCKETS_PER_GROUP; bucketIndex += 1) {
+      const bucketId = String(bucketIndex + 1).padStart(2, "0");
+      for (
+        let bucketFileIndex = 0;
+        bucketFileIndex < LARGE_CHANGE_FILES_PER_BUCKET;
+        bucketFileIndex += 1
+      ) {
+        const relativePath = [
+          LARGE_CHANGE_ROOT,
+          `group-${groupId}`,
+          `bucket-${bucketId}`,
+          `probe-${String(fileIndex + 1).padStart(3, "0")}.ts`,
+        ].join("/");
+        const filePath = path.join(workspacePath, ...relativePath.split("/"));
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, buildLargeReviewFixtureSource(fileIndex, "base"), "utf-8");
+        filePaths.push(relativePath);
+        fileIndex += 1;
+      }
+    }
+  }
 
-  fs.writeFileSync(
-    filePath,
-    buildLargeReviewFixtureSource(LARGE_DIFF_BLOCK_COUNT, "modified"),
-    "utf-8"
-  );
-
-  const diffOutput = runGitCommand(workspacePath, ["diff", "HEAD", "--", LARGE_DIFF_FILE_PATH]);
-  const hunkCount = (diffOutput.match(/^@@/gm) ?? []).length;
-  if (hunkCount !== LARGE_DIFF_BLOCK_COUNT) {
+  if (filePaths.length !== LARGE_CHANGE_FILE_COUNT) {
     throw new Error(
-      `Expected ${LARGE_DIFF_BLOCK_COUNT} hunks in seeded diff, received ${hunkCount}`
+      `Expected ${LARGE_CHANGE_FILE_COUNT} generated files, received ${filePaths.length}`
     );
   }
 
-  const numstatOutput = runGitCommand(workspacePath, [
-    "diff",
-    "HEAD",
-    "--numstat",
-    "--",
-    LARGE_DIFF_FILE_PATH,
-  ]).trim();
-  const [addedText = "0", deletedText = "0"] = numstatOutput.split("\t");
+  runGitCommand(workspacePath, ["add", LARGE_CHANGE_ROOT]);
+  runGitCommand(workspacePath, ["commit", "-q", "-m", "Seed immersive review perf fixture"]);
+
+  for (const [index, relativePath] of filePaths.entries()) {
+    const filePath = path.join(workspacePath, ...relativePath.split("/"));
+    fs.writeFileSync(filePath, buildLargeReviewFixtureSource(index, "modified"), "utf-8");
+  }
+
+  const diffOutput = runGitCommand(workspacePath, ["diff", "HEAD"]);
+  const hunkCount = (diffOutput.match(/^@@/gm) ?? []).length;
+  if (hunkCount !== filePaths.length) {
+    throw new Error(`Expected ${filePaths.length} hunks in seeded diff, received ${hunkCount}`);
+  }
+
+  let addedLines = 0;
+  let deletedLines = 0;
+  const numstatOutput = runGitCommand(workspacePath, ["diff", "HEAD", "--numstat"]).trim();
+  for (const line of numstatOutput.split("\n").filter(Boolean)) {
+    const [addedText = "0", deletedText = "0"] = line.split("\t");
+    addedLines += Number.parseInt(addedText, 10) || 0;
+    deletedLines += Number.parseInt(deletedText, 10) || 0;
+  }
 
   return {
     kind: "immersive-review-mark-read",
-    filePath: LARGE_DIFF_FILE_PATH,
-    blockCount: LARGE_DIFF_BLOCK_COUNT,
+    rootPath: LARGE_CHANGE_ROOT,
+    fileCount: filePaths.length,
+    directoryCount:
+      2 + LARGE_CHANGE_GROUP_COUNT + LARGE_CHANGE_GROUP_COUNT * LARGE_CHANGE_BUCKETS_PER_GROUP,
     hunkCount,
-    addedLines: Number.parseInt(addedText, 10) || 0,
-    deletedLines: Number.parseInt(deletedText, 10) || 0,
+    addedLines,
+    deletedLines,
   };
 }
 
@@ -167,7 +181,7 @@ test.describe("immersive review performance profiling", () => {
 
     await resetReactProfileSamples(page);
 
-    const runLabel = `review-immersive-mark-read-${diffSummary.hunkCount}-hunks`;
+    const runLabel = `review-immersive-mark-read-${diffSummary.fileCount}-files-${diffSummary.hunkCount}-hunks`;
     const chromeProfile = await withChromeProfiles(page, { label: runLabel }, async () => {
       await markReadButton.dispatchEvent("click");
       await expect(
@@ -204,7 +218,7 @@ test.describe("immersive review performance profiling", () => {
       historyProfile: diffSummary,
     });
 
-    expect(chromeProfile.wallTimeMs).toBeGreaterThan(0);
+    expect(chromeProfile.wallTimeMs).toBeLessThan(1_000);
     expect(chromeProfile.cpuProfile).not.toBeNull();
     expect(reactProfileSnapshot.enabled).toBe(true);
 

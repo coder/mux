@@ -1551,7 +1551,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         <div className="text-muted flex h-full items-center justify-center text-sm">
           Loading diff...
         </div>
-      ) : (
+      ) : !isImmersive ? (
+        // Immersive review renders into its own overlay, so skip the regular review DOM
+        // while it's active to avoid rerendering the hidden file tree and hunk list.
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {diffState.truncationWarning && (
             <div className="bg-warning/10 border-warning/30 text-warning mx-3 my-3 flex items-center gap-1.5 rounded border px-3 py-1.5 text-[10px] leading-[1.3]">
@@ -1739,7 +1741,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Immersive review mode: render into workspace overlay */}
       {isImmersive &&

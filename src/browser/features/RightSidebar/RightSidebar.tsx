@@ -164,6 +164,9 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
         "bg-surface-primary border-l border-border-light flex flex-col overflow-hidden flex-shrink-0",
         // Hide on mobile touch devices - too narrow for useful interaction
         "mobile-hide-right-sidebar",
+        // Immersive review renders its own full-screen overlay, so hiding the underlying
+        // sidebar container cuts layout/paint cost without discarding its React state.
+        immersiveHidden && "hidden",
         !isResizing && "transition-[width] duration-200",
         collapsed && "sticky right-0 z-10 shadow-[-2px_0_4px_rgba(0,0,0,0.2)]",
         // In desktop mode, hide the left border when collapsed to avoid
