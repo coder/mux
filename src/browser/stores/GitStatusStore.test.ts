@@ -2,7 +2,9 @@ import type { Result } from "@/common/types/result";
 import type { BashToolResult } from "@/common/types/tools";
 
 import { describe, it, test, expect, beforeEach, afterEach, jest } from "@jest/globals";
+import { GIT_FETCH_SCRIPT } from "@/common/utils/git/gitStatus";
 import { GitStatusStore } from "./GitStatusStore";
+import type { RuntimeStatus, RuntimeStatusStore } from "./RuntimeStatusStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
@@ -19,6 +21,89 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
  */
 
 const mockExecuteBash = jest.fn<() => Promise<Result<BashToolResult, string>>>();
+
+const DEVCONTAINER_RUNTIME = {
+  type: "devcontainer" as const,
+  configPath: ".devcontainer/devcontainer.json",
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitUntil(condition: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for passive git fetch");
+    }
+    await sleep(10);
+  }
+}
+
+function createWorkspaceMetadata(
+  workspaceId: string,
+  runtimeConfig: FrontendWorkspaceMetadata["runtimeConfig"] = DEFAULT_RUNTIME_CONFIG
+): FrontendWorkspaceMetadata {
+  return {
+    id: workspaceId,
+    name: workspaceId,
+    projectName: "test-project",
+    projectPath: "/home/user/test-project",
+    namedWorkspacePath: `/home/user/.mux/src/test-project/${workspaceId}`,
+    runtimeConfig,
+  };
+}
+
+function createRuntimeStatusStoreMock(initialStatus: RuntimeStatus | null) {
+  let runtimeStatus = initialStatus;
+  const subscribeKeyListeners = new Map<string, Set<() => void>>();
+
+  return {
+    runtimeStatusStore: {
+      getStatus: (_workspaceId: string) => runtimeStatus,
+      subscribeKey: (workspaceId: string, listener: () => void) => {
+        let listeners = subscribeKeyListeners.get(workspaceId);
+        if (!listeners) {
+          listeners = new Set();
+          subscribeKeyListeners.set(workspaceId, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+          listeners?.delete(listener);
+        };
+      },
+    } satisfies Pick<RuntimeStatusStore, "getStatus" | "subscribeKey">,
+    setStatus(nextStatus: RuntimeStatus | null) {
+      runtimeStatus = nextStatus;
+    },
+    emit(workspaceId: string) {
+      for (const listener of Array.from(subscribeKeyListeners.get(workspaceId) ?? [])) {
+        listener();
+      }
+    },
+    getListenerCount(workspaceId: string) {
+      return subscribeKeyListeners.get(workspaceId)?.size ?? 0;
+    },
+  };
+}
+
+function getFetchCallCount(): number {
+  return mockExecuteBash.mock.calls.filter((call) => {
+    const args = call[0] as { script?: string } | undefined;
+    return args?.script === GIT_FETCH_SCRIPT;
+  }).length;
+}
+
+function createStore(
+  runtimeStatusStore?: Pick<RuntimeStatusStore, "getStatus" | "subscribeKey">
+): GitStatusStore {
+  const store = new GitStatusStore(runtimeStatusStore);
+  store.setClient({
+    workspace: {
+      executeBash: mockExecuteBash,
+    },
+  } as unknown as Parameters<GitStatusStore["setClient"]>[0]);
+  return store;
+}
 
 describe("GitStatusStore", () => {
   let store: GitStatusStore;
@@ -43,13 +128,7 @@ describe("GitStatusStore", () => {
       },
     } as unknown as Window & typeof globalThis;
 
-    store = new GitStatusStore();
-    // Set up mock client for ORPC calls
-    store.setClient({
-      workspace: {
-        executeBash: mockExecuteBash,
-      },
-    } as unknown as Parameters<typeof store.setClient>[0]);
+    store = createStore();
   });
 
   afterEach(() => {
@@ -309,6 +388,61 @@ describe("GitStatusStore", () => {
     expect(listener).not.toHaveBeenCalled();
 
     unsub();
+  });
+
+  describe("passive fetch runtime gating", () => {
+    it("skips passive fetch for devcontainer with unresolved runtime status", async () => {
+      store.dispose();
+      const workspaceId = "dc-unresolved";
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME)]])
+      );
+      const unsubscribe = store.subscribeKey(workspaceId, jest.fn());
+
+      await waitUntil(() => runtimeStatusStore.getListenerCount(workspaceId) > 0);
+      expect(getFetchCallCount()).toBe(0);
+
+      mockExecuteBash.mockClear();
+
+      // @ts-expect-error - Accessing private method for passive fetch coverage
+      await store.updateGitStatus();
+
+      expect(getFetchCallCount()).toBe(0);
+      expect(mockExecuteBash).toHaveBeenCalled();
+
+      unsubscribe();
+    });
+
+    it("retries passive fetch when devcontainer runtime transitions from null to running", async () => {
+      store.dispose();
+      const workspaceId = "dc-retry";
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME)]])
+      );
+      const unsubscribe = store.subscribeKey(workspaceId, jest.fn());
+
+      await waitUntil(() => runtimeStatusStore.getListenerCount(workspaceId) > 0);
+      expect(getFetchCallCount()).toBe(0);
+
+      mockExecuteBash.mockClear();
+
+      // @ts-expect-error - Accessing private method for passive fetch coverage
+      await store.updateGitStatus();
+      expect(getFetchCallCount()).toBe(0);
+
+      mockExecuteBash.mockClear();
+      runtimeStatusStore.setStatus("running");
+      runtimeStatusStore.emit(workspaceId);
+
+      await waitUntil(() => getFetchCallCount() > 0);
+      expect(getFetchCallCount()).toBe(1);
+
+      unsubscribe();
+    });
   });
 
   describe("reference stability", () => {

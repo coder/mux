@@ -35,6 +35,39 @@ async function waitUntil(condition: () => boolean, timeoutMs = 1000): Promise<vo
   }
 }
 
+function createRuntimeStatusStoreMock(initialStatus: RuntimeStatus | null) {
+  let runtimeStatus = initialStatus;
+  const subscribeKeyListeners = new Map<string, Set<() => void>>();
+
+  return {
+    runtimeStatusStore: {
+      getStatus: (_workspaceId: string) => runtimeStatus,
+      subscribeKey: (workspaceId: string, listener: () => void) => {
+        let listeners = subscribeKeyListeners.get(workspaceId);
+        if (!listeners) {
+          listeners = new Set();
+          subscribeKeyListeners.set(workspaceId, listeners);
+        }
+        listeners.add(listener);
+        return () => {
+          listeners?.delete(listener);
+        };
+      },
+    },
+    setStatus: (nextStatus: RuntimeStatus | null) => {
+      runtimeStatus = nextStatus;
+    },
+    emit(workspaceId: string) {
+      for (const listener of Array.from(subscribeKeyListeners.get(workspaceId) ?? [])) {
+        listener();
+      }
+    },
+    getListenerCount(workspaceId: string) {
+      return subscribeKeyListeners.get(workspaceId)?.size ?? 0;
+    },
+  };
+}
+
 async function runPassiveRefreshScenario(
   metadata: FrontendWorkspaceMetadata,
   runtimeStatus: RuntimeStatus | null,
@@ -102,6 +135,70 @@ describe("passive refresh runtime gating", () => {
     );
 
     expect(callCount).toBe(1);
+  });
+
+  it("retries PR refresh when devcontainer runtime transitions from null to running", async () => {
+    const metadata = createWorkspaceMetadata("dc-retry", DEVCONTAINER_RUNTIME);
+    const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+    const executeBash = mock(() => {
+      return Promise.resolve({ success: false as const, error: "gh unavailable" });
+    });
+    const store = new PRStatusStore(runtimeStatusStore.runtimeStatusStore);
+
+    try {
+      store.setClient({
+        workspace: {
+          executeBash,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(new Map([[metadata.id, metadata]]));
+      await sleep(0);
+      store.subscribeWorkspace(metadata.id, () => undefined);
+
+      await waitUntil(() => runtimeStatusStore.getListenerCount(metadata.id) > 0);
+      expect(executeBash.mock.calls.length).toBe(0);
+
+      runtimeStatusStore.setStatus("running");
+      runtimeStatusStore.emit(metadata.id);
+
+      await waitUntil(() => executeBash.mock.calls.length > 0);
+      expect(executeBash.mock.calls.length).toBe(1);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("does not retry PR refresh when devcontainer runtime stays stopped", async () => {
+    const metadata = createWorkspaceMetadata("dc-stays-stopped", DEVCONTAINER_RUNTIME);
+    const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+    const executeBash = mock(() => {
+      return Promise.resolve({ success: false as const, error: "gh unavailable" });
+    });
+    const store = new PRStatusStore(runtimeStatusStore.runtimeStatusStore);
+
+    try {
+      store.setClient({
+        workspace: {
+          executeBash,
+        },
+      } as unknown as Parameters<PRStatusStore["setClient"]>[0]);
+
+      store.syncWorkspaces(new Map([[metadata.id, metadata]]));
+      await sleep(0);
+      store.subscribeWorkspace(metadata.id, () => undefined);
+
+      await waitUntil(() => runtimeStatusStore.getListenerCount(metadata.id) > 0);
+      expect(executeBash.mock.calls.length).toBe(0);
+
+      runtimeStatusStore.setStatus("stopped");
+      runtimeStatusStore.emit(metadata.id);
+      await sleep(100);
+
+      expect(executeBash.mock.calls.length).toBe(0);
+    } finally {
+      store.dispose();
+    }
   });
 
   it("runs passive PR refresh for non-devcontainer workspace", async () => {
