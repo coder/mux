@@ -556,10 +556,13 @@ describe("GitStatusStore", () => {
       });
 
       // @ts-expect-error - Accessing private method for passive fetch coverage
-      await store.fetchSecondaryWorkspaceRepos("project-a", workspaceId, [
-        "/home/user/project-b",
-        "/home/user/project-c",
-      ]);
+      await store.fetchSecondaryWorkspaceRepos(
+        "project-a",
+        new Map([
+          ["/home/user/project-b", workspaceId],
+          ["/home/user/project-c", workspaceId],
+        ])
+      );
 
       const fetchCalls = mockExecuteBash.mock.calls
         .map(
@@ -573,6 +576,73 @@ describe("GitStatusStore", () => {
 
       expect(fetchCalls).toHaveLength(1);
       expect(fetchCalls[0]?.options?.repoRootProjectPath).toBe("/home/user/project-b");
+    });
+
+    it("uses each secondary repo's owning workspace when fetch keys are shared", async () => {
+      const workspaceIdA = "shared-fetch-a";
+      const workspaceIdB = "shared-fetch-b";
+      const sharedProjectName = "shared-project";
+      const workspaces = new Map<string, FrontendWorkspaceMetadata>([
+        [
+          workspaceIdA,
+          {
+            ...createWorkspaceMetadata(workspaceIdA),
+            projectName: sharedProjectName,
+            projectPath: "/home/user/project-a",
+            projects: [
+              { projectPath: "/home/user/project-a", projectName: "project-a" },
+              { projectPath: "/home/user/project-b", projectName: "project-b" },
+            ],
+          },
+        ],
+        [
+          workspaceIdB,
+          {
+            ...createWorkspaceMetadata(workspaceIdB),
+            projectName: sharedProjectName,
+            projectPath: "/home/user/project-c",
+            projects: [
+              { projectPath: "/home/user/project-c", projectName: "project-c" },
+              { projectPath: "/home/user/project-d", projectName: "project-d" },
+            ],
+          },
+        ],
+      ]);
+      store.syncWorkspaces(workspaces);
+
+      // @ts-expect-error - Accessing private method for secondary fetch aggregation coverage
+      const secondaryRepoProjectPaths = store.getSecondaryRepoProjectPathsForFetchKey(
+        sharedProjectName,
+        workspaces
+      );
+
+      expect(Array.from(secondaryRepoProjectPaths.entries())).toEqual([
+        ["/home/user/project-b", workspaceIdA],
+        ["/home/user/project-d", workspaceIdB],
+      ]);
+
+      // @ts-expect-error - Accessing private method for passive fetch coverage
+      await store.fetchSecondaryWorkspaceRepos(sharedProjectName, secondaryRepoProjectPaths);
+
+      const fetchCalls = mockExecuteBash.mock.calls
+        .map(
+          (call) =>
+            (call as unknown[])[0] as {
+              workspaceId?: string;
+              script?: string;
+              options?: { repoRootProjectPath?: string };
+            }
+        )
+        .filter((call) => call.script === GIT_FETCH_SCRIPT)
+        .map((call) => ({
+          workspaceId: call.workspaceId,
+          repoRootProjectPath: call.options?.repoRootProjectPath,
+        }));
+
+      expect(fetchCalls).toEqual([
+        { workspaceId: workspaceIdA, repoRootProjectPath: "/home/user/project-b" },
+        { workspaceId: workspaceIdB, repoRootProjectPath: "/home/user/project-d" },
+      ]);
     });
   });
 

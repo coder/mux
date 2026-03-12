@@ -718,8 +718,8 @@ export class GitStatusStore {
   private getSecondaryRepoProjectPathsForFetchKey(
     fetchKey: string,
     workspaces: ReadonlyMap<string, FrontendWorkspaceMetadata>
-  ): string[] {
-    const secondaryRepoProjectPaths = new Set<string>();
+  ): ReadonlyMap<string, string> {
+    const secondaryRepoProjectPaths = new Map<string, string>();
 
     for (const metadata of workspaces.values()) {
       if (this.getFetchKey(metadata) !== fetchKey || !isMultiProject(metadata)) {
@@ -731,13 +731,20 @@ export class GitStatusStore {
           project.projectPath.trim().length > 0,
           "Secondary repo fetch requires a projectPath"
         );
-        if (project.projectPath !== metadata.projectPath) {
-          secondaryRepoProjectPaths.add(project.projectPath);
+        if (project.projectPath === metadata.projectPath) {
+          continue;
         }
+
+        const existingWorkspaceId = secondaryRepoProjectPaths.get(project.projectPath);
+        assert(
+          existingWorkspaceId == null || existingWorkspaceId === metadata.id,
+          `Secondary repo path ${project.projectPath} cannot belong to multiple workspaces for fetch key ${fetchKey}`
+        );
+        secondaryRepoProjectPaths.set(project.projectPath, metadata.id);
       }
     }
 
-    return Array.from(secondaryRepoProjectPaths);
+    return secondaryRepoProjectPaths;
   }
 
   /**
@@ -748,7 +755,10 @@ export class GitStatusStore {
   private tryFetchWorkspaces(workspaces: Map<string, FrontendWorkspaceMetadata>): void {
     const representativeWorkspaces = new Map<
       string,
-      { metadata: FrontendWorkspaceMetadata; secondaryRepoProjectPaths: readonly string[] }
+      {
+        metadata: FrontendWorkspaceMetadata;
+        secondaryRepoProjectPathsByWorkspaceId: ReadonlyMap<string, string>;
+      }
     >();
 
     // Passive fetches are skipped for devcontainer workspaces whose runtime is not
@@ -791,7 +801,7 @@ export class GitStatusStore {
 
       representativeWorkspaces.set(fetchKey, {
         metadata,
-        secondaryRepoProjectPaths: this.getSecondaryRepoProjectPathsForFetchKey(
+        secondaryRepoProjectPathsByWorkspaceId: this.getSecondaryRepoProjectPathsForFetchKey(
           fetchKey,
           workspaces
         ),
@@ -801,7 +811,7 @@ export class GitStatusStore {
     // Find the workspace that needs fetching most urgently
     let targetFetchKey: string | null = null;
     let targetWorkspaceId: string | null = null;
-    let targetSecondaryRepoProjectPaths: readonly string[] = [];
+    let targetSecondaryRepoProjectPathsByWorkspaceId: ReadonlyMap<string, string> = new Map();
     let oldestTime = Date.now();
 
     for (const [fetchKey, representative] of representativeWorkspaces) {
@@ -812,13 +822,18 @@ export class GitStatusStore {
         oldestTime = lastFetch;
         targetFetchKey = fetchKey;
         targetWorkspaceId = representative.metadata.id;
-        targetSecondaryRepoProjectPaths = representative.secondaryRepoProjectPaths;
+        targetSecondaryRepoProjectPathsByWorkspaceId =
+          representative.secondaryRepoProjectPathsByWorkspaceId;
       }
     }
 
     if (targetFetchKey && targetWorkspaceId) {
       // Fetch in background (don't await - don't block status checks)
-      void this.fetchWorkspace(targetFetchKey, targetWorkspaceId, targetSecondaryRepoProjectPaths);
+      void this.fetchWorkspace(
+        targetFetchKey,
+        targetWorkspaceId,
+        targetSecondaryRepoProjectPathsByWorkspaceId
+      );
     }
   }
 
@@ -864,17 +879,22 @@ export class GitStatusStore {
 
   private async fetchSecondaryWorkspaceRepos(
     fetchKey: string,
-    workspaceId: string,
-    projectPaths: readonly string[]
+    projectPathsByWorkspaceId: ReadonlyMap<string, string>
   ): Promise<void> {
-    if (!this.client || !this.isActive || !this.workspaceMetadata.has(workspaceId)) {
+    if (!this.client || !this.isActive) {
       return;
     }
 
-    for (const projectPath of projectPaths) {
+    for (const [projectPath, workspaceId] of projectPathsByWorkspaceId) {
       const metadata = this.workspaceMetadata.get(workspaceId);
-      if (!this.client || !this.isActive || !metadata) {
+      if (!this.client || !this.isActive) {
         return;
+      }
+      if (!metadata) {
+        console.debug(
+          `[fetch] Skipping secondary repo fetch for ${fetchKey} (${projectPath}): workspace ${workspaceId} is no longer tracked`
+        );
+        continue;
       }
       if (
         !canRunPassiveRuntimeCommand(
@@ -883,21 +903,23 @@ export class GitStatusStore {
         )
       ) {
         // Secondary repo fetches also run in the runtime context, so re-check passive
-        // eligibility before each repo in case the runtime stopped after the primary fetch.
+        // eligibility before each repo in case the owning runtime stopped after the
+        // primary fetch or another workspace on the same fetch key scheduled this repo.
         console.debug(
-          `[fetch] Skipping remaining secondary repo fetches for ${fetchKey}: runtime no longer eligible`
+          `[fetch] Skipping secondary repo fetch for ${fetchKey} (${projectPath}): workspace ${workspaceId} is no longer eligible`
         );
-        return;
+        continue;
       }
 
       assert(projectPath.trim().length > 0, "Secondary repo fetch requires a projectPath");
+      assert(workspaceId.trim().length > 0, "Secondary repo fetch requires a workspaceId");
       try {
         await this.executeWorkspaceFetch(workspaceId, projectPath);
       } catch (secondaryError) {
         // Secondary fetches are best-effort so a single stale repo does not back off
         // the entire workspace's primary background refresh loop.
         console.debug(
-          `[fetch] Secondary repo fetch failed for ${fetchKey} (${projectPath}):`,
+          `[fetch] Secondary repo fetch failed for ${fetchKey} (${projectPath}) via ${workspaceId}:`,
           secondaryError
         );
       }
@@ -913,7 +935,7 @@ export class GitStatusStore {
   private async fetchWorkspace(
     fetchKey: string,
     workspaceId: string,
-    secondaryRepoProjectPaths: readonly string[] = []
+    secondaryRepoProjectPathsByWorkspaceId: ReadonlyMap<string, string> = new Map()
   ): Promise<void> {
     // Defensive: Return early if client is unavailable
     if (!this.client || !this.workspaceMetadata.has(workspaceId)) {
@@ -934,11 +956,11 @@ export class GitStatusStore {
     try {
       await this.executeWorkspaceFetch(workspaceId);
 
-      if (secondaryRepoProjectPaths.length > 0) {
+      if (secondaryRepoProjectPathsByWorkspaceId.size > 0) {
         // Keep passive refreshes non-blocking for the current status check while still
         // refreshing every repo root covered by workspaces that share this fetch key.
         setTimeout(() => {
-          this.fetchSecondaryWorkspaceRepos(fetchKey, workspaceId, secondaryRepoProjectPaths).catch(
+          this.fetchSecondaryWorkspaceRepos(fetchKey, secondaryRepoProjectPathsByWorkspaceId).catch(
             (secondaryError) => {
               console.debug(
                 `[fetch] Secondary repo refresh loop failed for ${fetchKey}:`,
