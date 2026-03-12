@@ -648,7 +648,7 @@ describe("GitStatusStore", () => {
   describe("multi-project refreshes", () => {
     it("uses one project-status IPC call and derives workspace summaries", async () => {
       store.dispose();
-      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      const runtimeStatusStore = createRuntimeStatusStoreMock("running");
       store = createStore(runtimeStatusStore.runtimeStatusStore);
 
       const workspaceId = "multi-summary";
@@ -700,7 +700,8 @@ describe("GitStatusStore", () => {
         workspaceId,
         baseRef: expect.any(String),
       });
-      expect(mockExecuteBash).not.toHaveBeenCalled();
+      expect(getFetchCallCount()).toBe(1);
+      expect(mockExecuteBash).toHaveBeenCalledTimes(getFetchCallCount());
       expect(store.getProjectStatuses(workspaceId)).toEqual(projectResults);
       expect(store.getProjectStatuses(workspaceId)).toBe(store.getProjectStatuses(workspaceId));
 
@@ -726,9 +727,61 @@ describe("GitStatusStore", () => {
       unsubscribe();
     });
 
+    it("skips multi-project IPC when passive runtime commands are ineligible and preserves cached state", async () => {
+      store.dispose();
+      const runtimeStatusStore = createRuntimeStatusStoreMock("running");
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+
+      const workspaceId = "multi-passive-gate";
+      const metadata = createMultiProjectWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME);
+      const initialResults = [
+        createProjectStatusResult({
+          projectPath: "/home/user/project-a",
+          projectName: "project-a",
+          gitStatus: createGitStatus({ branch: "primary-branch", ahead: 1, dirty: true }),
+        }),
+        createProjectStatusResult({
+          projectPath: "/home/user/project-b",
+          projectName: "project-b",
+          gitStatus: createGitStatus({ branch: "secondary-branch", behind: 2 }),
+        }),
+      ];
+      mockGetProjectGitStatuses.mockResolvedValue(initialResults);
+
+      store.syncWorkspaces(new Map([[workspaceId, metadata]]));
+      await sleep(0);
+      mockGetProjectGitStatuses.mockClear();
+      mockExecuteBash.mockClear();
+      // @ts-expect-error - Accessing private field for targeted subscription control
+      const unsubscribe = store.projectStatuses.subscribeKey(workspaceId, jest.fn());
+
+      // @ts-expect-error - Accessing private method for refresh coverage
+      await store.updateGitStatus();
+
+      const initialProjectStatuses = store.getProjectStatuses(workspaceId);
+      const initialSummary = store.getMultiProjectSummary(workspaceId);
+      const initialStatus = store.getStatus(workspaceId);
+      expect(initialProjectStatuses).toEqual(initialResults);
+      expect(initialSummary).not.toBeNull();
+      expect(initialStatus).not.toBeNull();
+
+      runtimeStatusStore.setStatus(null);
+      mockGetProjectGitStatuses.mockClear();
+
+      // @ts-expect-error - Accessing private method for passive runtime gating coverage
+      await store.updateGitStatus();
+
+      expect(mockGetProjectGitStatuses).not.toHaveBeenCalled();
+      expect(store.getProjectStatuses(workspaceId)).toBe(initialProjectStatuses);
+      expect(store.getMultiProjectSummary(workspaceId)).toBe(initialSummary);
+      expect(store.getStatus(workspaceId)).toBe(initialStatus);
+
+      unsubscribe();
+    });
+
     it("preserves per-project errors in the summary instead of dropping failed rows", async () => {
       store.dispose();
-      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      const runtimeStatusStore = createRuntimeStatusStoreMock("running");
       store = createStore(runtimeStatusStore.runtimeStatusStore);
 
       const workspaceId = "multi-errors";
@@ -782,7 +835,7 @@ describe("GitStatusStore", () => {
 
     it("ignores stale multi-project results after invalidation generation changes", async () => {
       store.dispose();
-      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      const runtimeStatusStore = createRuntimeStatusStoreMock("running");
       store = createStore(runtimeStatusStore.runtimeStatusStore);
 
       const workspaceId = "multi-stale";
@@ -844,7 +897,7 @@ describe("GitStatusStore", () => {
 
     it("tracks refreshing state while a multi-project refresh is pending", async () => {
       store.dispose();
-      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      const runtimeStatusStore = createRuntimeStatusStoreMock("running");
       store = createStore(runtimeStatusStore.runtimeStatusStore);
 
       const workspaceId = "multi-refreshing";

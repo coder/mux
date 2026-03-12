@@ -643,6 +643,23 @@ export class GitStatusStore {
       };
     }
 
+    if (
+      !canRunPassiveRuntimeCommand(
+        metadata.runtimeConfig,
+        this.runtimeStatusStore.getStatus(metadata.id)
+      )
+    ) {
+      // Multi-project git status goes through the runtime-backed backend path,
+      // so passive refreshes must not wake stopped runtimes.
+      return {
+        kind: "multi",
+        workspaceId: metadata.id,
+        legacyStatus: null,
+        projectStatuses: null,
+        summary: null,
+      };
+    }
+
     try {
       const baseRef = this.getBaseRef(metadata);
       const results: ApiProjectGitStatusResult[] =
