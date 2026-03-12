@@ -8,6 +8,7 @@ import { EventRowSchema, type EventRow } from "@/common/orpc/schemas/analytics";
 import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { log } from "@/node/services/log";
+import { toUtcDateString } from "@/node/services/analytics/dateUtils";
 
 export const CHAT_FILE_NAME = "chat.jsonl";
 const METADATA_FILE_NAME = "metadata.json";
@@ -291,7 +292,7 @@ function dateBucketFromTimestamp(timestampMs: number | null): string | null {
     return null;
   }
 
-  return date.toISOString().slice(0, 10);
+  return toUtcDateString(date);
 }
 
 function parseUsage(rawUsage: unknown): LanguageModelV2Usage | undefined {
