@@ -1992,7 +1992,6 @@ describe("WorkspaceService getProjectGitStatuses", () => {
       metadata.id,
       "git fetch --quiet",
       expect.objectContaining({
-        executionTarget: "host-workspace",
         cwdMode: "repo-root",
         repoRootProjectPath: "/tmp/project-a",
         timeout_secs: 10,
@@ -2003,12 +2002,13 @@ describe("WorkspaceService getProjectGitStatuses", () => {
       metadata.id,
       expect.stringContaining('PREFERRED_BRANCH=""'),
       expect.objectContaining({
-        executionTarget: "host-workspace",
         cwdMode: "repo-root",
         repoRootProjectPath: "/tmp/project-a",
         timeout_secs: 5,
       })
     );
+    expect(executeBashMock.mock.calls[0]?.[2]).not.toHaveProperty("executionTarget");
+    expect(executeBashMock.mock.calls[1]?.[2]).not.toHaveProperty("executionTarget");
   });
 
   test("returns one entry per project in stable order for multi-project workspaces", async () => {

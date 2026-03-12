@@ -3657,7 +3657,6 @@ export class WorkspaceService extends EventEmitter {
         // best-effort fetch here instead of relying on the primary-repo scheduler refresh.
         try {
           const fetchResult = await this.executeBash(workspaceId, "git fetch --quiet", {
-            executionTarget: "host-workspace",
             cwdMode: "repo-root",
             repoRootProjectPath: project.projectPath,
             timeout_secs: 10,
@@ -3688,7 +3687,6 @@ export class WorkspaceService extends EventEmitter {
         }
 
         const result = await this.executeBash(workspaceId, script, {
-          executionTarget: "host-workspace",
           cwdMode: "repo-root",
           repoRootProjectPath: project.projectPath,
           timeout_secs: 5,
