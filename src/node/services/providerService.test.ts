@@ -447,6 +447,65 @@ describe("ProviderService gateway lifecycle", () => {
     });
   });
 
+  it("preserves manual bedrock routePriority entry when only region is configured", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["bedrock", "direct"],
+      });
+      config.saveProvidersConfig({
+        bedrock: { region: "us-east-1" },
+      });
+
+      // Updating the region should not remove the manually added bedrock route,
+      // even though Bedrock is not auto-route-eligible without auth signals.
+      const result = await service.setConfig("bedrock", ["region"], "us-west-2");
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toContain("bedrock");
+    });
+  });
+
+  it("removes bedrock from routePriority when fully deconfigured", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["bedrock", "direct"],
+      });
+      config.saveProvidersConfig({
+        bedrock: { region: "us-east-1" },
+      });
+
+      // Clearing the region leaves Bedrock fully deconfigured — should remove.
+      const result = await service.setConfig("bedrock", ["region"], "");
+
+      expect(result.success).toBe(true);
+      const updatedPriority = config.loadConfigOrDefault().routePriority ?? ["direct"];
+      expect(updatedPriority).not.toContain("bedrock");
+    });
+  });
+
+  it("removes bedrock from routePriority when explicitly disabled", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["bedrock", "direct"],
+      });
+      config.saveProvidersConfig({
+        bedrock: { region: "us-east-1" },
+      });
+
+      const result = await service.setConfig("bedrock", ["enabled"], false);
+
+      expect(result.success).toBe(true);
+      const updatedPriority = config.loadConfigOrDefault().routePriority ?? ["direct"];
+      expect(updatedPriority).not.toContain("bedrock");
+    });
+  });
+
   it("clears legacy muxGatewayEnabled: false when adding gateway to routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
       const existingConfig = config.loadConfigOrDefault();

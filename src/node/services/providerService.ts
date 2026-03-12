@@ -22,6 +22,7 @@ import { log } from "@/node/services/log";
 import {
   checkProviderConfigured,
   isProviderAutoRouteEligible,
+  resolveProviderCredentials,
 } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
@@ -295,7 +296,8 @@ export class ProviderService {
    * After a credential change, sync gateway presence in routePriority.
    * Configured gateways auto-insert immediately before "direct" in routePriority,
    * preserving existing user-defined order.
-   * Unconfigured gateways are removed.
+   * Gateways that are explicitly disabled or fully deconfigured are removed;
+   * configured-but-not-auto-eligible gateways keep any manual route.
    */
   private async syncGatewayLifecycle(provider: string): Promise<void> {
     if (!(provider in PROVIDER_DEFINITIONS)) return;
@@ -326,10 +328,19 @@ export class ProviderService {
         ...(providerName === "mux-gateway" ? { muxGatewayEnabled: undefined } : {}),
       }));
     } else if (!isAutoRouteEligible && priority.includes(providerName)) {
-      await this.config.editConfig((c) => ({
-        ...c,
-        routePriority: priority.filter((p) => p !== providerName),
-      }));
+      // Only remove a gateway from routePriority when it is truly deconfigured
+      // or explicitly disabled. Configured-but-not-auto-eligible providers
+      // (e.g., Bedrock with IAM role auth that has no observable credentials)
+      // should keep any manually added route.
+      const providerConfig = providersConfig[providerName] ?? {};
+      const credentials = resolveProviderCredentials(providerName, providerConfig);
+      const shouldRemove = !credentials.isConfigured || isProviderDisabledInConfig(providerConfig);
+      if (shouldRemove) {
+        await this.config.editConfig((c) => ({
+          ...c,
+          routePriority: priority.filter((p) => p !== providerName),
+        }));
+      }
     }
   }
 
