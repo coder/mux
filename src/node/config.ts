@@ -452,6 +452,17 @@ export class Config {
           }
         }
 
+        if (
+          Array.isArray(parsed.routePriority) &&
+          parsed.routePriority.includes("mux-gateway") &&
+          parsed.muxGatewayEnabled === false
+        ) {
+          // Once routePriority exists, it is the authoritative routing signal. Clear a stale
+          // legacy disable flag so downgrade-compat data cannot veto an explicitly enabled gateway.
+          delete parsed.muxGatewayEnabled;
+          configModified = true;
+        }
+
         // Normalize persisted model preferences while preserving explicit gateway selections.
         if (typeof parsed.defaultModel === "string") {
           const normalized = normalizeSelectedModel(parsed.defaultModel.trim());

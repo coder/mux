@@ -549,6 +549,20 @@ describe("Config", () => {
       expect(loaded.routeOverrides).toBeUndefined();
     });
 
+    it("clears stale muxGatewayEnabled disables when routePriority already includes mux-gateway", () => {
+      writeRawConfig({
+        muxGatewayEnabled: false,
+        routePriority: ["mux-gateway", "direct"],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
+      expect(loaded.muxGatewayEnabled).toBeUndefined();
+      expect(readRawConfig().muxGatewayEnabled).toBeUndefined();
+      expect(new Config(tempDir).loadConfigOrDefault().muxGatewayEnabled).toBeUndefined();
+    });
+
     it("does not rewrite configs that already include routePriority", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
