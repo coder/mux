@@ -6043,6 +6043,80 @@ describe("TaskService", () => {
     );
   });
 
+  test("parent stream-end rechecks cleanup for reported best-of children", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-best-of-cleanup-recheck";
+    const childOneId = "child-best-of-cleanup-recheck-1";
+    const childTwoId = "child-best-of-cleanup-recheck-2";
+    const bestOf = { groupId: "best-of-cleanup-recheck", index: 0, total: 2 } as const;
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child-1"),
+                id: childOneId,
+                name: "agent_explore_child_1",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                bestOf,
+              },
+              {
+                path: path.join(projectPath, "child-2"),
+                id: childTwoId,
+                name: "agent_explore_child_2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                bestOf: { ...bestOf, index: 1 },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: parentId,
+      messageId: "assistant-parent-cleanup-recheck",
+      metadata: { model: "test-model" },
+      parts: [],
+    });
+
+    const remainingTaskIds = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .map((workspace) => workspace.id)
+      .filter((id): id is string => typeof id === "string");
+    expect(remainingTaskIds).not.toContain(childOneId);
+    expect(remainingTaskIds).not.toContain(childTwoId);
+
+    expect(remove).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledWith(childOneId, true);
+    expect(remove).toHaveBeenCalledWith(childTwoId, true);
+  });
+
   async function setupPlanModeStreamEndHarness(options?: {
     planSubagentExecutorRouting?: PlanSubagentExecutorRouting;
     planSubagentDefaultsToOrchestrator?: boolean;

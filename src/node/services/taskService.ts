@@ -2971,6 +2971,10 @@ export class TaskService {
     if (!entry.workspace.parentWorkspaceId) {
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
       if (!hasActiveDescendants) {
+        // Foreground best-of children can finish while the parent task tool call is still pending,
+        // which temporarily blocks their leaf cleanup. Recheck reported children once the parent
+        // stream reaches a descendant-free stream-end so read-only tasks do not linger indefinitely.
+        await this.requestReportedChildCleanupRechecks(workspaceId);
         return;
       }
 
@@ -3390,6 +3394,32 @@ export class TaskService {
     return this.workspaceEventLocks.withLock(workspaceId, async () => {
       await this.cleanupReportedLeafTask(workspaceId);
     });
+  }
+
+  private async requestReportedChildCleanupRechecks(parentWorkspaceId: string): Promise<void> {
+    assert(
+      parentWorkspaceId.length > 0,
+      "requestReportedChildCleanupRechecks: parentWorkspaceId must be non-empty"
+    );
+
+    const cfg = this.config.loadConfigOrDefault();
+    const reportedChildTaskIds: string[] = [];
+    for (const project of cfg.projects.values()) {
+      for (const workspace of project.workspaces) {
+        const workspaceId = coerceNonEmptyString(workspace.id);
+        if (!workspaceId || workspace.parentWorkspaceId !== parentWorkspaceId) {
+          continue;
+        }
+        if (!hasCompletedAgentReport(workspace)) {
+          continue;
+        }
+        reportedChildTaskIds.push(workspaceId);
+      }
+    }
+
+    for (const workspaceId of reportedChildTaskIds) {
+      await this.requestReportedTaskCleanupRecheck(workspaceId);
+    }
   }
 
   private async fallbackReportMissingCompletionTool(
