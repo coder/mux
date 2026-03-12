@@ -787,25 +787,73 @@ export class TaskService {
     await this.maybeStartQueuedTasks();
 
     const config = this.config.loadConfigOrDefault();
+    const taskSettings: TaskSettings = config.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    assert(
+      Number.isFinite(taskSettings.maxParallelAgentTasks) && taskSettings.maxParallelAgentTasks > 0,
+      "TaskService.initialize: maxParallelAgentTasks must be a positive number"
+    );
+
     const awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
-      (t) => t.taskStatus === "awaiting_report"
+      (t) => t.taskStatus === "awaiting_report" && typeof t.id === "string"
     );
     const runningTasks = this.listAgentTaskWorkspaces(config).filter(
-      (t) => t.taskStatus === "running"
+      (t) => t.taskStatus === "running" && typeof t.id === "string"
+    );
+    const recoverableAwaitingReportTasks = awaitingReportTasks.filter(
+      (task) => !this.hasActiveDescendantAgentTasks(config, task.id!)
+    );
+    const recoverableRunningTasks = runningTasks.filter(
+      (task) => !this.hasActiveDescendantAgentTasks(config, task.id!)
     );
 
-    for (const task of awaitingReportTasks) {
-      if (!task.id) continue;
+    const recoveryCandidateCount =
+      recoverableAwaitingReportTasks.length + recoverableRunningTasks.length;
+    // `countActiveAgentTasks()` includes the startup-recovery candidates themselves. Subtract them so
+    // the recovery budget reflects only other active work, then add back each recovery send as we go.
+    const baseActiveTaskCount = Math.max(
+      0,
+      this.countActiveAgentTasks(config) - recoveryCandidateCount
+    );
+    const maxParallelAgentTasks = taskSettings.maxParallelAgentTasks;
 
-      // Avoid resuming a task while it still has active descendants (it shouldn't report yet).
-      const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
-      if (hasActiveDescendants) {
+    let recoveredAwaitingReportCount = 0;
+    let skippedAwaitingReportCount = 0;
+    let recoveredRunningCount = 0;
+    let skippedRunningCount = 0;
+
+    const isRecoveryAtCapacity = (
+      taskId: string,
+      taskStatus: "awaiting_report" | "running"
+    ): boolean => {
+      const recoveredTaskCount = recoveredAwaitingReportCount + recoveredRunningCount;
+      const activeCount = baseActiveTaskCount + recoveredTaskCount;
+      if (activeCount < maxParallelAgentTasks) {
+        return false;
+      }
+
+      log.info(
+        "Skipping task recovery on startup because maxParallelAgentTasks is already at capacity",
+        {
+          taskId,
+          taskStatus,
+          activeCount,
+          maxParallelAgentTasks,
+        }
+      );
+      return true;
+    };
+
+    for (const task of recoverableAwaitingReportTasks) {
+      const taskId = task.id!;
+      if (isRecoveryAtCapacity(taskId, "awaiting_report")) {
+        skippedAwaitingReportCount += 1;
         continue;
       }
+      recoveredAwaitingReportCount += 1;
 
       // Restart-safety: if this task stream ends again without its required completion tool,
       // fall back immediately.
-      this.remindedAwaitingReport.add(task.id);
+      this.remindedAwaitingReport.add(taskId);
 
       const isPlanLike = await this.isPlanLikeTaskWorkspace({
         projectPath: task.projectPath,
@@ -815,7 +863,7 @@ export class TaskService {
 
       const model = task.taskModelString ?? defaultModel;
       const sendResult = await this.workspaceService.sendMessage(
-        task.id,
+        taskId,
         isPlanLike
           ? "This task is awaiting its final propose_plan. Call propose_plan exactly once now."
           : "This task is awaiting its final agent_report. Call agent_report exactly once now.",
@@ -829,7 +877,7 @@ export class TaskService {
       );
       if (!sendResult.success) {
         log.error("Failed to resume awaiting_report task on startup", {
-          taskId: task.id,
+          taskId,
           error: sendResult.error,
         });
 
@@ -842,15 +890,20 @@ export class TaskService {
         );
       }
     }
+    log.info("TaskService startup awaiting_report recovery", {
+      recoveredAwaitingReportCount,
+      totalAwaitingReportTasks: recoverableAwaitingReportTasks.length,
+      skippedDueToConcurrencyLimit: skippedAwaitingReportCount,
+      maxParallelAgentTasks,
+    });
 
-    for (const task of runningTasks) {
-      if (!task.id) continue;
-      // Best-effort: if mux restarted mid-stream, nudge the agent to continue and report.
-      // Only do this when the task has no running descendants, to avoid duplicate spawns.
-      const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
-      if (hasActiveDescendants) {
+    for (const task of recoverableRunningTasks) {
+      const taskId = task.id!;
+      if (isRecoveryAtCapacity(taskId, "running")) {
+        skippedRunningCount += 1;
         continue;
       }
+      recoveredRunningCount += 1;
 
       const isPlanLike = await this.isPlanLikeTaskWorkspace({
         projectPath: task.projectPath,
@@ -859,7 +912,7 @@ export class TaskService {
 
       const model = task.taskModelString ?? defaultModel;
       await this.workspaceService.sendMessage(
-        task.id,
+        taskId,
         isPlanLike
           ? "Mux restarted while this task was running. Continue where you left off. " +
               "When you have a final plan, call propose_plan exactly once."
@@ -874,6 +927,19 @@ export class TaskService {
         { synthetic: true, agentInitiated: true }
       );
     }
+    log.info("TaskService startup running recovery", {
+      recoveredRunningCount,
+      totalRunningTasks: recoverableRunningTasks.length,
+      skippedDueToConcurrencyLimit: skippedRunningCount,
+      maxParallelAgentTasks,
+    });
+
+    const totalSkippedDueToConcurrencyLimit = skippedAwaitingReportCount + skippedRunningCount;
+    log.info(
+      `Recovered ${recoveredAwaitingReportCount}/${recoverableAwaitingReportTasks.length} awaiting_report, ` +
+        `${recoveredRunningCount}/${recoverableRunningTasks.length} running tasks ` +
+        `(${totalSkippedDueToConcurrencyLimit} skipped due to concurrency limit)`
+    );
 
     // Restart-safety for git patch artifacts:
     // - If mux crashed mid-generation, patch artifacts can be left "pending".

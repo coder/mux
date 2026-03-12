@@ -29,6 +29,7 @@ import {
   PLAN_AUTO_ROUTING_STATUS_MESSAGE,
 } from "@/common/constants/planAutoRoutingStatus";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { log } from "@/node/services/log";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
@@ -3493,6 +3494,101 @@ describe("TaskService", () => {
       }),
       expect.objectContaining({ synthetic: true })
     );
+  });
+
+  test("initialize throttles startup recovery to maxParallelAgentTasks", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const awaitingReportTaskId = "awaiting-222";
+    const runningTaskId = "running-333";
+    const throttledRunningTaskId = "running-444";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "awaiting-task"),
+                id: awaitingReportTaskId,
+                name: "agent_explore_awaiting",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "awaiting_report",
+              },
+              {
+                path: path.join(projectPath, "running-task"),
+                id: runningTaskId,
+                name: "agent_explore_running",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+              {
+                path: path.join(projectPath, "throttled-running-task"),
+                id: throttledRunningTaskId,
+                name: "agent_explore_running_throttled",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const logInfoSpy = spyOn(log, "info").mockImplementation(() => undefined);
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    try {
+      await taskService.initialize();
+
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage.mock.calls.map(([taskId]) => taskId)).toEqual([
+        awaitingReportTaskId,
+        runningTaskId,
+      ]);
+      expect(logInfoSpy).toHaveBeenCalledWith(
+        "TaskService startup awaiting_report recovery",
+        expect.objectContaining({
+          recoveredAwaitingReportCount: 1,
+          totalAwaitingReportTasks: 1,
+          skippedDueToConcurrencyLimit: 0,
+          maxParallelAgentTasks: 2,
+        })
+      );
+      expect(logInfoSpy).toHaveBeenCalledWith(
+        "TaskService startup running recovery",
+        expect.objectContaining({
+          recoveredRunningCount: 1,
+          totalRunningTasks: 2,
+          skippedDueToConcurrencyLimit: 1,
+          maxParallelAgentTasks: 2,
+        })
+      );
+      expect(logInfoSpy).toHaveBeenCalledWith(
+        "Skipping task recovery on startup because maxParallelAgentTasks is already at capacity",
+        expect.objectContaining({
+          taskId: throttledRunningTaskId,
+          taskStatus: "running",
+          activeCount: 2,
+          maxParallelAgentTasks: 2,
+        })
+      );
+      expect(logInfoSpy).toHaveBeenCalledWith(
+        "Recovered 1/1 awaiting_report, 1/2 running tasks (1 skipped due to concurrency limit)"
+      );
+    } finally {
+      logInfoSpy.mockRestore();
+    }
   });
 
   describe("backgroundForegroundWaitsForWorkspace", () => {
