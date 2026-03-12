@@ -56,6 +56,46 @@ describe("workspace.updateAgentAISettings", () => {
     }
   }, 60000);
 
+  test("preserves explicit gateway model IDs when persisting agent settings", async () => {
+    const env: TestEnvironment = await createTestEnvironment();
+    const tempGitRepo = await createTempGitRepo();
+
+    try {
+      const branchName = generateBranchName("ai-settings-gateway-model");
+      const createResult = await createWorkspace(env, tempGitRepo, branchName);
+      if (!createResult.success) {
+        throw new Error(`Workspace creation failed: ${createResult.error}`);
+      }
+
+      const workspaceId = createResult.metadata.id;
+      expect(workspaceId).toBeTruthy();
+
+      const client = resolveOrpcClient(env);
+      const updateResult = await client.workspace.updateAgentAISettings({
+        workspaceId: workspaceId!,
+        agentId: "exec",
+        aiSettings: { model: "openrouter:openai/gpt-5", thinkingLevel: "off" },
+      });
+      expect(updateResult.success).toBe(true);
+
+      const info = await client.workspace.getInfo({ workspaceId: workspaceId! });
+      expect(info?.aiSettingsByAgent?.exec).toEqual({
+        model: "openrouter:openai/gpt-5",
+        thinkingLevel: "off",
+      });
+
+      const list = await client.workspace.list();
+      const fromList = list.find((m) => m.id === workspaceId);
+      expect(fromList?.aiSettingsByAgent?.exec).toEqual({
+        model: "openrouter:openai/gpt-5",
+        thinkingLevel: "off",
+      });
+    } finally {
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(tempGitRepo);
+    }
+  }, 60000);
+
   test("compaction requests do not override workspace agent settings", async () => {
     const env: TestEnvironment = await createTestEnvironment();
     const tempGitRepo = await createTempGitRepo();

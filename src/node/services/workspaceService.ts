@@ -86,7 +86,11 @@ import {
   isSSHRuntime,
   isDockerRuntime,
 } from "@/common/types/runtime";
-import { isValidModelFormat, normalizeToCanonical } from "@/common/utils/ai/models";
+import {
+  isValidModelFormat,
+  normalizeSelectedModel,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -3564,7 +3568,7 @@ export class WorkspaceService extends EventEmitter {
     aiSettings: WorkspaceAISettings
   ): Result<WorkspaceAISettings, string> {
     const rawModel = aiSettings.model;
-    const model = normalizeToCanonical(rawModel).trim();
+    const model = normalizeSelectedModel(rawModel).trim();
     if (!model) {
       return Err("Model is required");
     }
@@ -3604,7 +3608,7 @@ export class WorkspaceService extends EventEmitter {
       return null;
     }
 
-    const model = normalizeToCanonical(rawModel).trim();
+    const model = normalizeSelectedModel(rawModel).trim();
     if (!isValidModelFormat(model)) {
       return null;
     }
