@@ -4564,7 +4564,11 @@ describe("TaskService", () => {
     if (afterSecondParentPartial) {
       const toolPart = afterSecondParentPartial.parts.find(
         (p) => isDynamicToolPart(p) && p.toolName === "task"
-      ) as DynamicToolPart | undefined;
+      ) as
+        | (DynamicToolPart & {
+            output?: unknown;
+          })
+        | undefined;
       expect(toolPart?.state).toBe("output-available");
       expect(toolPart?.output && typeof toolPart.output === "object").toBe(true);
       const serializedOutput = JSON.stringify(toolPart?.output);
