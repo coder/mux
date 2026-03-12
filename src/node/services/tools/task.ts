@@ -41,7 +41,7 @@ interface SpawnedTaskInfo {
 
 interface PendingTaskInfo {
   taskId: string;
-  status: "queued" | "running" | "completed";
+  status: "queued" | "running" | "completed" | "interrupted";
 }
 
 interface CompletedTaskInfo {
@@ -57,6 +57,7 @@ type ForegroundWaitOutcome =
   | { kind: "backgrounded" }
   | { kind: "timed_out" }
   | { kind: "interrupted" }
+  | { kind: "task_interrupted" }
   | { kind: "error"; error: unknown };
 
 function buildBestOfGroupId(workspaceId: string, toolCallId: string | undefined): string {
@@ -121,6 +122,12 @@ function buildForegroundContinuationNote(
   return taskCount === 1
     ? "Task exceeded foreground wait limit and continues running in background. Use task_await to monitor progress."
     : "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.";
+}
+
+function buildInterruptedTaskNote(taskCount: number): string {
+  return taskCount === 1
+    ? "Task was interrupted before reporting. Use task_await to inspect the final task state."
+    : "Some tasks were interrupted before reporting. Use task_await to inspect the final task states.";
 }
 
 function buildPendingTaskResult(params: {
@@ -195,7 +202,12 @@ function normalizePendingTaskStatuses(params: {
       params.taskService.getAgentTaskStatus(createdTask.taskId) ?? createdTask.status;
     return {
       taskId: createdTask.taskId,
-      status: currentStatus === "queued" ? "queued" : "running",
+      status:
+        currentStatus === "queued"
+          ? "queued"
+          : currentStatus === "interrupted"
+            ? "interrupted"
+            : "running",
     };
   });
 }
@@ -350,8 +362,12 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
             if (error instanceof ForegroundWaitBackgroundedError) {
               return { kind: "backgrounded" };
             }
-            if (getErrorMessage(error) === "Timed out waiting for agent_report") {
+            const errorMessage = getErrorMessage(error);
+            if (errorMessage === "Timed out waiting for agent_report") {
               return { kind: "timed_out" };
+            }
+            if (errorMessage === "Task interrupted") {
+              return { kind: "task_interrupted" };
             }
             return { kind: "error", error };
           }
@@ -383,7 +399,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
 
       const wasBackgrounded = waitOutcomes.some((outcome) => outcome.kind === "backgrounded");
       const didTimeOut = waitOutcomes.some((outcome) => outcome.kind === "timed_out");
-      if (wasBackgrounded || didTimeOut) {
+      const hadInterruptedTask = waitOutcomes.some(
+        (outcome) => outcome.kind === "task_interrupted"
+      );
+      if (wasBackgrounded || didTimeOut || hadInterruptedTask) {
         return parseToolResult(
           TaskToolResultSchema,
           buildPendingTaskResult({
@@ -393,10 +412,12 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
               completedReports,
             }),
             reports: completedReports,
-            note: buildForegroundContinuationNote(
-              createdTasks.length,
-              wasBackgrounded ? "backgrounded" : "timed_out"
-            ),
+            note: hadInterruptedTask
+              ? buildInterruptedTaskNote(createdTasks.length)
+              : buildForegroundContinuationNote(
+                  createdTasks.length,
+                  wasBackgrounded ? "backgrounded" : "timed_out"
+                ),
             forceGrouped: bestOfCount > 1,
           }),
           "task"

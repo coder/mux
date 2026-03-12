@@ -2972,8 +2972,9 @@ export class TaskService {
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
       if (!hasActiveDescendants) {
         // Foreground best-of children can finish while the parent task tool call is still pending,
-        // which temporarily blocks their leaf cleanup. Recheck reported children once the parent
-        // stream reaches a descendant-free stream-end so read-only tasks do not linger indefinitely.
+        // which temporarily blocks their leaf cleanup and may defer synthetic fallback delivery.
+        // Recheck both once the parent stream reaches a descendant-free stream-end.
+        await this.deliverDeferredBestOfReportsForParent(workspaceId);
         await this.requestReportedChildCleanupRechecks(workspaceId);
         return;
       }
@@ -3434,6 +3435,34 @@ export class TaskService {
 
     for (const workspaceId of reportedChildTaskIds) {
       await this.requestReportedTaskCleanupRecheck(workspaceId);
+    }
+  }
+
+  private async deliverDeferredBestOfReportsForParent(parentWorkspaceId: string): Promise<void> {
+    assert(
+      parentWorkspaceId.length > 0,
+      "deliverDeferredBestOfReportsForParent: parentWorkspaceId must be non-empty"
+    );
+
+    const cfg = this.config.loadConfigOrDefault();
+    const seenGroupIds = new Set<string>();
+    for (const project of cfg.projects.values()) {
+      for (const workspace of project.workspaces) {
+        if (workspace.parentWorkspaceId !== parentWorkspaceId) {
+          continue;
+        }
+        const groupId = coerceNonEmptyString(workspace.bestOf?.groupId);
+        const total = workspace.bestOf?.total;
+        if (!groupId || total == null || total <= 1 || seenGroupIds.has(groupId)) {
+          continue;
+        }
+        seenGroupIds.add(groupId);
+        await this.deliverDeferredBestOfSiblingReports({
+          parentWorkspaceId,
+          groupId,
+          total,
+        });
+      }
     }
   }
 

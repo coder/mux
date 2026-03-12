@@ -209,7 +209,7 @@ export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
 const TaskToolSpawnedTaskSchema = z
   .object({
     taskId: z.string(),
-    status: z.enum(["queued", "running", "completed"]),
+    status: z.enum(["queued", "running", "completed", "interrupted"]),
   })
   .strict();
 
