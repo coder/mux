@@ -657,12 +657,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const [expandedBestOfGroups, setExpandedBestOfGroups] = useState<Record<string, boolean>>({});
-  const toggleBestOfGroupExpansion = useCallback((groupId: string) => {
+  const toggleBestOfGroupExpansion = (groupId: string) => {
     setExpandedBestOfGroups((prev) => ({
       ...prev,
       [groupId]: !prev[groupId],
     }));
-  }, []);
+  };
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());

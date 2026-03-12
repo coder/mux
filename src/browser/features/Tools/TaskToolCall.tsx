@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Info } from "lucide-react";
 import {
   ToolContainer,
@@ -318,6 +318,10 @@ function normalizeTaskAgent(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
 }
 
+function normalizeTaskTitle(value: string | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
 function getTaskToolWorkspaceStatus(
   taskStatus: FrontendWorkspaceMetadata["taskStatus"]
 ): string | undefined {
@@ -368,6 +372,7 @@ function mergeTaskIdsInDisplayOrder(taskIdLists: ReadonlyArray<readonly string[]
 function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
   workspaceId: string | undefined;
   requestedAgentType: string;
+  requestedTitle: string | undefined;
   requestedCandidateCount: number;
   knownTaskIds: readonly string[];
   workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
@@ -377,6 +382,7 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
   }
 
   const requestedAgentType = normalizeTaskAgent(params.requestedAgentType);
+  const requestedTitle = normalizeTaskTitle(params.requestedTitle);
   const groupedCandidates = new Map<string, TaskToolWorkspaceEntry[]>();
 
   for (const metadata of params.workspaceMetadata.values()) {
@@ -394,7 +400,11 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
     }
 
     const taskId = normalizeTaskId(metadata.id);
+    const metadataTitle = getTaskToolWorkspaceTitle(metadata);
     if (!taskId) {
+      continue;
+    }
+    if (requestedTitle && normalizeTaskTitle(metadataTitle) !== requestedTitle) {
       continue;
     }
 
@@ -403,7 +413,7 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
       taskId,
       index: metadata.bestOf.index,
       status: getTaskToolWorkspaceStatus(metadata.taskStatus),
-      title: getTaskToolWorkspaceTitle(metadata),
+      title: metadataTitle,
     });
     groupedCandidates.set(metadata.bestOf.groupId, candidates);
   }
@@ -439,8 +449,17 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
     }
   }
 
-  if (!selectedGroup && groups.length === 1) {
-    selectedGroup = groups[0];
+  if (!selectedGroup && groups.length === 1 && requestedTitle) {
+    const hasActiveCandidate = groups[0]?.some((candidate) => {
+      return (
+        candidate.status === "queued" ||
+        candidate.status === "running" ||
+        candidate.status === "awaiting_report"
+      );
+    });
+    if (hasActiveCandidate) {
+      selectedGroup = groups[0];
+    }
   }
   if (!selectedGroup) {
     return [];
@@ -642,13 +661,21 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const title = args.title ?? "Task";
   const prompt = args.prompt ?? "";
   const agentType = args.agentId ?? args.subagent_type ?? "unknown";
+  const recoveredTaskIdsRef = useRef<string[]>([]);
+  // Keep the current best-of binding stable once a task call has matched concrete child IDs.
+  // This prevents a recovered group from disappearing when the last running child flips to
+  // reported before the parent task tool call itself produces a result.
   const recoveredWorkspaceEntries = recoverBestOfTaskIdsFromWorkspaceMetadata({
     workspaceId,
     requestedAgentType: agentType,
+    requestedTitle: title,
     requestedCandidateCount,
-    knownTaskIds: [...resultTaskIds, ...liveTaskIds],
+    knownTaskIds: [...resultTaskIds, ...liveTaskIds, ...recoveredTaskIdsRef.current],
     workspaceMetadata,
   });
+  if (recoveredWorkspaceEntries.length > 0) {
+    recoveredTaskIdsRef.current = recoveredWorkspaceEntries.map((entry) => entry.taskId);
+  }
   const taskIds = mergeTaskIdsInDisplayOrder([
     resultTaskIds,
     recoveredWorkspaceEntries.map((entry) => entry.taskId),

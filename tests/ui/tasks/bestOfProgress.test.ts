@@ -175,7 +175,7 @@ async function renderBestOfParentWorkspace(): Promise<{
     repoPath,
     trunkBranch,
     parentWorkspaceId: parentResult.metadata.id,
-    title: "Candidate one",
+    title: "Best of options",
     branchPrefix: "ui-best-of-child-1",
     index: 0,
     taskStatus: "running",
@@ -185,7 +185,7 @@ async function renderBestOfParentWorkspace(): Promise<{
     repoPath,
     trunkBranch,
     parentWorkspaceId: parentResult.metadata.id,
-    title: "Candidate two",
+    title: "Best of options",
     branchPrefix: "ui-best-of-child-2",
     index: 1,
     taskStatus: "running",
@@ -420,8 +420,6 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
       expect(taskMessageBlock.textContent).not.toContain("Creating candidates");
       expect(taskMessageBlock.textContent).toContain(setup.childOne.id);
       expect(taskMessageBlock.textContent).toContain(setup.childTwo.id);
-      expect(taskMessageBlock.textContent).toContain("Candidate one");
-      expect(taskMessageBlock.textContent).toContain("Candidate two");
     } finally {
       await cleanupView(setup.view, setup.cleanupDom);
       await cleanupTestEnvironment(setup.env);
