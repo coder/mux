@@ -20,6 +20,7 @@ import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
+import type { OpenAICompatibleProviderInstance } from "@/common/config/schemas/openaiCompatibleProvider";
 import { isOpReference } from "@/common/utils/opRef";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import type { PolicyService } from "@/node/services/policyService";
@@ -673,7 +674,10 @@ export class ProviderModelFactory {
 
       // Check if provider is supported (prevents silent failures when adding to PROVIDER_REGISTRY
       // but forgetting to implement handler below)
-      if (!(providerName in PROVIDER_REGISTRY)) {
+      // Note: "openai-compatible/*" are special multi-instance providers handled separately
+      const isOpenAICompatibleProvider = providerName.startsWith("openai-compatible/");
+      const isSupportedProvider = providerName in PROVIDER_REGISTRY || isOpenAICompatibleProvider;
+      if (!isSupportedProvider) {
         return Err({
           type: "provider_not_supported",
           provider: providerName,
@@ -1535,6 +1539,68 @@ export class ProviderModelFactory {
           fetch: providerFetch,
         });
         return Ok(provider.chatModel(modelId));
+      }
+
+      // Handle OpenAI-compatible providers (dynamic provider instances)
+      const isOpenAICompatible = providerName.startsWith("openai-compatible/");
+
+      if (isOpenAICompatible) {
+        const instanceId = providerName.slice("openai-compatible/".length);
+        const actualModelId = modelId;
+
+        // Load the openai-compatible provider config
+        const openaiCompatibleConfig = providersConfig["openai-compatible"] as
+          | { providers?: OpenAICompatibleProviderInstance[] }
+          | undefined;
+
+        const instances = openaiCompatibleConfig?.providers ?? [];
+        const instance = instances.find((p) => p.id === instanceId);
+
+        if (!instance) {
+          return Err({
+            type: "provider_not_supported",
+            provider: `openai-compatible/${instanceId}`,
+          });
+        }
+
+        // Check if instance is enabled
+        if (instance.enabled === false) {
+          return Err({
+            type: "provider_disabled",
+            provider: `openai-compatible/${instanceId}`,
+          });
+        }
+
+        // Resolve API key (may be a 1Password reference)
+        const resolvedApiKey = await this.resolveApiKey(instance.apiKey);
+        if (instance.apiKey && isOpReference(instance.apiKey) && !resolvedApiKey) {
+          return Err({
+            type: "api_key_not_found",
+            provider: `openai-compatible/${instanceId}`,
+          });
+        }
+
+        // Require either an API key or a baseUrl (local servers may not need an API key)
+        if (!resolvedApiKey && !instance.baseUrl) {
+          return Err({
+            type: "api_key_not_found",
+            provider: `openai-compatible/${instanceId}`,
+          });
+        }
+
+        const baseFetch = getProviderFetch({});
+        // eslint-disable-next-line no-restricted-syntax -- Dynamic import needed for multi-instance openai-compatible providers
+        const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+
+        const provider = createOpenAICompatible({
+          name: instanceId,
+          baseURL: instance.baseUrl,
+          apiKey: resolvedApiKey ?? "no-key",
+          headers: instance.headers,
+          fetch: baseFetch,
+        });
+
+        return Ok(provider.chatModel(actualModelId));
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)

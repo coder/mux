@@ -143,7 +143,8 @@ export function ModelsSection() {
 
   // Read OAuth state from this component's provider config source to avoid
   // cross-hook timing mismatches while settings are loading/refetching.
-  const codexOauthConfigured = config?.openai?.codexOauthSet === true;
+  const openaiConfig = config?.openai;
+  const codexOauthConfigured = openaiConfig?.codexOauthSet === true;
 
   // "Treat as" dropdown should only list known models — custom models don't have
   // the metadata (pricing, context window, tokenizer) that mapping inherits.
@@ -156,8 +157,9 @@ export function ModelsSection() {
   const modelExists = useCallback(
     (provider: string, modelId: string, excludeOriginal?: string): boolean => {
       if (!config) return false;
-      const currentModels = config[provider]?.models ?? [];
-      return currentModels.some((entry) => {
+      const providerConfig = config[provider];
+      const currentModels = providerConfig?.models ?? [];
+      return currentModels.some((entry: ProviderModelEntry) => {
         const currentModelId = getProviderModelEntryId(entry);
         return currentModelId === modelId && currentModelId !== excludeOriginal;
       });
@@ -309,10 +311,11 @@ export function ModelsSection() {
 
       return nextModels;
     });
-    setEditing(null);
 
     // Save in background
     void api.providers.setModels({ provider: editing.provider, models: updatedModels });
+
+    setEditing(null);
   }, [api, editing, config, modelExists, updateModelsOptimistically]);
 
   // Show loading state while config is being fetched
@@ -326,13 +329,7 @@ export function ModelsSection() {
   }
 
   // Get all custom models across providers (excluding hidden providers like mux-gateway)
-  const getCustomModels = (): Array<{
-    provider: string;
-    modelId: string;
-    fullId: string;
-    contextWindowTokens: number | null;
-    mappedToModel: string | null;
-  }> => {
+  const getCustomModels = () => {
     const models: Array<{
       provider: string;
       modelId: string;
@@ -344,7 +341,7 @@ export function ModelsSection() {
     for (const [provider, providerConfig] of Object.entries(config)) {
       // Skip hidden providers (mux-gateway models are routed, not managed as a standalone list)
       if (HIDDEN_PROVIDERS.has(provider)) continue;
-      if (!providerConfig.models) continue;
+      if (!providerConfig?.models) continue;
 
       for (const modelEntry of providerConfig.models) {
         const modelId = getProviderModelEntryId(modelEntry);

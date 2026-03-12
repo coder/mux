@@ -31,6 +31,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import { OpenAICompatibleProvidersSection } from "./OpenAICompatibleProvidersSection";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon/ProviderIcon";
@@ -380,10 +381,11 @@ export function ProvidersSection() {
   );
   const [codexOauthAuthorizeUrl, setCodexOauthAuthorizeUrl] = useState<string | null>(null);
 
-  const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
-  const openaiApiKeySet = config?.openai?.apiKeySet === true;
+  const openaiConfig = config?.openai;
+  const codexOauthIsConnected = openaiConfig?.codexOauthSet === true;
+  const openaiApiKeySet = openaiConfig?.apiKeySet === true;
   const codexOauthDefaultAuth =
-    config?.openai?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
+    openaiConfig?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
   const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
 
   const codexOauthLoginInProgress =
@@ -1225,10 +1227,27 @@ export function ProvidersSection() {
       {(
         [
           { key: "direct", label: "Direct Providers", providers: providerGroups.direct },
+          {
+            key: "openai-compatible",
+            label: "User Providers",
+            providers: [],
+            render: () => <OpenAICompatibleProvidersSection />,
+          },
           { key: "gateway", label: "Gateways", providers: providerGroups.gateway },
           { key: "local", label: "Local", providers: providerGroups.local },
         ] as const
       ).map((section) => {
+        if ("render" in section) {
+          return (
+            <div key={section.key} className="space-y-2">
+              <div className="text-muted text-xs font-medium tracking-wide uppercase">
+                {section.label}
+              </div>
+              {section.render()}
+            </div>
+          );
+        }
+
         if (section.providers.length === 0) {
           return null;
         }

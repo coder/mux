@@ -1332,6 +1332,36 @@ export const router = (authToken?: string) => {
           }
         }),
     },
+    openaiCompatibleProviders: {
+      getConfig: t
+        .input(schemas.openaiCompatibleProviders.getConfig.input)
+        .output(schemas.openaiCompatibleProviders.getConfig.output)
+        .handler(({ context }) => context.providerService.getOpenAICompatibleProvidersInfo()),
+      addProvider: t
+        .input(schemas.openaiCompatibleProviders.addProvider.input)
+        .output(schemas.openaiCompatibleProviders.addProvider.output)
+        .handler(({ context, input }) =>
+          context.providerService.addOpenAICompatibleProvider(input)
+        ),
+      updateProvider: t
+        .input(schemas.openaiCompatibleProviders.updateProvider.input)
+        .output(schemas.openaiCompatibleProviders.updateProvider.output)
+        .handler(({ context, input }) =>
+          context.providerService.updateOpenAICompatibleProvider(input.instanceId, input.updates)
+        ),
+      removeProvider: t
+        .input(schemas.openaiCompatibleProviders.removeProvider.input)
+        .output(schemas.openaiCompatibleProviders.removeProvider.output)
+        .handler(({ context, input }) =>
+          context.providerService.removeOpenAICompatibleProvider(input.instanceId)
+        ),
+      setModels: t
+        .input(schemas.openaiCompatibleProviders.setModels.input)
+        .output(schemas.openaiCompatibleProviders.setModels.output)
+        .handler(({ context, input }) =>
+          context.providerService.setOpenAICompatibleProviderModels(input.instanceId, input.models)
+        ),
+    },
     policy: {
       get: t
         .input(schemas.policy.get.input)

@@ -1415,10 +1415,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       try {
         const config = await api.providers.getConfig();
         if (!signal.aborted) {
-          setOpenAIKeySet(config?.openai?.apiKeySet ?? false);
-          setOpenAIProviderEnabled(config?.openai?.isEnabled ?? true);
-          setMuxGatewayCouponSet(config?.["mux-gateway"]?.couponCodeSet ?? false);
-          setMuxGatewayEnabled(config?.["mux-gateway"]?.isEnabled ?? true);
+          const openaiConfig = config?.openai;
+          const muxGatewayConfig = config?.["mux-gateway"];
+          setOpenAIKeySet(openaiConfig?.apiKeySet ?? false);
+          setOpenAIProviderEnabled(openaiConfig?.isEnabled ?? true);
+          setMuxGatewayCouponSet(muxGatewayConfig?.couponCodeSet ?? false);
+          setMuxGatewayEnabled(muxGatewayConfig?.isEnabled ?? true);
         }
       } catch {
         // Ignore errors fetching config

@@ -36,7 +36,32 @@ function parseProviderModelId(fullModelId: string): ParsedProviderModelId | null
   };
 }
 
-function findProviderModelEntry(
+/**
+ * Parse an openai-compatible model ID.
+ * Format: "openai-compatible/{instanceId}:{modelId}"
+ *
+ * Returns { provider, modelId, instanceId } or null if not an openai-compatible model.
+ */
+function parseOpenAICompatibleModelId(
+  fullModelId: string
+): { provider: string; modelId: string; instanceId: string } | null {
+  // Format: openai-compatible/{instanceId}:{modelId}
+  if (fullModelId.startsWith("openai-compatible/")) {
+    const colonIndex = fullModelId.indexOf(":");
+    if (colonIndex === -1 || colonIndex <= "openai-compatible/".length) {
+      return null;
+    }
+    return {
+      provider: fullModelId.slice(0, colonIndex),
+      modelId: fullModelId.slice(colonIndex + 1),
+      instanceId: fullModelId.slice("openai-compatible/".length, colonIndex),
+    };
+  }
+
+  return null;
+}
+
+export function findProviderModelEntry(
   providersConfig: ProvidersConfigMap | null,
   provider: string,
   modelId: string
@@ -44,12 +69,6 @@ function findProviderModelEntry(
   const entries = providersConfig?.[provider]?.models;
   if (!entries || entries.length === 0) {
     return null;
-  }
-
-  for (const entry of entries) {
-    if (getProviderModelEntryId(entry) === modelId) {
-      return entry;
-    }
   }
 
   return null;

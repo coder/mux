@@ -29,6 +29,7 @@ const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
 function getCustomModels(config: ProvidersConfigMap | null): string[] {
   if (!config) return [];
   const models: string[] = [];
+
   for (const [provider, info] of Object.entries(config)) {
     // Skip mux-gateway - those models are accessed via the cloud toggle, not listed separately
     if (provider === "mux-gateway") continue;
@@ -40,6 +41,7 @@ function getCustomModels(config: ProvidersConfigMap | null): string[] {
       models.push(`${provider}:${modelId}`);
     }
   }
+
   return models;
 }
 

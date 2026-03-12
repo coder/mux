@@ -199,7 +199,70 @@ export const ProviderConfigInfoSchema = z.object({
   gatewayModels: z.array(z.string()).optional(),
 });
 
+/**
+ * Frontend schema for an OpenAI-compatible provider instance.
+ * Represents a single provider instance (e.g., Together AI, Fireworks, LM Studio)
+ * that uses the OpenAI-compatible API format.
+ */
+export const OpenAICompatibleInstanceInfoSchema = z.object({
+  /** Unique identifier for this provider instance */
+  id: z.string(),
+  /** Display name shown in the UI */
+  name: z.string(),
+  /** Base URL for the API endpoint */
+  baseUrl: z.string(),
+  /** Whether an API key is set */
+  apiKeySet: z.boolean(),
+  /** Whether the API key is a 1Password reference */
+  apiKeyIsOpRef: z.boolean().optional(),
+  /** Human-readable label for 1Password reference */
+  apiKeyOpLabel: z.string().optional(),
+  /** Whether this provider instance is enabled */
+  isEnabled: z.boolean().default(true),
+  /** Whether this provider is configured and ready to use */
+  isConfigured: z.boolean(),
+  /** Models available from this provider */
+  models: z.array(ProviderModelEntrySchema).optional(),
+});
+
+/**
+ * Frontend schema for OpenAI-compatible providers.
+ * The "openai-compatible" key in ProvidersConfigMap contains this structure.
+ */
+export const OpenAICompatibleProvidersInfoSchema = z.object({
+  /** Whether the OpenAI-compatible provider system is enabled */
+  isEnabled: z.boolean().default(true),
+  /** Whether at least one provider instance is configured */
+  isConfigured: z.boolean(),
+  /** List of configured provider instances */
+  providers: z.array(OpenAICompatibleInstanceInfoSchema).optional(),
+});
+
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);
+
+/**
+ * Type guard to check if a provider config is OpenAI-compatible providers info.
+ */
+export function isOpenAICompatibleProvidersInfo(
+  value: unknown
+): value is z.infer<typeof OpenAICompatibleProvidersInfoSchema> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "providers" in value &&
+    Array.isArray((value as { providers?: unknown }).providers)
+  );
+}
+
+/**
+ * Type guard to check if a provider config is a regular ProviderConfigInfo.
+ * Use this to filter out the special "openai-compatible" entry when iterating over providers.
+ */
+export function isRegularProviderConfigInfo(
+  value: unknown
+): value is z.infer<typeof ProviderConfigInfoSchema> {
+  return !isOpenAICompatibleProvidersInfo(value);
+}
 
 export const providers = {
   setProviderConfig: {
@@ -229,6 +292,48 @@ export const providers = {
   onConfigChanged: {
     input: z.void(),
     output: eventIterator(z.void()),
+  },
+};
+
+// OpenAI-Compatible Provider Schemas
+export const openaiCompatibleProviders = {
+  getConfig: {
+    input: z.void(),
+    output: OpenAICompatibleProvidersInfoSchema,
+  },
+  addProvider: {
+    input: z.object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      baseUrl: z.string().url(),
+      apiKey: z.string().optional(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  updateProvider: {
+    input: z.object({
+      instanceId: z.string(),
+      updates: z.object({
+        name: z.string().optional(),
+        baseUrl: z.string().optional(),
+        apiKey: z.string().optional(),
+        enabled: z.boolean().optional(),
+      }),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  removeProvider: {
+    input: z.object({
+      instanceId: z.string(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  setModels: {
+    input: z.object({
+      instanceId: z.string(),
+      models: z.array(ProviderModelEntrySchema),
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
 };
 

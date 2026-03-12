@@ -953,6 +953,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
       setModels: () => Promise.resolve({ success: true, data: undefined }),
     },
+    openaiCompatibleProviders: {
+      addProvider: () => Promise.resolve({ success: true, data: undefined }),
+      updateProvider: () => Promise.resolve({ success: true, data: undefined }),
+      removeProvider: () => Promise.resolve({ success: true, data: undefined }),
+      setModels: () => Promise.resolve({ success: true, data: undefined }),
+    },
     onePassword: {
       isAvailable: () => Promise.resolve({ available: false }),
       listVaults: () => Promise.resolve([]),

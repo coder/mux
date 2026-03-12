@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { ModelParametersByModelSchema } from "./modelParameters";
 import { ProviderModelEntrySchema } from "./providerModelEntry";
+import { OpenAICompatibleProvidersConfigSchema } from "./openaiCompatibleProvider";
+import type { OpenAICompatibleProviderInstanceSchema } from "./openaiCompatibleProvider";
 
 export const CacheTtlSchema = z.enum(["5m", "1h"]);
 export const ServiceTierSchema = z.enum(["auto", "default", "flex", "priority"]);
@@ -78,6 +80,7 @@ export const ProvidersConfigSchema = z
     deepseek: DeepSeekProviderConfigSchema.optional(),
     ollama: OllamaProviderConfigSchema.optional(),
     "github-copilot": GitHubCopilotProviderConfigSchema.optional(),
+    "openai-compatible": OpenAICompatibleProvidersConfigSchema.optional(),
   })
   .catchall(BaseProviderConfigSchema);
 
@@ -92,5 +95,9 @@ export type GoogleProviderConfig = z.infer<typeof GoogleProviderConfigSchema>;
 export type DeepSeekProviderConfig = z.infer<typeof DeepSeekProviderConfigSchema>;
 export type OllamaProviderConfig = z.infer<typeof OllamaProviderConfigSchema>;
 export type GitHubCopilotProviderConfig = z.infer<typeof GitHubCopilotProviderConfigSchema>;
+export type OpenAICompatibleProvidersConfig = z.infer<typeof OpenAICompatibleProvidersConfigSchema>;
+export type OpenAICompatibleProviderInstance = z.infer<
+  typeof OpenAICompatibleProviderInstanceSchema
+>;
 
 export type ProvidersConfig = z.infer<typeof ProvidersConfigSchema>;
