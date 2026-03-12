@@ -82,6 +82,30 @@ describe("resolveRoute", () => {
     expect(resolved.routeModelId).toBe("openai/gpt-5");
   });
 
+  test("falls back from explicit gateway to mux-gateway when explicit is unconfigured", () => {
+    const resolved = resolveRoute(
+      EXPLICIT_GATEWAY_MODEL,
+      ["openrouter", "mux-gateway", "direct"],
+      {},
+      createIsConfigured(["mux-gateway"])
+    );
+
+    expect(resolved.routeProvider).toBe("mux-gateway");
+    expect(resolved.routeModelId).toBe("openai/gpt-5");
+  });
+
+  test("falls back to direct for explicit gateway when nothing is configured", () => {
+    const resolved = resolveRoute(
+      EXPLICIT_GATEWAY_MODEL,
+      ["openrouter", "mux-gateway", "direct"],
+      {},
+      () => false
+    );
+
+    expect(resolved.routeProvider).toBe("openai");
+    expect(resolved.routeModelId).toBe("gpt-5");
+  });
+
   test("supports per-model override to specific gateway", () => {
     const resolved = resolveRoute(
       MODEL,
@@ -208,14 +232,14 @@ describe("isModelAvailable", () => {
     ).toBe(true);
   });
 
-  test("returns false for explicit gateway-scoped models when only the direct provider is configured", () => {
+  test("returns true for explicit gateway-scoped models when only the direct provider is configured", () => {
     expect(
       isModelAvailableForRoutes({
         modelId: EXPLICIT_GATEWAY_MODEL,
         configuredProviders: ["openai"],
         routePriority: ["direct"],
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("returns true for explicit gateway-scoped models when the gateway is configured", () => {
@@ -224,6 +248,16 @@ describe("isModelAvailable", () => {
         modelId: EXPLICIT_GATEWAY_MODEL,
         configuredProviders: ["openrouter"],
         routePriority: ["openrouter", "direct"],
+      })
+    ).toBe(true);
+  });
+
+  test("returns true for explicit gateway models when a fallback route is configured", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: EXPLICIT_GATEWAY_MODEL,
+        configuredProviders: ["mux-gateway"],
+        routePriority: ["openrouter", "mux-gateway", "direct"],
       })
     ).toBe(true);
   });

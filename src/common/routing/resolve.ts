@@ -149,8 +149,16 @@ function findActiveRouteContext(
   routeOverrides: Record<string, string>,
   isConfigured: (provider: string) => boolean
 ): RouteContext | null {
+  // Explicit gateway is a preferred first candidate, not a dead-end.
+  // If the gateway itself is configured, use it; otherwise fall through
+  // to canonical override/priority routing so the underlying model
+  // stays reachable via other configured routes.
   if (parsed.explicitGateway != null) {
-    return getConfiguredExplicitGatewayRouteContext(modelInput, parsed, isConfigured);
+    const explicit = getConfiguredExplicitGatewayRouteContext(modelInput, parsed, isConfigured);
+    if (explicit) {
+      return explicit;
+    }
+    // Fall through to canonical routing below
   }
 
   // 1. Check per-model override
@@ -215,10 +223,6 @@ export function resolveRoute(
   );
   if (resolved) {
     return resolved;
-  }
-
-  if (parsed.explicitGateway != null) {
-    return explicitGatewayRouteContext(modelInput, parsed);
   }
 
   // 3. Nothing configured — fall back to direct (will fail at credential check later)

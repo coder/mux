@@ -419,7 +419,7 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
   });
 
-  test("keeps explicit OpenRouter custom models hidden when only the direct provider is configured", () => {
+  test("shows explicit OpenRouter custom models when only the direct provider is configured", () => {
     providersConfig = {
       openrouter: {
         apiKeySet: false,
@@ -432,8 +432,8 @@ describe("useModelsFromSettings provider availability gating", () => {
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    expect(result.current.models).not.toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
-    expect(result.current.hiddenModelsForSelector).toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+    expect(result.current.models).toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+    expect(result.current.hiddenModelsForSelector).not.toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
   });
 
   test("shows explicit OpenRouter custom models once OpenRouter is configured", () => {
@@ -446,6 +446,25 @@ describe("useModelsFromSettings provider availability gating", () => {
       },
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+    expect(result.current.hiddenModelsForSelector).not.toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+  });
+
+  test("shows explicit OpenRouter custom models when OpenRouter is unavailable but mux-gateway is configured", () => {
+    providersConfig = {
+      openrouter: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: false,
+        models: ["openai/gpt-5"],
+      },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      "mux-gateway": { apiKeySet: false, isEnabled: true, isConfigured: true },
+    };
+    routePriority = ["openrouter", "mux-gateway", "direct"];
 
     const { result } = renderHook(() => useModelsFromSettings());
 
