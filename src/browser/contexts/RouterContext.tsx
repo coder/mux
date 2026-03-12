@@ -86,6 +86,9 @@ function getInitialRoute(): string {
   const isStorybook = window.location.pathname.endsWith("iframe.html");
   const isStandalone = isStandalonePwa();
   const hasStandaloneSession = hasStandalonePwaSessionInitialized();
+  const launchBehavior = !isStandalone
+    ? readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard")
+    : null;
   const shouldIgnoreStandaloneWorkspaceUrl =
     isStandalone && !hasStandaloneSession && window.location.pathname.startsWith("/workspace/");
 
@@ -96,7 +99,15 @@ function getInitialRoute(): string {
     const url = window.location.pathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)
     if (url.startsWith("/") && url !== "/") {
-      return url;
+      if (!url.startsWith("/workspace/")) {
+        return url;
+      }
+
+      // Respect dashboard/new-chat launch preferences in browser mode so stale workspace URLs
+      // do not silently override the user's chosen startup destination on a fresh launch.
+      if (isStandalone || launchBehavior === "last-workspace") {
+        return url;
+      }
     }
   }
 
@@ -112,16 +123,13 @@ function getInitialRoute(): string {
     }
   }
 
-  if (!isStandalone) {
-    const launchBehavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
-    if (launchBehavior === "last-workspace") {
-      const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
-        SELECTED_WORKSPACE_KEY,
-        null
-      );
-      if (savedWorkspace?.workspaceId) {
-        return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
-      }
+  if (!isStandalone && launchBehavior === "last-workspace") {
+    const savedWorkspace = readPersistedState<WorkspaceSelection | null>(
+      SELECTED_WORKSPACE_KEY,
+      null
+    );
+    if (savedWorkspace?.workspaceId) {
+      return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
     }
   }
 

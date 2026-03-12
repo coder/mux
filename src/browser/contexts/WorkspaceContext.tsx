@@ -925,6 +925,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
 
+    // Don't restore a launch-project workspace when startup should stay on the dashboard.
+    const launchBehavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
+    if (launchBehavior === "dashboard") return;
+
     let cancelled = false;
 
     const checkLaunchProject = async () => {

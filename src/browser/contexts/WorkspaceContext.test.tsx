@@ -8,6 +8,7 @@ import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
+  LAUNCH_BEHAVIOR_KEY,
   SELECTED_WORKSPACE_KEY,
   getModelKey,
   getRightSidebarLayoutKey,
@@ -155,6 +156,9 @@ describe("WorkspaceContext", () => {
       projects: {
         list: () => Promise.resolve([]),
       },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
+      },
       locationPath: `/workspace/${childId}`,
     });
 
@@ -208,6 +212,9 @@ describe("WorkspaceContext", () => {
       },
       projects: {
         list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
       },
       locationPath: `/workspace/${workspaceId}`,
     });
@@ -280,6 +287,9 @@ describe("WorkspaceContext", () => {
       },
       projects: {
         list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
       },
       locationPath: `/workspace/${archivedId}`,
     });
@@ -365,6 +375,9 @@ describe("WorkspaceContext", () => {
       },
       projects: {
         list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
       },
       // Parent is selected, not the child
       locationPath: `/workspace/${parentId}`,
@@ -577,6 +590,9 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(initialWorkspaces),
       },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
+      },
       locationPath: "/workspace/ws-remove",
     });
 
@@ -759,6 +775,9 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
+      },
       locationPath: "/workspace/ws-existing",
     });
 
@@ -855,9 +874,7 @@ describe("WorkspaceContext", () => {
     expect(ctx().pendingNewWorkspaceProject).toBe(systemProjectPath);
   });
 
-  test("launch project auto-selects workspace when no URL hash", async () => {
-    // With the new router, URL takes precedence. When there's no URL hash,
-    // and localStorage has no saved workspace, the launch project kicks in.
+  test("dashboard mode blocks launch-project auto-selection", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -877,14 +894,108 @@ describe("WorkspaceContext", () => {
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
-      // No locationHash, no localStorage - so launch project should kick in
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("default launch behavior blocks launch-project auto-selection", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-launch",
+              projectPath: "/launch-project",
+              projectName: "launch-project",
+              name: "main",
+              namedWorkspacePath: "/launch-project-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
+  test("last-workspace mode allows launch-project auto-selection", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-launch",
+              projectPath: "/launch-project",
+              projectName: "launch-project",
+              name: "main",
+              namedWorkspacePath: "/launch-project-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
+      },
     });
 
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().loading).toBe(false));
 
-    // Should have auto-selected the first workspace from launch project
+    await waitFor(() => {
+      expect(ctx().selectedWorkspace?.projectPath).toBe("/launch-project");
+    });
+  });
+
+  test("new-chat mode still allows launch-project auto-selection", async () => {
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createWorkspaceMetadata({
+              id: "ws-launch",
+              projectPath: "/launch-project",
+              projectName: "launch-project",
+              name: "main",
+              namedWorkspacePath: "/launch-project-main",
+            }),
+          ]),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      server: {
+        getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("new-chat"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+
     await waitFor(() => {
       expect(ctx().selectedWorkspace?.projectPath).toBe("/launch-project");
     });
@@ -900,6 +1011,9 @@ describe("WorkspaceContext", () => {
       },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
       },
     });
 
@@ -936,6 +1050,9 @@ describe("WorkspaceContext", () => {
       },
       projects: {
         list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
       },
       locationPath: "/workspace/ws-existing",
       server: {

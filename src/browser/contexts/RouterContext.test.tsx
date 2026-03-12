@@ -112,6 +112,73 @@ describe("navigateFromSettings", () => {
   });
 });
 
+describe("browser startup launch behavior", () => {
+  afterEach(() => {
+    cleanup();
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+  });
+
+  test("dashboard mode ignores a stale /workspace/:id URL", async () => {
+    installWindow("https://mux.example.com/workspace/stale-123");
+    window.localStorage.setItem(LAUNCH_BEHAVIOR_KEY, JSON.stringify("dashboard"));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+  });
+
+  test("last-workspace mode preserves a /workspace/:id URL", async () => {
+    installWindow("https://mux.example.com/workspace/stale-123");
+    window.localStorage.setItem(LAUNCH_BEHAVIOR_KEY, JSON.stringify("last-workspace"));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/workspace/stale-123");
+    });
+  });
+
+  test("dashboard mode still preserves non-workspace routes", async () => {
+    installWindow("https://mux.example.com/settings/general");
+    window.localStorage.setItem(LAUNCH_BEHAVIOR_KEY, JSON.stringify("dashboard"));
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/settings/general");
+    });
+  });
+
+  test("default launch behavior ignores a stale /workspace/:id URL", async () => {
+    installWindow("https://mux.example.com/workspace/stale-123");
+
+    const view = render(
+      <RouterProvider>
+        <PathnameObserver />
+      </RouterProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("pathname").textContent).toBe("/");
+    });
+  });
+});
+
 describe("standalone PWA startup", () => {
   afterEach(() => {
     cleanup();
