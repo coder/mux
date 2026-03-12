@@ -4547,6 +4547,9 @@ describe("TaskService", () => {
 
     await finalizeChildReport(childOneId, "Report from child one", "Option one");
 
+    const parentHistoryAfterFirst = await collectFullHistory(historyService, parentId);
+    expect(JSON.stringify(parentHistoryAfterFirst)).not.toContain("Report from child one");
+
     const afterFirstParentPartial = await partialService.readPartial(parentId);
     expect(afterFirstParentPartial).not.toBeNull();
     if (afterFirstParentPartial) {

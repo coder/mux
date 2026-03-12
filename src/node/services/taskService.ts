@@ -3895,6 +3895,14 @@ export class TaskService {
         }
         return;
       }
+
+      if (
+        childEntry?.workspace.bestOf?.total != null &&
+        childEntry.workspace.bestOf.total > 1 &&
+        (await this.hasPendingBestOfTaskToolInPartial(parentWorkspaceId))
+      ) {
+        return;
+      }
     }
 
     // Background tasks: append a synthetic user message containing the report so earlier history
