@@ -63,12 +63,3 @@ export async function findAvailableCommand(commands: string[]): Promise<string |
   }
   return null;
 }
-
-/** GUI editors that spawn detached (no terminal needed) */
-export const GUI_EDITORS = ["cursor", "code", "zed", "subl"] as const;
-
-/** Terminal editors that require a terminal session */
-export const TERMINAL_EDITORS = ["nvim", "vim", "vi", "nano", "emacs"] as const;
-
-/** All known GUI terminal emulators */
-export const TERMINAL_EMULATORS = ["ghostty", "kitty", "alacritty", "wezterm", "iterm2"] as const;
