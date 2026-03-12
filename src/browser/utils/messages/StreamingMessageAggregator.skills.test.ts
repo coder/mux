@@ -143,6 +143,31 @@ const createSkillSnapshotMessage = ({
     }
   );
 
+const createSkillInvocationMessage = ({
+  id = "invoke-1",
+  skillName = "pull-requests",
+  scope = "project",
+  historySequence,
+}: {
+  id?: string;
+  skillName?: string;
+  scope?: AgentSkillScope;
+  historySequence: number;
+}) => {
+  const command = `/${skillName}`;
+  return createMuxMessage(id, "user", command, {
+    historySequence,
+    timestamp: 0,
+    muxMetadata: {
+      type: "agent-skill",
+      rawCommand: command,
+      commandPrefix: command,
+      skillName,
+      scope,
+    },
+  });
+};
+
 describe("Loaded skills tracking", () => {
   it("returns empty array when no skills loaded", () => {
     const aggregator = createAggregator();
@@ -437,17 +462,7 @@ describe("Agent skill snapshot association", () => {
       historySequence: 1,
       frontmatterYaml: "name: pull-requests\ndescription: PR guidelines",
     });
-    const invocation = createMuxMessage("invoke-1", "user", "/pull-requests", {
-      historySequence: 2,
-      timestamp: 0,
-      muxMetadata: {
-        type: "agent-skill",
-        rawCommand: "/pull-requests",
-        commandPrefix: "/pull-requests",
-        skillName: "pull-requests",
-        scope: "project",
-      },
-    });
+    const invocation = createSkillInvocationMessage({ historySequence: 2 });
 
     aggregator.loadHistoricalMessages([snapshot, invocation]);
 
@@ -466,6 +481,56 @@ describe("Agent skill snapshot association", () => {
         frontmatterYaml: "name: pull-requests\ndescription: PR guidelines",
         body: "# Content",
       },
+    });
+  });
+
+  it("uses the latest snapshot available at each invocation turn", () => {
+    const aggregator = createAggregator();
+    const firstFrontmatter = "name: pull-requests\ndescription: First";
+    const secondFrontmatter = "name: pull-requests\ndescription: Second";
+    const firstSnapshot = createSkillSnapshotMessage({
+      id: "snapshot-1",
+      historySequence: 1,
+      body: "# First",
+      frontmatterYaml: firstFrontmatter,
+    });
+    const firstInvocation = createSkillInvocationMessage({
+      id: "invoke-1",
+      historySequence: 2,
+    });
+    const secondSnapshot = createSkillSnapshotMessage({
+      id: "snapshot-2",
+      historySequence: 3,
+      body: "# Second",
+      frontmatterYaml: secondFrontmatter,
+    });
+    const secondInvocation = createSkillInvocationMessage({
+      id: "invoke-2",
+      historySequence: 4,
+    });
+
+    aggregator.loadHistoricalMessages([
+      firstSnapshot,
+      firstInvocation,
+      secondSnapshot,
+      secondInvocation,
+    ]);
+
+    const displayed = aggregator.getDisplayedMessages();
+    expect(displayed).toHaveLength(2);
+
+    const [firstMessage, secondMessage] = displayed;
+    if (firstMessage?.type !== "user" || secondMessage?.type !== "user") {
+      throw new Error("Expected displayed user messages");
+    }
+
+    expect(firstMessage.agentSkill?.snapshot).toEqual({
+      frontmatterYaml: firstFrontmatter,
+      body: "# First",
+    });
+    expect(secondMessage.agentSkill?.snapshot).toEqual({
+      frontmatterYaml: secondFrontmatter,
+      body: "# Second",
     });
   });
 });

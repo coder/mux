@@ -300,35 +300,30 @@ function getAgentSkillSnapshotKey(scope: AgentSkillScope, skillName: string): st
   return `${scope}:${skillName}`;
 }
 
-function collectLatestAgentSkillSnapshots(
-  messages: readonly MuxMessage[]
-): Map<string, AgentSkillSnapshotContent> {
-  const snapshots = new Map<string, AgentSkillSnapshotContent>();
-
-  for (const message of messages) {
-    const snapshotMeta = message.metadata?.agentSkillSnapshot;
-    if (!snapshotMeta) {
-      continue;
-    }
-
-    const parsed = AgentSkillSnapshotMetadataSchema.safeParse(snapshotMeta);
-    if (!parsed.success) {
-      continue;
-    }
-
-    const body = extractAgentSkillSnapshotBody(getTextPartContent(message.parts));
-    if (body === null) {
-      continue;
-    }
-
-    snapshots.set(getAgentSkillSnapshotKey(parsed.data.scope, parsed.data.skillName), {
-      sha256: parsed.data.sha256,
-      frontmatterYaml: parsed.data.frontmatterYaml,
-      body,
-    });
+function maybeCollectAgentSkillSnapshot(
+  message: MuxMessage,
+  snapshots: Map<string, AgentSkillSnapshotContent>
+): void {
+  const snapshotMeta = message.metadata?.agentSkillSnapshot;
+  if (!snapshotMeta) {
+    return;
   }
 
-  return snapshots;
+  const parsed = AgentSkillSnapshotMetadataSchema.safeParse(snapshotMeta);
+  if (!parsed.success) {
+    return;
+  }
+
+  const body = extractAgentSkillSnapshotBody(getTextPartContent(message.parts));
+  if (body === null) {
+    return;
+  }
+
+  snapshots.set(getAgentSkillSnapshotKey(parsed.data.scope, parsed.data.skillName), {
+    sha256: parsed.data.sha256,
+    frontmatterYaml: parsed.data.frontmatterYaml,
+    body,
+  });
 }
 
 export class StreamingMessageAggregator {
@@ -2802,9 +2797,10 @@ export class StreamingMessageAggregator {
       // debugLlmRequest is enabled. We still want to surface their content in the UI by
       // attaching the resolved snapshot (frontmatterYaml + body) to the *subsequent*
       // /{skillName} invocation message.
-      const latestAgentSkillSnapshotByKey = collectLatestAgentSkillSnapshots(allMessages);
+      const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
 
       for (const message of allMessages) {
+        maybeCollectAgentSkillSnapshot(message, latestAgentSkillSnapshotByKey);
         const isSynthetic = message.metadata?.synthetic === true;
         const isUiVisibleSynthetic = message.metadata?.uiVisible === true;
 
