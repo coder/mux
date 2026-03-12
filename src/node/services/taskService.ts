@@ -3772,10 +3772,22 @@ export class TaskService {
       parentWorkspaceId: params.parentWorkspaceId,
       groupId: params.groupId,
     });
-    if (siblings.length !== params.total) {
+    if (siblings.length === 0) {
+      return null;
+    }
+    if (siblings.length > params.total) {
+      log.error("buildBestOfCompletedTaskToolOutput: found more siblings than requested", {
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+        siblingCount: siblings.length,
+        requestedTotal: params.total,
+      });
       return null;
     }
 
+    // Best-of creation can fail or be interrupted after only some candidates are spawned.
+    // When recovering an interrupted parent stream, finalize against the siblings that
+    // actually exist so the parent task tool call does not stay pending forever.
     const parentSessionDir = this.config.getSessionDir(params.parentWorkspaceId);
     const reports: Array<{
       taskId: string;
