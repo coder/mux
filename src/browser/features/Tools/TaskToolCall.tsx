@@ -307,6 +307,177 @@ function normalizeTaskId(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+interface TaskToolWorkspaceEntry {
+  taskId: string;
+  index?: number;
+  status?: string;
+  title?: string;
+}
+
+function normalizeTaskAgent(value: string | undefined): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
+}
+
+function getTaskToolWorkspaceStatus(
+  taskStatus: FrontendWorkspaceMetadata["taskStatus"]
+): string | undefined {
+  switch (taskStatus) {
+    case "reported":
+      return "completed";
+    case "queued":
+    case "running":
+    case "awaiting_report":
+    case "interrupted":
+      return taskStatus;
+    default:
+      return undefined;
+  }
+}
+
+function getTaskToolWorkspaceTitle(metadata: FrontendWorkspaceMetadata): string | undefined {
+  const title = metadata.title?.trim();
+  if (title && title.length > 0) {
+    return title;
+  }
+
+  const name = metadata.name?.trim();
+  return name && name.length > 0 ? name : undefined;
+}
+
+function mergeTaskIdsInDisplayOrder(taskIdLists: ReadonlyArray<readonly string[]>): string[] {
+  const taskIds: string[] = [];
+  const seen = new Set<string>();
+
+  for (const taskIdList of taskIdLists) {
+    for (const taskId of taskIdList) {
+      const normalizedTaskId = normalizeTaskId(taskId);
+      if (!normalizedTaskId || seen.has(normalizedTaskId)) {
+        continue;
+      }
+      seen.add(normalizedTaskId);
+      taskIds.push(normalizedTaskId);
+    }
+  }
+
+  return taskIds;
+}
+
+// task-created events are intentionally ephemeral UI hints. If the parent workspace
+// is opened after those events were missed, recover the current best-of candidates
+// from child workspace metadata when the matching group is unambiguous.
+function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
+  workspaceId: string | undefined;
+  requestedAgentType: string;
+  requestedCandidateCount: number;
+  knownTaskIds: readonly string[];
+  workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
+}): TaskToolWorkspaceEntry[] {
+  if (!params.workspaceId || params.requestedCandidateCount <= 1 || !params.workspaceMetadata) {
+    return [];
+  }
+
+  const requestedAgentType = normalizeTaskAgent(params.requestedAgentType);
+  const groupedCandidates = new Map<string, TaskToolWorkspaceEntry[]>();
+
+  for (const metadata of params.workspaceMetadata.values()) {
+    if (metadata.parentWorkspaceId !== params.workspaceId) {
+      continue;
+    }
+    if (metadata.bestOf?.total !== params.requestedCandidateCount) {
+      continue;
+    }
+    if (requestedAgentType) {
+      const metadataAgentType = normalizeTaskAgent(metadata.agentId ?? metadata.agentType);
+      if (metadataAgentType && metadataAgentType !== requestedAgentType) {
+        continue;
+      }
+    }
+
+    const taskId = normalizeTaskId(metadata.id);
+    if (!taskId) {
+      continue;
+    }
+
+    const candidates = groupedCandidates.get(metadata.bestOf.groupId) ?? [];
+    candidates.push({
+      taskId,
+      index: metadata.bestOf.index,
+      status: getTaskToolWorkspaceStatus(metadata.taskStatus),
+      title: getTaskToolWorkspaceTitle(metadata),
+    });
+    groupedCandidates.set(metadata.bestOf.groupId, candidates);
+  }
+
+  const groups = Array.from(groupedCandidates.values()).filter(
+    (group) => group.length > 0 && group.length <= params.requestedCandidateCount
+  );
+  if (groups.length === 0) {
+    return [];
+  }
+
+  const knownTaskIds = new Set(
+    params.knownTaskIds
+      .map((taskId) => normalizeTaskId(taskId))
+      .filter((taskId): taskId is string => taskId != null)
+  );
+
+  let selectedGroup: TaskToolWorkspaceEntry[] | undefined;
+  if (knownTaskIds.size > 0) {
+    const matchingGroups = groups
+      .map((group) => ({
+        group,
+        matchCount: group.filter((candidate) => knownTaskIds.has(candidate.taskId)).length,
+      }))
+      .filter((group) => group.matchCount > 0)
+      .sort((left, right) => right.matchCount - left.matchCount);
+
+    if (
+      matchingGroups.length === 1 ||
+      matchingGroups[0]?.matchCount !== matchingGroups[1]?.matchCount
+    ) {
+      selectedGroup = matchingGroups[0]?.group;
+    }
+  }
+
+  if (!selectedGroup && groups.length === 1) {
+    selectedGroup = groups[0];
+  }
+  if (!selectedGroup) {
+    return [];
+  }
+
+  return [...selectedGroup].sort(
+    (left, right) =>
+      (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+function collectWorkspaceTaskEntriesById(params: {
+  taskIds: readonly string[];
+  workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
+}): Map<string, TaskToolWorkspaceEntry> {
+  const entriesByTaskId = new Map<string, TaskToolWorkspaceEntry>();
+  if (!params.workspaceMetadata) {
+    return entriesByTaskId;
+  }
+
+  for (const taskId of params.taskIds) {
+    const metadata = params.workspaceMetadata.get(taskId);
+    if (!metadata) {
+      continue;
+    }
+
+    entriesByTaskId.set(taskId, {
+      taskId,
+      index: metadata.bestOf?.index,
+      status: getTaskToolWorkspaceStatus(metadata.taskStatus),
+      title: getTaskToolWorkspaceTitle(metadata),
+    });
+  }
+
+  return entriesByTaskId;
+}
+
 function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null): {
   taskIds: string[];
   statusByTaskId: Map<string, string>;
@@ -391,11 +562,16 @@ function getAggregateTaskStatus(
   if (displayEntries.every((entry) => entry.status === "completed")) {
     return "completed";
   }
-  if (displayEntries.some((entry) => entry.status === "running")) {
+  if (
+    displayEntries.some((entry) => entry.status === "running" || entry.status === "awaiting_report")
+  ) {
     return "running";
   }
   if (displayEntries.some((entry) => entry.status === "queued")) {
     return "queued";
+  }
+  if (displayEntries.some((entry) => entry.status === "interrupted")) {
+    return "interrupted";
   }
   return fallbackStatus;
 }
@@ -454,14 +630,35 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     result && typeof result === "object" && "status" in result ? result : null;
 
   const liveTaskIds = useTaskToolLiveTaskIds(workspaceId, toolCallId) ?? [];
+  const workspaceContext = useOptionalWorkspaceContext();
+  const workspaceMetadata = workspaceContext?.workspaceMetadata;
   const {
     taskIds: resultTaskIds,
     statusByTaskId,
     ownReportsByTaskId,
   } = collectTaskToolResultDisplayData(successResult);
-  const taskIds = Array.from(new Set([...resultTaskIds, ...liveTaskIds]));
 
   const requestedCandidateCount = args.n ?? 1;
+  const title = args.title ?? "Task";
+  const prompt = args.prompt ?? "";
+  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
+  const recoveredWorkspaceEntries = recoverBestOfTaskIdsFromWorkspaceMetadata({
+    workspaceId,
+    requestedAgentType: agentType,
+    requestedCandidateCount,
+    knownTaskIds: [...resultTaskIds, ...liveTaskIds],
+    workspaceMetadata,
+  });
+  const taskIds = mergeTaskIdsInDisplayOrder([
+    resultTaskIds,
+    recoveredWorkspaceEntries.map((entry) => entry.taskId),
+    liveTaskIds,
+  ]);
+  const workspaceEntriesByTaskId = collectWorkspaceTaskEntriesById({
+    taskIds,
+    workspaceMetadata,
+  });
+
   const totalCandidateCount = Math.max(
     requestedCandidateCount,
     taskIds.length,
@@ -469,27 +666,28 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   );
   const isBestOf = totalCandidateCount > 1;
 
-  const title = args.title ?? "Task";
-  const prompt = args.prompt ?? "";
-  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
   const kindBadge = <AgentTypeBadge type={agentType} />;
   const isBackground = args.run_in_background;
 
   const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId) => {
     const ownReport = ownReportsByTaskId.get(taskId);
     const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
+    const workspaceEntry = workspaceEntriesByTaskId.get(taskId);
     const reportMarkdown =
       typeof ownReport?.reportMarkdown === "string" && ownReport.reportMarkdown.trim().length > 0
         ? ownReport.reportMarkdown
         : linkedReport?.reportMarkdown;
     const reportTitle = ownReport?.title ?? linkedReport?.title;
-    const derivedStatus = (ownReport ?? linkedReport) ? "completed" : statusByTaskId.get(taskId);
+    const derivedStatus =
+      (ownReport ?? linkedReport)
+        ? "completed"
+        : (workspaceEntry?.status ?? statusByTaskId.get(taskId));
 
     return {
       taskId,
       status:
         derivedStatus ?? (status === "executing" ? "running" : (successResult?.status ?? "queued")),
-      title: reportTitle ?? title,
+      title: reportTitle ?? workspaceEntry?.title ?? title,
       reportMarkdown,
     };
   });
