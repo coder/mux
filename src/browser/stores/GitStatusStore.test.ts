@@ -537,13 +537,13 @@ describe("GitStatusStore", () => {
       );
 
       let fetchCallCount = 0;
-      mockExecuteBash.mockImplementation(async () => {
+      mockExecuteBash.mockImplementation(() => {
         fetchCallCount += 1;
         if (fetchCallCount === 1) {
           runtimeStatusStore.setStatus(null);
         }
 
-        return {
+        const result: Result<BashToolResult, string> = {
           success: true,
           data: {
             success: true,
@@ -551,7 +551,8 @@ describe("GitStatusStore", () => {
             exitCode: 0,
             wall_duration_ms: 0,
           },
-        } as Result<BashToolResult, string>;
+        };
+        return Promise.resolve(result);
       });
 
       // @ts-expect-error - Accessing private method for passive fetch coverage
