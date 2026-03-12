@@ -27,8 +27,15 @@ describe("executeFileEditOperation", () => {
           modifiedTime: new Date(),
           isDirectory: false,
         }),
-      readFile: jest.fn<() => Promise<Uint8Array>>().mockResolvedValue(new Uint8Array()),
-      writeFile: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      readFile: jest.fn<() => ReadableStream<Uint8Array>>(
+        () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          })
+      ),
+      writeFile: jest.fn(),
       normalizePath: jest.fn<(targetPath: string, basePath: string) => string>(
         (targetPath: string, basePath: string) => {
           normalizePathCalls.push({ targetPath, basePath });
@@ -50,7 +57,7 @@ describe("executeFileEditOperation", () => {
         ...getTestDeps(),
       },
       filePath: testFilePath,
-      operation: () => ({ success: true, newContent: "test", metadata: {} }),
+      operation: () => ({ success: false, error: "stop after path resolution" }),
     });
 
     // Verify that runtime.normalizePath() was called for path resolution
@@ -308,5 +315,318 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     }
 
     expect(resolvePathCalls).toEqual([]);
+  });
+
+  test("serializes concurrent edits to the same file", async () => {
+    using tempDir = new TestTempDir("serialized-file-edit-test");
+
+    const testFile = path.join(tempDir.path, "main.ts");
+    await fs.writeFile(testFile, "start\n");
+
+    const config = {
+      cwd: tempDir.path,
+      runtime: new LocalRuntime(tempDir.path),
+      runtimeTempDir: tempDir.path,
+      ...getTestDeps(),
+    };
+
+    let startFirstEdit!: () => void;
+    const firstEditStarted = new Promise<void>((resolve) => {
+      startFirstEdit = resolve;
+    });
+    let releaseFirstEdit!: () => void;
+    const allowFirstEditToFinish = new Promise<void>((resolve) => {
+      releaseFirstEdit = resolve;
+    });
+    let secondEditSaw = "";
+
+    const firstEdit = executeFileEditOperation({
+      config,
+      filePath: testFile,
+      operation: async (originalContent) => {
+        startFirstEdit();
+        await allowFirstEditToFinish;
+        return {
+          success: true,
+          newContent: `${originalContent}first\n`,
+          metadata: {},
+        };
+      },
+    });
+
+    await firstEditStarted;
+
+    const secondEdit = executeFileEditOperation({
+      config,
+      filePath: testFile,
+      operation: (originalContent) => {
+        secondEditSaw = originalContent;
+        return {
+          success: true,
+          newContent: `${originalContent}second\n`,
+          metadata: {},
+        };
+      },
+    });
+
+    releaseFirstEdit();
+
+    const [firstResult, secondResult] = await Promise.all([firstEdit, secondEdit]);
+
+    expect(firstResult.success).toBe(true);
+    expect(secondResult.success).toBe(true);
+    expect(secondEditSaw).toBe("start\nfirst\n");
+    expect(await fs.readFile(testFile, "utf-8")).toBe("start\nfirst\nsecond\n");
+  });
+
+  test("stops a queued same-file edit after abort", async () => {
+    using tempDir = new TestTempDir("aborted-queued-file-edit-test");
+
+    const testFile = path.join(tempDir.path, "main.ts");
+    await fs.writeFile(testFile, "start\n");
+
+    const config = {
+      cwd: tempDir.path,
+      runtime: new LocalRuntime(tempDir.path),
+      runtimeTempDir: tempDir.path,
+      ...getTestDeps(),
+    };
+
+    let startFirstEdit!: () => void;
+    const firstEditStarted = new Promise<void>((resolve) => {
+      startFirstEdit = resolve;
+    });
+    let releaseFirstEdit!: () => void;
+    const allowFirstEditToFinish = new Promise<void>((resolve) => {
+      releaseFirstEdit = resolve;
+    });
+
+    const firstEdit = executeFileEditOperation({
+      config,
+      filePath: testFile,
+      operation: async (originalContent) => {
+        startFirstEdit();
+        await allowFirstEditToFinish;
+        return {
+          success: true,
+          newContent: `${originalContent}first\n`,
+          metadata: {},
+        };
+      },
+    });
+
+    await firstEditStarted;
+
+    const abortController = new AbortController();
+    const secondEdit = executeFileEditOperation({
+      config,
+      filePath: testFile,
+      abortSignal: abortController.signal,
+      operation: (originalContent) => ({
+        success: true,
+        newContent: `${originalContent}second\n`,
+        metadata: {},
+      }),
+    });
+
+    abortController.abort();
+    releaseFirstEdit();
+
+    const [firstResult, secondResult] = await Promise.all([firstEdit, secondEdit]);
+
+    expect(firstResult.success).toBe(true);
+    expect(secondResult.success).toBe(false);
+    if (!secondResult.success) {
+      expect(secondResult.error.toLowerCase()).toContain("abort");
+    }
+    expect(await fs.readFile(testFile, "utf-8")).toBe("start\nfirst\n");
+  });
+
+  test("scopes same-path serialization to each runtime instance", async () => {
+    const createMockRuntime = (
+      content: string,
+      options?: {
+        onStat?: () => void;
+      }
+    ): Runtime => {
+      return {
+        stat: jest
+          .fn<() => Promise<{ size: number; modifiedTime: Date; isDirectory: boolean }>>()
+          .mockImplementation(() => {
+            options?.onStat?.();
+            return Promise.resolve({
+              size: content.length,
+              modifiedTime: new Date(),
+              isDirectory: false,
+            });
+          }),
+        readFile: jest.fn<() => ReadableStream<Uint8Array>>(
+          () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode(content));
+                controller.close();
+              },
+            })
+        ),
+        writeFile: jest.fn<() => WritableStream<Uint8Array>>(
+          () =>
+            new WritableStream<Uint8Array>({
+              write() {
+                return Promise.resolve();
+              },
+            })
+        ),
+        normalizePath: jest.fn<(targetPath: string, basePath: string) => string>(
+          (targetPath: string, basePath: string) => {
+            if (targetPath.startsWith("/")) {
+              return targetPath;
+            }
+            return `${basePath}/${targetPath}`;
+          }
+        ),
+      } as unknown as Runtime;
+    };
+
+    let startFirstEdit!: () => void;
+    const firstEditStarted = new Promise<void>((resolve) => {
+      startFirstEdit = resolve;
+    });
+    let releaseFirstEdit!: () => void;
+    const allowFirstEditToFinish = new Promise<void>((resolve) => {
+      releaseFirstEdit = resolve;
+    });
+    let secondStatStarted!: () => void;
+    const secondStatObserved = new Promise<void>((resolve) => {
+      secondStatStarted = resolve;
+    });
+
+    const firstRuntime = createMockRuntime("first\n");
+    const secondRuntime = createMockRuntime("second\n", {
+      onStat: () => secondStatStarted(),
+    });
+
+    const firstEdit = executeFileEditOperation({
+      config: {
+        cwd: "/workspace",
+        runtime: firstRuntime,
+        runtimeTempDir: "/tmp",
+        ...getTestDeps(),
+      },
+      filePath: "main.ts",
+      operation: async (originalContent) => {
+        startFirstEdit();
+        await allowFirstEditToFinish;
+        return {
+          success: true,
+          newContent: `${originalContent}from-first-runtime\n`,
+          metadata: {},
+        };
+      },
+    });
+
+    await firstEditStarted;
+
+    const secondEdit = executeFileEditOperation({
+      config: {
+        cwd: "/workspace",
+        runtime: secondRuntime,
+        runtimeTempDir: "/tmp",
+        ...getTestDeps(),
+      },
+      filePath: "main.ts",
+      operation: (originalContent) => ({
+        success: true,
+        newContent: `${originalContent}from-second-runtime\n`,
+        metadata: {},
+      }),
+    });
+
+    const secondStartedBeforeRelease = await Promise.race([
+      secondStatObserved.then(() => true),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(false), 0);
+      }),
+    ]);
+
+    expect(secondStartedBeforeRelease).toBe(true);
+
+    releaseFirstEdit();
+
+    const [firstResult, secondResult] = await Promise.all([firstEdit, secondEdit]);
+    expect(firstResult.success).toBe(true);
+    expect(secondResult.success).toBe(true);
+  });
+
+  test("waits for an in-flight write to settle before reporting abort", async () => {
+    let signalWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      signalWriteStarted = resolve;
+    });
+    let releaseWrite!: () => void;
+    const allowWriteToFinish = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+
+    const mockRuntime = {
+      stat: jest
+        .fn<() => Promise<{ size: number; modifiedTime: Date; isDirectory: boolean }>>()
+        .mockResolvedValue({
+          size: 6,
+          modifiedTime: new Date(),
+          isDirectory: false,
+        }),
+      readFile: jest.fn<() => ReadableStream<Uint8Array>>(
+        () =>
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("start\n"));
+              controller.close();
+            },
+          })
+      ),
+      writeFile: jest.fn<() => WritableStream<Uint8Array>>(
+        () =>
+          new WritableStream<Uint8Array>({
+            async write() {
+              signalWriteStarted();
+              await allowWriteToFinish;
+            },
+          })
+      ),
+      normalizePath: jest.fn<(targetPath: string, basePath: string) => string>(
+        (targetPath: string, basePath: string) => {
+          if (targetPath.startsWith("/")) {
+            return targetPath;
+          }
+          return `${basePath}/${targetPath}`;
+        }
+      ),
+    } as unknown as Runtime;
+
+    const abortController = new AbortController();
+    const editResultPromise = executeFileEditOperation({
+      config: {
+        cwd: "/workspace",
+        runtime: mockRuntime,
+        runtimeTempDir: "/tmp",
+        ...getTestDeps(),
+      },
+      filePath: "main.ts",
+      abortSignal: abortController.signal,
+      operation: (originalContent) => ({
+        success: true,
+        newContent: `${originalContent}written\n`,
+        metadata: {},
+      }),
+    });
+
+    await writeStarted;
+
+    abortController.abort();
+    releaseWrite();
+
+    const result = await editResultPromise;
+    expect(result.success).toBe(true);
   });
 });

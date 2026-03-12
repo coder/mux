@@ -27,6 +27,7 @@ import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/util
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
+import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -255,8 +256,9 @@ export abstract class LocalBaseRuntime implements Runtime {
         const parentDir = path.dirname(resolvedPath);
         await fsPromises.mkdir(parentDir, { recursive: true });
 
-        // Create temp file for atomic write
-        tempPath = `${resolvedPath}.tmp.${Date.now()}`;
+        // Use a unique temp path so parallel writers never race on the same
+        // intermediate file before the final atomic rename.
+        tempPath = getAtomicWriteTempPath(resolvedPath);
         const nodeStream = fs.createWriteStream(tempPath);
         const webStream = Writable.toWeb(nodeStream) as WritableStream<Uint8Array>;
         writer = webStream.getWriter();

@@ -42,6 +42,7 @@ import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { isGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
 
 export interface DevcontainerRuntimeOptions {
   srcBaseDir: string;
@@ -328,7 +329,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     abortSignal?: AbortSignal
   ): WritableStream<Uint8Array> {
     const quotedPath = this.quoteForContainer(filePath);
-    const tempPath = `${filePath}.tmp.${Date.now()}`;
+    const tempPath = getAtomicWriteTempPath(filePath);
     const quotedTempPath = this.quoteForContainer(tempPath);
     const writeCommand = `mkdir -p $(dirname ${quotedPath}) && cat > ${quotedTempPath} && mv ${quotedTempPath} ${quotedPath}`;
 
