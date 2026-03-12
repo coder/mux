@@ -5,6 +5,8 @@ import { availableRoutes, isModelAvailable, resolveRoute } from "./resolve";
 const MODEL = "anthropic:claude-opus-4-6";
 const OPENAI_MODEL = "openai:gpt-5.4";
 
+const EXPLICIT_GATEWAY_MODEL = "openrouter:openai/gpt-5";
+
 function createIsConfigured(configuredProviders: string[]): (provider: string) => boolean {
   const configuredSet = new Set(configuredProviders);
   return (provider: string): boolean => configuredSet.has(provider);
@@ -66,6 +68,18 @@ describe("resolveRoute", () => {
 
     expect(resolved.routeProvider).toBe("github-copilot");
     expect(resolved.routeModelId).toBe("gpt-5.4");
+  });
+
+  test("preserves explicit gateway-scoped OpenAI routes without double-prefixing", () => {
+    const resolved = resolveRoute(
+      EXPLICIT_GATEWAY_MODEL,
+      ["openrouter", "direct"],
+      {},
+      createIsConfigured(["openrouter"])
+    );
+
+    expect(resolved.routeProvider).toBe("openrouter");
+    expect(resolved.routeModelId).toBe("openai/gpt-5");
   });
 
   test("supports per-model override to specific gateway", () => {
@@ -190,6 +204,26 @@ describe("isModelAvailable", () => {
         modelId: MODEL,
         configuredProviders: ["anthropic"],
         routePriority: ["direct"],
+      })
+    ).toBe(true);
+  });
+
+  test("returns false for explicit gateway-scoped models when only the direct provider is configured", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: EXPLICIT_GATEWAY_MODEL,
+        configuredProviders: ["openai"],
+        routePriority: ["direct"],
+      })
+    ).toBe(false);
+  });
+
+  test("returns true for explicit gateway-scoped models when the gateway is configured", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: EXPLICIT_GATEWAY_MODEL,
+        configuredProviders: ["openrouter"],
+        routePriority: ["openrouter", "direct"],
       })
     ).toBe(true);
   });

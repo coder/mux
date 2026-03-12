@@ -19,6 +19,8 @@ let providersConfig: ProvidersConfigMap | null = null;
 let routePriority: string[] = ["direct"];
 let routeOverrides: Record<string, string> = {};
 
+const OPENROUTER_OPENAI_CUSTOM_MODEL = "openrouter:openai/gpt-5";
+
 interface TestApi {
   config?: {
     updateModelPreferences?: (patch: {
@@ -415,6 +417,40 @@ describe("useModelsFromSettings provider availability gating", () => {
     // when the provider is unconfigured.
     expect(result.current.hiddenModelsForSelector).toContain("openai:gpt-5.3-codex");
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
+  });
+
+  test("keeps explicit OpenRouter custom models hidden when only the direct provider is configured", () => {
+    providersConfig = {
+      openrouter: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: false,
+        models: ["openai/gpt-5"],
+      },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).not.toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+    expect(result.current.hiddenModelsForSelector).toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+  });
+
+  test("shows explicit OpenRouter custom models once OpenRouter is configured", () => {
+    providersConfig = {
+      openrouter: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: ["openai/gpt-5"],
+      },
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+    expect(result.current.hiddenModelsForSelector).not.toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
   });
 
   test("hides models from disabled providers", () => {
