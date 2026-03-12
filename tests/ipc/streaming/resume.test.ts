@@ -2,7 +2,7 @@ import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../s
 import {
   sendMessageWithModel,
   createStreamCollector,
-  modelString,
+  HAIKU_MODEL,
   resolveOrpcClient,
   configureTestRetries,
 } from "../helpers";
@@ -17,6 +17,9 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
+
+const RESUME_STREAM_MODEL = HAIKU_MODEL;
+// Resume behavior is model-agnostic, so keep this coverage on fast Haiku.
 
 describeIntegration("resumeStream", () => {
   // Enable retries in CI for flaky API tests
@@ -44,7 +47,7 @@ describeIntegration("resumeStream", () => {
           env,
           workspaceId,
           `Use bash to run: for i in {1..10}; do sleep 0.5; done && echo '${expectedWord}'. Set display_name="resume-test" and timeout_secs=120. Do not spawn a sub-agent.`,
-          modelString("anthropic", "claude-sonnet-4-5"),
+          RESUME_STREAM_MODEL,
           {
             toolPolicy: [{ regex_match: "bash", action: "require" }],
           }
@@ -92,7 +95,7 @@ describeIntegration("resumeStream", () => {
         // Resume the stream (no new user message)
         const resumeResult = await client.workspace.resumeStream({
           workspaceId,
-          options: { model: "anthropic:claude-sonnet-4-5", agentId: "exec" },
+          options: { model: RESUME_STREAM_MODEL, agentId: "exec" },
         });
         expect(resumeResult.success).toBe(true);
 
@@ -175,7 +178,7 @@ describeIntegration("resumeStream", () => {
         const client = resolveOrpcClient(env);
         const resumeResult = await client.workspace.resumeStream({
           workspaceId,
-          options: { model: "anthropic:claude-sonnet-4-5", agentId: "exec" },
+          options: { model: RESUME_STREAM_MODEL, agentId: "exec" },
         });
         expect(resumeResult.success).toBe(true);
 

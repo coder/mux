@@ -5,7 +5,7 @@
  * the backend automatically retries with 1M context enabled for models that support it.
  *
  * Pre-seeds ~250k tokens of conversation history, then issues a compaction request
- * with the shared Sonnet integration model (default 200k limit, supports 1M).
+ * with an explicitly pinned Sonnet integration model (default 200k limit, supports 1M).
  * If the 1M retry fires correctly, the compaction should succeed rather than
  * returning context_exceeded.
  */
@@ -14,7 +14,6 @@ import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "./se
 import { createStreamCollector, resolveOrpcClient } from "./helpers";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
-import { INTEGRATION_TEST_MODEL } from "../testUtils";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -40,6 +39,9 @@ function buildFillerText(charCount: number): string {
   const repeats = Math.ceil(charCount / base.length);
   return base.repeat(repeats).slice(0, charCount);
 }
+
+const COMPACTION_1M_RETRY_MODEL = "anthropic:claude-sonnet-4-6";
+// Pinned to Sonnet: this test validates 1M-context retry behavior; Haiku's context window is too small
 
 describeIntegration("compaction 1M context retry", () => {
   // Compaction with 1M retry can take a while — summarizing 250k+ tokens of content.
@@ -82,7 +84,7 @@ describeIntegration("compaction 1M context retry", () => {
         const collector = createStreamCollector(env.orpc, workspaceId);
         collector.start();
 
-        const integrationModel = INTEGRATION_TEST_MODEL;
+        const integrationModel = COMPACTION_1M_RETRY_MODEL;
 
         // Send compaction request — use the same pattern as production /compact.
         // Crucially, do NOT enable 1M context in providerOptions; the retry should add it.

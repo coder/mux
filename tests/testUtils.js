@@ -51,13 +51,13 @@ const path = __importStar(require("path"));
 // This runs once when the module is first imported
 (0, dotenv_1.config)({ path: path.resolve(__dirname, "../.env"), quiet: true });
 /**
- * Pin provider-backed integration coverage to one Sonnet model so the suite stays
- * stable even when the app-wide default model changes.
+ * Default provider-backed integration coverage to Haiku so the suite runs faster
+ * and cheaper unless a test explicitly pins a larger or provider-specific model.
  *
  * Keep this as a literal string: the CommonJS shim (`tests/testUtils.js`) is loaded
  * directly by Jest/Node and cannot import TypeScript-only source files.
  */
-exports.INTEGRATION_TEST_MODEL = "anthropic:claude-sonnet-4-6";
+exports.INTEGRATION_TEST_MODEL = "anthropic:claude-haiku-4-5";
 /**
  * Check if integration tests should run
  * Tests are skipped if TEST_INTEGRATION env var is not set

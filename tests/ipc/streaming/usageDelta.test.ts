@@ -2,12 +2,11 @@ import { setupWorkspace, shouldRunIntegrationTests, validateApiKeys } from "../s
 import {
   sendMessageWithModel,
   createStreamCollector,
-  modelString,
+  HAIKU_MODEL,
   assertStreamSuccess,
   configureTestRetries,
 } from "../helpers";
 import { isUsageDelta } from "../../../src/common/orpc/types";
-import { KNOWN_MODELS } from "../../../src/common/constants/knownModels";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -16,6 +15,9 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
+
+const USAGE_DELTA_MODEL = HAIKU_MODEL;
+// Usage-delta assertions are model-agnostic, so keep this coverage on fast Haiku.
 
 describeIntegration("usage-delta events", () => {
   // Enable retries in CI for flaky API tests
@@ -35,7 +37,7 @@ describeIntegration("usage-delta events", () => {
           env,
           workspaceId,
           "Use the file_read tool to read README.md. Only read the first 5 lines.",
-          modelString("anthropic", KNOWN_MODELS.SONNET.providerModelId)
+          USAGE_DELTA_MODEL
         );
 
         expect(result.success).toBe(true);
