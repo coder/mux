@@ -24,6 +24,19 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+function callWrappedExecute(
+  toolRecord: Record<string, unknown>,
+  options: unknown
+): Promise<unknown> {
+  const execute = toolRecord.execute;
+  if (typeof execute !== "function") {
+    throw new Error("Expected wrapped tool execute handler");
+  }
+
+  const invoke = execute as (args: Record<string, never>, options: unknown) => Promise<unknown>;
+  return invoke({}, options);
+}
+
 describe("withSequentialExecution", () => {
   test("serializes sibling execute handlers in invocation order", async () => {
     const executionLog: string[] = [];
@@ -106,5 +119,69 @@ describe("withSequentialExecution", () => {
 
     expect(results).toEqual([{ tool: "A" }, { tool: "B" }, { tool: "C" }]);
     expect(executionLog).toEqual(["start A", "end A", "start B", "end B", "start C", "end C"]);
+  });
+
+  test("does not execute queued siblings after stream abort", async () => {
+    const executionLog: string[] = [];
+    const startedA = createDeferred<void>();
+    const releaseA = createDeferred<void>();
+    let startedB = false;
+
+    const tools = {
+      a: tool({
+        description: "Tool A",
+        inputSchema: z.object({}),
+        execute: async () => {
+          executionLog.push("start A");
+          startedA.resolve();
+          await releaseA.promise;
+          executionLog.push("end A");
+          return { tool: "A" };
+        },
+      }),
+      b: tool({
+        description: "Tool B",
+        inputSchema: z.object({}),
+        execute: () => {
+          startedB = true;
+          executionLog.push("start B");
+          return { tool: "B" };
+        },
+      }),
+    };
+
+    const wrappedTools = withSequentialExecution(tools);
+    expect(wrappedTools).toBeDefined();
+
+    const controller = new AbortController();
+    const firstPromise = callWrappedExecute(
+      wrappedTools!.a as Record<string, unknown>,
+      {} as never
+    );
+    await startedA.promise;
+
+    const secondPromise = callWrappedExecute(
+      wrappedTools!.b as Record<string, unknown>,
+      {
+        abortSignal: controller.signal,
+      } as never
+    );
+    controller.abort();
+
+    try {
+      await secondPromise;
+      throw new Error("Expected queued tool to reject after abort");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("Interrupted");
+    }
+    expect(startedB).toBe(false);
+    expect(executionLog).toEqual(["start A"]);
+
+    releaseA.resolve();
+    expect(await firstPromise).toEqual({ tool: "A" });
+    await Promise.resolve();
+    expect(startedB).toBe(false);
+    expect(executionLog).toEqual(["start A", "end A"]);
   });
 });
