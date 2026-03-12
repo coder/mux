@@ -11,6 +11,20 @@ let cleanupDom: (() => void) | null = null;
 let apiStatus: "auth_required" | "connecting" | "error" = "auth_required";
 let apiError: string | null = "Authentication required";
 
+const passthroughRef = <T,>(value: T): T => value;
+
+void mock.module("react-dnd", () => ({
+  DndProvider: (props: { children: React.ReactNode }) => props.children,
+  useDrag: () => [{ isDragging: false }, passthroughRef, () => undefined] as const,
+  useDrop: () => [{ isOver: false }, passthroughRef] as const,
+  useDragLayer: () => ({ isDragging: false, item: null, currentOffset: null }),
+}));
+
+void mock.module("react-dnd-html5-backend", () => ({
+  HTML5Backend: {},
+  getEmptyImage: () => null,
+}));
+
 // AppLoader imports App, which pulls in Lottie-based components. In happy-dom,
 // lottie-web's canvas bootstrap can throw during module evaluation.
 void mock.module("lottie-react", () => ({
