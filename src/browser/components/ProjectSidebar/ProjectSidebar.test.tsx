@@ -48,17 +48,19 @@ const passthroughRef = <T,>(value: T): T => value;
 
 let ProjectSidebar: (typeof import("./ProjectSidebar"))["default"];
 
-void mock.module("react-dnd", () => ({
-  DndProvider: TestWrapper,
-  useDrag: () => [{ isDragging: false }, passthroughRef, () => undefined] as const,
-  useDrop: () => [{ isOver: false }, passthroughRef] as const,
-  useDragLayer: () => ({ isDragging: false, item: null, currentOffset: null }),
-}));
+function installProjectSidebarModuleMocks() {
+  void mock.module("react-dnd", () => ({
+    DndProvider: TestWrapper,
+    useDrag: () => [{ isDragging: false }, passthroughRef, () => undefined] as const,
+    useDrop: () => [{ isOver: false }, passthroughRef] as const,
+    useDragLayer: () => ({ isDragging: false, item: null, currentOffset: null }),
+  }));
 
-void mock.module("react-dnd-html5-backend", () => ({
-  HTML5Backend: {},
-  getEmptyImage: () => null,
-}));
+  void mock.module("react-dnd-html5-backend", () => ({
+    HTML5Backend: {},
+    getEmptyImage: () => null,
+  }));
+}
 
 function resolveVoidResult() {
   return Promise.resolve({ success: true as const, data: undefined });
@@ -305,6 +307,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       EXPANDED_PROJECTS_KEY,
       JSON.stringify([MULTI_PROJECT_SIDEBAR_SECTION_ID])
     );
+    installProjectSidebarModuleMocks();
     installProjectSidebarTestDoubles();
     ({ default: ProjectSidebar } = await import("./ProjectSidebar"));
   });
