@@ -49,12 +49,16 @@ function parseRoutingInput(modelInput: string): ParsedRoutingInput {
   };
 }
 
+function getCanonicalRouteKey(parsed: ParsedRoutingInput): string {
+  return `${parsed.origin}:${parsed.originModelId}`;
+}
+
 function directRouteContext(
-  modelInput: string,
+  _modelInput: string,
   parsed: ReturnType<typeof parseRoutingInput>
 ): RouteContext {
   return {
-    canonical: modelInput,
+    canonical: getCanonicalRouteKey(parsed),
     origin: parsed.origin,
     originModelId: parsed.originModelId,
     routeProvider: parsed.origin,
@@ -63,7 +67,7 @@ function directRouteContext(
 }
 
 function explicitGatewayRouteContext(
-  modelInput: string,
+  _modelInput: string,
   parsed: ReturnType<typeof parseRoutingInput>
 ): RouteContext {
   const explicitGateway = parsed.explicitGateway;
@@ -73,7 +77,7 @@ function explicitGatewayRouteContext(
   }
 
   return {
-    canonical: modelInput,
+    canonical: getCanonicalRouteKey(parsed),
     origin: parsed.origin,
     originModelId: parsed.originModelId,
     routeProvider: explicitGateway,
@@ -84,14 +88,14 @@ function explicitGatewayRouteContext(
 }
 
 function gatewayRouteContext(
-  modelInput: string,
+  _modelInput: string,
   parsed: ReturnType<typeof parseRoutingInput>,
   gateway: ProviderName
 ): RouteContext {
   const definition = getProviderDefinition(gateway);
   const toGatewayModelId = definition?.toGatewayModelId;
   return {
-    canonical: modelInput,
+    canonical: getCanonicalRouteKey(parsed),
     origin: parsed.origin,
     originModelId: parsed.originModelId,
     routeProvider: gateway,
@@ -162,7 +166,10 @@ function findActiveRouteContext(
   }
 
   // 1. Check per-model override
-  const override = routeOverrides[modelInput];
+  // Route overrides are stored under canonical model identity (for example, "openai:gpt-5"),
+  // not under raw explicit gateway strings like "openrouter:openai/gpt-5".
+  const canonicalKey = getCanonicalRouteKey(parsed);
+  const override = routeOverrides[canonicalKey];
   if (override === "direct" || override === parsed.origin) {
     const direct = getConfiguredDirectRouteContext(modelInput, parsed, isConfigured);
     if (direct) {

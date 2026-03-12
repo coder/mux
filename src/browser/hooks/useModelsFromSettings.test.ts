@@ -515,6 +515,32 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector.length).toBe(0);
   });
 
+  test("gateway-prefixed custom model stays available via canonical route override when gateway is unavailable", () => {
+    routePriority = ["direct"];
+    routeOverrides = { "openai:gpt-5": "mux-gateway" };
+
+    providersConfig = {
+      openrouter: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: false,
+        models: ["openai/gpt-5"],
+      },
+      openai: { apiKeySet: false, isEnabled: true, isConfigured: false },
+      "mux-gateway": {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        couponCodeSet: true,
+      },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+    expect(result.current.hiddenModelsForSelector).not.toContain(OPENROUTER_OPENAI_CUSTOM_MODEL);
+  });
+
   test("provider missing from config is treated as unavailable without a route", () => {
     providersConfig = {
       anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true },

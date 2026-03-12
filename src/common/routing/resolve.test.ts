@@ -94,6 +94,19 @@ describe("resolveRoute", () => {
     expect(resolved.routeModelId).toBe("openai/gpt-5");
   });
 
+  test("explicit gateway input uses canonical route override on fallback", () => {
+    const route = resolveRoute(
+      EXPLICIT_GATEWAY_MODEL,
+      ["direct"],
+      { "openai:gpt-5": "mux-gateway" },
+      createIsConfigured(["mux-gateway"])
+    );
+
+    expect(route).not.toBeNull();
+    expect(route.routeProvider).toBe("mux-gateway");
+    expect(route.canonical).toBe("openai:gpt-5");
+  });
+
   test("falls back to direct for explicit gateway when nothing is configured", () => {
     const resolved = resolveRoute(
       EXPLICIT_GATEWAY_MODEL,
@@ -332,6 +345,36 @@ describe("isModelAvailable", () => {
         routePriority: ["mux-gateway", "openrouter", "direct"],
       })
     ).toBe(false);
+  });
+  test("explicit gateway model finds canonical route override on fallback", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: EXPLICIT_GATEWAY_MODEL,
+        configuredProviders: ["mux-gateway"],
+        routePriority: ["direct"],
+        routeOverrides: { "openai:gpt-5": "mux-gateway" },
+      })
+    ).toBe(true);
+  });
+
+  test("explicit bedrock model falls back to direct anthropic when bedrock is unconfigured", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: "bedrock:anthropic.claude-opus-4-6",
+        configuredProviders: ["anthropic"],
+        routePriority: ["direct"],
+      })
+    ).toBe(true);
+  });
+
+  test("explicit bedrock model falls back to mux-gateway when bedrock is unconfigured", () => {
+    expect(
+      isModelAvailableForRoutes({
+        modelId: "bedrock:anthropic.claude-opus-4-6",
+        configuredProviders: ["mux-gateway"],
+        routePriority: ["mux-gateway", "direct"],
+      })
+    ).toBe(true);
   });
 });
 
