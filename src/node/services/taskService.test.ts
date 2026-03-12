@@ -56,6 +56,28 @@ async function collectFullHistory(service: HistoryService, workspaceId: string) 
   return messages;
 }
 
+function findWorkspaceInConfig(config: Config, workspaceId: string) {
+  return Array.from(config.loadConfigOrDefault().projects.values())
+    .flatMap((project) => project.workspaces)
+    .find((workspace) => workspace.id === workspaceId);
+}
+
+async function waitForWorkspaceRemoval(
+  config: Config,
+  workspaceId: string,
+  timeoutMs = 20_000
+): Promise<void> {
+  const start = Date.now();
+  while (findWorkspaceInConfig(config, workspaceId)) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timed out waiting for workspace cleanup (workspaceId=${workspaceId})`);
+    }
+
+    // Patch artifact readiness flips before the async cleanup recheck removes the child workspace.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 function createNullInitLogger() {
   return {
     logStep: (_message: string) => undefined,
@@ -4545,14 +4567,11 @@ describe("TaskService", () => {
     expect(artifact?.status).toBe("ready");
 
     await fsPromises.stat(patchPath);
+    await waitForWorkspaceRemoval(config, childId);
+
     expect(remove).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledWith(childId, true);
-
-    const postCfg = config.loadConfigOrDefault();
-    const ws = Array.from(postCfg.projects.values())
-      .flatMap((p) => p.workspaces)
-      .find((w) => w.id === childId);
-    expect(ws).toBeUndefined();
+    expect(findWorkspaceInConfig(config, childId)).toBeUndefined();
   }, 20_000);
 
   test("agent_report generates mixed per-project git format-patch artifacts for multi-project exec tasks before cleanup", async () => {
@@ -4902,14 +4921,11 @@ describe("TaskService", () => {
     expect(artifact?.status).toBe("ready");
 
     await fsPromises.stat(patchPath);
+    await waitForWorkspaceRemoval(config, childId);
+
     expect(remove).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledWith(childId, true);
-
-    const postCfg = config.loadConfigOrDefault();
-    const ws = Array.from(postCfg.projects.values())
-      .flatMap((p) => p.workspaces)
-      .find((w) => w.id === childId);
-    expect(ws).toBeUndefined();
+    expect(findWorkspaceInConfig(config, childId)).toBeUndefined();
   }, 20_000);
   test("agent_report updates queued/running task tool output in parent history", async () => {
     const config = await createTestConfig(rootDir);
