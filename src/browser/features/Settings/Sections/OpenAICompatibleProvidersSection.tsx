@@ -262,7 +262,7 @@ export function OpenAICompatibleProvidersSection({
           <p className="text-muted text-xs">
             Configure OpenAI-compatible API endpoints (Together AI, Fireworks, LM Studio, etc.).
             Models are accessed via{" "}
-            <code className="text-accent">openai-compatible:provider-id:model-name</code>.
+            <code className="text-accent">openai-compatible/provider-id:model-name</code>.
           </p>
 
           {error && (
@@ -455,7 +455,7 @@ export function OpenAICompatibleProvidersSection({
                     placeholder="together-ai"
                   />
                   <p className="text-dim mt-1 text-xs">
-                    Used in model strings: openai-compatible:
+                    Used in model strings: openai-compatible/
                     <span className="text-accent">together-ai</span>:model-id
                   </p>
                 </div>

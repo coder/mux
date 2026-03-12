@@ -31,7 +31,6 @@ import { CSS } from "@dnd-kit/utilities";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { OpenAICompatibleProvidersSection } from "./OpenAICompatibleProvidersSection";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
@@ -1228,10 +1227,27 @@ export function ProvidersSection() {
       {(
         [
           { key: "direct", label: "Direct Providers", providers: providerGroups.direct },
+          {
+            key: "openai-compatible",
+            label: "User Providers",
+            providers: [],
+            render: () => <OpenAICompatibleProvidersSection />,
+          },
           { key: "gateway", label: "Gateways", providers: providerGroups.gateway },
           { key: "local", label: "Local", providers: providerGroups.local },
         ] as const
       ).map((section) => {
+        if ("render" in section) {
+          return (
+            <div key={section.key} className="space-y-2">
+              <div className="text-muted text-xs font-medium tracking-wide uppercase">
+                {section.label}
+              </div>
+              {section.render()}
+            </div>
+          );
+        }
+
         if (section.providers.length === 0) {
           return null;
         }
@@ -2202,8 +2218,6 @@ export function ProvidersSection() {
           </div>
         );
       })}
-
-      <OpenAICompatibleProvidersSection />
 
       {config && !hasAnyConfiguredProvider && (
         <div className="border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-xs">

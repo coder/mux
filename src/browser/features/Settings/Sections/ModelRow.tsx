@@ -15,6 +15,10 @@ import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { cn } from "@/common/lib/utils";
 import type { AvailableRoute } from "@/common/routing";
 import { getModelStats, type ModelStats } from "@/common/utils/tokens/modelStats";
+import {
+  isOpenAICompatibleProvider,
+  formatOpenAICompatibleDisplayName,
+} from "@/common/utils/providers/openaiCompatible";
 
 /** Format tokens as human-readable string (e.g. 200000 -> "200k") */
 function formatTokenCount(tokens: number): string {
@@ -329,6 +333,11 @@ export function ModelRow(props: ModelRowProps) {
           <span className="text-foreground min-w-0 truncate font-mono text-xs">
             {props.modelId}
           </span>
+          {isOpenAICompatibleProvider(props.provider) && (
+            <span className="text-muted shrink-0 rounded bg-background-secondary px-1.5 py-0.5 text-[10px]">
+              {formatOpenAICompatibleDisplayName(props.provider)}
+            </span>
+          )}
           {mappedModelDisplayName && (
             <span className="text-muted ml-1 flex shrink-0 items-center gap-1 text-[10px]">
               →

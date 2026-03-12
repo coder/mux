@@ -8,7 +8,6 @@ import {
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { useRouting } from "./useRouting";
-import { useOpenAICompatibleProviders } from "./useOpenAICompatibleProviders";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { isValidProvider } from "@/common/constants/providers";
@@ -20,9 +19,6 @@ import {
 } from "@/common/utils/ai/models";
 import { isModelAvailable } from "@/common/routing";
 import type { ProviderModelEntry, ProvidersConfigMap } from "@/common/orpc/types";
-import type {
-  OpenAICompatibleProvidersInfo,
-} from "@/common/orpc/types";
 import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
@@ -127,7 +123,6 @@ export function useModelsFromSettings() {
   );
   const { config, refresh } = useProvidersConfig();
   const { routePriority, routeOverrides } = useRouting();
-  const { config: openaiCompatibleConfig } = useOpenAICompatibleProviders();
 
   const [defaultModel, setDefaultModel] = usePersistedState<string>(
     DEFAULT_MODEL_KEY,
