@@ -524,6 +524,55 @@ describe("GitStatusStore", () => {
 
       unsubscribe();
     });
+
+    it("rechecks passive eligibility before each secondary repo fetch", async () => {
+      store.dispose();
+      const workspaceId = "dc-secondary-stop";
+      const runtimeStatusStore = createRuntimeStatusStoreMock("running");
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+      store.syncWorkspaces(
+        new Map([
+          [workspaceId, createMultiProjectWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME)],
+        ])
+      );
+
+      let fetchCallCount = 0;
+      mockExecuteBash.mockImplementation(async () => {
+        fetchCallCount += 1;
+        if (fetchCallCount === 1) {
+          runtimeStatusStore.setStatus(null);
+        }
+
+        return {
+          success: true,
+          data: {
+            success: true,
+            output: "",
+            exitCode: 0,
+            wall_duration_ms: 0,
+          },
+        } as Result<BashToolResult, string>;
+      });
+
+      // @ts-expect-error - Accessing private method for passive fetch coverage
+      await store.fetchSecondaryWorkspaceRepos("project-a", workspaceId, [
+        "/home/user/project-b",
+        "/home/user/project-c",
+      ]);
+
+      const fetchCalls = mockExecuteBash.mock.calls
+        .map(
+          (call) =>
+            (call as unknown[])[0] as {
+              script?: string;
+              options?: { repoRootProjectPath?: string };
+            }
+        )
+        .filter((call) => call.script === GIT_FETCH_SCRIPT);
+
+      expect(fetchCalls).toHaveLength(1);
+      expect(fetchCalls[0]?.options?.repoRootProjectPath).toBe("/home/user/project-b");
+    });
   });
 
   describe("reference stability", () => {
@@ -725,6 +774,45 @@ describe("GitStatusStore", () => {
       });
 
       unsubscribe();
+    });
+
+    it("fetches secondary repos from every workspace that shares the fetch key", async () => {
+      const firstWorkspace = createMultiProjectWorkspaceMetadata("multi-shared-a");
+      const secondWorkspace: FrontendWorkspaceMetadata = {
+        ...createMultiProjectWorkspaceMetadata("multi-shared-b"),
+        projects: [
+          { projectPath: "/home/user/project-a", projectName: "project-a" },
+          { projectPath: "/home/user/project-c", projectName: "project-c" },
+        ],
+      };
+      const workspaces = new Map<string, FrontendWorkspaceMetadata>([
+        [firstWorkspace.id, firstWorkspace],
+        [secondWorkspace.id, secondWorkspace],
+      ]);
+
+      store.syncWorkspaces(workspaces);
+      mockExecuteBash.mockClear();
+
+      // @ts-expect-error - Accessing private method for fetch dedupe coverage
+      store.tryFetchWorkspaces(workspaces);
+      await waitUntil(() => getFetchCallCount() === 3);
+
+      const secondaryRepoProjectPaths = mockExecuteBash.mock.calls
+        .map(
+          (call) =>
+            (call as unknown[])[0] as {
+              script?: string;
+              options?: { repoRootProjectPath?: string };
+            }
+        )
+        .filter((call) => call.script === GIT_FETCH_SCRIPT)
+        .map((call) => call.options?.repoRootProjectPath ?? null)
+        .filter((projectPath): projectPath is string => projectPath !== null);
+
+      expect(secondaryRepoProjectPaths).toHaveLength(2);
+      expect(new Set(secondaryRepoProjectPaths)).toEqual(
+        new Set(["/home/user/project-b", "/home/user/project-c"])
+      );
     });
 
     it("skips multi-project IPC when passive runtime commands are ineligible and preserves cached state", async () => {
