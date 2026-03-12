@@ -65,6 +65,20 @@ const fromSlashSeparatedGatewayModelId = (
   };
 };
 
+const fromDotSeparatedGatewayModelId = (
+  gatewayModelId: string
+): { origin: string; modelId: string } | null => {
+  const separatorIndex = gatewayModelId.indexOf(".");
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  return {
+    origin: gatewayModelId.slice(0, separatorIndex),
+    modelId: gatewayModelId.slice(separatorIndex + 1),
+  };
+};
+
 // Order determines display order in UI (Settings, model selectors, etc.)
 export const PROVIDER_DEFINITIONS = {
   "mux-gateway": {
@@ -148,6 +162,7 @@ export const PROVIDER_DEFINITIONS = {
     passthrough: false,
     // Bedrock model IDs use dot-separated vendor.model notation.
     toGatewayModelId: (origin, modelId) => `${origin}.${modelId}`,
+    fromGatewayModelId: fromDotSeparatedGatewayModelId,
   },
   ollama: {
     displayName: "Ollama",

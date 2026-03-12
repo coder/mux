@@ -9,7 +9,7 @@ import {
 } from "./models";
 
 describe("normalizeToCanonical", () => {
-  it("should convert mux-gateway:provider/model to provider:model", () => {
+  it("normalizes mux-gateway model IDs to canonical identity", () => {
     expect(normalizeToCanonical("mux-gateway:anthropic/claude-opus-4-5")).toBe(
       "anthropic:claude-opus-4-5"
     );
@@ -17,18 +17,45 @@ describe("normalizeToCanonical", () => {
     expect(normalizeToCanonical("mux-gateway:google/gemini-2.5-pro")).toBe("google:gemini-2.5-pro");
   });
 
-  it("should keep github-copilot:model identities unchanged", () => {
+  it("normalizes bedrock model IDs to canonical anthropic identity", () => {
+    expect(normalizeToCanonical("bedrock:anthropic.claude-sonnet-4-5")).toBe(
+      "anthropic:claude-sonnet-4-5"
+    );
+    expect(normalizeToCanonical("bedrock:anthropic.claude-opus-4-6")).toBe(
+      "anthropic:claude-opus-4-6"
+    );
+  });
+
+  it("leaves bedrock model IDs unchanged when origin is not a known direct provider", () => {
+    expect(normalizeToCanonical("bedrock:us.anthropic.claude-sonnet-4-5")).toBe(
+      "bedrock:us.anthropic.claude-sonnet-4-5"
+    );
+  });
+
+  it("leaves bedrock model IDs unchanged when no dot separator exists", () => {
+    expect(normalizeToCanonical("bedrock:some-model-without-dots")).toBe(
+      "bedrock:some-model-without-dots"
+    );
+  });
+
+  it("normalizes openrouter model IDs to canonical identity", () => {
+    expect(normalizeToCanonical("openrouter:openai/gpt-5")).toBe("openai:gpt-5");
+    expect(normalizeToCanonical("openrouter:anthropic/claude-sonnet-4-5")).toBe(
+      "anthropic:claude-sonnet-4-5"
+    );
+  });
+
+  it("leaves github-copilot model IDs unchanged", () => {
     expect(normalizeToCanonical("github-copilot:gpt-5.4")).toBe("github-copilot:gpt-5.4");
   });
 
-  it("should return non-gateway strings unchanged", () => {
-    expect(normalizeToCanonical("anthropic:claude-opus-4-5")).toBe("anthropic:claude-opus-4-5");
-    expect(normalizeToCanonical("openai:gpt-4o")).toBe("openai:gpt-4o");
+  it("leaves direct provider model IDs unchanged", () => {
+    expect(normalizeToCanonical("anthropic:claude-sonnet-4-5")).toBe("anthropic:claude-sonnet-4-5");
+    expect(normalizeToCanonical("openai:gpt-5")).toBe("openai:gpt-5");
     expect(normalizeToCanonical("claude-opus-4-5")).toBe("claude-opus-4-5");
   });
 
-  it("should return malformed gateway strings unchanged", () => {
-    // No slash in the inner part
+  it("returns malformed gateway strings unchanged", () => {
     expect(normalizeToCanonical("mux-gateway:no-slash-here")).toBe("mux-gateway:no-slash-here");
   });
 });
