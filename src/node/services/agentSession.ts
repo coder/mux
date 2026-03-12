@@ -1735,7 +1735,11 @@ export class AgentSession {
   async sendMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    internal?: { synthetic?: boolean; agentInitiated?: boolean }
+    internal?: {
+      synthetic?: boolean;
+      agentInitiated?: boolean;
+      onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+    }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
@@ -2195,42 +2199,66 @@ export class AgentSession {
 
     this.setTurnPhase(TurnPhase.PREPARING);
 
-    try {
-      // If this is a compaction request, terminate background processes first.
-      // They won't be included in the summary, so continuing with orphaned processes would be confusing.
-      const isCompactionStreamRequest = isCompactionRequest || autoCompactionMessage !== null;
-      if (isCompactionStreamRequest && !this.keepBackgroundProcesses) {
-        await this.backgroundProcessManager.cleanup(this.workspaceId);
+    const startPreparedStream = async (): Promise<Result<void, SendMessageError>> => {
+      try {
+        // If this is a compaction request, terminate background processes first.
+        // They won't be included in the summary, so continuing with orphaned processes would be confusing.
+        const isCompactionStreamRequest = isCompactionRequest || autoCompactionMessage !== null;
+        if (isCompactionStreamRequest && !this.keepBackgroundProcesses) {
+          await this.backgroundProcessManager.cleanup(this.workspaceId);
+
+          if (this.disposed) {
+            return Ok(undefined);
+          }
+        }
+
+        // Note: Follow-up content for compaction is now stored on the summary message
+        // and dispatched via dispatchPendingFollowUp() after compaction completes.
+        // This provides crash safety - the follow-up survives app restarts.
 
         if (this.disposed) {
           return Ok(undefined);
         }
-      }
 
-      // Note: Follow-up content for compaction is now stored on the summary message
-      // and dispatched via dispatchPendingFollowUp() after compaction completes.
-      // This provides crash safety - the follow-up survives app restarts.
-
-      if (this.disposed) {
-        return Ok(undefined);
+        // Turn-phase transitions for success are driven by stream events.
+        return await this.streamWithHistory(
+          modelForStream,
+          optionsForStream,
+          undefined,
+          undefined,
+          agentInitiated
+        );
+      } finally {
+        // Success should advance via stream events; if startup never emitted any, don't leave the
+        // session stuck in PREPARING.
+        if (this.turnPhase === TurnPhase.PREPARING) {
+          this.setTurnPhase(TurnPhase.IDLE);
+        }
       }
+    };
 
-      // Must await here so errors propagate back to sendMessage() callers.
-      // Turn-phase transitions for success are driven by stream events.
-      const result = await this.streamWithHistory(
-        modelForStream,
-        optionsForStream,
-        undefined,
-        undefined,
-        agentInitiated
-      );
-      return result;
-    } finally {
-      // Only transition to IDLE on failure; success transitions are driven by stream events.
-      if (this.turnPhase === TurnPhase.PREPARING) {
-        this.setTurnPhase(TurnPhase.IDLE);
-      }
+    if (editMessageId) {
+      // The edit is already persisted + emitted above, so let callers unblock immediately instead of
+      // waiting for runtime warmup / stream-start to finish before they can clear edit state.
+      void startPreparedStream()
+        .then(async (result) => {
+          if (!result.success) {
+            await internal?.onAcceptedPreStreamFailure?.(result.error);
+          }
+        })
+        .catch((error: unknown) => {
+          log.error("Accepted edit stream failed before startup completed", {
+            workspaceId: this.workspaceId,
+            editMessageId,
+            error: getErrorMessage(error),
+          });
+        });
+      return Ok(undefined);
     }
+
+    // Non-edit sends preserve the old behavior so pre-stream startup failures still propagate to
+    // synchronous callers (draft restore, interrupted-task rollback, etc.).
+    return await startPreparedStream();
   }
 
   async resumeStream(

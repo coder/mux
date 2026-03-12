@@ -4427,9 +4427,28 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
+      const restoreInterruptedTaskAfterAcceptedEditFailure =
+        resumedInterruptedTask && normalizedOptions?.editMessageId
+          ? async (error: SendMessageError) => {
+              try {
+                await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+              } catch (restoreError: unknown) {
+                log.error(
+                  "Failed to restore interrupted task status after accepted edit startup failure",
+                  {
+                    workspaceId,
+                    error,
+                    restoreError,
+                  }
+                );
+              }
+            }
+          : undefined;
+
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
         agentInitiated: internal?.agentInitiated,
+        onAcceptedPreStreamFailure: restoreInterruptedTaskAfterAcceptedEditFailure,
       });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {

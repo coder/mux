@@ -12,6 +12,17 @@ import { Ok } from "@/common/types/result";
 import { AgentSession } from "./agentSession";
 import { createTestHistoryService } from "./testHistoryService";
 
+async function waitForCondition(condition: () => boolean, timeoutMs = 1000): Promise<boolean> {
+  if (condition()) {
+    return true;
+  }
+  if (timeoutMs <= 0) {
+    return false;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  return waitForCondition(condition, timeoutMs - 10);
+}
+
 describe("AgentSession.sendMessage (editMessageId)", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
   afterEach(async () => {
@@ -71,6 +82,8 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     expect(result.success).toBe(true);
     expect(truncateAfterMessage.mock.calls).toHaveLength(1);
     expect(appendToHistory.mock.calls).toHaveLength(1);
+
+    await session.waitForIdle();
     expect(streamMessage.mock.calls).toHaveLength(1);
   });
 
@@ -222,5 +235,71 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     expect(appendedFileParts).toHaveLength(1);
     expect(appendedFileParts[0].url).toBe(originalImageUrl);
     expect(appendedFileParts[0].mediaType).toBe("image/png");
+  });
+
+  it("acknowledges accepted edits before replacement stream startup settles", async () => {
+    const workspaceId = "ws-edit-ack";
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const originalMessageId = "user-message-to-edit";
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage(originalMessageId, "user", "original", { historySequence: 0 })
+    );
+
+    let resolveStreamMessage: ((result: Result<void, SendMessageError>) => void) | undefined;
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_messages: MuxMessage[]) => {
+      return new Promise<Result<void, SendMessageError>>((resolve) => {
+        resolveStreamMessage = resolve;
+      });
+    });
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<Result<void, SendMessageError>>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const result = await session.sendMessage("edited", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      editMessageId: originalMessageId,
+    });
+
+    expect(result.success).toBe(true);
+    const sawStreamStartup = await waitForCondition(() => {
+      return streamMessage.mock.calls.length === 1 && resolveStreamMessage !== undefined;
+    });
+    expect(sawStreamStartup).toBe(true);
+    expect(session.isPreparingTurn()).toBe(true);
+
+    resolveStreamMessage?.(Ok(undefined));
+    await session.waitForIdle();
   });
 });

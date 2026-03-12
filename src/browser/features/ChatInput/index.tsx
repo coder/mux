@@ -190,6 +190,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
+  // Hide edit-mode chrome as soon as an edit send starts so the input doesn't sit blank
+  // while the backend acknowledges the edit and begins the replacement stream.
+  const [optimisticallyDismissedEditId, setOptimisticallyDismissedEditId] = useState<string | null>(
+    null
+  );
+  const editingMessageForUi =
+    editingMessage?.id === optimisticallyDismissedEditId ? undefined : editingMessage;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
@@ -211,6 +218,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       mobileTouchMediaQuery.removeEventListener("change", handleMobileTouchChange);
     };
   }, []);
+  useEffect(() => {
+    if (
+      optimisticallyDismissedEditId != null &&
+      editingMessage?.id !== optimisticallyDismissedEditId
+    ) {
+      setOptimisticallyDismissedEditId(null);
+    }
+  }, [editingMessage?.id, optimisticallyDismissedEditId]);
   // runtimeType for telemetry - defaults to "worktree" if not provided
   const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
 
@@ -1455,7 +1470,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const hasReviews = !!reviews && reviews.length > 0;
 
       if (mode === "replace") {
-        if (editingMessage) {
+        if (editingMessageForUi) {
           return;
         }
         if (hasFileParts || hasReviews) {
@@ -1486,7 +1501,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     window.addEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
-  }, [appendText, restoreText, restoreDraft, applyDraftFromPending, getDraft, editingMessage]);
+  }, [appendText, restoreText, restoreDraft, applyDraftFromPending, getDraft, editingMessageForUi]);
 
   // Allow external components to open the Model Selector
   useEffect(() => {
@@ -1665,7 +1680,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // When editing an existing message, we only allow changing the text.
       // Don't preventDefault here so any clipboard text can still paste normally.
-      if (editingMessage) {
+      if (editingMessageForUi) {
         pushToast({
           type: "error",
           message: "Attachments cannot be added while editing a message.",
@@ -1688,7 +1703,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           });
         });
     },
-    [editingMessage, pushToast, setAttachments, showResizeToast]
+    [editingMessageForUi, pushToast, setAttachments, showResizeToast]
   );
 
   // Handle removing an attachment
@@ -1704,7 +1719,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // native picker to "All files") don't reject the entire batch — valid files
   // still get attached and only failures are toasted.
   const handleAttachFiles = (files: File[]) => {
-    if (editingMessage) {
+    if (editingMessageForUi) {
       pushToast({
         type: "error",
         message: "Attachments cannot be added while editing a message.",
@@ -1802,7 +1817,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           inputRef.current.style.height = "";
         }
       },
-      editMessageId: editingMessage?.id,
+      editMessageId: editingMessageForUi?.id,
       onCancelEdit: commandOnCancelEdit,
       reviews: reviewsData,
       fileParts: commandFileParts.length > 0 ? commandFileParts : undefined,
@@ -1854,10 +1869,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Check if drag contains files
       if (e.dataTransfer.types.includes("Files")) {
         e.preventDefault();
-        e.dataTransfer.dropEffect = editingMessage ? "none" : "copy";
+        e.dataTransfer.dropEffect = editingMessageForUi ? "none" : "copy";
       }
     },
-    [editingMessage]
+    [editingMessageForUi]
   );
 
   // Handle drop to extract attachments
@@ -1868,7 +1883,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const attachmentFiles = extractAttachmentsFromDrop(e.dataTransfer);
       if (attachmentFiles.length === 0) return;
 
-      if (editingMessage) {
+      if (editingMessageForUi) {
         pushToast({
           type: "error",
           message: "Attachments cannot be added while editing a message.",
@@ -1889,7 +1904,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           });
         });
     },
-    [editingMessage, pushToast, setAttachments, showResizeToast]
+    [editingMessageForUi, pushToast, setAttachments, showResizeToast]
   );
 
   // Handle suggestion selection
@@ -2101,11 +2116,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Save current draft state for restoration on error
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
+      const editMessageForSend = editingMessageForUi;
 
       try {
         // Prepare file parts if any
         const fileParts = chatAttachmentsToFileParts(attachments, { validate: true });
-        const sendFileParts = editingMessage
+        const sendFileParts = editMessageForSend
           ? fileParts
           : fileParts.length > 0
             ? fileParts
@@ -2119,7 +2135,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         let muxMetadata: MuxMessageMetadata | undefined = skillMuxMetadata;
         let compactionOptions: Partial<SendMessageOptions> = {};
 
-        if (editingMessage && actualMessageText.startsWith("/")) {
+        if (editMessageForSend && actualMessageText.startsWith("/")) {
           const parsed = parseCommand(messageText);
           if (parsed?.type === "compact") {
             const {
@@ -2189,6 +2205,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Capture review IDs before clearing (for marking as checked on success)
         const sentReviewIds = reviewIdsForCheck;
 
+        if (editMessageForSend) {
+          setOptimisticallyDismissedEditId(editMessageForSend.id);
+        }
+
         // Clear input, images, and hide reviews immediately for responsive UI
         // Text/images are restored if send fails; reviews remain "attached" in state
         // so they'll reappear naturally on failure (we only call onCheckReviews on success)
@@ -2218,7 +2238,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             ? { queueDispatchMode: overrides.queueDispatchMode }
             : {}),
           additionalSystemInstructions,
-          editMessageId: editingMessage?.id,
+          editMessageId: editMessageForSend?.id,
           fileParts: sendFileParts,
           muxMetadata,
         };
@@ -2235,6 +2255,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // Show error using enhanced toast
           setToast(createErrorToast(result.error));
           // Restore draft on error so user can try again
+          setOptimisticallyDismissedEditId(null);
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
         } else {
@@ -2264,8 +2285,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           }
 
           // Exit editing mode if we were editing
-          if (editingMessage && props.onCancelEdit) {
+          if (editMessageForSend && props.onCancelEdit) {
             props.onCancelEdit();
+          } else if (editMessageForSend) {
+            setOptimisticallyDismissedEditId(null);
           }
           props.onMessageSent?.(overrides?.queueDispatchMode ?? "tool-end");
         }
@@ -2279,6 +2302,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           })
         );
         // Restore draft on error
+        setOptimisticallyDismissedEditId(null);
         setDraft(preSendDraft);
         setDraftReviews(preSendReviews);
       } finally {
@@ -2298,7 +2322,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Handler for Escape in vim normal mode - cancels edit if editing
   const handleEscapeInNormalMode = () => {
-    if (variant === "workspace" && editingMessage && props.onCancelEdit) {
+    if (variant === "workspace" && editingMessageForUi && props.onCancelEdit) {
       restorePreEditDraft();
       props.onCancelEdit();
       inputRef.current?.blur();
@@ -2345,7 +2369,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // In vim mode, escape first goes to normal mode; escapeInNormalMode callback handles cancel
     // In non-vim mode, escape directly cancels edit
     if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
-      if (variant === "workspace" && editingMessage && props.onCancelEdit && !vimEnabled) {
+      if (variant === "workspace" && editingMessageForUi && props.onCancelEdit && !vimEnabled) {
         e.preventDefault();
         stopKeyboardPropagation(e);
         restorePreEditDraft();
@@ -2362,7 +2386,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (
       variant === "workspace" &&
       e.key === "ArrowUp" &&
-      !editingMessage &&
+      !editingMessageForUi &&
       input.trim() === "" &&
       props.onEditLastUserMessage
     ) {
@@ -2414,7 +2438,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
 
     // Workspace variant placeholders
-    if (editingMessage) {
+    if (editingMessageForUi) {
       if (isMobileTouch) {
         return "Edit your message...";
       }
@@ -2558,7 +2582,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   data-escape-interrupts-stream="true"
                   value={input}
                   ghostHint={commandGhostHint}
-                  isEditing={!!editingMessage}
+                  isEditing={!!editingMessageForUi}
                   focusBorderColor={focusBorderColor}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
@@ -2577,8 +2601,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         : undefined
                   }
                   placeholder={placeholder}
-                  disabled={!editingMessage && (disabled || sendInFlightBlocksInput)}
-                  aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
+                  disabled={!editingMessageForUi && (disabled || sendInFlightBlocksInput)}
+                  aria-label={editingMessageForUi ? "Edit your last message" : "Message Claude"}
                   aria-autocomplete="list"
                   aria-controls={
                     showAtMentionSuggestions && atMentionSuggestions.length > 0
@@ -2596,7 +2620,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     <div className="flex items-center gap-1">
                       <AttachFileButton
                         onFiles={handleAttachFiles}
-                        disabled={disabled || sendInFlightBlocksInput || !!editingMessage}
+                        disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
                       />
                       <VoiceInputButton
                         state={voiceInput.state}
@@ -2611,7 +2635,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   }
                 />
                 {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
-                {input.trim() === "" && !editingMessage && (
+                {input.trim() === "" && !editingMessageForUi && (
                   <div className="mobile-hide-shortcut-hints text-muted @container pointer-events-none absolute right-18 bottom-3 left-2 flex flex-nowrap items-center gap-4 overflow-hidden text-[11px] whitespace-nowrap">
                     <span className="shrink-0">
                       <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
@@ -2644,7 +2668,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
           <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
             {/* Editing indicator - workspace only */}
-            {variant === "workspace" && editingMessage && (
+            {variant === "workspace" && editingMessageForUi && (
               <div className="text-edit-mode text-[11px] font-medium">
                 Editing message{" "}
                 <span className="mobile-hide-shortcut-hints">

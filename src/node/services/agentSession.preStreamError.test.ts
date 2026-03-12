@@ -138,6 +138,78 @@ describe("AgentSession pre-stream errors", () => {
     expect(streamError?.messageId).toMatch(/^assistant-/);
   });
 
+  it("acknowledges edited sends immediately and surfaces later startup failure via stream-error", async () => {
+    const workspaceId = "ws-edit-startup-failed";
+
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const originalMessageId = "editable-user-message";
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage(originalMessageId, "user", "original", { historySequence: 0 })
+    );
+
+    const aiEmitter = new EventEmitter();
+    const streamMessage = mock((_history: MuxMessage[]) => {
+      return Promise.resolve(
+        Err({
+          type: "api_key_not_found",
+          provider: "anthropic",
+        })
+      );
+    });
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<Result<void, SendMessageError>>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const events: WorkspaceChatMessage[] = [];
+    session.onChatEvent((event) => {
+      events.push(event.message);
+    });
+
+    const result = await session.sendMessage("edited", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      editMessageId: originalMessageId,
+    });
+
+    expect(result.success).toBe(true);
+
+    await session.waitForIdle();
+    expect(streamMessage.mock.calls).toHaveLength(1);
+
+    const streamError = events.find(
+      (event): event is StreamErrorMessage => event.type === "stream-error"
+    );
+
+    expect(streamError).toBeDefined();
+    expect(streamError?.errorType).toBe("authentication");
+    expect(streamError?.error).toContain(PROVIDER_DISPLAY_NAMES.anthropic);
+  });
+
   it("schedules auto-retry when runtime startup fails before stream events", async () => {
     const workspaceId = "ws-runtime-start-failed";
 

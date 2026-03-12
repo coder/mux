@@ -7,6 +7,7 @@ import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { Err, Ok, type Result } from "@/common/types/result";
+import type { SendMessageError } from "@/common/types/errors";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
@@ -362,6 +363,50 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(result.success).toBe(true);
     expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
     expect(restoreInterruptedTaskAfterResumeFailure).not.toHaveBeenCalled();
+  });
+
+  test("sendMessage restores interrupted status when accepted edit startup fails later", async () => {
+    fakeSession.isBusy.mockReturnValue(false);
+
+    const markInterruptedTaskRunning = mock(() => Promise.resolve(true));
+    const restoreInterruptedTaskAfterResumeFailure = mock(() => Promise.resolve());
+    workspaceService.setTaskService({
+      markInterruptedTaskRunning,
+      restoreInterruptedTaskAfterResumeFailure,
+      resetAutoResumeCount: mock(() => undefined),
+    } as unknown as TaskService);
+
+    const startupFailureHandled = createDeferred<void>();
+    fakeSession.sendMessage.mockImplementation(
+      (
+        _message: string,
+        _options: unknown,
+        internal?: {
+          onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+        }
+      ) => {
+        void Promise.resolve().then(async () => {
+          await internal?.onAcceptedPreStreamFailure?.({
+            type: "runtime_start_failed",
+            message: "Runtime is starting",
+          });
+          startupFailureHandled.resolve();
+        });
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+      editMessageId: "user-123",
+    });
+
+    expect(result.success).toBe(true);
+    expect(markInterruptedTaskRunning).toHaveBeenCalledWith("test-workspace");
+
+    await startupFailureHandled.promise;
+    expect(restoreInterruptedTaskAfterResumeFailure).toHaveBeenCalledWith("test-workspace");
   });
 
   test("resumeStream restores interrupted task status before successful resume", async () => {
