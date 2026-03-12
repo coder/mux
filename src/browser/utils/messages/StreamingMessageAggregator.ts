@@ -280,6 +280,57 @@ function extractAgentSkillSnapshotBody(snapshotText: string): string | null {
   return snapshotText.slice(bodyStart, closeTagStart);
 }
 
+interface AgentSkillSnapshotContent {
+  sha256?: string;
+  frontmatterYaml?: string;
+  body: string;
+}
+
+function getTextPartContent(parts: ReadonlyArray<MuxMessage["parts"][number]>): string {
+  const content: string[] = [];
+  for (const part of parts) {
+    if (part.type === "text") {
+      content.push(part.text);
+    }
+  }
+  return content.join("");
+}
+
+function getAgentSkillSnapshotKey(scope: AgentSkillScope, skillName: string): string {
+  return `${scope}:${skillName}`;
+}
+
+function collectLatestAgentSkillSnapshots(
+  messages: readonly MuxMessage[]
+): Map<string, AgentSkillSnapshotContent> {
+  const snapshots = new Map<string, AgentSkillSnapshotContent>();
+
+  for (const message of messages) {
+    const snapshotMeta = message.metadata?.agentSkillSnapshot;
+    if (!snapshotMeta) {
+      continue;
+    }
+
+    const parsed = AgentSkillSnapshotMetadataSchema.safeParse(snapshotMeta);
+    if (!parsed.success) {
+      continue;
+    }
+
+    const body = extractAgentSkillSnapshotBody(getTextPartContent(message.parts));
+    if (body === null) {
+      continue;
+    }
+
+    snapshots.set(getAgentSkillSnapshotKey(parsed.data.scope, parsed.data.skillName), {
+      sha256: parsed.data.sha256,
+      frontmatterYaml: parsed.data.frontmatterYaml,
+      body,
+    });
+  }
+
+  return snapshots;
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
@@ -693,10 +744,7 @@ export class StreamingMessageAggregator {
     if (!message) return undefined;
 
     // Concatenate all text parts (ignore tool calls and reasoning)
-    return message.parts
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("");
+    return getTextPartContent(message.parts);
   }
 
   /**
@@ -828,11 +876,7 @@ export class StreamingMessageAggregator {
     const parts = message.parts;
     const lastToolIndex = parts.findLastIndex((part) => part.type === "dynamic-tool");
     const textPartsAfterTools = lastToolIndex >= 0 ? parts.slice(lastToolIndex + 1) : parts;
-    return textPartsAfterTools
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("")
-      .trim();
+    return getTextPartContent(textPartsAfterTools).trim();
   }
 
   private compactMessageParts(message: MuxMessage): void {
@@ -947,9 +991,6 @@ export class StreamingMessageAggregator {
       }
     }
 
-    // Use "streaming" context if there's an active stream (reconnection), otherwise "historical"
-    const context = hasActiveStream ? "streaming" : "historical";
-
     // Sort applied messages in chronological order for processing
     const chronologicalMessages = [...appliedMessages].sort(
       (a, b) => (a.metadata?.historySequence ?? 0) - (b.metadata?.historySequence ?? 0)
@@ -972,7 +1013,7 @@ export class StreamingMessageAggregator {
           let assistantUpdatedTodos = false;
           for (const part of message.parts) {
             if (isDynamicToolPart(part) && part.state === "output-available") {
-              this.processToolResult(part.toolName, part.input, part.output, context);
+              this.processToolResult(part.toolName, part.input, part.output);
               if (
                 part.toolName === "todo_write" &&
                 hasSuccessResult(part.output) &&
@@ -1138,12 +1179,17 @@ export class StreamingMessageAggregator {
    * Used to show "Starting Coder workspace..." in StreamingBarrier.
    */
   handleRuntimeStatus(status: RuntimeStatusEvent): void {
-    // Clear status when ready/error or set new status
+    // Keep stream lifecycle code focused on when runtime status becomes irrelevant.
     if (status.phase === "ready" || status.phase === "error") {
-      this.runtimeStatus = null;
-    } else {
-      this.runtimeStatus = status;
+      this.clearRuntimeStatus();
+      return;
     }
+
+    this.runtimeStatus = status;
+  }
+
+  private clearRuntimeStatus(): void {
+    this.runtimeStatus = null;
   }
 
   getPendingStreamModel(): string | null {
@@ -1531,7 +1577,7 @@ export class StreamingMessageAggregator {
     this.lastAbortReason = null;
 
     // Clear runtime status - runtime is ready now that stream has started
-    this.runtimeStatus = null;
+    this.clearRuntimeStatus();
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
@@ -1782,7 +1828,7 @@ export class StreamingMessageAggregator {
     // Direct lookup by messageId
 
     // Clear runtime status (ensureReady is no longer relevant once stream aborts)
-    this.runtimeStatus = null;
+    this.clearRuntimeStatus();
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1814,7 +1860,7 @@ export class StreamingMessageAggregator {
     // Direct lookup by messageId
 
     // Clear runtime status - runtime start/ensureReady failed
-    this.runtimeStatus = null;
+    this.clearRuntimeStatus();
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1978,6 +2024,36 @@ export class StreamingMessageAggregator {
     });
   }
 
+  private handleAgentSkillReadResult(input: unknown, output: unknown): void {
+    if (hasSuccessResult(output)) {
+      const result = output as {
+        success: true;
+        skill: {
+          scope: AgentSkillScope;
+          directoryName: string;
+          frontmatter: { name: string; description: string };
+        };
+      };
+      const skill = result.skill;
+      this.trackLoadedSkill({
+        name: skill.frontmatter.name,
+        description: skill.frontmatter.description,
+        scope: skill.scope,
+      });
+      return;
+    }
+
+    if (!hasFailureResult(output)) {
+      return;
+    }
+
+    const args = input as { name?: string } | undefined;
+    const errorResult = output as { error?: string };
+    if (args?.name) {
+      this.trackSkillLoadError(args.name, errorResult.error ?? "Unknown error");
+    }
+  }
+
   /**
    * Process a completed tool call's result to update derived state.
    * Called for both live tool-call-end events and historical tool parts.
@@ -1988,14 +2064,8 @@ export class StreamingMessageAggregator {
    * @param toolName - Name of the tool that was called
    * @param input - Tool input arguments
    * @param output - Tool output result
-   * @param context - Whether this is from live streaming or historical reload
    */
-  private processToolResult(
-    toolName: string,
-    input: unknown,
-    output: unknown,
-    _context: "streaming" | "historical"
-  ): void {
+  private processToolResult(toolName: string, input: unknown, output: unknown): void {
     // Update TODO state if this was a successful todo_write.
     // We still reconstruct from history so interrupted/incomplete plans survive reloads;
     // final completed plans are cleared later when the last active stream ends.
@@ -2053,32 +2123,10 @@ export class StreamingMessageAggregator {
       }
     }
 
-    // Track loaded skills when agent_skill_read succeeds
-    // Skills persist: update both during streaming and on historical reload
-    if (toolName === "agent_skill_read" && hasSuccessResult(output)) {
-      const result = output as {
-        success: true;
-        skill: {
-          scope: AgentSkillScope;
-          directoryName: string;
-          frontmatter: { name: string; description: string };
-        };
-      };
-      const skill = result.skill;
-      this.trackLoadedSkill({
-        name: skill.frontmatter.name,
-        description: skill.frontmatter.description,
-        scope: skill.scope,
-      });
-    }
-
-    // Track runtime skill load errors when agent_skill_read fails
-    if (toolName === "agent_skill_read" && hasFailureResult(output)) {
-      const args = input as { name?: string } | undefined;
-      const errorResult = output as { error?: string };
-      if (args?.name) {
-        this.trackSkillLoadError(args.name, errorResult.error ?? "Unknown error");
-      }
+    if (toolName === "agent_skill_read") {
+      // Keep agent_skill_read parsing separate so this router only decides *which*
+      // derived-state handler should run for a tool result.
+      this.handleAgentSkillReadResult(input, output);
     }
 
     // Link extraction is derived from message history (see computeLinksFromMessages()).
@@ -2168,8 +2216,7 @@ export class StreamingMessageAggregator {
         (toolPart as DynamicToolPartAvailable).output = data.result;
 
         // Process tool result to update derived state (todos, agentStatus, etc.)
-        // This is from a live stream, so use "streaming" context
-        this.processToolResult(data.toolName, toolPart.input, data.result, "streaming");
+        this.processToolResult(data.toolName, toolPart.input, data.result);
 
         // Tool output is now stable - invalidate all caches.
         this.markMessageDirty(data.messageId);
@@ -2445,10 +2492,7 @@ export class StreamingMessageAggregator {
     // Check for plan-display messages (ephemeral /plan output)
     const muxMeta = message.metadata?.muxMetadata;
     if (muxMeta?.type === "plan-display") {
-      const content = message.parts
-        .filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("");
+      const content = getTextPartContent(message.parts);
       displayedMessages.push({
         type: "plan-display",
         id: message.id,
@@ -2462,10 +2506,7 @@ export class StreamingMessageAggregator {
 
     if (message.role === "user") {
       // User messages: combine all text parts into single block, extract attachments
-      const partsContent = message.parts
-        .filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("");
+      const partsContent = getTextPartContent(message.parts);
 
       const fileParts = message.parts
         .filter((p): p is MuxFilePart => p.type === "file")
@@ -2761,32 +2802,9 @@ export class StreamingMessageAggregator {
       // debugLlmRequest is enabled. We still want to surface their content in the UI by
       // attaching the resolved snapshot (frontmatterYaml + body) to the *subsequent*
       // /{skillName} invocation message.
-      const latestAgentSkillSnapshotByKey = new Map<
-        string,
-        { sha256?: string; frontmatterYaml?: string; body: string }
-      >();
+      const latestAgentSkillSnapshotByKey = collectLatestAgentSkillSnapshots(allMessages);
 
       for (const message of allMessages) {
-        const snapshotMeta = message.metadata?.agentSkillSnapshot;
-        if (snapshotMeta) {
-          const parsed = AgentSkillSnapshotMetadataSchema.safeParse(snapshotMeta);
-          if (parsed.success) {
-            const snapshotText = message.parts
-              .filter((p) => p.type === "text")
-              .map((p) => p.text)
-              .join("");
-            const body = extractAgentSkillSnapshotBody(snapshotText);
-            if (body !== null) {
-              const key = `${parsed.data.scope}:${parsed.data.skillName}`;
-              latestAgentSkillSnapshotByKey.set(key, {
-                sha256: parsed.data.sha256,
-                frontmatterYaml: parsed.data.frontmatterYaml,
-                body,
-              });
-            }
-          }
-        }
-
         const isSynthetic = message.metadata?.synthetic === true;
         const isUiVisibleSynthetic = message.metadata?.uiVisible === true;
 
@@ -2799,7 +2817,7 @@ export class StreamingMessageAggregator {
         const muxMeta = message.metadata?.muxMetadata;
         const agentSkillSnapshotKey =
           message.role === "user" && muxMeta?.type === "agent-skill"
-            ? `${muxMeta.scope}:${muxMeta.skillName}`
+            ? getAgentSkillSnapshotKey(muxMeta.scope, muxMeta.skillName)
             : undefined;
 
         const agentSkillSnapshot = agentSkillSnapshotKey

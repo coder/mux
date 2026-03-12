@@ -1,99 +1,179 @@
 import { describe, expect, it } from "bun:test";
-import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
+import type { AgentSkillScope } from "@/common/types/agentSkill";
 import { createMuxMessage } from "@/common/types/message";
+import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
 const TEST_CREATED_AT = "2024-01-01T00:00:00.000Z";
 const WORKSPACE_ID = "test-workspace";
 
-describe("Loaded skills tracking", () => {
-  const createAggregator = () => {
-    return new StreamingMessageAggregator(TEST_CREATED_AT);
-  };
+const createAggregator = () => new StreamingMessageAggregator(TEST_CREATED_AT);
 
+const startStream = (aggregator: StreamingMessageAggregator, messageId = "msg-1") => {
+  aggregator.handleStreamStart({
+    type: "stream-start",
+    workspaceId: WORKSPACE_ID,
+    messageId,
+    historySequence: 1,
+    model: "test-model",
+    startTime: 0,
+  });
+};
+
+const emitSkillReadResult = (
+  aggregator: StreamingMessageAggregator,
+  {
+    messageId = "msg-1",
+    toolCallId,
+    skillName,
+    result,
+  }: {
+    messageId?: string;
+    toolCallId: string;
+    skillName: string;
+    result: unknown;
+  }
+) => {
+  aggregator.handleToolCallStart({
+    type: "tool-call-start",
+    workspaceId: WORKSPACE_ID,
+    messageId,
+    toolCallId,
+    toolName: "agent_skill_read",
+    args: { name: skillName },
+    tokens: 10,
+    timestamp: 0,
+  });
+  aggregator.handleToolCallEnd({
+    type: "tool-call-end",
+    workspaceId: WORKSPACE_ID,
+    messageId,
+    toolCallId,
+    toolName: "agent_skill_read",
+    result,
+    timestamp: 0,
+  });
+};
+
+const emitSuccessfulSkillRead = (
+  aggregator: StreamingMessageAggregator,
+  {
+    messageId,
+    toolCallId,
+    skillName,
+    description = "A skill",
+    scope = "project",
+  }: {
+    messageId?: string;
+    toolCallId: string;
+    skillName: string;
+    description?: string;
+    scope?: AgentSkillScope;
+  }
+) => {
+  emitSkillReadResult(aggregator, {
+    messageId,
+    toolCallId,
+    skillName,
+    result: {
+      success: true,
+      skill: {
+        scope,
+        directoryName: skillName,
+        frontmatter: {
+          name: skillName,
+          description,
+        },
+        body: "# Content",
+      },
+    },
+  });
+};
+
+const emitFailedSkillRead = (
+  aggregator: StreamingMessageAggregator,
+  {
+    messageId,
+    toolCallId,
+    skillName,
+    error,
+  }: {
+    messageId?: string;
+    toolCallId: string;
+    skillName: string;
+    error: string;
+  }
+) => {
+  emitSkillReadResult(aggregator, {
+    messageId,
+    toolCallId,
+    skillName,
+    result: { success: false, error },
+  });
+};
+
+const createSkillSnapshotMessage = ({
+  id = "snapshot-1",
+  skillName = "pull-requests",
+  scope = "project",
+  historySequence,
+  body = "# Content",
+  frontmatterYaml,
+}: {
+  id?: string;
+  skillName?: string;
+  scope?: AgentSkillScope;
+  historySequence?: number;
+  body?: string;
+  frontmatterYaml?: string;
+}) =>
+  createMuxMessage(
+    id,
+    "user",
+    `<agent-skill name="${skillName}" scope="${scope}">\n${body}\n</agent-skill>`,
+    {
+      ...(historySequence !== undefined ? { historySequence } : {}),
+      timestamp: 0,
+      synthetic: true,
+      agentSkillSnapshot: {
+        skillName,
+        scope,
+        sha256: "deadbeef",
+        ...(frontmatterYaml !== undefined ? { frontmatterYaml } : {}),
+      },
+    }
+  );
+
+describe("Loaded skills tracking", () => {
   it("returns empty array when no skills loaded", () => {
-    const agg = createAggregator();
-    expect(agg.getLoadedSkills()).toEqual([]);
+    const aggregator = createAggregator();
+    expect(aggregator.getLoadedSkills()).toEqual([]);
   });
 
   it("tracks skills from successful agent_skill_read tool calls", () => {
-    const agg = createAggregator();
-    const messageId = "msg-1";
-    const toolCallId = "tc-1";
-
-    // Start a stream
-    agg.handleStreamStart({
-      type: "stream-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      historySequence: 1,
-      model: "test-model",
-      startTime: Date.now(),
-    });
-
-    // Start a tool call
-    agg.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId,
-      toolName: "agent_skill_read",
-      args: { name: "tests" },
-      tokens: 10,
-      timestamp: Date.now(),
-    });
-
-    // Complete the tool call with skill result
-    agg.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId,
-      toolName: "agent_skill_read",
-      result: {
-        success: true,
-        skill: {
-          scope: "project",
-          directoryName: "tests",
-          frontmatter: {
-            name: "tests",
-            description: "Testing doctrine and conventions",
-          },
-          body: "# Tests skill content",
-        },
-      },
-      timestamp: Date.now(),
-    });
-
-    const skills = agg.getLoadedSkills();
-    expect(skills).toHaveLength(1);
-    expect(skills[0]).toEqual({
-      name: "tests",
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitSuccessfulSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "tests",
       description: "Testing doctrine and conventions",
-      scope: "project",
     });
+
+    expect(aggregator.getLoadedSkills()).toEqual([
+      {
+        name: "tests",
+        description: "Testing doctrine and conventions",
+        scope: "project",
+      },
+    ]);
   });
 
   it("tracks skills from agentSkillSnapshot messages via handleMessage", () => {
-    const agg = createAggregator();
+    const aggregator = createAggregator();
+    const snapshot = createSkillSnapshotMessage({ skillName: "pull-requests" });
 
-    const snapshot = createMuxMessage(
-      "snapshot-1",
-      "user",
-      '<agent-skill name="pull-requests" scope="project">\n# Content\n</agent-skill>',
-      {
-        timestamp: Date.now(),
-        synthetic: true,
-        agentSkillSnapshot: {
-          skillName: "pull-requests",
-          scope: "project",
-          sha256: "deadbeef",
-        },
-      }
-    );
+    aggregator.handleMessage({ ...snapshot, type: "message" });
 
-    agg.handleMessage({ ...snapshot, type: "message" });
-
-    expect(agg.getLoadedSkills()).toEqual([
+    expect(aggregator.getLoadedSkills()).toEqual([
       {
         name: "pull-requests",
         description: "(loaded via /pull-requests)",
@@ -103,27 +183,12 @@ describe("Loaded skills tracking", () => {
   });
 
   it("tracks skills from agentSkillSnapshot during loadHistoricalMessages replay", () => {
-    const agg = createAggregator();
+    const aggregator = createAggregator();
+    const snapshot = createSkillSnapshotMessage({ skillName: "pull-requests", historySequence: 1 });
 
-    const snapshot = createMuxMessage(
-      "snapshot-1",
-      "user",
-      '<agent-skill name="pull-requests" scope="project">\n# Content\n</agent-skill>',
-      {
-        historySequence: 1,
-        timestamp: Date.now(),
-        synthetic: true,
-        agentSkillSnapshot: {
-          skillName: "pull-requests",
-          scope: "project",
-          sha256: "deadbeef",
-        },
-      }
-    );
+    aggregator.loadHistoricalMessages([snapshot]);
 
-    agg.loadHistoricalMessages([snapshot]);
-
-    expect(agg.getLoadedSkills()).toEqual([
+    expect(aggregator.getLoadedSkills()).toEqual([
       {
         name: "pull-requests",
         description: "(loaded via /pull-requests)",
@@ -133,68 +198,23 @@ describe("Loaded skills tracking", () => {
   });
 
   it("deduplicates skills by name", () => {
-    const agg = createAggregator();
-    const messageId = "msg-1";
+    const aggregator = createAggregator();
+    startStream(aggregator);
 
-    agg.handleStreamStart({
-      type: "stream-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      historySequence: 1,
-      model: "test-model",
-      startTime: Date.now(),
-    });
-
-    // Load same skill twice
-    for (let i = 0; i < 2; i++) {
-      agg.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: WORKSPACE_ID,
-        messageId,
-        toolCallId: `tc-${i}`,
-        toolName: "agent_skill_read",
-        args: { name: "tests" },
-        tokens: 10,
-        timestamp: Date.now(),
-      });
-
-      agg.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: WORKSPACE_ID,
-        messageId,
-        toolCallId: `tc-${i}`,
-        toolName: "agent_skill_read",
-        result: {
-          success: true,
-          skill: {
-            scope: "project",
-            directoryName: "tests",
-            frontmatter: {
-              name: "tests",
-              description: "Testing doctrine",
-            },
-            body: "# Content",
-          },
-        },
-        timestamp: Date.now(),
+    for (let index = 0; index < 2; index++) {
+      emitSuccessfulSkillRead(aggregator, {
+        toolCallId: `tc-${index}`,
+        skillName: "tests",
+        description: "Testing doctrine",
       });
     }
 
-    expect(agg.getLoadedSkills()).toHaveLength(1);
+    expect(aggregator.getLoadedSkills()).toHaveLength(1);
   });
 
   it("tracks multiple different skills", () => {
-    const agg = createAggregator();
-    const messageId = "msg-1";
-
-    agg.handleStreamStart({
-      type: "stream-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      historySequence: 1,
-      model: "test-model",
-      startTime: Date.now(),
-    });
+    const aggregator = createAggregator();
+    startStream(aggregator);
 
     const skillDefs = [
       { name: "tests", description: "Testing skill", scope: "project" as const },
@@ -202,356 +222,196 @@ describe("Loaded skills tracking", () => {
       { name: "mux-docs", description: "Documentation", scope: "built-in" as const },
     ];
 
-    for (const [i, skill] of skillDefs.entries()) {
-      agg.handleToolCallStart({
-        type: "tool-call-start",
-        workspaceId: WORKSPACE_ID,
-        messageId,
-        toolCallId: `tc-${i}`,
-        toolName: "agent_skill_read",
-        args: { name: skill.name },
-        tokens: 10,
-        timestamp: Date.now(),
-      });
-
-      agg.handleToolCallEnd({
-        type: "tool-call-end",
-        workspaceId: WORKSPACE_ID,
-        messageId,
-        toolCallId: `tc-${i}`,
-        toolName: "agent_skill_read",
-        result: {
-          success: true,
-          skill: {
-            scope: skill.scope,
-            directoryName: skill.name,
-            frontmatter: {
-              name: skill.name,
-              description: skill.description,
-            },
-            body: "# Content",
-          },
-        },
-        timestamp: Date.now(),
+    for (const [index, skill] of skillDefs.entries()) {
+      emitSuccessfulSkillRead(aggregator, {
+        toolCallId: `tc-${index}`,
+        skillName: skill.name,
+        description: skill.description,
+        scope: skill.scope,
       });
     }
 
-    const skills = agg.getLoadedSkills();
+    const skills = aggregator.getLoadedSkills();
     expect(skills).toHaveLength(3);
-    expect(skills.map((s) => s.name).sort()).toEqual(["mux-docs", "pull-requests", "tests"]);
+    expect(skills.map((skill) => skill.name).sort()).toEqual([
+      "mux-docs",
+      "pull-requests",
+      "tests",
+    ]);
   });
 
   it("ignores failed agent_skill_read calls for loadedSkills", () => {
-    const agg = createAggregator();
-    const messageId = "msg-1";
-
-    agg.handleStreamStart({
-      type: "stream-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      historySequence: 1,
-      model: "test-model",
-      startTime: Date.now(),
-    });
-
-    agg.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitFailedSkillRead(aggregator, {
       toolCallId: "tc-1",
-      toolName: "agent_skill_read",
-      args: { name: "nonexistent" },
-      tokens: 10,
-      timestamp: Date.now(),
+      skillName: "nonexistent",
+      error: "Skill not found",
     });
 
-    agg.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId: "tc-1",
-      toolName: "agent_skill_read",
-      result: {
-        success: false,
-        error: "Skill not found",
-      },
-      timestamp: Date.now(),
-    });
-
-    expect(agg.getLoadedSkills()).toEqual([]);
+    expect(aggregator.getLoadedSkills()).toEqual([]);
   });
 
   it("returns stable array reference for memoization", () => {
-    const agg = createAggregator();
-    const messageId = "msg-1";
-
-    agg.handleStreamStart({
-      type: "stream-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      historySequence: 1,
-      model: "test-model",
-      startTime: Date.now(),
-    });
-
-    // Load a skill
-    agg.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitSuccessfulSkillRead(aggregator, {
       toolCallId: "tc-1",
-      toolName: "agent_skill_read",
-      args: { name: "tests" },
-      tokens: 10,
-      timestamp: Date.now(),
+      skillName: "tests",
+      description: "Testing",
     });
 
-    agg.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId: "tc-1",
-      toolName: "agent_skill_read",
-      result: {
-        success: true,
-        skill: {
-          scope: "project",
-          directoryName: "tests",
-          frontmatter: { name: "tests", description: "Testing" },
-          body: "# Content",
-        },
-      },
-      timestamp: Date.now(),
-    });
-
-    // Multiple calls should return same reference
-    const ref1 = agg.getLoadedSkills();
-    const ref2 = agg.getLoadedSkills();
-    expect(ref1).toBe(ref2); // Same reference, not just equal
+    const ref1 = aggregator.getLoadedSkills();
+    const ref2 = aggregator.getLoadedSkills();
+    expect(ref1).toBe(ref2);
   });
 
   it("clears skills on loadHistoricalMessages replay", () => {
-    const agg = createAggregator();
-    const messageId = "msg-1";
-
-    // Load a skill first
-    agg.handleStreamStart({
-      type: "stream-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      historySequence: 1,
-      model: "test-model",
-      startTime: Date.now(),
-    });
-
-    agg.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitSuccessfulSkillRead(aggregator, {
       toolCallId: "tc-1",
-      toolName: "agent_skill_read",
-      args: { name: "tests" },
-      tokens: 10,
-      timestamp: Date.now(),
+      skillName: "tests",
+      description: "Testing",
     });
 
-    agg.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId: "tc-1",
-      toolName: "agent_skill_read",
-      result: {
-        success: true,
-        skill: {
-          scope: "project",
-          directoryName: "tests",
-          frontmatter: { name: "tests", description: "Testing" },
-          body: "# Content",
-        },
-      },
-      timestamp: Date.now(),
-    });
+    expect(aggregator.getLoadedSkills()).toHaveLength(1);
 
-    expect(agg.getLoadedSkills()).toHaveLength(1);
-
-    // Replay with empty history should clear skills
-    agg.loadHistoricalMessages([]);
-    expect(agg.getLoadedSkills()).toEqual([]);
+    aggregator.loadHistoricalMessages([]);
+    expect(aggregator.getLoadedSkills()).toEqual([]);
   });
 });
 
 describe("Skill load error tracking", () => {
-  const createAggregator = () => {
-    return new StreamingMessageAggregator(TEST_CREATED_AT);
-  };
-
-  /** Helper to emit a failed agent_skill_read tool call */
-  const emitFailedSkillRead = (
-    agg: StreamingMessageAggregator,
-    messageId: string,
-    toolCallId: string,
-    skillName: string,
-    error: string
-  ) => {
-    agg.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId,
-      toolName: "agent_skill_read",
-      args: { name: skillName },
-      tokens: 10,
-      timestamp: Date.now(),
-    });
-    agg.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId,
-      toolName: "agent_skill_read",
-      result: { success: false, error },
-      timestamp: Date.now(),
-    });
-  };
-
-  /** Helper to emit a successful agent_skill_read tool call */
-  const emitSuccessfulSkillRead = (
-    agg: StreamingMessageAggregator,
-    messageId: string,
-    toolCallId: string,
-    skillName: string
-  ) => {
-    agg.handleToolCallStart({
-      type: "tool-call-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId,
-      toolName: "agent_skill_read",
-      args: { name: skillName },
-      tokens: 10,
-      timestamp: Date.now(),
-    });
-    agg.handleToolCallEnd({
-      type: "tool-call-end",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      toolCallId,
-      toolName: "agent_skill_read",
-      result: {
-        success: true,
-        skill: {
-          scope: "project",
-          directoryName: skillName,
-          frontmatter: { name: skillName, description: "A skill" },
-          body: "# Content",
-        },
-      },
-      timestamp: Date.now(),
-    });
-  };
-
-  const startStream = (agg: StreamingMessageAggregator, messageId: string) => {
-    agg.handleStreamStart({
-      type: "stream-start",
-      workspaceId: WORKSPACE_ID,
-      messageId,
-      historySequence: 1,
-      model: "test-model",
-      startTime: Date.now(),
-    });
-  };
-
   it("returns empty array when no errors", () => {
-    const agg = createAggregator();
-    expect(agg.getSkillLoadErrors()).toEqual([]);
+    const aggregator = createAggregator();
+    expect(aggregator.getSkillLoadErrors()).toEqual([]);
   });
 
   it("tracks failed agent_skill_read calls", () => {
-    const agg = createAggregator();
-    startStream(agg, "msg-1");
-    emitFailedSkillRead(agg, "msg-1", "tc-1", "nonexistent", "Agent skill not found: nonexistent");
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "nonexistent",
+      error: "Agent skill not found: nonexistent",
+    });
 
-    expect(agg.getSkillLoadErrors()).toEqual([
+    expect(aggregator.getSkillLoadErrors()).toEqual([
       { name: "nonexistent", error: "Agent skill not found: nonexistent" },
     ]);
   });
 
   it("deduplicates errors by skill name", () => {
-    const agg = createAggregator();
-    startStream(agg, "msg-1");
-    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "Parse error");
-    emitFailedSkillRead(agg, "msg-1", "tc-2", "broken", "Parse error");
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "broken",
+      error: "Parse error",
+    });
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-2",
+      skillName: "broken",
+      error: "Parse error",
+    });
 
-    expect(agg.getSkillLoadErrors()).toHaveLength(1);
+    expect(aggregator.getSkillLoadErrors()).toHaveLength(1);
   });
 
   it("updates error message on subsequent failure", () => {
-    const agg = createAggregator();
-    startStream(agg, "msg-1");
-    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "First error");
-    emitFailedSkillRead(agg, "msg-1", "tc-2", "broken", "Second error");
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "broken",
+      error: "First error",
+    });
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-2",
+      skillName: "broken",
+      error: "Second error",
+    });
 
-    expect(agg.getSkillLoadErrors()).toEqual([{ name: "broken", error: "Second error" }]);
+    expect(aggregator.getSkillLoadErrors()).toEqual([{ name: "broken", error: "Second error" }]);
   });
 
   it("clears error when skill later loads successfully", () => {
-    const agg = createAggregator();
-    startStream(agg, "msg-1");
-    emitFailedSkillRead(agg, "msg-1", "tc-1", "flaky", "Temporary failure");
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "flaky",
+      error: "Temporary failure",
+    });
 
-    expect(agg.getSkillLoadErrors()).toHaveLength(1);
+    expect(aggregator.getSkillLoadErrors()).toHaveLength(1);
 
-    emitSuccessfulSkillRead(agg, "msg-1", "tc-2", "flaky");
+    emitSuccessfulSkillRead(aggregator, {
+      toolCallId: "tc-2",
+      skillName: "flaky",
+    });
 
-    expect(agg.getSkillLoadErrors()).toEqual([]);
-    expect(agg.getLoadedSkills()).toHaveLength(1);
+    expect(aggregator.getSkillLoadErrors()).toEqual([]);
+    expect(aggregator.getLoadedSkills()).toHaveLength(1);
   });
 
   it("replaces loaded skill with error on later failure", () => {
-    const agg = createAggregator();
-    startStream(agg, "msg-1");
-    emitSuccessfulSkillRead(agg, "msg-1", "tc-1", "flaky-skill");
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitSuccessfulSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "flaky-skill",
+    });
 
-    expect(agg.getLoadedSkills()).toHaveLength(1);
-    expect(agg.getSkillLoadErrors()).toEqual([]);
+    expect(aggregator.getLoadedSkills()).toHaveLength(1);
+    expect(aggregator.getSkillLoadErrors()).toEqual([]);
 
-    // Skill was edited/deleted and the agent retries — now it fails
-    emitFailedSkillRead(agg, "msg-1", "tc-2", "flaky-skill", "SKILL.md is missing");
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-2",
+      skillName: "flaky-skill",
+      error: "SKILL.md is missing",
+    });
 
-    // Error replaces the loaded state so the UI reflects current reality
-    expect(agg.getSkillLoadErrors()).toEqual([
+    expect(aggregator.getSkillLoadErrors()).toEqual([
       { name: "flaky-skill", error: "SKILL.md is missing" },
     ]);
-    expect(agg.getLoadedSkills()).toEqual([]);
+    expect(aggregator.getLoadedSkills()).toEqual([]);
   });
 
   it("clears errors on loadHistoricalMessages replay", () => {
-    const agg = createAggregator();
-    startStream(agg, "msg-1");
-    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "Error");
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "broken",
+      error: "Error",
+    });
 
-    expect(agg.getSkillLoadErrors()).toHaveLength(1);
+    expect(aggregator.getSkillLoadErrors()).toHaveLength(1);
 
-    agg.loadHistoricalMessages([]);
-    expect(agg.getSkillLoadErrors()).toEqual([]);
+    aggregator.loadHistoricalMessages([]);
+    expect(aggregator.getSkillLoadErrors()).toEqual([]);
   });
 
   it("returns stable array reference for memoization", () => {
-    const agg = createAggregator();
-    startStream(agg, "msg-1");
-    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "Error");
+    const aggregator = createAggregator();
+    startStream(aggregator);
+    emitFailedSkillRead(aggregator, {
+      toolCallId: "tc-1",
+      skillName: "broken",
+      error: "Error",
+    });
 
-    const ref1 = agg.getSkillLoadErrors();
-    const ref2 = agg.getSkillLoadErrors();
+    const ref1 = aggregator.getSkillLoadErrors();
+    const ref2 = aggregator.getSkillLoadErrors();
     expect(ref1).toBe(ref2);
   });
 
   it("tracks errors from historical tool calls", () => {
-    const agg = createAggregator();
+    const aggregator = createAggregator();
 
-    // Simulate loading a historical message with a failed agent_skill_read tool part
-    agg.loadHistoricalMessages([
+    aggregator.loadHistoricalMessages([
       createMuxMessage("msg-1", "assistant", "", undefined, [
         {
           type: "dynamic-tool",
@@ -564,40 +424,22 @@ describe("Skill load error tracking", () => {
       ]),
     ]);
 
-    expect(agg.getSkillLoadErrors()).toEqual([
+    expect(aggregator.getSkillLoadErrors()).toEqual([
       { name: "missing-skill", error: "Agent skill not found: missing-skill" },
     ]);
   });
 });
 
 describe("Agent skill snapshot association", () => {
-  const createAggregator = () => {
-    return new StreamingMessageAggregator(TEST_CREATED_AT);
-  };
-
   it("attaches agentSkillSnapshot content to the subsequent invocation message", () => {
-    const agg = createAggregator();
-
-    const snapshot = createMuxMessage(
-      "snapshot-1",
-      "user",
-      '<agent-skill name="pull-requests" scope="project">\n# Content\n</agent-skill>',
-      {
-        historySequence: 1,
-        timestamp: Date.now(),
-        synthetic: true,
-        agentSkillSnapshot: {
-          skillName: "pull-requests",
-          scope: "project",
-          sha256: "deadbeef",
-          frontmatterYaml: "name: pull-requests\ndescription: PR guidelines",
-        },
-      }
-    );
-
+    const aggregator = createAggregator();
+    const snapshot = createSkillSnapshotMessage({
+      historySequence: 1,
+      frontmatterYaml: "name: pull-requests\ndescription: PR guidelines",
+    });
     const invocation = createMuxMessage("invoke-1", "user", "/pull-requests", {
       historySequence: 2,
-      timestamp: Date.now(),
+      timestamp: 0,
       muxMetadata: {
         type: "agent-skill",
         rawCommand: "/pull-requests",
@@ -607,18 +449,17 @@ describe("Agent skill snapshot association", () => {
       },
     });
 
-    agg.loadHistoricalMessages([snapshot, invocation]);
+    aggregator.loadHistoricalMessages([snapshot, invocation]);
 
-    const displayed = agg.getDisplayedMessages();
+    const displayed = aggregator.getDisplayedMessages();
     expect(displayed).toHaveLength(1);
 
-    const msg = displayed[0];
-    expect(msg.type).toBe("user");
-    if (msg.type !== "user") {
+    const message = displayed[0];
+    if (message?.type !== "user") {
       throw new Error("Expected displayed user message");
     }
 
-    expect(msg.agentSkill).toEqual({
+    expect(message.agentSkill).toEqual({
       skillName: "pull-requests",
       scope: "project",
       snapshot: {
