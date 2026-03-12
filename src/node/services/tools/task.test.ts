@@ -140,6 +140,59 @@ describe("task tool", () => {
     expect(bestOfGroups[1]?.groupId).toBe(bestOfGroups[2]?.groupId);
   });
 
+  it("returns partial spawn metadata when best-of task creation fails mid-batch", async () => {
+    using tempDir = new TestTempDir("test-task-tool-best-of-partial-failure");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    let createCount = 0;
+    const create = mock(() => {
+      createCount += 1;
+      if (createCount === 3) {
+        return Err("workspace creation failed");
+      }
+
+      return Ok({
+        taskId: `child-task-${createCount}`,
+        kind: "agent" as const,
+        status: "running" as const,
+      });
+    });
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "compare three approaches",
+          title: "Best of 3",
+          run_in_background: false,
+          n: 3,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(waitForAgentReport).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: "running",
+      taskIds: ["child-task-1", "child-task-2"],
+      tasks: [
+        { taskId: "child-task-1", status: "running" },
+        { taskId: "child-task-2", status: "running" },
+      ],
+      note:
+        "Best-of task creation stopped after spawning 2 of 3 candidate(s): workspace creation failed. " +
+        "Use task_await on the returned task metadata before retrying, or you may duplicate work.",
+    });
+  });
+
   it("returns one completed report per best-of task when run in foreground", async () => {
     using tempDir = new TestTempDir("test-task-tool-best-of-foreground");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

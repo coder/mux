@@ -513,7 +513,11 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const collapsedPreview = isBestOf ? `Best of ${totalCandidateCount} · ${preview}` : preview;
   const singleEntry = !isBestOf ? displayEntries[0] : undefined;
   const createdCandidateCount = taskIds.length;
-  const shouldShowCreationProgress = isBestOf && createdCandidateCount < totalCandidateCount;
+  const shouldShowCreationProgress =
+    isBestOf &&
+    !errorResult &&
+    status === "executing" &&
+    createdCandidateCount < totalCandidateCount;
 
   return (
     <ToolContainer expanded={expanded}>

@@ -218,6 +218,19 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         });
 
         if (!created.success) {
+          if (createdTasks.length > 0) {
+            return parseToolResult(
+              TaskToolResultSchema,
+              buildPendingTaskResult({
+                tasks: createdTasks,
+                note:
+                  `Best-of task creation stopped after spawning ${createdTasks.length} of ${bestOfCount} candidate(s): ${created.error}. ` +
+                  "Use task_await on the returned task metadata before retrying, or you may duplicate work.",
+              }),
+              "task"
+            );
+          }
+
           throw new Error(created.error);
         }
 
