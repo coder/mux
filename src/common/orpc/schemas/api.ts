@@ -148,7 +148,7 @@ export const FlowPromptStateSchema = z.object({
   isCurrentVersionEnqueued: z.boolean(),
   hasPendingUpdate: z.boolean(),
   autoSendMode: FlowPromptAutoSendModeSchema,
-  agentScope: z.string(),
+  nextHeadingContent: z.string().nullable(),
   updatePreviewText: z.string().nullable(),
 });
 
@@ -1283,13 +1283,6 @@ export const workspace = {
       input: z.object({
         workspaceId: z.string(),
         mode: FlowPromptAutoSendModeSchema,
-      }),
-      output: ResultSchema(z.void(), z.string()),
-    },
-    updateAgentScope: {
-      input: z.object({
-        workspaceId: z.string(),
-        agentScope: z.string(),
       }),
       output: ResultSchema(z.void(), z.string()),
     },

@@ -11,6 +11,7 @@ describe("getFlowPromptFileHint", () => {
     expect(hint).not.toBeNull();
     expect(hint).toContain("Flow prompt file path:");
     expect(hint).toContain("/tmp/workspace/.mux/prompts/feature-branch.md");
-    expect(hint).toContain("do NOT re-read the file");
+    expect(hint).toContain("Flow prompt updates may arrive in chat as diffs or full snapshots");
+    expect(hint).toContain("If the full flow-prompt context is not already clear");
   });
 });

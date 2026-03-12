@@ -89,6 +89,18 @@ function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatche
  * heading explicitly specifies flags via /pattern/flags syntax.
  */
 
+export function extractHeadingSection(markdown: string, headingTitle: string): string | null {
+  if (!markdown || !headingTitle) return null;
+
+  const expectedHeading = headingTitle.trim().toLowerCase();
+  if (!expectedHeading) return null;
+
+  return extractSectionByHeading(
+    markdown,
+    (headingText) => headingText.trim().toLowerCase() === expectedHeading
+  );
+}
+
 export function extractModelSection(markdown: string, modelId: string): string | null {
   if (!markdown || !modelId) return null;
 

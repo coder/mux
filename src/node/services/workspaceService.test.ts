@@ -1275,7 +1275,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
               isCurrentVersionEnqueued: boolean;
               hasPendingUpdate: boolean;
               autoSendMode: "off" | "end-of-turn";
-              agentScope: string;
+              nextHeadingContent: string | null;
               updatePreviewText: string | null;
             }>;
           };
@@ -1293,7 +1293,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
       isCurrentVersionEnqueued: false,
       hasPendingUpdate: false,
       autoSendMode: "off",
-      agentScope: "",
+      nextHeadingContent: null,
       updatePreviewText: null,
     });
 
@@ -1302,31 +1302,6 @@ describe("WorkspaceService Flow Prompting controls", () => {
     expect(result.success).toBe(true);
     expect(session.clearFlowPromptUpdate).toHaveBeenCalledTimes(1);
     expect(setAutoSendMode).toHaveBeenCalledWith(workspaceId, "off", { clearPending: true });
-  });
-
-  test("updateFlowPromptAgentScope persists the latest scope text", async () => {
-    const workspaceId = "flow-scope-workspace";
-    const setAgentScope = spyOn(
-      (
-        workspaceService as unknown as {
-          flowPromptService: {
-            setAgentScope: (workspaceId: string, agentScope: string) => Promise<unknown>;
-          };
-        }
-      ).flowPromptService,
-      "setAgentScope"
-    ).mockResolvedValue(undefined);
-
-    const result = await workspaceService.updateFlowPromptAgentScope(
-      workspaceId,
-      "Only work on the stage 2 test coverage."
-    );
-
-    expect(result.success).toBe(true);
-    expect(setAgentScope).toHaveBeenCalledWith(
-      workspaceId,
-      "Only work on the stage 2 test coverage."
-    );
   });
 
   test("disabling Flow Prompting clears any queued synthetic follow-up before deleting the file", async () => {
@@ -1437,7 +1412,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
       path: "/tmp/test/workspace/.mux/prompts/feature.md",
       nextContent: "Updated flow prompt instructions",
       nextFingerprint: "flow-prompt-fingerprint",
-      text: `[Flow prompt updated. Follow current agent instructions.]\n\nAgent scope:\n\`\`\`md\nOnly work on the test coverage for stage 2.\n\`\`\``,
+      text: `[Flow prompt updated. Follow current agent instructions.]\n\nCurrent Next heading:\n\`\`\`md\nOnly work on the test coverage for stage 2.\n\`\`\``,
       state: {
         workspaceId,
         path: "/tmp/test/workspace/.mux/prompts/feature.md",
@@ -1449,7 +1424,7 @@ describe("WorkspaceService Flow Prompting controls", () => {
         isCurrentVersionEnqueued: false,
         hasPendingUpdate: false,
         autoSendMode: "off" as const,
-        agentScope: "Only work on the test coverage for stage 2.",
+        nextHeadingContent: "Only work on the test coverage for stage 2.",
         updatePreviewText: "[Flow prompt updated. Follow current agent instructions.]",
       },
     };

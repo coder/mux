@@ -3621,19 +3621,6 @@ export const router = (authToken?: string) => {
             }
             return { success: true as const, data: undefined };
           }),
-        updateAgentScope: t
-          .input(schemas.workspace.flowPrompt.updateAgentScope.input)
-          .output(schemas.workspace.flowPrompt.updateAgentScope.output)
-          .handler(async ({ context, input }) => {
-            const result = await context.workspaceService.updateFlowPromptAgentScope(
-              input.workspaceId,
-              input.agentScope
-            );
-            if (!result.success) {
-              return { success: false as const, error: result.error };
-            }
-            return { success: true as const, data: undefined };
-          }),
         sendNow: t
           .input(schemas.workspace.flowPrompt.sendNow.input)
           .output(schemas.workspace.flowPrompt.sendNow.output)

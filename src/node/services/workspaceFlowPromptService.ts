@@ -17,6 +17,7 @@ import {
 } from "@/common/constants/flowPrompting";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shellQuote } from "@/common/utils/shell";
+import { extractHeadingSection } from "@/node/utils/main/markdown";
 import { log } from "@/node/services/log";
 import { generateDiff } from "@/node/services/tools/fileCommon";
 
@@ -31,7 +32,6 @@ interface PersistedFlowPromptState {
   lastSentContent: string | null;
   lastSentFingerprint: string | null;
   autoSendMode: FlowPromptAutoSendMode;
-  agentScope: string;
 }
 
 export interface FlowPromptState {
@@ -45,7 +45,7 @@ export interface FlowPromptState {
   isCurrentVersionEnqueued: boolean;
   hasPendingUpdate: boolean;
   autoSendMode: FlowPromptAutoSendMode;
-  agentScope: string;
+  nextHeadingContent: string | null;
   updatePreviewText: string | null;
 }
 
@@ -153,7 +153,7 @@ function areFlowPromptStatesEqual(a: FlowPromptState | null, b: FlowPromptState)
     a.isCurrentVersionEnqueued === b.isCurrentVersionEnqueued &&
     a.hasPendingUpdate === b.hasPendingUpdate &&
     a.autoSendMode === b.autoSendMode &&
-    a.agentScope === b.agentScope &&
+    a.nextHeadingContent === b.nextHeadingContent &&
     a.updatePreviewText === b.updatePreviewText
   );
 }
@@ -199,30 +199,38 @@ export function getFlowPromptPollIntervalMs(params: {
   return FLOW_PROMPT_RECENT_POLL_INTERVAL_MS;
 }
 
-function buildFlowPromptAgentScopeSection(agentScope: string | null | undefined): string {
-  const trimmedAgentScope = agentScope?.trim() ?? "";
-  if (trimmedAgentScope.length === 0) {
+function getFlowPromptNextHeadingContent(content: string): string | null {
+  const nextHeadingContent =
+    extractHeadingSection(content, "Next")?.trim() ??
+    extractHeadingSection(content, "Next:")?.trim() ??
+    "";
+  return nextHeadingContent.length > 0 ? nextHeadingContent : null;
+}
+
+function buildFlowPromptNextHeadingSection(nextHeadingContent: string | null | undefined): string {
+  const trimmedNextHeadingContent = nextHeadingContent?.trim() ?? "";
+  if (trimmedNextHeadingContent.length === 0) {
     return "";
   }
 
-  return `\n\nAgent scope:\n\`\`\`md\n${trimmedAgentScope}\n\`\`\``;
+  return `\n\nCurrent Next heading:\n\`\`\`md\n${trimmedNextHeadingContent}\n\`\`\``;
 }
 
 export function buildFlowPromptUpdateMessage(params: {
   path: string;
   previousContent: string;
   nextContent: string;
-  agentScope?: string | null;
+  nextHeadingContent?: string | null;
 }): string {
   const markerLine = getFlowPromptPathMarkerLine(params.path);
-  const scopeSection = buildFlowPromptAgentScopeSection(params.agentScope);
+  const nextHeadingSection = buildFlowPromptNextHeadingSection(params.nextHeadingContent);
   const previousTrimmed = params.previousContent.trim();
   const nextTrimmed = params.nextContent.trim();
 
   if (nextTrimmed.length === 0) {
     return `[Flow prompt updated. Follow current agent instructions.]
 
-${markerLine}${scopeSection}
+${markerLine}${nextHeadingSection}
 
 The flow prompt file is now empty. Stop relying on any prior flow prompt instructions from that file unless the user saves new content.`;
   }
@@ -236,7 +244,7 @@ The flow prompt file is now empty. Stop relying on any prior flow prompt instruc
   if (shouldSendDiff) {
     return `[Flow prompt updated. Follow current agent instructions.]
 
-${markerLine}${scopeSection}
+${markerLine}${nextHeadingSection}
 
 Latest flow prompt changes:
 \`\`\`diff
@@ -246,7 +254,7 @@ ${diff}
 
   return `[Flow prompt updated. Follow current agent instructions.]
 
-${markerLine}${scopeSection}
+${markerLine}${nextHeadingSection}
 
 Current flow prompt contents:
 \`\`\`md
@@ -260,11 +268,14 @@ export function buildFlowPromptAttachMessage(params: {
   nextContent: string;
 }): string {
   const prefix = `Re the live prompt in ${params.path}:`;
+  const nextHeadingSection = buildFlowPromptNextHeadingSection(
+    getFlowPromptNextHeadingContent(params.nextContent)
+  );
   const previousTrimmed = params.previousContent.trim();
   const nextTrimmed = params.nextContent.trim();
 
   if (nextTrimmed.length === 0 && previousTrimmed.length > 0) {
-    return `${prefix}\n\nThe flow prompt file is now empty. Stop relying on any prior flow prompt instructions from that file unless I save new content.`;
+    return `${prefix}${nextHeadingSection}\n\nThe flow prompt file is now empty. Stop relying on any prior flow prompt instructions from that file unless I save new content.`;
   }
 
   if (nextTrimmed.length === 0) {
@@ -278,7 +289,7 @@ export function buildFlowPromptAttachMessage(params: {
     diff.length < params.nextContent.length * 1.5;
 
   if (shouldSendDiff) {
-    return `${prefix}\n\nLatest flow prompt changes:\n\`\`\`diff\n${diff}\n\`\`\``;
+    return `${prefix}${nextHeadingSection}\n\nLatest flow prompt changes:\n\`\`\`diff\n${diff}\n\`\`\``;
   }
 
   return `${prefix}\n`;
@@ -436,16 +447,6 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     // Auto-send mode lives beside the last-sent fingerprint in the session sidecar because
     // file watching happens in the backend; the watcher needs the current preference even
     // when the user changes it from the browser without another manual send.
-    return this.refreshMonitor(workspaceId, true);
-  }
-
-  async setAgentScope(workspaceId: string, agentScope: string): Promise<FlowPromptState> {
-    const persisted = await this.readPersistedState(workspaceId);
-    await this.writePersistedState(workspaceId, {
-      ...persisted,
-      agentScope,
-    });
-
     return this.refreshMonitor(workspaceId, true);
   }
 
@@ -877,7 +878,8 @@ export class WorkspaceFlowPromptService extends EventEmitter {
 
   private buildCurrentUpdatePayload(
     snapshot: FlowPromptFileSnapshot,
-    persisted: PersistedFlowPromptState
+    persisted: PersistedFlowPromptState,
+    nextHeadingContent: string | null = getFlowPromptNextHeadingContent(snapshot.content)
   ): { nextFingerprint: string; previewText: string; sendText: string } | null {
     const previousTrimmed = (persisted.lastSentContent ?? "").trim();
     const nextFingerprint = snapshot.contentFingerprint ?? computeFingerprint(snapshot.content);
@@ -901,7 +903,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
         path: snapshot.path,
         previousContent: persisted.lastSentContent ?? "",
         nextContent: snapshot.content,
-        agentScope: persisted.agentScope,
+        nextHeadingContent,
       }),
     };
   }
@@ -936,7 +938,12 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       snapshot.contentFingerprint ?? computeFingerprint(snapshot.content);
     const hasPendingUpdate =
       pendingFingerprint != null && pendingFingerprint === currentSnapshotFingerprint;
-    const currentUpdatePayload = this.buildCurrentUpdatePayload(snapshot, persisted);
+    const nextHeadingContent = getFlowPromptNextHeadingContent(snapshot.content);
+    const currentUpdatePayload = this.buildCurrentUpdatePayload(
+      snapshot,
+      persisted,
+      nextHeadingContent
+    );
 
     return {
       workspaceId: snapshot.workspaceId,
@@ -951,7 +958,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
         snapshot.contentFingerprint === lastEnqueuedFingerprint,
       hasPendingUpdate,
       autoSendMode: persisted.autoSendMode,
-      agentScope: persisted.agentScope,
+      nextHeadingContent,
       updatePreviewText: currentUpdatePayload?.previewText ?? null,
     };
   }
@@ -1079,14 +1086,12 @@ export class WorkspaceFlowPromptService extends EventEmitter {
           parsed.autoSendMode === "end-of-turn"
             ? "end-of-turn"
             : DEFAULT_FLOW_PROMPT_AUTO_SEND_MODE,
-        agentScope: typeof parsed.agentScope === "string" ? parsed.agentScope : "",
       };
     } catch {
       return {
         lastSentContent: null,
         lastSentFingerprint: null,
         autoSendMode: DEFAULT_FLOW_PROMPT_AUTO_SEND_MODE,
-        agentScope: "",
       };
     }
   }

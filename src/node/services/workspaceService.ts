@@ -3079,18 +3079,6 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async updateFlowPromptAgentScope(
-    workspaceId: string,
-    agentScope: string
-  ): Promise<Result<void, string>> {
-    try {
-      await this.flowPromptService.setAgentScope(workspaceId, agentScope);
-      return Ok(undefined);
-    } catch (error) {
-      return Err(`Failed to update Flow Prompting agent scope: ${getErrorMessage(error)}`);
-    }
-  }
-
   async sendFlowPromptNow(workspaceId: string): Promise<Result<void, string>> {
     try {
       const currentUpdate = await this.flowPromptService.getCurrentUpdate(workspaceId);

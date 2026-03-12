@@ -428,7 +428,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       isCurrentVersionEnqueued: false,
       hasPendingUpdate: false,
       autoSendMode: "off",
-      agentScope: "",
+      nextHeadingContent: null,
       updatePreviewText: null,
     };
   };
@@ -1618,6 +1618,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
             lastEnqueuedFingerprint: null,
             isCurrentVersionEnqueued: false,
             hasPendingUpdate: false,
+            nextHeadingContent: null,
             updatePreviewText: null,
           }));
           return Promise.resolve({ success: true as const, data: undefined });
@@ -1642,13 +1643,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           setFlowPromptState(input.workspaceId, (state) => ({
             ...state,
             autoSendMode: input.mode,
-          }));
-          return Promise.resolve({ success: true as const, data: undefined });
-        },
-        updateAgentScope: (input: { workspaceId: string; agentScope: string }) => {
-          setFlowPromptState(input.workspaceId, (state) => ({
-            ...state,
-            agentScope: input.agentScope,
           }));
           return Promise.resolve({ success: true as const, data: undefined });
         },

@@ -11,7 +11,7 @@ export function getFlowPromptFileHint(flowPromptPath: string, exists: boolean): 
 
   return `${getFlowPromptPathMarkerLine(flowPromptPath)}
 
-A flow prompt file exists at: ${flowPromptPath}. If the full prompt is already included in the chat history, do NOT re-read the file. Otherwise, read it when the current task needs the latest flow prompt context.
+A flow prompt file exists at: ${flowPromptPath}. Flow prompt updates may arrive in chat as diffs or full snapshots, and they include the current \`Next\` heading when present. If the full flow-prompt context is not already clear from those updates or from chat history, read the full file.
 
 ${exactPathRule}`;
 }

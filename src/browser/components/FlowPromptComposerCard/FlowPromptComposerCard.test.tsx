@@ -19,7 +19,7 @@ function createState(overrides?: Partial<FlowPromptState>): FlowPromptState {
     isCurrentVersionEnqueued: false,
     hasPendingUpdate: false,
     autoSendMode: "off",
-    agentScope: "",
+    nextHeadingContent: null,
     updatePreviewText: null,
     ...overrides,
   };
@@ -115,7 +115,6 @@ describe("FlowPromptComposerCard", () => {
       onSendNow: () => undefined,
       onToggleCollapsed: () => undefined,
       onAutoSendModeChange: () => undefined,
-      onAgentScopeChange: () => undefined,
     });
 
     expect(view.container.textContent).not.toContain("Flow prompt file path:");
@@ -149,7 +148,6 @@ describe("FlowPromptComposerCard", () => {
       onSendNow: () => undefined,
       onToggleCollapsed: () => undefined,
       onAutoSendModeChange: () => undefined,
-      onAgentScopeChange: () => undefined,
     });
 
     expect(view.getByText("Live flow prompt contents")).toBeTruthy();
@@ -177,7 +175,6 @@ describe("FlowPromptComposerCard", () => {
       onSendNow: () => undefined,
       onToggleCollapsed: () => undefined,
       onAutoSendModeChange: () => undefined,
-      onAgentScopeChange: () => undefined,
     });
 
     expect(view.container.textContent).toContain("Send this clear update");
@@ -203,21 +200,19 @@ describe("FlowPromptComposerCard", () => {
     ).toBe(false);
   });
 
-  test("renders a full-width Agent Scope textarea with the persisted scope text", () => {
+  test("renders the parsed Next heading content above the diff preview", () => {
     const view = renderCard({
-      state: createState({ agentScope: "Only work on stage 2 of the plan." }),
+      state: createState({ nextHeadingContent: "Only work on stage 2 of the plan." }),
       onOpen: () => undefined,
       onDisable: () => undefined,
       onSendNow: () => undefined,
       onToggleCollapsed: () => undefined,
       onAutoSendModeChange: () => undefined,
-      onAgentScopeChange: () => undefined,
     });
 
-    const textarea = view.getByRole("textbox", { name: "Agent Scope" });
-    expect((textarea as HTMLTextAreaElement).value).toBe("Only work on stage 2 of the plan.");
-    expect(textarea.className).toContain("w-full");
-    expect(view.container.textContent).toContain("Sent with the next Flow Prompt update");
+    expect(view.container.textContent).toContain("Next");
+    expect(view.container.textContent).toContain("Only work on stage 2 of the plan.");
+    expect(view.container.textContent).toContain("Sent with every Flow Prompt update");
   });
 
   test("keeps icon actions accessible without rendering their labels inline", () => {
@@ -229,14 +224,13 @@ describe("FlowPromptComposerCard", () => {
       onSendNow: () => undefined,
       onToggleCollapsed: () => undefined,
       onAutoSendModeChange: () => undefined,
-      onAgentScopeChange: () => undefined,
     });
 
     expect(view.getByRole("button", { name: "Send now" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Copy path" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Open prompt" })).toBeTruthy();
     expect(view.getByRole("button", { name: "Disable" })).toBeTruthy();
-    expect(view.getByRole("textbox", { name: "Agent Scope" })).toBeTruthy();
+    expect(view.container.textContent).toContain("Next");
     expect(view.getByTestId("flow-prompt-helper-row").className).toContain("md:col-span-2");
     expect(view.queryByText(/^Send now$/)).toBeNull();
     expect(view.container.textContent).not.toContain("Copy path");
@@ -254,7 +248,6 @@ describe("FlowPromptComposerCard", () => {
       onSendNow: () => undefined,
       onToggleCollapsed: () => undefined,
       onAutoSendModeChange: () => undefined,
-      onAgentScopeChange: () => undefined,
     });
 
     expect(view.getByLabelText("Expand Flow Prompting composer").className).toContain("text-left");
@@ -270,7 +263,6 @@ describe("FlowPromptComposerCard", () => {
       onSendNow: () => undefined,
       onToggleCollapsed,
       onAutoSendModeChange: () => undefined,
-      onAgentScopeChange: () => undefined,
     });
 
     expect(view.getByTestId("flow-prompt-composer-strip")).toBeTruthy();
