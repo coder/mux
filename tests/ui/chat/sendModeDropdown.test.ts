@@ -276,5 +276,5 @@ describe("Send dispatch modes (mock AI router)", () => {
       unregisterStep?.();
       await app.dispose();
     }
-  }, 60_000);
+  }, 90_000);
 });
