@@ -1058,6 +1058,15 @@ export class StreamingMessageAggregator {
     }
 
     this.invalidateCache();
+
+    if (!opts?.skipDerivedState && !hasActiveStream && this.pendingStreamStartTime !== null) {
+      const latestMessage = this.getAllMessages().at(-1);
+      if (!latestMessage || latestMessage.role === "assistant") {
+        // Authoritative history now shows an idle/assistant-ended transcript, so any
+        // preserved "starting..." state came from a disconnected pre-stream turn.
+        this.clearPendingStreamLifecycleState();
+      }
+    }
   }
 
   setEstablishedOldestHistorySequence(sequence: number | null): void {
@@ -1220,6 +1229,11 @@ export class StreamingMessageAggregator {
 
   private clearRuntimeStatus(): void {
     this.runtimeStatus = null;
+  }
+
+  private clearPendingStreamLifecycleState(): void {
+    this.setPendingStreamStartTime(null);
+    this.clearRuntimeStatus();
   }
 
   getPendingStreamModel(): string | null {
@@ -1573,6 +1587,7 @@ export class StreamingMessageAggregator {
     this.activeStreams.clear();
     this.displayedMessageCache.clear();
     this.messageVersions.clear();
+    this.clearPendingStreamLifecycleState();
     this.interruptingMessageId = null;
     this.streamLifecycle = null;
     this.lastAbortReason = null;
@@ -1603,12 +1618,9 @@ export class StreamingMessageAggregator {
   handleStreamStart(data: StreamStartEvent): void {
     const { isCompacting, hasCompactionContinue } = this.resolveStreamStartCompaction(data);
 
-    // Clear pending stream start timestamp - stream has started
-    this.setPendingStreamStartTime(null);
+    // Clear pending "starting..." UI now that the assistant turn is live.
+    this.clearPendingStreamLifecycleState();
     this.lastAbortReason = null;
-
-    // Clear runtime status - runtime is ready now that stream has started
-    this.clearRuntimeStatus();
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
@@ -1718,6 +1730,10 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamEnd(data: StreamEndEvent): void {
+    // A terminal event means any locally preserved "starting..." state is stale,
+    // even if reconnect delivered stream-end without the earlier stream-start.
+    this.clearPendingStreamLifecycleState();
+
     // Direct lookup by messageId - O(1) instead of O(n) find
     const activeStream = this.activeStreams.get(data.messageId);
 
@@ -1843,9 +1859,8 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamAbort(data: StreamAbortEvent): void {
-    // Clear pending stream start timestamp - abort can arrive before stream-start.
-    // This ensures StreamingBarrier exits the "starting..." phase immediately.
-    this.setPendingStreamStartTime(null);
+    // Abort can arrive before stream-start. Clear pending lifecycle UI immediately.
+    this.clearPendingStreamLifecycleState();
     this.clearInFlightStreamLifecycle();
     this.lastAbortReason = {
       reason: data.abortReason ?? "system",
@@ -1858,9 +1873,6 @@ export class StreamingMessageAggregator {
     }
 
     // Direct lookup by messageId
-
-    // Clear runtime status (ensureReady is no longer relevant once stream aborts)
-    this.clearRuntimeStatus();
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1885,15 +1897,11 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamError(data: StreamErrorMessage): void {
-    // Clear pending stream start timestamp - error arrived before/instead of stream-start.
-    // This ensures StreamingBarrier exits the "starting..." phase immediately.
-    this.setPendingStreamStartTime(null);
+    // Error can arrive before/instead of stream-start. Clear pending lifecycle UI immediately.
+    this.clearPendingStreamLifecycleState();
     this.clearInFlightStreamLifecycle();
 
     // Direct lookup by messageId
-
-    // Clear runtime status - runtime start/ensureReady failed
-    this.clearRuntimeStatus();
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {

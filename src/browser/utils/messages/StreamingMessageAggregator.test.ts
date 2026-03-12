@@ -38,6 +38,28 @@ function withDebugLlmRequestEnabled<T>(fn: () => T): T {
 // Helper to wait for throttled init output updates (100ms throttle + buffer)
 const waitForInitThrottle = () => new Promise((r) => setTimeout(r, 120));
 
+function seedPendingStreamState(aggregator: StreamingMessageAggregator): void {
+  aggregator.handleMessage({
+    ...createMuxMessage("user-1", "user", "Hello", {
+      historySequence: 1,
+      timestamp: Date.now(),
+      muxMetadata: {
+        type: "normal",
+        requestedModel: "openai:gpt-4o-mini",
+      },
+    }),
+    type: "message",
+  });
+
+  aggregator.handleRuntimeStatus({
+    type: "runtime-status",
+    workspaceId: "test-workspace",
+    phase: "starting",
+    runtimeType: "local",
+    detail: "Starting workspace...",
+  });
+}
+
 describe("StreamingMessageAggregator", () => {
   describe("init state reference stability", () => {
     test("should return new array reference when state changes", async () => {
@@ -1982,6 +2004,54 @@ describe("StreamingMessageAggregator", () => {
       });
 
       expect(aggregator.getPendingStreamModel()).toBeNull();
+    });
+  });
+
+  describe("pending stream lifecycle", () => {
+    test("clears pending state when stream-end arrives without prior stream-start", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      seedPendingStreamState(aggregator);
+
+      expect(aggregator.getPendingStreamStartTime()).not.toBeNull();
+      expect(aggregator.getPendingStreamModel()).toBe("openai:gpt-4o-mini");
+      expect(aggregator.getRuntimeStatus()?.phase).toBe("starting");
+
+      aggregator.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: "test-workspace",
+        messageId: "assistant-1",
+        metadata: {
+          historySequence: 2,
+          timestamp: Date.now(),
+          model: "openai:gpt-4o-mini",
+        },
+        parts: [],
+      });
+
+      expect(aggregator.getPendingStreamStartTime()).toBeNull();
+      expect(aggregator.getPendingStreamModel()).toBeNull();
+      expect(aggregator.getRuntimeStatus()).toBeNull();
+    });
+
+    test("clears stale pending state when authoritative history now ends with assistant", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      seedPendingStreamState(aggregator);
+
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("assistant-1", "assistant", "Done", {
+            historySequence: 2,
+            timestamp: Date.now(),
+            model: "openai:gpt-4o-mini",
+          }),
+        ],
+        false,
+        { mode: "append" }
+      );
+
+      expect(aggregator.getPendingStreamStartTime()).toBeNull();
+      expect(aggregator.getPendingStreamModel()).toBeNull();
+      expect(aggregator.getRuntimeStatus()).toBeNull();
     });
   });
 
