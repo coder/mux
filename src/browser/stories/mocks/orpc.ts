@@ -22,6 +22,7 @@ import type {
   WorkspaceStatsSnapshot,
   ServerAuthSession,
 } from "@/common/orpc/types";
+import type { ProjectGitStatusResult as ApiProjectGitStatusResult } from "@/common/orpc/schemas/api";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
@@ -112,6 +113,8 @@ export interface MockORPCClientOptions {
   layoutPresets?: LayoutPresetsConfig;
   projects?: Map<string, ProjectConfig>;
   workspaces?: FrontendWorkspaceMetadata[];
+  /** Pre-seeded multi-project git status rows keyed by workspace ID. */
+  projectGitStatusesByWorkspace?: Map<string, ApiProjectGitStatusResult[]>;
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
   taskSettings?: Partial<TaskSettings>;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
@@ -311,6 +314,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   const {
     projects: providedProjects = new Map<string, ProjectConfig>(),
     workspaces: inputWorkspaces = [],
+    projectGitStatusesByWorkspace = new Map<string, ApiProjectGitStatusResult[]>(),
     onChat,
     executeBash,
     providersConfig = { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
@@ -1505,6 +1509,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }
         return Promise.resolve(statuses);
       },
+      getProjectGitStatuses: (input: { workspaceId: string; baseRef?: string | null }) =>
+        Promise.resolve(
+          (projectGitStatusesByWorkspace.get(input.workspaceId) ?? []).map((row) => ({
+            ...row,
+            gitStatus: row.gitStatus ? { ...row.gitStatus } : row.gitStatus,
+          }))
+        ),
       stopRuntime: () => Promise.resolve({ success: true as const, data: undefined }),
       onChat: async function* (input: { workspaceId: string }, options?: { signal?: AbortSignal }) {
         if (!onChat) {
