@@ -3139,6 +3139,21 @@ export class TaskService {
     }
 
     this.rejectWaiters(workspaceId, new Error("Task interrupted"));
+
+    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
+    const bestOf = entry.workspace.bestOf;
+    if (
+      parentWorkspaceId &&
+      bestOf?.total != null &&
+      bestOf.total > 1 &&
+      !this.aiService.isStreaming(parentWorkspaceId)
+    ) {
+      await this.deliverDeferredBestOfSiblingReports({
+        parentWorkspaceId,
+        groupId: bestOf.groupId,
+        total: bestOf.total,
+      });
+    }
   }
 
   private async handleSuccessfulProposePlanAutoHandoff(args: {
@@ -3419,6 +3434,54 @@ export class TaskService {
 
     for (const workspaceId of reportedChildTaskIds) {
       await this.requestReportedTaskCleanupRecheck(workspaceId);
+    }
+  }
+
+  private async deliverDeferredBestOfSiblingReports(params: {
+    parentWorkspaceId: string;
+    groupId: string;
+    total: number;
+  }): Promise<void> {
+    assert(
+      params.parentWorkspaceId.length > 0,
+      "deliverDeferredBestOfSiblingReports: parentWorkspaceId must be non-empty"
+    );
+
+    if (
+      await this.shouldDeferBestOfFallback({
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+        total: params.total,
+      })
+    ) {
+      return;
+    }
+
+    const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
+    const parentSessionDir = this.config.getSessionDir(params.parentWorkspaceId);
+    const cfg = this.config.loadConfigOrDefault();
+    for (const sibling of this.listBestOfSiblingTasks({
+      parentWorkspaceId: params.parentWorkspaceId,
+      groupId: params.groupId,
+    })) {
+      if (parentTaskToolState.referencedTaskIds.has(sibling.taskId)) {
+        continue;
+      }
+      if (!(sibling.taskStatus === "reported" || sibling.taskStatus === "interrupted")) {
+        continue;
+      }
+
+      const artifact = await readSubagentReportArtifact(parentSessionDir, sibling.taskId);
+      if (!artifact) {
+        continue;
+      }
+
+      await this.deliverReportToParent(
+        params.parentWorkspaceId,
+        sibling.taskId,
+        findWorkspaceEntry(cfg, sibling.taskId),
+        { reportMarkdown: artifact.reportMarkdown, title: artifact.title }
+      );
     }
   }
 
