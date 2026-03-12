@@ -25,6 +25,7 @@ import {
   type TimingPercentilesRow,
   type TokensByModelRow,
 } from "@/common/orpc/schemas/analytics";
+import { toUtcDateString } from "@/node/services/analytics/dateUtils";
 
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 const MIN_SAFE_BIGINT = BigInt(Number.MIN_SAFE_INTEGER);
@@ -107,7 +108,7 @@ function parseDateFilter(value: unknown): string | null {
 
   if (value instanceof Date) {
     assert(Number.isFinite(value.getTime()), "Invalid Date provided for analytics filter");
-    return value.toISOString().slice(0, 10);
+    return toUtcDateString(value);
   }
 
   if (typeof value === "string") {
@@ -119,7 +120,7 @@ function parseDateFilter(value: unknown): string | null {
     // Accept either full ISO timestamps or YYYY-MM-DD and normalize to YYYY-MM-DD.
     const parsed = new Date(trimmed);
     assert(Number.isFinite(parsed.getTime()), `Invalid date filter value: ${trimmed}`);
-    return parsed.toISOString().slice(0, 10);
+    return toUtcDateString(parsed);
   }
 
   throw new Error("Unsupported analytics date filter type");
@@ -143,7 +144,7 @@ function parseTimingMetric(value: unknown): TimingMetric {
 
 function getTodayUtcDateString(now: Date = new Date()): string {
   assert(Number.isFinite(now.getTime()), "Invalid Date while computing analytics summary date");
-  return now.toISOString().slice(0, 10);
+  return toUtcDateString(now);
 }
 
 async function querySummary(

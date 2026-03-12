@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { Worker } from "node:worker_threads";
 import writeFileAtomic from "write-file-atomic";
+import { toUtcDateString } from "@/node/services/analytics/dateUtils";
 import type {
   AgentCostRow,
   DelegationAgentBreakdownRow,
@@ -114,7 +115,7 @@ function toDateFilterString(value: Date | null | undefined): string | null {
   }
 
   assert(Number.isFinite(value.getTime()), "Analytics date filter must be a valid Date");
-  return value.toISOString().slice(0, 10);
+  return toUtcDateString(value);
 }
 
 interface ProviderCacheHitTotals {
