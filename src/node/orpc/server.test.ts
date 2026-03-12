@@ -328,6 +328,67 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("serves managed event sound assets by validated asset id", async () => {
+    const servedAssetId = "11111111-1111-1111-1111-111111111111.wav";
+    const missingAssetId = "22222222-2222-2222-2222-222222222222.wav";
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-event-sound-route-"));
+    const assetPath = path.join(tempDir, servedAssetId);
+    const assetBody = "event-sound-payload";
+
+    await fs.writeFile(assetPath, assetBody, "utf-8");
+
+    const stubContext: Partial<ORPCContext> = {
+      eventSoundAssetService: {
+        getAssetFilePath: (assetId: string) => {
+          if (assetId === servedAssetId) {
+            return Promise.resolve(assetPath);
+          }
+
+          if (assetId === missingAssetId) {
+            return Promise.resolve(null);
+          }
+
+          return Promise.resolve(null);
+        },
+      } as unknown as ORPCContext["eventSoundAssetService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        authToken: "test-token",
+      });
+
+      const unauthenticatedResponse = await fetch(
+        `${server.baseUrl}/assets/event-sounds/${servedAssetId}`
+      );
+      expect(unauthenticatedResponse.status).toBe(401);
+
+      const invalidIdResponse = await fetch(
+        `${server.baseUrl}/assets/event-sounds/not-a-valid-id?token=test-token`
+      );
+      expect(invalidIdResponse.status).toBe(400);
+
+      const missingAssetResponse = await fetch(
+        `${server.baseUrl}/assets/event-sounds/${missingAssetId}?token=test-token`
+      );
+      expect(missingAssetResponse.status).toBe(404);
+
+      const servedAssetResponse = await fetch(
+        `${server.baseUrl}/assets/event-sounds/${servedAssetId}?token=test-token`
+      );
+      expect(servedAssetResponse.status).toBe(200);
+      expect(await servedAssetResponse.text()).toBe(assetBody);
+    } finally {
+      await server?.close();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("reports whether GitHub device-flow login is enabled", async () => {
     async function runCase(enabled: boolean): Promise<void> {
       const stubContext: Partial<ORPCContext> = {

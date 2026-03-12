@@ -758,6 +758,23 @@ async function loadServices(): Promise<void> {
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
   });
 
+  services.setProjectAudioFilePicker(async () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win) return null;
+
+    const res = await dialog.showOpenDialog(win, {
+      properties: ["openFile"],
+      filters: [
+        {
+          name: "Audio Files",
+          extensions: ["mp3", "wav", "ogg", "m4a", "aac", "flac", "webm"],
+        },
+      ],
+    });
+
+    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
+  });
+
   services.setTerminalWindowManager(terminalWindowManager);
 
   loadTokenizerModules().catch((error) => {

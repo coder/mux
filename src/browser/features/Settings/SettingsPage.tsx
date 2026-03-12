@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Server,
   Lock,
+  Volume2,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -37,6 +38,7 @@ import { ExperimentsSection } from "./Sections/ExperimentsSection";
 import { ServerAccessSection } from "./Sections/ServerAccessSection";
 import { KeybindsSection } from "./Sections/KeybindsSection";
 import { SecuritySection } from "./Sections/SecuritySection";
+import { SoundsSection } from "./Sections/SoundsSection";
 import type { SettingsSection } from "./types";
 
 const BASE_SECTIONS: SettingsSection[] = [
@@ -99,6 +101,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Runtimes",
     icon: <Container className="h-4 w-4" />,
     component: RuntimesSection,
+  },
+  {
+    id: "sounds",
+    label: "Sounds",
+    icon: <Volume2 className="h-4 w-4" />,
+    component: SoundsSection,
   },
   {
     id: "experiments",

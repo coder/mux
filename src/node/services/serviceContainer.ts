@@ -47,6 +47,7 @@ import { McpOauthService } from "@/node/services/mcpOauthService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { EventSoundAssetService } from "@/node/services/eventSoundAssetService";
 import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import {
@@ -123,6 +124,7 @@ export class ServiceContainer {
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   public readonly serverAuthService: ServerAuthService;
+  public readonly eventSoundAssetService: EventSoundAssetService;
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
@@ -141,6 +143,8 @@ export class ServiceContainer {
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);
     this.devToolsService = new DevToolsService(config);
+
+    this.eventSoundAssetService = new EventSoundAssetService(config.rootDir);
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -522,6 +526,7 @@ export class ServiceContainer {
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
+      eventSoundAssetService: this.eventSoundAssetService,
       analyticsService: this.analyticsService,
     };
   }
@@ -537,6 +542,10 @@ export class ServiceContainer {
 
   setProjectDirectoryPicker(picker: () => Promise<string | null>): void {
     this.projectService.setDirectoryPicker(picker);
+  }
+
+  setProjectAudioFilePicker(picker: () => Promise<string | null>): void {
+    this.projectService.setAudioFilePicker(picker);
   }
 
   setTerminalWindowManager(manager: TerminalWindowManager): void {

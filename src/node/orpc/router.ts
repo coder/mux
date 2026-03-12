@@ -593,6 +593,7 @@ export const router = (authToken?: string) => {
             muxGovernorUrl,
             muxGovernorEnrolled,
             llmDebugLogs: config.llmDebugLogs === true,
+            eventSoundSettings: config.eventSoundSettings,
             onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
@@ -885,6 +886,23 @@ export const router = (authToken?: string) => {
             return config;
           });
         }),
+      updateEventSoundSettings: t
+        .input(schemas.config.updateEventSoundSettings.input)
+        .output(schemas.config.updateEventSoundSettings.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const nextSettings = input.eventSoundSettings;
+            if (!nextSettings || Object.keys(nextSettings).length === 0) {
+              const { eventSoundSettings: _eventSoundSettings, ...rest } = config;
+              return rest;
+            }
+
+            return {
+              ...config,
+              eventSoundSettings: nextSettings,
+            };
+          });
+        }),
       unenrollMuxGovernor: t
         .input(schemas.config.unenrollMuxGovernor.input)
         .output(schemas.config.unenrollMuxGovernor.output)
@@ -895,6 +913,32 @@ export const router = (authToken?: string) => {
           });
 
           await context.policyService.refreshNow();
+        }),
+    },
+    eventSounds: {
+      uploadAsset: t
+        .input(schemas.eventSounds.uploadAsset.input)
+        .output(schemas.eventSounds.uploadAsset.output)
+        .handler(async ({ context, input }) => {
+          return context.eventSoundAssetService.uploadFromData(input);
+        }),
+      importFromLocalPath: t
+        .input(schemas.eventSounds.importFromLocalPath.input)
+        .output(schemas.eventSounds.importFromLocalPath.output)
+        .handler(async ({ context, input }) => {
+          return context.eventSoundAssetService.importFromLocalPath(input.localPath);
+        }),
+      deleteAsset: t
+        .input(schemas.eventSounds.deleteAsset.input)
+        .output(schemas.eventSounds.deleteAsset.output)
+        .handler(async ({ context, input }) => {
+          await context.eventSoundAssetService.deleteAsset(input.assetId);
+        }),
+      listAssets: t
+        .input(schemas.eventSounds.listAssets.input)
+        .output(schemas.eventSounds.listAssets.output)
+        .handler(async ({ context }) => {
+          return context.eventSoundAssetService.listAssets();
         }),
     },
     devtools: {
@@ -2143,6 +2187,13 @@ export const router = (authToken?: string) => {
         .output(schemas.projects.pickDirectory.output)
         .handler(async ({ context }) => {
           return context.projectService.pickDirectory();
+        }),
+      pickAudioFile: t
+        .input(schemas.projects.pickAudioFile.input)
+        .output(schemas.projects.pickAudioFile.output)
+        .handler(async ({ context }) => {
+          const filePath = await context.projectService.pickAudioFile();
+          return { filePath };
         }),
       getFileCompletions: t
         .input(schemas.projects.getFileCompletions.input)

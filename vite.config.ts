@@ -180,6 +180,12 @@ export default defineConfig(({ mode }) => {
           // point back to the public dev-server origin (not 127.0.0.1:3000).
           changeOrigin: false,
         },
+        "/assets/event-sounds": {
+          target: backendProxyTarget,
+          // Dev-server mode serves the UI from Vite, but managed event-sound assets
+          // are served by the backend Express route.
+          changeOrigin: false,
+        },
         "/health": {
           target: backendProxyTarget,
           changeOrigin: true,

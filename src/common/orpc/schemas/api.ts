@@ -72,6 +72,7 @@ import {
 import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
+  EventSoundSettingsSchema,
   SubagentAiDefaultsSchema,
   UpdateChannelSchema,
 } from "../../config/schemas/appConfigOnDisk";
@@ -536,6 +537,10 @@ export const projects = {
   pickDirectory: {
     input: z.void(),
     output: z.string().nullable(),
+  },
+  pickAudioFile: {
+    input: z.object({}),
+    output: z.object({ filePath: z.string().nullable() }),
   },
   remove: {
     input: z.object({ projectPath: z.string(), force: z.boolean().nullish() }).passthrough(),
@@ -1656,6 +1661,7 @@ export const config = {
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
       llmDebugLogs: z.boolean(),
+      eventSoundSettings: EventSoundSettingsSchema,
       onePasswordAccountName: z.string().nullish(),
     }),
   },
@@ -1723,9 +1729,58 @@ export const config = {
       .strict(),
     output: z.void(),
   },
+  updateEventSoundSettings: {
+    input: z
+      .object({
+        eventSoundSettings: EventSoundSettingsSchema,
+      })
+      .strict(),
+    output: z.void(),
+  },
   unenrollMuxGovernor: {
     input: z.void(),
     output: z.void(),
+  },
+};
+
+const EventSoundAssetSchema = z.object({
+  assetId: z.string(),
+  originalName: z.string(),
+  mimeType: z.string(),
+  playbackPath: z.string(),
+  createdAt: z.string(),
+});
+
+export const eventSounds = {
+  uploadAsset: {
+    input: z
+      .object({
+        base64: z.string(),
+        originalName: z.string(),
+        mimeType: z.string(),
+      })
+      .strict(),
+    output: EventSoundAssetSchema,
+  },
+  importFromLocalPath: {
+    input: z
+      .object({
+        localPath: z.string(),
+      })
+      .strict(),
+    output: EventSoundAssetSchema,
+  },
+  deleteAsset: {
+    input: z
+      .object({
+        assetId: z.string(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  listAssets: {
+    input: z.void(),
+    output: z.array(EventSoundAssetSchema),
   },
 };
 

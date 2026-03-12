@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
+import type { EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
@@ -179,6 +180,80 @@ describe("Config", () => {
       expect(loaded.onePasswordAccountName).toBe("personal-account");
       expect(loaded.muxGovernorUrl).toBe("https://governor.example.com");
       expect(loaded.terminalDefaultShell).toBe("zsh");
+    });
+  });
+
+  describe("event sound settings", () => {
+    it("loads eventSoundSettings and applies schema defaults", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          eventSoundSettings: {
+            agent_review_ready: {
+              enabled: true,
+              source: {
+                kind: "managed",
+                assetId: "11111111-1111-1111-1111-111111111111.wav",
+              },
+            },
+            future_event: {
+              source: {
+                kind: "managed",
+                assetId: "22222222-2222-2222-2222-222222222222.wav",
+              },
+            },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.eventSoundSettings).toEqual({
+        agent_review_ready: {
+          enabled: true,
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+        future_event: {
+          enabled: false,
+          source: {
+            kind: "managed",
+            assetId: "22222222-2222-2222-2222-222222222222.wav",
+          },
+        },
+      });
+    });
+
+    it("round-trips eventSoundSettings through editConfig", async () => {
+      const eventSoundSettings: EventSoundSettings = {
+        agent_review_ready: {
+          enabled: true,
+          source: {
+            kind: "managed",
+            assetId: "11111111-1111-1111-1111-111111111111.wav",
+          },
+        },
+        future_event: {
+          enabled: false,
+          source: null,
+        },
+      };
+
+      await config.editConfig((cfg) => {
+        cfg.eventSoundSettings = eventSoundSettings;
+        return cfg;
+      });
+
+      const reloaded = config.loadConfigOrDefault();
+      expect(reloaded.eventSoundSettings).toEqual(eventSoundSettings);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        eventSoundSettings?: unknown;
+      };
+      expect(raw.eventSoundSettings).toEqual(eventSoundSettings);
     });
   });
 

@@ -33,7 +33,7 @@ import { CommandPalette } from "./components/CommandPalette/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   getAgentIdKey,
@@ -88,6 +88,8 @@ import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
 import { createProjectRefs } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
+import type { EventSoundSettings } from "@/common/config/schemas/appConfigOnDisk";
+import { playEventSound } from "@/browser/utils/audio/eventSounds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { LandingPage } from "@/browser/features/LandingPage/LandingPage";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
@@ -231,6 +233,55 @@ function AppInner() {
   useEffect(() => {
     workspaceMetadataRef.current = workspaceMetadata;
   }, [workspaceMetadata]);
+
+  const eventSoundSettingsRef = useRef<EventSoundSettings | undefined>(undefined);
+  const eventSoundSettingsLoadVersionRef = useRef(0);
+  useEffect(() => {
+    const handleEventSoundSettingsChanged = (
+      event: CustomEventType<typeof CUSTOM_EVENTS.EVENT_SOUND_SETTINGS_CHANGED>
+    ) => {
+      eventSoundSettingsLoadVersionRef.current += 1;
+      eventSoundSettingsRef.current = event.detail.eventSoundSettings;
+    };
+
+    window.addEventListener(
+      CUSTOM_EVENTS.EVENT_SOUND_SETTINGS_CHANGED,
+      handleEventSoundSettingsChanged as EventListener
+    );
+
+    if (!api) {
+      eventSoundSettingsRef.current = undefined;
+      return () => {
+        window.removeEventListener(
+          CUSTOM_EVENTS.EVENT_SOUND_SETTINGS_CHANGED,
+          handleEventSoundSettingsChanged as EventListener
+        );
+      };
+    }
+
+    let isCancelled = false;
+    const loadVersion = eventSoundSettingsLoadVersionRef.current;
+    void api.config
+      .getConfig()
+      .then((config) => {
+        if (!isCancelled && loadVersion === eventSoundSettingsLoadVersionRef.current) {
+          eventSoundSettingsRef.current = config.eventSoundSettings;
+        }
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          console.debug("Failed to load event sound settings", { error: String(error) });
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+      window.removeEventListener(
+        CUSTOM_EVENTS.EVENT_SOUND_SETTINGS_CHANGED,
+        handleEventSoundSettingsChanged as EventListener
+      );
+    };
+  }, [api]);
 
   const handleOpenMuxChat = useCallback(() => {
     // User requested an F1 shortcut to jump straight into Chat with Mux.
@@ -990,6 +1041,9 @@ function AppInner() {
       // can be drained before compaction finishes.
       if (compaction?.hasContinueMessage) return;
 
+      // Play event sound (independent of notification settings).
+      playEventSound(eventSoundSettingsRef.current, "agent_review_ready", api);
+
       // Skip notification if the selected workspace is focused (Slack-like behavior).
       // Notification suppression intentionally follows selection state, not chat-route visibility.
       const isWorkspaceFocused =
@@ -1043,7 +1097,7 @@ function AppInner() {
     return () => {
       unsubscribe?.();
     };
-  }, [setSelectedWorkspace, workspaceStore]);
+  }, [api, setSelectedWorkspace, workspaceStore]);
 
   // Show auth modal if authentication is required
   if (status === "auth_required") {
