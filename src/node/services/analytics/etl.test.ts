@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import {
   appendEvents,
   CHAT_FILE_NAME,
@@ -23,23 +23,6 @@ const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
 
 const tempDirsToClean: string[] = [];
 const duckDbHandlesToClose: Array<{ instance: DuckDBInstance; conn: DuckDBConnection }> = [];
-const duckDbRequire: NodeRequire = require;
-
-// Bun cannot load @duckdb/node-api in this environment, so keep the pure parser
-// coverage in this file and skip the native DuckDB-backed cases under Bun.
-const shouldRunDuckDbBackedTests = process.versions.bun == null;
-
-function testIf(shouldRun: boolean) {
-  return (...args: Parameters<typeof test>) => {
-    if (shouldRun) {
-      test(...args);
-    } else {
-      test.skip(...args);
-    }
-  };
-}
-
-const testWithDuckDb = testIf(shouldRunDuckDbBackedTests);
 
 function createMissingSessionsDir(): string {
   return path.join(os.tmpdir(), `mux-analytics-etl-${process.pid}-${randomUUID()}`);
@@ -129,20 +112,7 @@ async function createTempSessionDir(): Promise<string> {
   return sessionDir;
 }
 
-interface DuckDBNodeApiModule {
-  DuckDBInstance: {
-    create(path: string): Promise<DuckDBInstance>;
-  };
-}
-
-interface DuckDBNodeApiModule {
-  DuckDBInstance: {
-    create(path: string): Promise<DuckDBInstance>;
-  };
-}
-
 async function createTestConn(): Promise<DuckDBConnection> {
-  const { DuckDBInstance } = duckDbRequire("@duckdb/node-api") as DuckDBNodeApiModule;
   const instance = await DuckDBInstance.create(":memory:");
   const conn = await instance.connect();
   duckDbHandlesToClose.push({ instance, conn });
@@ -260,7 +230,7 @@ describe("rebuildAll", () => {
     ]);
   });
 
-  testWithDuckDb("continues rebuild when parsing one workspace fails", async () => {
+  test("continues rebuild when parsing one workspace fails", async () => {
     const conn = await createTestConn();
     const sessionsDir = await createTempSessionDir();
 
@@ -279,7 +249,7 @@ describe("rebuildAll", () => {
 });
 
 describe("appendEvents", () => {
-  testWithDuckDb("inserts parsed events with expected fields", async () => {
+  test("inserts parsed events with expected fields", async () => {
     const conn = await createTestConn();
     const sessionDir = await createTempSessionDir();
 
@@ -311,7 +281,7 @@ describe("appendEvents", () => {
     expect(rows[0].project_path).toBe("/proj");
   });
 
-  testWithDuckDb("is a no-op when events is empty", async () => {
+  test("is a no-op when events is empty", async () => {
     const conn = await createTestConn();
 
     await appendEvents(conn, []);
@@ -350,7 +320,7 @@ describe("parseWorkspaceFromDisk", () => {
 });
 
 describe("ingestArchivedSubagentTranscripts", () => {
-  testWithDuckDb("ingests archived sub-agent transcripts from parent session dir", async () => {
+  test("ingests archived sub-agent transcripts from parent session dir", async () => {
     const conn = await createTestConn();
     const parentWorkspaceId = "parent-id";
     const childWorkspaceId = "child-1";
@@ -395,70 +365,67 @@ describe("ingestArchivedSubagentTranscripts", () => {
     expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
   });
 
-  testWithDuckDb(
-    "handles flat rollup — ingests both child and grandchild at parent level",
-    async () => {
-      const conn = await createTestConn();
-      const parentWorkspaceId = "parent-id";
-      const childWorkspaceId = "child-b";
-      const grandchildWorkspaceId = "child-c";
+  test("handles flat rollup — ingests both child and grandchild at parent level", async () => {
+    const conn = await createTestConn();
+    const parentWorkspaceId = "parent-id";
+    const childWorkspaceId = "child-b";
+    const grandchildWorkspaceId = "child-c";
 
-      const parentSessionDir = await createTempSessionDir();
-      await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    const parentSessionDir = await createTempSessionDir();
+    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
 
-      const childSessionDir = path.join(
-        parentSessionDir,
-        SUBAGENT_TRANSCRIPTS_DIR_NAME,
-        childWorkspaceId
-      );
-      await fs.mkdir(childSessionDir, { recursive: true });
-      await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-      await writeMetadataJson(childSessionDir, {
-        parentWorkspaceId,
-        name: "child-workspace",
-      });
+    const childSessionDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      childWorkspaceId
+    );
+    await fs.mkdir(childSessionDir, { recursive: true });
+    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    await writeMetadataJson(childSessionDir, {
+      parentWorkspaceId,
+      name: "child-workspace",
+    });
 
-      const grandchildSessionDir = path.join(
-        parentSessionDir,
-        SUBAGENT_TRANSCRIPTS_DIR_NAME,
-        grandchildWorkspaceId
-      );
-      await fs.mkdir(grandchildSessionDir, { recursive: true });
-      await writeChatJsonl(grandchildSessionDir, [
-        makeUserLine(),
-        makeAssistantLine({ sequence: 1 }),
-      ]);
-      await writeMetadataJson(grandchildSessionDir, {
-        parentWorkspaceId: childWorkspaceId,
-        name: "grandchild-workspace",
-      });
+    const grandchildSessionDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      grandchildWorkspaceId
+    );
+    await fs.mkdir(grandchildSessionDir, { recursive: true });
+    await writeChatJsonl(grandchildSessionDir, [
+      makeUserLine(),
+      makeAssistantLine({ sequence: 1 }),
+    ]);
+    await writeMetadataJson(grandchildSessionDir, {
+      parentWorkspaceId: childWorkspaceId,
+      name: "grandchild-workspace",
+    });
 
-      await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
+    await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
 
-      expect(await queryEventCount(conn)).toBe(3);
+    expect(await queryEventCount(conn)).toBe(3);
 
-      const childRows = await queryRows(
-        conn,
-        "SELECT CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
-        [childWorkspaceId]
-      );
-      expect(childRows).toHaveLength(1);
-      expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
+    const childRows = await queryRows(
+      conn,
+      "SELECT CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
+      [childWorkspaceId]
+    );
+    expect(childRows).toHaveLength(1);
+    expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
 
-      const grandchildRows = await queryRows(
-        conn,
-        "SELECT parent_workspace_id, CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
-        [grandchildWorkspaceId]
-      );
-      expect(grandchildRows).toHaveLength(1);
-      expect(grandchildRows[0].parent_workspace_id).toBe(childWorkspaceId);
-      expect(parseBooleanFromInteger(grandchildRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(
-        true
-      );
-    }
-  );
+    const grandchildRows = await queryRows(
+      conn,
+      "SELECT parent_workspace_id, CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
+      [grandchildWorkspaceId]
+    );
+    expect(grandchildRows).toHaveLength(1);
+    expect(grandchildRows[0].parent_workspace_id).toBe(childWorkspaceId);
+    expect(parseBooleanFromInteger(grandchildRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(
+      true
+    );
+  });
 
-  testWithDuckDb("watermark prevents double-counting on re-ingestion", async () => {
+  test("watermark prevents double-counting on re-ingestion", async () => {
     const conn = await createTestConn();
     const parentWorkspaceId = "parent-id";
     const childWorkspaceId = "child-id";
@@ -489,7 +456,7 @@ describe("ingestArchivedSubagentTranscripts", () => {
     expect(await queryEventCount(conn)).toBe(2);
   });
 
-  testWithDuckDb("recovers sub-agent data after clearWorkspaceAnalyticsState", async () => {
+  test("recovers sub-agent data after clearWorkspaceAnalyticsState", async () => {
     const conn = await createTestConn();
     const parentWorkspaceId = "parent-id";
     const childWorkspaceId = "child-id";
@@ -529,7 +496,7 @@ describe("ingestArchivedSubagentTranscripts", () => {
     expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
   });
 
-  testWithDuckDb("rebuildAll ingests archived sub-agent transcripts", async () => {
+  test("rebuildAll ingests archived sub-agent transcripts", async () => {
     const conn = await createTestConn();
     const sessionsDir = await createTempSessionDir();
     const parentWorkspaceId = "parent-id";
@@ -559,7 +526,7 @@ describe("ingestArchivedSubagentTranscripts", () => {
     expect(await queryEventCount(conn, childWorkspaceId)).toBe(1);
   });
 
-  testWithDuckDb("no-op when subagent-transcripts directory does not exist", async () => {
+  test("no-op when subagent-transcripts directory does not exist", async () => {
     const conn = await createTestConn();
     const parentWorkspaceId = "parent-id";
 
@@ -572,45 +539,42 @@ describe("ingestArchivedSubagentTranscripts", () => {
     expect(await queryEventCount(conn, parentWorkspaceId)).toBe(1);
   });
 
-  testWithDuckDb(
-    "falls back to parent workspace ID when archived metadata.json is missing",
-    async () => {
-      const conn = await createTestConn();
-      const parentWorkspaceId = "parent-id";
-      const childWorkspaceId = "legacy-child";
+  test("falls back to parent workspace ID when archived metadata.json is missing", async () => {
+    const conn = await createTestConn();
+    const parentWorkspaceId = "parent-id";
+    const childWorkspaceId = "legacy-child";
 
-      const parentSessionDir = await createTempSessionDir();
-      await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    const parentSessionDir = await createTempSessionDir();
+    await writeChatJsonl(parentSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
 
-      // Create archived child WITHOUT metadata.json — simulates pre-existing archives
-      const childSessionDir = path.join(
-        parentSessionDir,
-        SUBAGENT_TRANSCRIPTS_DIR_NAME,
-        childWorkspaceId
-      );
-      await fs.mkdir(childSessionDir, { recursive: true });
-      await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
-      // Deliberately NOT writing metadata.json
+    // Create archived child WITHOUT metadata.json — simulates pre-existing archives
+    const childSessionDir = path.join(
+      parentSessionDir,
+      SUBAGENT_TRANSCRIPTS_DIR_NAME,
+      childWorkspaceId
+    );
+    await fs.mkdir(childSessionDir, { recursive: true });
+    await writeChatJsonl(childSessionDir, [makeUserLine(), makeAssistantLine({ sequence: 1 })]);
+    // Deliberately NOT writing metadata.json
 
-      await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
+    await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
 
-      expect(await queryEventCount(conn, childWorkspaceId)).toBe(1);
+    expect(await queryEventCount(conn, childWorkspaceId)).toBe(1);
 
-      const childRows = await queryRows(
-        conn,
-        "SELECT parent_workspace_id, CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
-        [childWorkspaceId]
-      );
-      expect(childRows).toHaveLength(1);
-      // Even without metadata.json, the fallback sets parentWorkspaceId and is_sub_agent
-      expect(childRows[0].parent_workspace_id).toBe(parentWorkspaceId);
-      expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
-    }
-  );
+    const childRows = await queryRows(
+      conn,
+      "SELECT parent_workspace_id, CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int FROM events WHERE workspace_id = ?",
+      [childWorkspaceId]
+    );
+    expect(childRows).toHaveLength(1);
+    // Even without metadata.json, the fallback sets parentWorkspaceId and is_sub_agent
+    expect(childRows[0].parent_workspace_id).toBe(parentWorkspaceId);
+    expect(parseBooleanFromInteger(childRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(true);
+  });
 });
 
 describe("ingestDelegationRollups", () => {
-  testWithDuckDb("should ingest per-category token fields into delegation_rollups", async () => {
+  test("should ingest per-category token fields into delegation_rollups", async () => {
     const conn = await createTestConn();
     const parentWorkspaceId = "parent-id";
     const childWorkspaceId = "child-id";
@@ -663,7 +627,7 @@ describe("ingestDelegationRollups", () => {
     expect(parseInteger(rows[0].cache_create_tokens, "cache_create_tokens")).toBe(30);
   });
 
-  testWithDuckDb("should default per-category tokens to 0 for legacy rollup entries", async () => {
+  test("should default per-category tokens to 0 for legacy rollup entries", async () => {
     const conn = await createTestConn();
     const parentWorkspaceId = "parent-id";
     const childWorkspaceId = "legacy-child";

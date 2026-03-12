@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { DuckDBConnection } from "@duckdb/node-api";
+import { DuckDBAppender, DuckDBDateValue, type DuckDBConnection } from "@duckdb/node-api";
 import { EventRowSchema, type EventRow } from "@/common/orpc/schemas/analytics";
 import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -57,68 +57,7 @@ INSERT INTO events (
 )
 `;
 
-const duckDbRequire: NodeRequire = require;
-
-interface DuckDBAppenderLike {
-  appendVarchar(value: string): void;
-  appendNull(): void;
-  appendDouble(value: number): void;
-  appendInteger(value: number): void;
-  appendBigInt(value: bigint): void;
-  appendDate(value: unknown): void;
-  appendBoolean(value: boolean): void;
-  endRow(): void;
-  flushSync(): void;
-  closeSync(): void;
-}
-
-interface DuckDBDateValueConstructor {
-  fromParts(parts: { year: number; month: number; day: number }): unknown;
-}
-
-interface LazyDuckDBRuntime {
-  DuckDBDateValue: DuckDBDateValueConstructor;
-}
-
-let lazyDuckDBRuntime: LazyDuckDBRuntime | undefined;
-
-function isDuckDBAppenderLike(value: unknown): value is DuckDBAppenderLike {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-
-  const candidate = value as Partial<DuckDBAppenderLike>;
-  return (
-    typeof candidate.appendVarchar === "function" &&
-    typeof candidate.appendNull === "function" &&
-    typeof candidate.appendDouble === "function" &&
-    typeof candidate.appendInteger === "function" &&
-    typeof candidate.appendBigInt === "function" &&
-    typeof candidate.appendDate === "function" &&
-    typeof candidate.appendBoolean === "function" &&
-    typeof candidate.endRow === "function" &&
-    typeof candidate.flushSync === "function" &&
-    typeof candidate.closeSync === "function"
-  );
-}
-
-function loadDuckDBRuntime(): LazyDuckDBRuntime {
-  if (lazyDuckDBRuntime) {
-    return lazyDuckDBRuntime;
-  }
-
-  const module = duckDbRequire("@duckdb/node-api") as {
-    DuckDBDateValue?: DuckDBDateValueConstructor;
-  };
-  assert(module.DuckDBDateValue != null, "loadDuckDBRuntime expected DuckDBDateValue export");
-
-  lazyDuckDBRuntime = {
-    DuckDBDateValue: module.DuckDBDateValue,
-  };
-  return lazyDuckDBRuntime;
-}
-
-function appendVarcharOrNull(appender: DuckDBAppenderLike, value: string | null | undefined): void {
+function appendVarcharOrNull(appender: DuckDBAppender, value: string | null | undefined): void {
   if (value != null) {
     appender.appendVarchar(value);
   } else {
@@ -126,7 +65,7 @@ function appendVarcharOrNull(appender: DuckDBAppenderLike, value: string | null 
   }
 }
 
-function appendDoubleOrNull(appender: DuckDBAppenderLike, value: number | null | undefined): void {
+function appendDoubleOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
   if (value != null) {
     appender.appendDouble(value);
   } else {
@@ -134,7 +73,7 @@ function appendDoubleOrNull(appender: DuckDBAppenderLike, value: number | null |
   }
 }
 
-function appendIntegerOrNull(appender: DuckDBAppenderLike, value: number | null | undefined): void {
+function appendIntegerOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
   if (value != null) {
     appender.appendInteger(value);
   } else {
@@ -142,7 +81,7 @@ function appendIntegerOrNull(appender: DuckDBAppenderLike, value: number | null 
   }
 }
 
-function appendBigIntOrNull(appender: DuckDBAppenderLike, value: number | null | undefined): void {
+function appendBigIntOrNull(appender: DuckDBAppender, value: number | null | undefined): void {
   if (value != null) {
     appender.appendBigInt(BigInt(Math.trunc(value)));
   } else {
@@ -150,11 +89,7 @@ function appendBigIntOrNull(appender: DuckDBAppenderLike, value: number | null |
   }
 }
 
-function appendDateOrNull(
-  appender: DuckDBAppenderLike,
-  dateStr: string | null | undefined,
-  duckDBDateValue: DuckDBDateValueConstructor
-): void {
+function appendDateOrNull(appender: DuckDBAppender, dateStr: string | null | undefined): void {
   if (dateStr == null) {
     appender.appendNull();
     return;
@@ -165,7 +100,7 @@ function appendDateOrNull(
     Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d),
     `appendDateOrNull: invalid date "${dateStr}"`
   );
-  appender.appendDate(duckDBDateValue.fromParts({ year: y, month: m, day: d }));
+  appender.appendDate(DuckDBDateValue.fromParts({ year: y, month: m, day: d }));
 }
 
 export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]): Promise<void> {
@@ -175,13 +110,12 @@ export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]
     return;
   }
 
-  const { DuckDBDateValue } = loadDuckDBRuntime();
   const appender = await conn.createAppender("events");
 
   try {
     assert(
-      isDuckDBAppenderLike(appender),
-      "appendEvents: expected createAppender to return a DuckDBAppender-compatible object"
+      appender instanceof DuckDBAppender,
+      "appendEvents: expected createAppender to return a DuckDBAppender"
     );
 
     for (const event of events) {
@@ -193,7 +127,7 @@ export async function appendEvents(conn: DuckDBConnection, events: IngestEvent[]
       appendVarcharOrNull(appender, row.parent_workspace_id);
       appendVarcharOrNull(appender, row.agent_id);
       appendBigIntOrNull(appender, row.timestamp);
-      appendDateOrNull(appender, event.date, DuckDBDateValue);
+      appendDateOrNull(appender, event.date);
       appendVarcharOrNull(appender, row.model);
       appendVarcharOrNull(appender, row.thinking_level);
       appender.appendInteger(row.input_tokens);
