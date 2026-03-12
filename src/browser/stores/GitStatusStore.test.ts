@@ -578,6 +578,50 @@ describe("GitStatusStore", () => {
       expect(fetchCalls[0]?.options?.repoRootProjectPath).toBe("/home/user/project-b");
     });
 
+    it("keeps the first workspace when shared fetch keys include the same secondary repo", () => {
+      const workspaceIdA = "shared-secondary-a";
+      const workspaceIdB = "shared-secondary-b";
+      const sharedProjectName = "shared-project";
+      const sharedSecondaryProjectPath = "/home/user/project-b";
+      const workspaces = new Map<string, FrontendWorkspaceMetadata>([
+        [
+          workspaceIdA,
+          {
+            ...createWorkspaceMetadata(workspaceIdA),
+            projectName: sharedProjectName,
+            projectPath: "/home/user/project-a",
+            projects: [
+              { projectPath: "/home/user/project-a", projectName: "project-a" },
+              { projectPath: sharedSecondaryProjectPath, projectName: "project-b" },
+            ],
+          },
+        ],
+        [
+          workspaceIdB,
+          {
+            ...createWorkspaceMetadata(workspaceIdB),
+            projectName: sharedProjectName,
+            projectPath: "/home/user/project-c",
+            projects: [
+              { projectPath: "/home/user/project-c", projectName: "project-c" },
+              { projectPath: sharedSecondaryProjectPath, projectName: "project-b" },
+            ],
+          },
+        ],
+      ]);
+      store.syncWorkspaces(workspaces);
+
+      // @ts-expect-error - Accessing private method for duplicate secondary repo coverage
+      const secondaryRepoProjectPaths = store.getSecondaryRepoProjectPathsForFetchKey(
+        sharedProjectName,
+        workspaces
+      );
+
+      expect(Array.from(secondaryRepoProjectPaths.entries())).toEqual([
+        [sharedSecondaryProjectPath, workspaceIdA],
+      ]);
+    });
+
     it("uses each secondary repo's owning workspace when fetch keys are shared", async () => {
       const workspaceIdA = "shared-fetch-a";
       const workspaceIdB = "shared-fetch-b";

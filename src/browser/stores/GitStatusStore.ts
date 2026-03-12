@@ -736,10 +736,11 @@ export class GitStatusStore {
         }
 
         const existingWorkspaceId = secondaryRepoProjectPaths.get(project.projectPath);
-        assert(
-          existingWorkspaceId == null || existingWorkspaceId === metadata.id,
-          `Secondary repo path ${project.projectPath} cannot belong to multiple workspaces for fetch key ${fetchKey}`
-        );
+        if (existingWorkspaceId != null) {
+          // Workspaces that share a fetch key can also share the same secondary repo.
+          // Keep the first owning workspace so one duplicate path cannot abort the fetch cycle.
+          continue;
+        }
         secondaryRepoProjectPaths.set(project.projectPath, metadata.id);
       }
     }
