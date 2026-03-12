@@ -1,8 +1,16 @@
 const os = require("node:os");
 
+// Use cgroup-aware memory when available (containers), fall back to host RAM.
+// process.constrainedMemory() returns the cgroup v2 limit (Node 19.6+),
+// or 0/undefined outside a cgroup.
+const totalMemoryBytes =
+  (typeof process.constrainedMemory === "function" &&
+    process.constrainedMemory()) ||
+  os.totalmem();
+
 const cpuWorkerCap = Math.max(1, Math.floor(os.cpus().length * 0.5));
 const memoryWorkerCap = Math.floor(
-  os.totalmem() / (1024 * 1024 * 1024) / 1.5,
+  totalMemoryBytes / (1024 * 1024 * 1024) / 1.5,
 );
 const maxWorkers = Math.max(1, Math.min(cpuWorkerCap, memoryWorkerCap));
 
@@ -45,8 +53,9 @@ module.exports = {
     // This is slower but ensures compatibility
     "node_modules/(?!\\.pnpm)(?!.*)",
   ],
-  // High core-count containers with limited RAM (for example 96 cores / 32 GB)
-  // can OOM if Jest uses CPU-only parallelism, so keep roughly 1.5 GB per worker.
+  // High core-count containers with limited cgroup memory (for example 96 cores /
+  // 32 GB) can OOM if Jest uses CPU-only parallelism, so keep roughly 1.5 GB
+  // per worker.
   maxWorkers,
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,
