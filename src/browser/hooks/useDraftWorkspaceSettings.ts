@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { readPersistedState, usePersistedState } from "./usePersistedState";
 import { useThinkingLevel } from "./useThinkingLevel";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
   type RuntimeMode,
@@ -250,14 +250,16 @@ export function useDraftWorkspaceSettings(
     WORKSPACE_DEFAULTS.model,
     { listener: true }
   );
-  const defaultModel = normalizeToCanonical(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
+  // normalizeSelectedModel (not normalizeToCanonical) to preserve explicit
+  // gateway routing choices like "openrouter:openai/gpt-5".
+  const defaultModel = normalizeSelectedModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
 
   // Project-scoped model preference (persisted per project). If unset, fall back to the global
   // default model preference.
   const [modelOverride] = usePersistedState<string | null>(getModelKey(projectScopeId), null, {
     listener: true,
   });
-  const model = normalizeToCanonical(
+  const model = normalizeSelectedModel(
     typeof modelOverride === "string" && modelOverride.trim().length > 0
       ? modelOverride.trim()
       : defaultModel

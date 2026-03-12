@@ -13,10 +13,12 @@ import type * as ProjectContextModule from "@/browser/contexts/ProjectContext";
 import type * as ThinkingContextModule from "@/browser/contexts/ThinkingContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
+  DEFAULT_MODEL_KEY,
   DEFAULT_RUNTIME_KEY,
   GLOBAL_SCOPE_ID,
   getAgentIdKey,
   getLastRuntimeConfigKey,
+  getModelKey,
   getProjectScopeId,
   getRuntimeKey,
 } from "@/common/constants/storage";
@@ -214,6 +216,38 @@ describe("useDraftWorkspaceSettings", () => {
 
     await waitFor(() => {
       expect(result.current.settings.agentId).toBe("plan");
+    });
+  });
+
+  test("preserves explicit gateway model in the project preference", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(getModelKey(getProjectScopeId(projectPath)), "openrouter:openai/gpt-5");
+
+    const wrapper = createWrapper(projectPath);
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings.model).toBe("openrouter:openai/gpt-5");
+    });
+  });
+
+  test("preserves explicit gateway model in the global default preference", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(DEFAULT_MODEL_KEY, "openrouter:openai/gpt-5");
+
+    const wrapper = createWrapper(projectPath);
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings.model).toBe("openrouter:openai/gpt-5");
     });
   });
 
