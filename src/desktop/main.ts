@@ -63,6 +63,7 @@ import type { UpdateStatus } from "../common/orpc/types";
 import { parseMuxDeepLink } from "../common/utils/deepLink";
 
 import { normalizeAndValidateExternalUrl } from "./utils/normalizeAndValidateExternalUrl";
+import { hasSameOrigin } from "./utils/hasSameOrigin";
 import assert from "../common/utils/assert";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { loadTokenizerModules } from "../node/utils/main/tokenizer";
@@ -776,6 +777,51 @@ function createWindow() {
 
   mainWindowFinishedLoading = false;
 
+  const useDevServer = (isE2ETest && !forceDistLoad) || (!app.isPackaged && !forceDistLoad);
+  const devHost = process.env.MUX_DEVSERVER_HOST ?? "127.0.0.1";
+  const devServerUrl = `http://${devHost}:${devServerPort}`;
+  let devServerRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+  let devServerRetryAttempt = 0;
+
+  const clearDevServerRetry = (): void => {
+    if (devServerRetryTimeout !== null) {
+      clearTimeout(devServerRetryTimeout);
+      devServerRetryTimeout = null;
+    }
+  };
+
+  const loadFromDevServer = (): void => {
+    console.log(`[${timestamp()}] [window] Loading from dev server: ${devServerUrl}`);
+    void mainWindow?.loadURL(devServerUrl);
+  };
+
+  // `make start` rebuilds the desktop entrypoints before launching Electron, which can briefly
+  // interrupt an already-running Vite server. Keep retrying so Electron still latches on.
+  const scheduleDevServerReload = (): void => {
+    if (
+      !useDevServer ||
+      mainWindow == null ||
+      mainWindow.isDestroyed() ||
+      devServerRetryTimeout !== null
+    ) {
+      return;
+    }
+
+    const delayMs = Math.min(1000, 250 * 2 ** devServerRetryAttempt);
+    devServerRetryAttempt += 1;
+    console.warn(
+      `[${timestamp()}] [window] Dev server unavailable, retrying in ${delayMs}ms: ${devServerUrl}`
+    );
+
+    devServerRetryTimeout = setTimeout(() => {
+      devServerRetryTimeout = null;
+      if (mainWindow == null || mainWindow.isDestroyed()) {
+        return;
+      }
+      loadFromDevServer();
+    }, delayMs);
+  };
+
   // Calculate default window size (80% of screen)
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
@@ -912,12 +958,9 @@ function createWindow() {
   // app.isPackaged is true when running from a built .app/.exe, false in development
   console.log(`[${timestamp()}] [window] Loading content...`);
   console.time("[window] Content load");
-  if ((isE2ETest && !forceDistLoad) || (!app.isPackaged && !forceDistLoad)) {
+  if (useDevServer) {
     // Development mode: load from vite dev server
-    const devHost = process.env.MUX_DEVSERVER_HOST ?? "127.0.0.1";
-    const url = `http://${devHost}:${devServerPort}`;
-    console.log(`[${timestamp()}] [window] Loading from dev server: ${url}`);
-    void mainWindow.loadURL(url);
+    loadFromDevServer();
     if (!isE2ETest) {
       mainWindow.webContents.once("did-finish-load", () => {
         mainWindow?.webContents.openDevTools();
@@ -932,6 +975,8 @@ function createWindow() {
 
   // Track when content finishes loading
   mainWindow.webContents.once("did-finish-load", () => {
+    clearDevServerRetry();
+    devServerRetryAttempt = 0;
     console.timeEnd("[window] Content load");
     console.log(`[${timestamp()}] [window] Content finished loading`);
 
@@ -965,6 +1010,15 @@ function createWindow() {
           url: validatedURL,
         });
       }
+
+      if (
+        isMainFrame &&
+        useDevServer &&
+        errorCode !== -3 &&
+        hasSameOrigin(validatedURL, devServerUrl)
+      ) {
+        scheduleDevServerReload();
+      }
     }
   );
 
@@ -990,6 +1044,7 @@ function createWindow() {
   });
 
   mainWindow.on("closed", () => {
+    clearDevServerRetry();
     mainWindow = null;
     mainWindowFinishedLoading = false;
   });
