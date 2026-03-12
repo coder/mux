@@ -3872,6 +3872,7 @@ export class TaskService {
 
   private async getTaskToolPartialState(workspaceId: string): Promise<{
     hasPendingBestOfTaskTool: boolean;
+    pendingBestOfTaskToolCount: number;
     referencedTaskIds: Set<string>;
   }> {
     const partial = await this.historyService.readPartial(workspaceId);
@@ -3879,11 +3880,12 @@ export class TaskService {
     if (!partial) {
       return {
         hasPendingBestOfTaskTool: false,
+        pendingBestOfTaskToolCount: 0,
         referencedTaskIds,
       };
     }
 
-    let hasPendingBestOfTaskTool = false;
+    let pendingBestOfTaskToolCount = 0;
     for (const part of partial.parts) {
       if (!isDynamicToolPart(part) || part.toolName !== "task") {
         continue;
@@ -3892,7 +3894,7 @@ export class TaskService {
       if (part.state === "input-available") {
         const parsedInput = TaskToolArgsSchema.safeParse(part.input);
         if (parsedInput.success && (parsedInput.data.n ?? 1) > 1) {
-          hasPendingBestOfTaskTool = true;
+          pendingBestOfTaskToolCount += 1;
         }
         continue;
       }
@@ -3927,7 +3929,8 @@ export class TaskService {
     }
 
     return {
-      hasPendingBestOfTaskTool,
+      hasPendingBestOfTaskTool: pendingBestOfTaskToolCount > 0,
+      pendingBestOfTaskToolCount,
       referencedTaskIds,
     };
   }
@@ -3938,7 +3941,10 @@ export class TaskService {
     total: number;
   }): Promise<boolean> {
     const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
-    if (!parentTaskToolState.hasPendingBestOfTaskTool) {
+    if (
+      !parentTaskToolState.hasPendingBestOfTaskTool ||
+      parentTaskToolState.pendingBestOfTaskToolCount !== 1
+    ) {
       return false;
     }
 
@@ -4004,14 +4010,14 @@ export class TaskService {
     // Restart-safe: if the parent has a pending task tool call in partial.json (interrupted stream),
     // finalize it with the report. Avoid rewriting persisted history to keep earlier messages immutable.
     if (!this.aiService.isStreaming(parentWorkspaceId)) {
-      const finalizedPendingTaskIds = await this.tryFinalizePendingTaskToolCallInPartial(
+      const finalization = await this.tryFinalizePendingTaskToolCallInPartial(
         parentWorkspaceId,
         parsedOutput.data,
         childWorkspaceId,
         childEntry
       );
-      if (finalizedPendingTaskIds) {
-        for (const taskId of finalizedPendingTaskIds) {
+      if (finalization.kind === "finalized") {
+        for (const taskId of finalization.taskIds) {
           if (taskId === childWorkspaceId) {
             continue;
           }
@@ -4031,11 +4037,12 @@ export class TaskService {
         }
 
         if (
-          await this.shouldDeferBestOfFallback({
+          finalization.kind === "not_ready" &&
+          (await this.shouldDeferBestOfFallback({
             parentWorkspaceId,
             groupId: childEntry.workspace.bestOf.groupId,
             total: childEntry.workspace.bestOf.total,
-          })
+          }))
         ) {
           return;
         }
@@ -4079,18 +4086,20 @@ export class TaskService {
     output: unknown,
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined
-  ): Promise<readonly string[] | null> {
+  ): Promise<
+    { kind: "finalized"; taskIds: readonly string[] } | { kind: "not_ready" } | { kind: "failed" }
+  > {
     const parsedOutput = TaskToolResultSchema.safeParse(output);
     if (!parsedOutput.success || parsedOutput.data.status !== "completed") {
       log.error("tryFinalizePendingTaskToolCallInPartial: invalid output", {
         error: parsedOutput.success ? "status is not 'completed'" : parsedOutput.error.message,
       });
-      return null;
+      return { kind: "failed" };
     }
 
     const partial = await this.historyService.readPartial(workspaceId);
     if (!partial) {
-      return null;
+      return { kind: "failed" };
     }
 
     type PendingTaskToolPart = DynamicToolPart & { toolName: "task"; state: "input-available" };
@@ -4100,13 +4109,13 @@ export class TaskService {
     );
 
     if (pendingParts.length === 0) {
-      return null;
+      return { kind: "failed" };
     }
     if (pendingParts.length > 1) {
       log.error("tryFinalizePendingTaskToolCallInPartial: multiple pending task tool calls", {
         workspaceId,
       });
-      return null;
+      return { kind: "failed" };
     }
 
     const toolCallId = pendingParts[0].toolCallId;
@@ -4117,14 +4126,14 @@ export class TaskService {
         workspaceId,
         error: parsedInput.error.message,
       });
-      return null;
+      return { kind: "failed" };
     }
 
     let finalizedOutput: z.infer<typeof TaskToolResultSchema> = parsedOutput.data;
     if ((parsedInput.data.n ?? 1) > 1) {
       const bestOf = childEntry?.workspace.bestOf;
       if (!bestOf) {
-        return null;
+        return { kind: "failed" };
       }
 
       const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
@@ -4133,7 +4142,7 @@ export class TaskService {
         total: bestOf.total,
       });
       if (!groupedOutput) {
-        return null;
+        return { kind: "not_ready" };
       }
 
       finalizedOutput = groupedOutput;
@@ -4156,7 +4165,7 @@ export class TaskService {
         workspaceId,
         error: writeResult.error,
       });
-      return null;
+      return { kind: "failed" };
     }
 
     this.workspaceService.emit("chat", {
@@ -4173,10 +4182,13 @@ export class TaskService {
     });
 
     if (Array.isArray(finalizedOutput.taskIds) && finalizedOutput.taskIds.length > 0) {
-      return finalizedOutput.taskIds;
+      return { kind: "finalized", taskIds: finalizedOutput.taskIds };
     }
 
-    return finalizedOutput.taskId ? [finalizedOutput.taskId] : [childWorkspaceId];
+    return {
+      kind: "finalized",
+      taskIds: finalizedOutput.taskId ? [finalizedOutput.taskId] : [childWorkspaceId],
+    };
   }
 
   private async canCleanupReportedTask(
