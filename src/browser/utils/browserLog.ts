@@ -7,9 +7,6 @@ export interface BrowserLogEntry {
 const MAX_ENTRIES = 500;
 const entries: BrowserLogEntry[] = [];
 
-type Listener = (entry: BrowserLogEntry) => void;
-const listeners = new Set<Listener>();
-
 // Preserve originals so DevTools still works
 const originalConsole = {
   log: console.log.bind(console),
@@ -50,19 +47,6 @@ export function installBrowserLogCapture(): void {
 
       entries.push(entry);
       if (entries.length > MAX_ENTRIES) entries.shift();
-
-      for (const listener of listeners) listener(entry);
     };
   }
-}
-
-export function onBrowserLogEntry(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-export function getRecentBrowserLogs(): BrowserLogEntry[] {
-  return [...entries];
 }
