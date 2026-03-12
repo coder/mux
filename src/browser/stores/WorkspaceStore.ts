@@ -795,7 +795,7 @@ export class WorkspaceStore {
       this.cancelPendingIdleBump(workspaceId);
       this.states.bump(workspaceId);
     },
-    "queued-message-changed": (workspaceId, _aggregator, data) => {
+    "queued-message-changed": (workspaceId, aggregator, data) => {
       if (!isQueuedMessageChanged(data)) return;
 
       // Create QueuedMessage once here instead of on every render
@@ -816,6 +816,10 @@ export class WorkspaceStore {
           }
         : null;
 
+      // Mirror the queue signal onto the active compaction stream so background
+      // activity-stop notifications can still suppress the intermediate
+      // "Compaction complete" notice after we unsubscribe from onChat.
+      aggregator.setActiveCompactionQueuedFollowUp(queuedMessage !== null);
       this.assertChatTransientState(workspaceId).queuedMessage = queuedMessage;
       this.states.bump(workspaceId);
     },
@@ -2340,7 +2344,10 @@ export class WorkspaceStore {
     }
 
     return {
-      hasContinueMessage: compactingStreams.some((stream) => stream.hasCompactionContinue === true),
+      hasContinueMessage: compactingStreams.some(
+        (stream) =>
+          stream.hasCompactionContinue === true || stream.hasQueuedCompactionFollowUp === true
+      ),
     };
   }
 

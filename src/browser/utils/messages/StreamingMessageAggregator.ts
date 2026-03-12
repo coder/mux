@@ -113,6 +113,10 @@ interface StreamingContext {
   isComplete: boolean;
   isCompacting: boolean;
   hasCompactionContinue: boolean;
+  // Track the last known queued-follow-up state on the compaction stream itself so
+  // background activity completion can still suppress the intermediate notification
+  // after the workspace loses its live queued-message subscription.
+  hasQueuedCompactionFollowUp: boolean;
   isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
@@ -1376,6 +1380,15 @@ export class StreamingMessageAggregator {
     return Array.from(this.activeStreams.values());
   }
 
+  setActiveCompactionQueuedFollowUp(hasQueuedFollowUp: boolean): void {
+    for (const context of this.activeStreams.values()) {
+      if (!context.isCompacting) {
+        continue;
+      }
+      context.hasQueuedCompactionFollowUp = hasQueuedFollowUp;
+    }
+  }
+
   /**
    * Get the messageId of the first active stream (for token tracking)
    * Returns undefined if no streams are active
@@ -1534,6 +1547,7 @@ export class StreamingMessageAggregator {
       isComplete: false,
       isCompacting,
       hasCompactionContinue,
+      hasQueuedCompactionFollowUp: false,
       isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
@@ -1676,7 +1690,10 @@ export class StreamingMessageAggregator {
 
       // Capture compaction info before cleanup (cleanup removes the stream context)
       const compaction = activeStream.isCompacting
-        ? { hasContinueMessage: activeStream.hasCompactionContinue }
+        ? {
+            hasContinueMessage:
+              activeStream.hasCompactionContinue || activeStream.hasQueuedCompactionFollowUp,
+          }
         : undefined;
 
       // Clean up stream-scoped state for this stream.
