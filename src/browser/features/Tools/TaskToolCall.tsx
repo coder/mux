@@ -289,6 +289,7 @@ interface TaskToolCallProps {
   taskReportLinking?: TaskReportLinking;
   workspaceId?: string;
   toolCallId?: string;
+  startedAt?: number;
 }
 
 interface TaskToolDisplayEntry {
@@ -312,6 +313,7 @@ interface TaskToolWorkspaceEntry {
   index?: number;
   status?: string;
   title?: string;
+  createdAtMs?: number;
 }
 
 function normalizeTaskAgent(value: string | undefined): string | null {
@@ -320,6 +322,14 @@ function normalizeTaskAgent(value: string | undefined): string | null {
 
 function normalizeTaskTitle(value: string | undefined): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseWorkspaceCreatedAtMs(createdAt: string | undefined): number | undefined {
+  if (typeof createdAt !== "string" || createdAt.trim().length === 0) {
+    return undefined;
+  }
+  const timestamp = Date.parse(createdAt);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
 function getTaskToolWorkspaceStatus(
@@ -375,6 +385,7 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
   requestedTitle: string | undefined;
   requestedCandidateCount: number;
   knownTaskIds: readonly string[];
+  toolStartedAt: number | undefined;
   workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
 }): TaskToolWorkspaceEntry[] {
   if (!params.workspaceId || params.requestedCandidateCount <= 1 || !params.workspaceMetadata) {
@@ -414,6 +425,7 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
       index: metadata.bestOf.index,
       status: getTaskToolWorkspaceStatus(metadata.taskStatus),
       title: metadataTitle,
+      createdAtMs: parseWorkspaceCreatedAtMs(metadata.createdAt),
     });
     groupedCandidates.set(metadata.bestOf.groupId, candidates);
   }
@@ -449,6 +461,15 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
     }
   }
 
+  const toolStartedAt = params.toolStartedAt;
+  if (!selectedGroup && groups.length === 1 && toolStartedAt != null) {
+    const createdAfterToolStart = groups[0]?.every((candidate) => {
+      return candidate.createdAtMs != null && candidate.createdAtMs >= toolStartedAt;
+    });
+    if (createdAfterToolStart) {
+      selectedGroup = groups[0];
+    }
+  }
   if (!selectedGroup) {
     return [];
   }
@@ -631,6 +652,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   status = "pending",
   taskReportLinking,
   toolCallId,
+  startedAt,
 }) => {
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult: TaskToolSuccessResult | null =
@@ -659,6 +681,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     requestedTitle: title,
     requestedCandidateCount,
     knownTaskIds: [...resultTaskIds, ...liveTaskIds, ...recoveredTaskIdsRef.current],
+    toolStartedAt: startedAt,
     workspaceMetadata,
   });
   if (recoveredWorkspaceEntries.length > 0) {

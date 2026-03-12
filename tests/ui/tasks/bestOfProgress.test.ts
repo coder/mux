@@ -51,20 +51,26 @@ async function seedBestOfParentHistory(
   workspaceId: string
 ): Promise<void> {
   const userMessage = createMuxMessage("user-best-of", "user", "Compare the best options");
-  const taskToolMessage = createMuxMessage("assistant-best-of", "assistant", "", undefined, [
-    {
-      type: "dynamic-tool" as const,
-      toolCallId: TOOL_CALL_ID,
-      toolName: "task" as const,
-      state: "input-available" as const,
-      input: {
-        agentId: "explore" as const,
-        prompt: "Compare the best options",
-        title: "Best of options",
-        n: 2,
+  const taskToolMessage = createMuxMessage(
+    "assistant-best-of",
+    "assistant",
+    "",
+    { timestamp: Date.now() },
+    [
+      {
+        type: "dynamic-tool" as const,
+        toolCallId: TOOL_CALL_ID,
+        toolName: "task" as const,
+        state: "input-available" as const,
+        input: {
+          agentId: "explore" as const,
+          prompt: "Compare the best options",
+          title: "Best of options",
+          n: 2,
+        },
       },
-    },
-  ]);
+    ]
+  );
 
   for (const message of [userMessage, taskToolMessage]) {
     const appendResult = await historyService.appendToHistory(workspaceId, message);
@@ -287,7 +293,7 @@ async function renderCompletedBestOfParentWorkspace(params: {
     "assistant-best-of-completed",
     "assistant",
     "",
-    undefined,
+    { timestamp: Date.now() },
     [
       {
         type: "dynamic-tool" as const,
@@ -367,7 +373,7 @@ async function renderPartiallySpawnedBestOfParentWorkspace(params: {
     "assistant-best-of-partial",
     "assistant",
     "",
-    undefined,
+    { timestamp: Date.now() },
     [
       {
         type: "dynamic-tool" as const,
@@ -422,22 +428,11 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
     await preloadTestModules();
   });
 
-  test("renders created best-of candidates once task-created events arrive", async () => {
+  test("recovers created best-of candidates from matching workspace metadata", async () => {
     const setup = await renderBestOfParentWorkspace();
 
     try {
       const taskMessageBlock = await openTaskCard(setup.view);
-
-      emitTaskCreated({
-        env: setup.env,
-        parentWorkspaceId: setup.parentMetadata.id,
-        taskId: setup.childOne.id,
-      });
-      emitTaskCreated({
-        env: setup.env,
-        parentWorkspaceId: setup.parentMetadata.id,
-        taskId: setup.childTwo.id,
-      });
 
       await waitFor(() => {
         expect(taskMessageBlock.textContent).toContain("0/2 completed");
