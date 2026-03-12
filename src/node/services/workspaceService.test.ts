@@ -22,7 +22,6 @@ import type { TerminalService } from "@/node/services/terminalService";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { log } from "@/node/services/log";
 import * as todoStorageModule from "@/node/services/todos/todoStorage";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as bashToolModule from "@/node/services/tools/bash";
@@ -1986,19 +1985,9 @@ describe("WorkspaceService getProjectGitStatuses", () => {
       },
     ]);
     expect(getWorkspaceMetadataMock).toHaveBeenCalledWith(metadata.id);
-    expect(executeBashMock).toHaveBeenCalledTimes(2);
+    expect(executeBashMock).toHaveBeenCalledTimes(1);
     expect(executeBashMock).toHaveBeenNthCalledWith(
       1,
-      metadata.id,
-      "git fetch --quiet",
-      expect.objectContaining({
-        cwdMode: "repo-root",
-        repoRootProjectPath: "/tmp/project-a",
-        timeout_secs: 10,
-      })
-    );
-    expect(executeBashMock).toHaveBeenNthCalledWith(
-      2,
       metadata.id,
       expect.stringContaining('PREFERRED_BRANCH=""'),
       expect.objectContaining({
@@ -2007,8 +1996,10 @@ describe("WorkspaceService getProjectGitStatuses", () => {
         timeout_secs: 5,
       })
     );
+    expect(executeBashMock.mock.calls.some(([, script]) => script === "git fetch --quiet")).toBe(
+      false
+    );
     expect(executeBashMock.mock.calls[0]?.[2]).not.toHaveProperty("executionTarget");
-    expect(executeBashMock.mock.calls[1]?.[2]).not.toHaveProperty("executionTarget");
   });
 
   test("returns one entry per project in stable order for multi-project workspaces", async () => {
@@ -2049,87 +2040,22 @@ describe("WorkspaceService getProjectGitStatuses", () => {
     expect(result[0]?.gitStatus?.ahead).toBe(2);
     expect(result[1]?.gitStatus?.branch).toBe("feature/b");
     expect(result[1]?.gitStatus?.behind).toBe(3);
-    expect(executeBashMock).toHaveBeenCalledTimes(4);
+    expect(executeBashMock).toHaveBeenCalledTimes(2);
     expect(executeBashMock).toHaveBeenNthCalledWith(
       1,
-      metadata.id,
-      "git fetch --quiet",
-      expect.objectContaining({ repoRootProjectPath: "/tmp/project-a", timeout_secs: 10 })
-    );
-    expect(executeBashMock).toHaveBeenNthCalledWith(
-      2,
       metadata.id,
       expect.stringContaining('PREFERRED_BRANCH="release"'),
       expect.objectContaining({ repoRootProjectPath: "/tmp/project-a", timeout_secs: 5 })
     );
     expect(executeBashMock).toHaveBeenNthCalledWith(
-      3,
-      metadata.id,
-      "git fetch --quiet",
-      expect.objectContaining({ repoRootProjectPath: "/tmp/project-b", timeout_secs: 10 })
-    );
-    expect(executeBashMock).toHaveBeenNthCalledWith(
-      4,
+      2,
       metadata.id,
       expect.stringContaining('PREFERRED_BRANCH="release"'),
       expect.objectContaining({ repoRootProjectPath: "/tmp/project-b", timeout_secs: 5 })
     );
-  });
-
-  test("logs fetch failures and still computes git status", async () => {
-    const metadata: WorkspaceMetadata = {
-      id: "ws-fetch-failure",
-      name: "ws-fetch-failure",
-      projectName: "project-a",
-      projectPath: "/tmp/project-a",
-      runtimeConfig: { type: "local" },
-    };
-    const logWarnMock = mock(() => undefined);
-    const logWarnSpy = spyOn(log, "warn").mockImplementation(logWarnMock);
-
-    try {
-      const { workspaceService, executeBashMock } = createServiceHarness({
-        metadata,
-        executeBashImpl: (_workspaceId, script) => {
-          if (script === "git fetch --quiet") {
-            return Promise.resolve(Err("fetch failed"));
-          }
-          return Promise.resolve(bashOk(createGitStatusOutput({ behind: 4 })));
-        },
-      });
-
-      const result = await workspaceService.getProjectGitStatuses(metadata.id);
-
-      expect(result).toEqual([
-        {
-          projectPath: "/tmp/project-a",
-          projectName: "project-a",
-          gitStatus: {
-            branch: "feature/test",
-            ahead: 1,
-            behind: 4,
-            dirty: false,
-            outgoingAdditions: 5,
-            outgoingDeletions: 2,
-            incomingAdditions: 3,
-            incomingDeletions: 1,
-          },
-          error: null,
-        },
-      ]);
-      expect(executeBashMock).toHaveBeenCalledTimes(2);
-      expect(logWarnMock).toHaveBeenCalledWith(
-        "Failed to refresh project git refs before computing status",
-        expect.objectContaining({
-          workspaceId: metadata.id,
-          projectPath: metadata.projectPath,
-          projectName: metadata.projectName,
-          error: "fetch failed",
-        })
-      );
-    } finally {
-      logWarnSpy.mockRestore();
-    }
+    expect(executeBashMock.mock.calls.some(([, script]) => script === "git fetch --quiet")).toBe(
+      false
+    );
   });
 
   test("continues when one project bash execution fails", async () => {

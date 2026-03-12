@@ -3653,39 +3653,6 @@ export class WorkspaceService extends EventEmitter {
 
     for (const project of projects) {
       try {
-        // Divergence and incoming counts come from origin refs, so each repo needs a quick
-        // best-effort fetch here instead of relying on the primary-repo scheduler refresh.
-        try {
-          const fetchResult = await this.executeBash(workspaceId, "git fetch --quiet", {
-            cwdMode: "repo-root",
-            repoRootProjectPath: project.projectPath,
-            timeout_secs: 10,
-          });
-          if (!fetchResult.success) {
-            log.warn("Failed to refresh project git refs before computing status", {
-              workspaceId,
-              projectPath: project.projectPath,
-              projectName: project.projectName,
-              error: fetchResult.error,
-            });
-          } else if (!fetchResult.data.success) {
-            log.warn("Failed to refresh project git refs before computing status", {
-              workspaceId,
-              projectPath: project.projectPath,
-              projectName: project.projectName,
-              error: fetchResult.data.error,
-              exitCode: fetchResult.data.exitCode,
-            });
-          }
-        } catch (error) {
-          log.warn("Failed to refresh project git refs before computing status", {
-            workspaceId,
-            projectPath: project.projectPath,
-            projectName: project.projectName,
-            error: getErrorMessage(error),
-          });
-        }
-
         const result = await this.executeBash(workspaceId, script, {
           cwdMode: "repo-root",
           repoRootProjectPath: project.projectPath,
