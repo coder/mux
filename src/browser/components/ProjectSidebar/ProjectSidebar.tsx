@@ -1779,7 +1779,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const renderAgeTiers = (
                                 workspaces: FrontendWorkspaceMetadata[],
                                 tierKeyPrefix: string,
-                                sectionId?: string
+                                sectionId?: string,
+                                allRowsForBestOfCoalescing: FrontendWorkspaceMetadata[] = workspaces
                               ): React.ReactNode => {
                                 const { recent: topVisibleRows, buckets } =
                                   partitionWorkspacesByAge(workspaces, workspaceRecency);
@@ -1986,7 +1987,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         <>
                                           {renderWorkspaceRowsWithBestOfCoalescing({
                                             rows: bucket,
-                                            allRows: workspaces,
+                                            allRows: allRowsForBestOfCoalescing,
                                             sectionId,
                                             rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
                                           })}
@@ -2007,7 +2008,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   <>
                                     {renderWorkspaceRowsWithBestOfCoalescing({
                                       rows: topVisibleRows,
-                                      allRows: workspaces,
+                                      allRows: allRowsForBestOfCoalescing,
                                       sectionId,
                                       rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
                                     })}
@@ -2016,8 +2017,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 );
                               };
 
-                              // Filter completed child rows before section partitioning so every
-                              // section view stays in sync with the same visible hierarchy.
+                              // Partition both the full section membership and the filtered visible rows.
+                              // Best-of grouping stays leaf-only by consulting the unfiltered section data,
+                              // while actual rendering still follows the visible hierarchy.
+                              const {
+                                unsectioned: allUnsectionedForNormalRendering,
+                                bySectionId: allBySectionIdForNormalRendering,
+                              } = partitionWorkspacesBySection(
+                                workspacesForNormalRendering,
+                                sections
+                              );
                               const { unsectioned, bySectionId } = partitionWorkspacesBySection(
                                 visibleWorkspacesForNormalRendering,
                                 sections
@@ -2067,6 +2076,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               // Render section with its workspaces
                               const renderSection = (section: SectionConfig) => {
                                 const sectionWorkspaces = bySectionId.get(section.id) ?? [];
+                                const sectionAllWorkspaces =
+                                  allBySectionIdForNormalRendering.get(section.id) ?? [];
                                 const sectionDrafts = draftsBySectionId.get(section.id) ?? [];
 
                                 const sectionExpandedKey = getSectionExpandedKey(
@@ -2126,7 +2137,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                                 ":tier:0",
                                                 ":tier"
                                               ),
-                                              section.id
+                                              section.id,
+                                              sectionAllWorkspaces
                                             )
                                           ) : sectionDrafts.length === 0 ? (
                                             <div className="text-muted px-3 py-2 text-center text-xs italic">
@@ -2154,7 +2166,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       {unsectioned.length > 0 ? (
                                         renderAgeTiers(
                                           unsectioned,
-                                          getTierKey(projectPath, 0).replace(":0", "")
+                                          getTierKey(projectPath, 0).replace(":0", ""),
+                                          undefined,
+                                          allUnsectionedForNormalRendering
                                         )
                                       ) : unsectionedDrafts.length === 0 ? (
                                         <div className="text-muted px-3 py-2 text-center text-xs italic">
@@ -2168,7 +2182,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       {unsectioned.length > 0 &&
                                         renderAgeTiers(
                                           unsectioned,
-                                          getTierKey(projectPath, 0).replace(":0", "")
+                                          getTierKey(projectPath, 0).replace(":0", ""),
+                                          undefined,
+                                          allUnsectionedForNormalRendering
                                         )}
                                     </>
                                   )}

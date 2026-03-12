@@ -660,7 +660,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   });
 
   const totalCandidateCount = Math.max(
-    requestedCandidateCount,
+    successResult?.status === "completed" ? 0 : requestedCandidateCount,
     taskIds.length,
     ownReportsByTaskId.size
   );

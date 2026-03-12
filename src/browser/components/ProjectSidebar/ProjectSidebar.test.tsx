@@ -508,4 +508,105 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       expect(view.getByTestId(agentItemTestId("child-3"))).toBeTruthy();
     });
   });
+
+  test("does not coalesce a best-of group when one candidate still has hidden child tasks", () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const bestOfGroup = { groupId: "best-of-non-leaf", index: 0, total: 2 } as const;
+    const childOne = {
+      ...createWorkspace("child-1", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Compare implementation options",
+        bestOf: bestOfGroup,
+      }),
+      projects: singleProjectRefs,
+    };
+    const hiddenGrandchild = {
+      ...createWorkspace("grandchild-1", {
+        parentWorkspaceId: "child-1",
+        taskStatus: "reported",
+        title: "Nested follow-up",
+      }),
+      projects: singleProjectRefs,
+    };
+    const childTwo = {
+      ...createWorkspace("child-2", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Compare implementation options",
+        bestOf: { ...bestOfGroup, index: 1 },
+      }),
+      projects: singleProjectRefs,
+    };
+
+    const sortedWorkspacesByProject = new Map([
+      ["/projects/demo-project", [parentWorkspace, childOne, hiddenGrandchild, childTwo]],
+    ]);
+
+    const projectConfig = { workspaces: [] };
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => ({
+      userProjects: new Map([["/projects/demo-project", projectConfig]]),
+      systemProjectPath: null,
+      resolveProjectPath: () => null,
+      getProjectConfig: () => projectConfig,
+      loading: false,
+      refreshProjects: () => Promise.resolve(),
+      addProject: () => undefined,
+      removeProject: () => Promise.resolve({ success: true }),
+      isProjectCreateModalOpen: false,
+      openProjectCreateModal: () => undefined,
+      closeProjectCreateModal: () => undefined,
+      workspaceModalState: {
+        isOpen: false,
+        projectPath: null,
+        projectName: "",
+        branches: [],
+        defaultTrunkBranch: undefined,
+        loadErrorMessage: null,
+        isLoading: false,
+      },
+      openWorkspaceModal: () => Promise.resolve(),
+      closeWorkspaceModal: () => undefined,
+      getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+      getSecrets: () => Promise.resolve([]),
+      updateSecrets: () => Promise.resolve(),
+      createSection: () =>
+        Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
+      updateSection: () => resolveVoidResult(),
+      removeSection: () => resolveVoidResult(),
+      reorderSections: () => resolveVoidResult(),
+      assignWorkspaceToSection: () => resolveVoidResult(),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    }));
+
+    const workspaceRecency = {
+      parent: Date.now(),
+      "child-1": Date.now(),
+      "grandchild-1": Date.now(),
+      "child-2": Date.now(),
+    };
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        workspaceRecency={workspaceRecency}
+      />
+    );
+
+    expect(view.queryByTestId("best-of-group-best-of-non-leaf")).toBeNull();
+    expect(view.getByTestId(agentItemTestId("child-1"))).toBeTruthy();
+    expect(view.getByTestId(agentItemTestId("child-2"))).toBeTruthy();
+    expect(view.queryByTestId(agentItemTestId("grandchild-1"))).toBeNull();
+  });
 });

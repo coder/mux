@@ -236,6 +236,90 @@ async function openTaskCard(view: RenderedApp): Promise<HTMLElement> {
   return taskMessageBlock;
 }
 
+async function renderCompletedBestOfParentWorkspace(params: {
+  requestedCount: number;
+  completedReports: Array<{ taskId: string; title: string; reportMarkdown: string }>;
+}): Promise<{
+  env: Awaited<ReturnType<typeof createTestEnvironment>>;
+  repoPath: string;
+  cleanupDom: () => void;
+  view: RenderedApp;
+}> {
+  const env = await createTestEnvironment();
+  env.services.aiService.enableMockMode();
+
+  const repoPath = await createTempGitRepo();
+  await trustProject(env, repoPath);
+  const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+  const parentResult = await env.orpc.workspace.create({
+    projectPath: repoPath,
+    branchName: generateBranchName("ui-best-of-completed-parent"),
+    trunkBranch,
+    title: "Parent workspace",
+  });
+  if (!parentResult.success) {
+    throw new Error(`Failed to create completed parent workspace: ${parentResult.error}`);
+  }
+
+  const historyService = new HistoryService(env.config);
+  const userMessage = createMuxMessage(
+    "user-best-of-completed",
+    "user",
+    "Compare the best options"
+  );
+  const taskToolMessage = createMuxMessage(
+    "assistant-best-of-completed",
+    "assistant",
+    "",
+    undefined,
+    [
+      {
+        type: "dynamic-tool" as const,
+        toolCallId: "tool-task-best-of-completed",
+        toolName: "task" as const,
+        state: "output-available" as const,
+        input: {
+          agentId: "explore" as const,
+          prompt: "Compare the best options",
+          title: "Best of options",
+          n: params.requestedCount,
+        },
+        output: {
+          status: "completed" as const,
+          taskIds: params.completedReports.map((report) => report.taskId),
+          reports: params.completedReports.map((report) => ({
+            taskId: report.taskId,
+            title: report.title,
+            reportMarkdown: report.reportMarkdown,
+            agentId: "explore",
+            agentType: "explore",
+          })),
+        },
+      },
+    ]
+  );
+
+  for (const message of [userMessage, taskToolMessage]) {
+    const appendResult = await historyService.appendToHistory(parentResult.metadata.id, message);
+    if (!appendResult.success) {
+      throw new Error(`Failed to append completed best-of history: ${appendResult.error}`);
+    }
+  }
+
+  const cleanupDom = installDom();
+  const view = renderApp({ apiClient: env.orpc, metadata: parentResult.metadata });
+  await setupWorkspaceView(view, parentResult.metadata, parentResult.metadata.id);
+  await waitForWorkspaceChatToRender(view.container);
+
+  return {
+    env,
+    repoPath,
+    cleanupDom,
+    view,
+  };
+}
+
 describe("Best-of parent task progress UI (mock AI router)", () => {
   beforeAll(async () => {
     await preloadTestModules();
@@ -300,6 +384,38 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
       await waitFor(() => {
         expect(taskMessageBlock.textContent).toContain("2/2 completed");
       });
+    } finally {
+      await cleanupView(setup.view, setup.cleanupDom);
+      await cleanupTestEnvironment(setup.env);
+      await cleanupTempGitRepo(setup.repoPath);
+    }
+  }, 60_000);
+
+  test("uses the realized completed candidate count when best-of creation finished partially", async () => {
+    const setup = await renderCompletedBestOfParentWorkspace({
+      requestedCount: 3,
+      completedReports: [
+        {
+          taskId: "completed-child-1",
+          title: "Candidate one",
+          reportMarkdown: "Report from child one",
+        },
+        {
+          taskId: "completed-child-2",
+          title: "Candidate two",
+          reportMarkdown: "Report from child two",
+        },
+      ],
+    });
+
+    try {
+      const taskMessageBlock = await openTaskCard(setup.view);
+
+      await waitFor(() => {
+        expect(taskMessageBlock.textContent).toContain("2/2 completed");
+      });
+      expect(taskMessageBlock.textContent).not.toContain("2/3 completed");
+      expect(taskMessageBlock.textContent).toContain("Best of 2 · Best of options");
     } finally {
       await cleanupView(setup.view, setup.cleanupDom);
       await cleanupTestEnvironment(setup.env);
