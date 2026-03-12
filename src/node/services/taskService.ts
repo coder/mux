@@ -3830,43 +3830,35 @@ export class TaskService {
     return parsed.data;
   }
 
-  private async hasPendingBestOfTaskToolInPartial(workspaceId: string): Promise<boolean> {
+  private async getTaskToolPartialState(workspaceId: string): Promise<{
+    hasPendingBestOfTaskTool: boolean;
+    referencedTaskIds: Set<string>;
+  }> {
     const partial = await this.historyService.readPartial(workspaceId);
+    const referencedTaskIds = new Set<string>();
     if (!partial) {
-      return false;
+      return {
+        hasPendingBestOfTaskTool: false,
+        referencedTaskIds,
+      };
     }
 
+    let hasPendingBestOfTaskTool = false;
     for (const part of partial.parts) {
-      if (!isDynamicToolPart(part)) continue;
-      if (part.toolName !== "task") continue;
-      if (part.state !== "input-available") continue;
-
-      const parsedInput = TaskToolArgsSchema.safeParse(part.input);
-      if (!parsedInput.success) {
+      if (!isDynamicToolPart(part) || part.toolName !== "task") {
         continue;
       }
 
-      if ((parsedInput.data.n ?? 1) > 1) {
-        return true;
+      if (part.state === "input-available") {
+        const parsedInput = TaskToolArgsSchema.safeParse(part.input);
+        if (parsedInput.success && (parsedInput.data.n ?? 1) > 1) {
+          hasPendingBestOfTaskTool = true;
+        }
+        continue;
       }
-    }
-
-    return false;
-  }
-
-  private async hasTaskToolOutputForTaskInPartial(
-    workspaceId: string,
-    taskId: string
-  ): Promise<boolean> {
-    const partial = await this.historyService.readPartial(workspaceId);
-    if (!partial) {
-      return false;
-    }
-
-    for (const part of partial.parts) {
-      if (!isDynamicToolPart(part)) continue;
-      if (part.toolName !== "task") continue;
-      if (part.state !== "output-available") continue;
+      if (part.state !== "output-available") {
+        continue;
+      }
 
       const parsedOutput = TaskToolResultSchema.safeParse(part.output);
       if (!parsedOutput.success) {
@@ -3874,25 +3866,30 @@ export class TaskService {
       }
 
       const output = parsedOutput.data;
-      if (output.taskId === taskId) {
-        return true;
+      if (typeof output.taskId === "string") {
+        referencedTaskIds.add(output.taskId);
       }
-      if (Array.isArray(output.taskIds) && output.taskIds.includes(taskId)) {
-        return true;
+      if (Array.isArray(output.taskIds)) {
+        for (const taskId of output.taskIds) {
+          referencedTaskIds.add(taskId);
+        }
       }
       if ("tasks" in output && Array.isArray(output.tasks)) {
-        if (output.tasks.some((task) => task.taskId === taskId)) {
-          return true;
+        for (const task of output.tasks) {
+          referencedTaskIds.add(task.taskId);
         }
       }
       if ("reports" in output && Array.isArray(output.reports)) {
-        if (output.reports.some((report) => report.taskId === taskId)) {
-          return true;
+        for (const report of output.reports) {
+          referencedTaskIds.add(report.taskId);
         }
       }
     }
 
-    return false;
+    return {
+      hasPendingBestOfTaskTool,
+      referencedTaskIds,
+    };
   }
 
   private async deliverReportToParent(
@@ -3950,14 +3947,15 @@ export class TaskService {
       }
 
       if (childEntry?.workspace.bestOf?.total != null && childEntry.workspace.bestOf.total > 1) {
-        if (await this.hasPendingBestOfTaskToolInPartial(parentWorkspaceId)) {
+        const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
+        if (parentTaskToolState.hasPendingBestOfTaskTool) {
           return;
         }
 
         // Concurrent sibling completions can arrive after another sibling already finalized
         // the grouped task output in the interrupted parent partial. Avoid appending an
         // extra synthetic fallback report once that grouped result already contains this child.
-        if (await this.hasTaskToolOutputForTaskInPartial(parentWorkspaceId, childWorkspaceId)) {
+        if (parentTaskToolState.referencedTaskIds.has(childWorkspaceId)) {
           return;
         }
       }
@@ -4120,12 +4118,11 @@ export class TaskService {
       return { ok: false, reason: "task_not_reported" };
     }
 
-    if (
-      entry.workspace.bestOf?.total != null &&
-      entry.workspace.bestOf.total > 1 &&
-      (await this.hasPendingBestOfTaskToolInPartial(parentWorkspaceId))
-    ) {
-      return { ok: false, reason: "best_of_parent_partial_pending" };
+    if (entry.workspace.bestOf?.total != null && entry.workspace.bestOf.total > 1) {
+      const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
+      if (parentTaskToolState.hasPendingBestOfTaskTool) {
+        return { ok: false, reason: "best_of_parent_partial_pending" };
+      }
     }
 
     if (this.aiService.isStreaming(workspaceId)) {

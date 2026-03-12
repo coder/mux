@@ -298,94 +298,106 @@ interface TaskToolDisplayEntry {
   reportMarkdown?: string;
 }
 
-function getTaskIdsFromTaskToolSuccessResult(result: TaskToolSuccessResult | null): string[] {
-  if (!result) {
-    return [];
-  }
+interface TaskToolOwnReport {
+  reportMarkdown: string;
+  title?: string;
+}
 
+function normalizeTaskId(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null): {
+  taskIds: string[];
+  statusByTaskId: Map<string, string>;
+  ownReportsByTaskId: Map<string, TaskToolOwnReport>;
+} {
   const taskIds = new Set<string>();
-
-  if (typeof result.taskId === "string" && result.taskId.trim().length > 0) {
-    taskIds.add(result.taskId.trim());
-  }
-
-  if (Array.isArray(result.taskIds)) {
-    for (const taskId of result.taskIds) {
-      if (typeof taskId === "string" && taskId.trim().length > 0) {
-        taskIds.add(taskId.trim());
-      }
-    }
-  }
-
-  if ("tasks" in result && Array.isArray(result.tasks)) {
-    for (const task of result.tasks) {
-      if (typeof task.taskId === "string" && task.taskId.trim().length > 0) {
-        taskIds.add(task.taskId.trim());
-      }
-    }
-  }
-
-  if ("reports" in result && Array.isArray(result.reports)) {
-    for (const report of result.reports) {
-      if (typeof report.taskId === "string" && report.taskId.trim().length > 0) {
-        taskIds.add(report.taskId.trim());
-      }
-    }
-  }
-
-  return Array.from(taskIds);
-}
-
-function getTaskStatusByTaskId(result: TaskToolSuccessResult | null): Map<string, string> {
   const statusByTaskId = new Map<string, string>();
+  const ownReportsByTaskId = new Map<string, TaskToolOwnReport>();
   if (!result) {
-    return statusByTaskId;
+    return {
+      taskIds: [],
+      statusByTaskId,
+      ownReportsByTaskId,
+    };
   }
 
-  if ("tasks" in result && Array.isArray(result.tasks)) {
-    for (const task of result.tasks) {
-      statusByTaskId.set(task.taskId, task.status);
+  const rememberTaskId = (taskId: unknown): string | null => {
+    const normalizedTaskId = normalizeTaskId(taskId);
+    if (normalizedTaskId) {
+      taskIds.add(normalizedTaskId);
     }
-    return statusByTaskId;
-  }
+    return normalizedTaskId;
+  };
 
-  const taskIds = getTaskIdsFromTaskToolSuccessResult(result);
-  for (const taskId of taskIds) {
-    statusByTaskId.set(taskId, result.status === "completed" ? "completed" : result.status);
-  }
-
-  return statusByTaskId;
-}
-
-function getOwnReportsByTaskId(
-  result: TaskToolSuccessResult | null
-): Map<string, { reportMarkdown: string; title?: string }> {
-  const reportByTaskId = new Map<string, { reportMarkdown: string; title?: string }>();
-  if (!result) {
-    return reportByTaskId;
-  }
-
-  if (
-    result.status === "completed" &&
-    typeof result.taskId === "string" &&
-    typeof result.reportMarkdown === "string"
-  ) {
-    reportByTaskId.set(result.taskId, {
+  const taskStatuses = "tasks" in result && Array.isArray(result.tasks) ? result.tasks : undefined;
+  const singleTaskId = rememberTaskId(result.taskId);
+  if (singleTaskId && result.status === "completed" && typeof result.reportMarkdown === "string") {
+    ownReportsByTaskId.set(singleTaskId, {
       reportMarkdown: result.reportMarkdown,
       title: result.title,
     });
   }
 
-  if ("reports" in result && Array.isArray(result.reports)) {
-    for (const report of result.reports) {
-      reportByTaskId.set(report.taskId, {
-        reportMarkdown: report.reportMarkdown,
-        title: report.title,
-      });
+  if (Array.isArray(result.taskIds)) {
+    for (const taskId of result.taskIds) {
+      rememberTaskId(taskId);
     }
   }
 
-  return reportByTaskId;
+  if (taskStatuses) {
+    for (const task of taskStatuses) {
+      const taskId = rememberTaskId(task.taskId);
+      if (taskId) {
+        statusByTaskId.set(taskId, task.status);
+      }
+    }
+  }
+
+  if ("reports" in result && Array.isArray(result.reports)) {
+    for (const report of result.reports) {
+      const taskId = rememberTaskId(report.taskId);
+      if (taskId) {
+        ownReportsByTaskId.set(taskId, {
+          reportMarkdown: report.reportMarkdown,
+          title: report.title,
+        });
+      }
+    }
+  }
+
+  if (!taskStatuses) {
+    const fallbackStatus = result.status === "completed" ? "completed" : result.status;
+    for (const taskId of taskIds) {
+      statusByTaskId.set(taskId, fallbackStatus);
+    }
+  }
+
+  return {
+    taskIds: Array.from(taskIds),
+    statusByTaskId,
+    ownReportsByTaskId,
+  };
+}
+
+function getAggregateTaskStatus(
+  displayEntries: readonly TaskToolDisplayEntry[],
+  fallbackStatus: TaskToolSuccessResult["status"] | undefined
+): string | undefined {
+  if (displayEntries.length === 0) {
+    return fallbackStatus;
+  }
+  if (displayEntries.every((entry) => entry.status === "completed")) {
+    return "completed";
+  }
+  if (displayEntries.some((entry) => entry.status === "running")) {
+    return "running";
+  }
+  if (displayEntries.some((entry) => entry.status === "queued")) {
+    return "queued";
+  }
+  return fallbackStatus;
 }
 
 const TaskToolCandidateCard: React.FC<{
@@ -442,10 +454,12 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     result && typeof result === "object" && "status" in result ? result : null;
 
   const liveTaskIds = useTaskToolLiveTaskIds(workspaceId, toolCallId) ?? [];
-  const resultTaskIds = getTaskIdsFromTaskToolSuccessResult(successResult);
+  const {
+    taskIds: resultTaskIds,
+    statusByTaskId,
+    ownReportsByTaskId,
+  } = collectTaskToolResultDisplayData(successResult);
   const taskIds = Array.from(new Set([...resultTaskIds, ...liveTaskIds]));
-  const statusByTaskId = getTaskStatusByTaskId(successResult);
-  const ownReportsByTaskId = getOwnReportsByTaskId(successResult);
 
   const requestedCandidateCount = args.n ?? 1;
   const totalCandidateCount = Math.max(
@@ -488,16 +502,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const hasAnyReport = displayEntries.some(
     (entry) => typeof entry.reportMarkdown === "string" && entry.reportMarkdown.trim().length > 0
   );
-  const aggregateTaskStatus =
-    displayEntries.length === 0
-      ? successResult?.status
-      : displayEntries.every((entry) => entry.status === "completed")
-        ? "completed"
-        : displayEntries.some((entry) => entry.status === "running")
-          ? "running"
-          : displayEntries.some((entry) => entry.status === "queued")
-            ? "queued"
-            : successResult?.status;
+  const aggregateTaskStatus = getAggregateTaskStatus(displayEntries, successResult?.status);
 
   const effectiveStatus: ToolStatus =
     aggregateTaskStatus === "completed"

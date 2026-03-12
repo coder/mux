@@ -88,6 +88,41 @@ function toAggregatePendingStatus(
   return statuses.every((status) => status === "queued") ? "queued" : "running";
 }
 
+function serializeCompletedReport(report: CompletedTaskInfo) {
+  return {
+    taskId: report.taskId,
+    reportMarkdown: report.reportMarkdown,
+    title: report.title,
+    agentId: report.agentId,
+    agentType: report.agentType,
+  };
+}
+
+function serializeCompletedReports(reports: readonly CompletedTaskInfo[]) {
+  return reports.map(serializeCompletedReport);
+}
+
+function buildBackgroundStartNote(taskCount: number): string {
+  return taskCount === 1
+    ? "Task started in background. Use task_await to monitor progress."
+    : "Tasks started in background. Use task_await to monitor progress.";
+}
+
+function buildForegroundContinuationNote(
+  taskCount: number,
+  reason: "backgrounded" | "timed_out"
+): string {
+  if (reason === "backgrounded") {
+    return taskCount === 1
+      ? "Task sent to background because a new message was queued. Use task_await to monitor progress."
+      : "Tasks were sent to background because a new message was queued. Use task_await to monitor progress.";
+  }
+
+  return taskCount === 1
+    ? "Task exceeded foreground wait limit and continues running in background. Use task_await to monitor progress."
+    : "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.";
+}
+
 function buildPendingTaskResult(params: {
   tasks: readonly PendingTaskInfo[];
   note: string;
@@ -96,13 +131,7 @@ function buildPendingTaskResult(params: {
   const status = toAggregatePendingStatus(params.tasks.map((task) => task.status));
   const serializedReports =
     params.reports && params.reports.length > 0
-      ? params.reports.map((report) => ({
-          taskId: report.taskId,
-          reportMarkdown: report.reportMarkdown,
-          title: report.title,
-          agentId: report.agentId,
-          agentType: report.agentType,
-        }))
+      ? serializeCompletedReports(params.reports)
       : undefined;
 
   if (params.tasks.length === 1) {
@@ -127,8 +156,9 @@ function buildPendingTaskResult(params: {
 function buildCompletedTaskResult(params: {
   reports: readonly CompletedTaskInfo[];
 }): z.infer<typeof TaskToolResultSchema> {
-  if (params.reports.length === 1) {
-    const report = params.reports[0];
+  const serializedReports = serializeCompletedReports(params.reports);
+  if (serializedReports.length === 1) {
+    const report = serializedReports[0];
     return {
       status: "completed",
       taskId: report?.taskId,
@@ -141,14 +171,8 @@ function buildCompletedTaskResult(params: {
 
   return {
     status: "completed",
-    taskIds: params.reports.map((report) => report.taskId),
-    reports: params.reports.map((report) => ({
-      taskId: report.taskId,
-      reportMarkdown: report.reportMarkdown,
-      title: report.title,
-      agentId: report.agentId,
-      agentType: report.agentType,
-    })),
+    taskIds: serializedReports.map((report) => report.taskId),
+    reports: serializedReports,
   };
 }
 
@@ -291,10 +315,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           TaskToolResultSchema,
           buildPendingTaskResult({
             tasks: createdTasks,
-            note:
-              createdTasks.length === 1
-                ? "Task started in background. Use task_await to monitor progress."
-                : "Tasks started in background. Use task_await to monitor progress.",
+            note: buildBackgroundStartNote(createdTasks.length),
           }),
           "task"
         );
@@ -369,13 +390,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
               completedReports,
             }),
             reports: completedReports,
-            note: wasBackgrounded
-              ? createdTasks.length === 1
-                ? "Task sent to background because a new message was queued. Use task_await to monitor progress."
-                : "Tasks were sent to background because a new message was queued. Use task_await to monitor progress."
-              : createdTasks.length === 1
-                ? "Task exceeded foreground wait limit and continues running in background. Use task_await to monitor progress."
-                : "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.",
+            note: buildForegroundContinuationNote(
+              createdTasks.length,
+              wasBackgrounded ? "backgrounded" : "timed_out"
+            ),
           }),
           "task"
         );
