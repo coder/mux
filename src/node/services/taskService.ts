@@ -3757,10 +3757,18 @@ export class TaskService {
     index: number;
     agentId?: string;
     agentType?: string;
+    taskStatus?: WorkspaceConfigEntry["taskStatus"];
+    reportedAt?: WorkspaceConfigEntry["reportedAt"];
   }> {
     const cfg = this.config.loadConfigOrDefault();
-    const siblings: Array<{ taskId: string; index: number; agentId?: string; agentType?: string }> =
-      [];
+    const siblings: Array<{
+      taskId: string;
+      index: number;
+      agentId?: string;
+      agentType?: string;
+      taskStatus?: WorkspaceConfigEntry["taskStatus"];
+      reportedAt?: WorkspaceConfigEntry["reportedAt"];
+    }> = [];
 
     for (const project of cfg.projects.values()) {
       for (const workspace of project.workspaces) {
@@ -3783,6 +3791,8 @@ export class TaskService {
           index: workspace.bestOf.index,
           agentId: coerceNonEmptyString(workspace.agentId),
           agentType: coerceNonEmptyString(workspace.agentType),
+          taskStatus: workspace.taskStatus,
+          reportedAt: workspace.reportedAt,
         });
       }
     }
@@ -3922,6 +3932,40 @@ export class TaskService {
     };
   }
 
+  private async shouldDeferBestOfFallback(params: {
+    parentWorkspaceId: string;
+    groupId: string;
+    total: number;
+  }): Promise<boolean> {
+    const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
+    if (!parentTaskToolState.hasPendingBestOfTaskTool) {
+      return false;
+    }
+
+    const siblings = this.listBestOfSiblingTasks({
+      parentWorkspaceId: params.parentWorkspaceId,
+      groupId: params.groupId,
+    });
+    const hasRecoverableSibling = siblings.some((sibling) => {
+      return (
+        sibling.taskStatus === "queued" ||
+        sibling.taskStatus === "running" ||
+        sibling.taskStatus === "awaiting_report"
+      );
+    });
+    if (hasRecoverableSibling) {
+      return true;
+    }
+
+    return (
+      (await this.buildBestOfCompletedTaskToolOutput({
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+        total: params.total,
+      })) != null
+    );
+  }
+
   private async deliverReportToParent(
     parentWorkspaceId: string,
     childWorkspaceId: string,
@@ -3978,14 +4022,21 @@ export class TaskService {
 
       if (childEntry?.workspace.bestOf?.total != null && childEntry.workspace.bestOf.total > 1) {
         const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
-        if (parentTaskToolState.hasPendingBestOfTaskTool) {
-          return;
-        }
 
         // Concurrent sibling completions can arrive after another sibling already finalized
         // the grouped task output in the interrupted parent partial. Avoid appending an
         // extra synthetic fallback report once that grouped result already contains this child.
         if (parentTaskToolState.referencedTaskIds.has(childWorkspaceId)) {
+          return;
+        }
+
+        if (
+          await this.shouldDeferBestOfFallback({
+            parentWorkspaceId,
+            groupId: childEntry.workspace.bestOf.groupId,
+            total: childEntry.workspace.bestOf.total,
+          })
+        ) {
           return;
         }
       }
@@ -4149,8 +4200,13 @@ export class TaskService {
     }
 
     if (entry.workspace.bestOf?.total != null && entry.workspace.bestOf.total > 1) {
-      const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
-      if (parentTaskToolState.hasPendingBestOfTaskTool) {
+      if (
+        await this.shouldDeferBestOfFallback({
+          parentWorkspaceId,
+          groupId: entry.workspace.bestOf.groupId,
+          total: entry.workspace.bestOf.total,
+        })
+      ) {
         return { ok: false, reason: "best_of_parent_partial_pending" };
       }
     }

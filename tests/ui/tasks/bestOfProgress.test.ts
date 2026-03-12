@@ -228,7 +228,8 @@ async function openTaskCard(view: RenderedApp): Promise<HTMLElement> {
 
   taskToolName.click();
   await waitFor(() => {
-    if (!taskMessageBlock.textContent?.includes("Best of 2 · Best of options")) {
+    const text = taskMessageBlock.textContent ?? "";
+    if (!text.includes("Best of options") || !text.includes("Prompt")) {
       throw new Error("Expanded best-of task details not visible yet");
     }
   });
@@ -320,6 +321,88 @@ async function renderCompletedBestOfParentWorkspace(params: {
   };
 }
 
+async function renderPartiallySpawnedBestOfParentWorkspace(params: {
+  requestedCount: number;
+  spawnedTaskIds: string[];
+}): Promise<{
+  env: Awaited<ReturnType<typeof createTestEnvironment>>;
+  repoPath: string;
+  cleanupDom: () => void;
+  view: RenderedApp;
+}> {
+  const env = await createTestEnvironment();
+  env.services.aiService.enableMockMode();
+
+  const repoPath = await createTempGitRepo();
+  await trustProject(env, repoPath);
+  const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+  const parentResult = await env.orpc.workspace.create({
+    projectPath: repoPath,
+    branchName: generateBranchName("ui-best-of-partial-parent"),
+    trunkBranch,
+    title: "Parent workspace",
+  });
+  if (!parentResult.success) {
+    throw new Error(`Failed to create partial parent workspace: ${parentResult.error}`);
+  }
+
+  const historyService = new HistoryService(env.config);
+  const userMessage = createMuxMessage("user-best-of-partial", "user", "Compare the best options");
+  const taskToolMessage = createMuxMessage(
+    "assistant-best-of-partial",
+    "assistant",
+    "",
+    undefined,
+    [
+      {
+        type: "dynamic-tool" as const,
+        toolCallId: "tool-task-best-of-partial",
+        toolName: "task" as const,
+        state: "output-available" as const,
+        input: {
+          agentId: "explore" as const,
+          prompt: "Compare the best options",
+          title: "Best of options",
+          n: params.requestedCount,
+        },
+        output: {
+          status: "running" as const,
+          taskIds: params.spawnedTaskIds,
+          tasks: params.spawnedTaskIds.map((taskId) => ({ taskId, status: "completed" as const })),
+          reports: params.spawnedTaskIds.map((taskId, index) => ({
+            taskId,
+            title: `Candidate ${index + 1}`,
+            reportMarkdown: `Report from ${taskId}`,
+            agentId: "explore",
+            agentType: "explore",
+          })),
+          note: "Some candidates were never spawned.",
+        },
+      },
+    ]
+  );
+
+  for (const message of [userMessage, taskToolMessage]) {
+    const appendResult = await historyService.appendToHistory(parentResult.metadata.id, message);
+    if (!appendResult.success) {
+      throw new Error(`Failed to append partial best-of history: ${appendResult.error}`);
+    }
+  }
+
+  const cleanupDom = installDom();
+  const view = renderApp({ apiClient: env.orpc, metadata: parentResult.metadata });
+  await setupWorkspaceView(view, parentResult.metadata, parentResult.metadata.id);
+  await waitForWorkspaceChatToRender(view.container);
+
+  return {
+    env,
+    repoPath,
+    cleanupDom,
+    view,
+  };
+}
+
 describe("Best-of parent task progress UI (mock AI router)", () => {
   beforeAll(async () => {
     await preloadTestModules();
@@ -384,6 +467,27 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
       await waitFor(() => {
         expect(taskMessageBlock.textContent).toContain("2/2 completed");
       });
+    } finally {
+      await cleanupView(setup.view, setup.cleanupDom);
+      await cleanupTestEnvironment(setup.env);
+      await cleanupTempGitRepo(setup.repoPath);
+    }
+  }, 60_000);
+
+  test("uses the realized spawned candidate count after best-of creation stops early", async () => {
+    const setup = await renderPartiallySpawnedBestOfParentWorkspace({
+      requestedCount: 3,
+      spawnedTaskIds: ["spawned-child-1", "spawned-child-2"],
+    });
+
+    try {
+      const taskMessageBlock = await openTaskCard(setup.view);
+
+      await waitFor(() => {
+        expect(taskMessageBlock.textContent).toContain("2/2 completed");
+      });
+      expect(taskMessageBlock.textContent).not.toContain("2/3 completed");
+      expect(taskMessageBlock.textContent).toContain("Best of 2 · Best of options");
     } finally {
       await cleanupView(setup.view, setup.cleanupDom);
       await cleanupTestEnvironment(setup.env);

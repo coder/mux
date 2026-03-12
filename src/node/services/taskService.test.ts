@@ -4953,6 +4953,145 @@ describe("TaskService", () => {
     expect(JSON.stringify(parentHistoryAfterSecond)).not.toContain("Report from child two");
   });
 
+  test("agent_report falls back to synthetic parent reports when grouped recovery cannot finish", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-best-of-fallback";
+    const childOneId = "child-best-of-fallback-1";
+    const childTwoId = "child-best-of-fallback-2";
+    const bestOf = { groupId: "best-of-fallback-group", index: 0, total: 2 } as const;
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child-1"),
+                id: childOneId,
+                name: "agent_explore_child_1",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                bestOf,
+              },
+              {
+                path: path.join(projectPath, "child-2"),
+                id: childTwoId,
+                name: "agent_explore_child_2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "interrupted",
+                bestOf: { ...bestOf, index: 1 },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-best-of-fallback",
+      "assistant",
+      "Waiting on best-of subagents…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-best-of-fallback-call",
+          toolName: "task",
+          input: {
+            subagent_type: "explore",
+            prompt: "compare options",
+            title: "Best of 2",
+            n: 2,
+          },
+          state: "input-available",
+        },
+      ]
+    );
+    expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    const childPrompt = createMuxMessage(`user-${childOneId}-prompt`, "user", "compare options", {
+      timestamp: Date.now(),
+    });
+    expect((await historyService.appendToHistory(childOneId, childPrompt)).success).toBe(true);
+
+    const childAssistantPlaceholder = createMuxMessage(
+      `assistant-${childOneId}-partial`,
+      "assistant",
+      "",
+      { timestamp: Date.now() }
+    );
+    expect(
+      (await historyService.appendToHistory(childOneId, childAssistantPlaceholder)).success
+    ).toBe(true);
+
+    const childHistorySequence = childAssistantPlaceholder.metadata?.historySequence;
+    if (typeof childHistorySequence !== "number") {
+      throw new Error("Expected child historySequence to be a number");
+    }
+
+    const childPartial = createMuxMessage(
+      `assistant-${childOneId}-partial`,
+      "assistant",
+      "",
+      { timestamp: Date.now(), historySequence: childHistorySequence },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: `agent-report-${childOneId}`,
+          toolName: "agent_report",
+          input: { reportMarkdown: "Report from child one", title: "Option one" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+    expect((await partialService.writePartial(childOneId, childPartial)).success).toBe(true);
+    expect((await partialService.commitPartial(childOneId)).success).toBe(true);
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childOneId,
+      messageId: `assistant-${childOneId}-partial`,
+      metadata: { model: "test-model" },
+      parts: childPartial.parts as StreamEndEvent["parts"],
+    });
+
+    const parentHistory = await collectFullHistory(historyService, parentId);
+    const serializedParentHistory = JSON.stringify(parentHistory);
+    expect(serializedParentHistory).toContain("<mux_subagent_report>");
+    expect(serializedParentHistory).toContain("Report from child one");
+
+    const remainingTaskIds = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .map((workspace) => workspace.id)
+      .filter((id): id is string => typeof id === "string");
+    expect(remainingTaskIds).not.toContain(childOneId);
+    expect(remainingTaskIds).toContain(childTwoId);
+  });
+
   test("agent_report generates git format-patch artifact for exec tasks before cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
