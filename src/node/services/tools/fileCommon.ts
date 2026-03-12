@@ -50,12 +50,6 @@ export async function validatePlanModeAccess(
 }
 
 /**
- * Compute a 6-character hexadecimal lease from file content.
- * The lease changes when file content is modified.
- * Uses a deterministic hash so leases are consistent across processes.
- */
-
-/**
  * Generate a unified diff between old and new content using jsdiff.
  * Uses createPatch with context of 3 lines.
  *
@@ -277,33 +271,6 @@ export function validatePathInCwd(
 }
 
 /**
- * Validates and auto-corrects redundant path prefixes in file paths.
- * Returns the corrected path and an optional warning message.
- *
- * This is a convenience wrapper around validateNoRedundantPrefix that handles
- * the common pattern of auto-correcting paths and returning warnings.
- *
- * @param filePath - The file path to validate (may be modified if redundant prefix found)
- * @param cwd - The working directory
- * @param runtime - The runtime to use for path normalization
- * @returns Object with correctedPath and optional warning
- */
-export function validateAndCorrectPath(
-  filePath: string,
-  cwd: string,
-  runtime: Runtime
-): { correctedPath: string; warning?: string } {
-  const redundantPrefixValidation = validateNoRedundantPrefix(filePath, cwd, runtime);
-  if (redundantPrefixValidation) {
-    return {
-      correctedPath: redundantPrefixValidation.correctedPath,
-      warning: redundantPrefixValidation.warning,
-    };
-  }
-  return { correctedPath: filePath };
-}
-
-/**
  * Resolve a file-tool path after applying redundant-prefix auto-correction.
  *
  * Despite the historical name, this helper no longer enforces a cwd boundary.
@@ -316,10 +283,11 @@ export function resolvePathWithinCwd(
   cwd: string,
   runtime: Runtime
 ): { correctedPath: string; resolvedPath: string; warning?: string } {
-  const { correctedPath, warning } = validateAndCorrectPath(filePath, cwd, runtime);
+  const redundantPrefixResult = validateNoRedundantPrefix(filePath, cwd, runtime);
+  const correctedPath = redundantPrefixResult?.correctedPath ?? filePath;
   return {
     correctedPath,
     resolvedPath: runtime.normalizePath(correctedPath, cwd),
-    warning,
+    warning: redundantPrefixResult?.warning,
   };
 }
