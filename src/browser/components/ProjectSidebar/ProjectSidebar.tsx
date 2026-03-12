@@ -62,6 +62,7 @@ import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModa
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 import { AgentListItem, type WorkspaceSelection } from "../AgentListItem/AgentListItem";
+import { BestOfGroupListItem } from "./BestOfGroupListItem";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
@@ -84,6 +85,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
+import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
@@ -653,6 +655,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       .filter(([, expanded]) => expanded)
       .map(([workspaceId]) => workspaceId)
   );
+
+  const [expandedBestOfGroups, setExpandedBestOfGroups] = useState<Record<string, boolean>>({});
+  const toggleBestOfGroupExpansion = useCallback((groupId: string) => {
+    setExpandedBestOfGroups((prev) => ({
+      ...prev,
+      [groupId]: !prev[groupId],
+    }));
+  }, []);
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
@@ -1466,15 +1476,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const renderWorkspace = (
                                 metadata: FrontendWorkspaceMetadata,
                                 sectionId?: string,
-                                rowRenderMetaOverride?: AgentRowRenderMeta
+                                rowRenderMetaOverride?: AgentRowRenderMeta | null,
+                                depthOverride?: number,
+                                keyOverride?: string
                               ) => {
                                 const rowRenderMeta =
-                                  rowRenderMetaOverride ??
-                                  baseRowMetaByWorkspaceId.get(metadata.id);
+                                  rowRenderMetaOverride === undefined
+                                    ? baseRowMetaByWorkspaceId.get(metadata.id)
+                                    : (rowRenderMetaOverride ?? undefined);
 
                                 return (
                                   <AgentListItem
-                                    key={metadata.id}
+                                    key={keyOverride ?? metadata.id}
                                     metadata={metadata}
                                     projectPath={projectPath}
                                     projectName={projectName}
@@ -1490,7 +1503,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     onArchiveWorkspace={handleArchiveWorkspace}
                                     onCancelCreation={handleCancelWorkspaceCreation}
                                     depth={
-                                      rowRenderMeta?.depth ?? depthByWorkspaceId[metadata.id] ?? 0
+                                      depthOverride ??
+                                      rowRenderMeta?.depth ??
+                                      depthByWorkspaceId[metadata.id] ??
+                                      0
                                     }
                                     sectionId={sectionId}
                                     rowRenderMeta={rowRenderMeta}
@@ -1500,6 +1516,202 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     onToggleCompletedChildren={toggleCompletedChildrenExpansion}
                                   />
                                 );
+                              };
+
+                              const renderWorkspaceRowsWithBestOfCoalescing = ({
+                                rows,
+                                allRows,
+                                sectionId,
+                                rowMetaByWorkspaceId,
+                              }: {
+                                rows: FrontendWorkspaceMetadata[];
+                                allRows: FrontendWorkspaceMetadata[];
+                                sectionId?: string;
+                                rowMetaByWorkspaceId: ReadonlyMap<string, AgentRowRenderMeta>;
+                              }): React.ReactNode[] => {
+                                if (rows.length === 0) {
+                                  return [];
+                                }
+
+                                const childrenByParentId = new Map<
+                                  string,
+                                  FrontendWorkspaceMetadata[]
+                                >();
+                                for (const workspace of allRows) {
+                                  const parentId = workspace.parentWorkspaceId;
+                                  if (!parentId) {
+                                    continue;
+                                  }
+                                  const children = childrenByParentId.get(parentId) ?? [];
+                                  children.push(workspace);
+                                  childrenByParentId.set(parentId, children);
+                                }
+
+                                const getBestOfGroupId = (
+                                  workspace: FrontendWorkspaceMetadata
+                                ): string | null => {
+                                  const groupId = workspace.bestOf?.groupId;
+                                  if (!groupId || !workspace.parentWorkspaceId) {
+                                    return null;
+                                  }
+                                  if ((workspace.bestOf?.total ?? 1) < 2) {
+                                    return null;
+                                  }
+                                  const hasChildren =
+                                    (childrenByParentId.get(workspace.id)?.length ?? 0) > 0;
+                                  return hasChildren ? null : groupId;
+                                };
+
+                                const allMembersByGroupId = new Map<
+                                  string,
+                                  FrontendWorkspaceMetadata[]
+                                >();
+                                for (const workspace of allRows) {
+                                  const groupId = getBestOfGroupId(workspace);
+                                  if (!groupId) {
+                                    continue;
+                                  }
+                                  const group = allMembersByGroupId.get(groupId) ?? [];
+                                  group.push(workspace);
+                                  allMembersByGroupId.set(groupId, group);
+                                }
+
+                                const visibleMembersByGroupId = new Map<
+                                  string,
+                                  FrontendWorkspaceMetadata[]
+                                >();
+                                for (const workspace of rows) {
+                                  const groupId = getBestOfGroupId(workspace);
+                                  if (!groupId) {
+                                    continue;
+                                  }
+                                  const group = visibleMembersByGroupId.get(groupId) ?? [];
+                                  group.push(workspace);
+                                  visibleMembersByGroupId.set(groupId, group);
+                                }
+
+                                const indexByWorkspaceId = new Map(
+                                  rows.map((workspace, index) => [workspace.id, index] as const)
+                                );
+                                const validGroupIds = new Set<string>();
+                                for (const [groupId, visibleMembers] of visibleMembersByGroupId) {
+                                  const allMembers = allMembersByGroupId.get(groupId) ?? [];
+                                  if (visibleMembers.length < 2 || allMembers.length < 2) {
+                                    continue;
+                                  }
+                                  const indices = visibleMembers
+                                    .map((workspace) => indexByWorkspaceId.get(workspace.id))
+                                    .filter((index): index is number => index != null);
+                                  if (indices.length !== visibleMembers.length) {
+                                    continue;
+                                  }
+                                  const firstIndex = Math.min(...indices);
+                                  const lastIndex = Math.max(...indices);
+                                  if (lastIndex - firstIndex + 1 !== visibleMembers.length) {
+                                    continue;
+                                  }
+                                  validGroupIds.add(groupId);
+                                }
+
+                                const skippedWorkspaceIds = new Set<string>();
+                                const renderedRows: React.ReactNode[] = [];
+
+                                for (const workspace of rows) {
+                                  if (skippedWorkspaceIds.has(workspace.id)) {
+                                    continue;
+                                  }
+
+                                  const bestOfGroupId = getBestOfGroupId(workspace);
+                                  if (!bestOfGroupId || !validGroupIds.has(bestOfGroupId)) {
+                                    renderedRows.push(
+                                      renderWorkspace(
+                                        workspace,
+                                        sectionId,
+                                        rowMetaByWorkspaceId.get(workspace.id)
+                                      )
+                                    );
+                                    continue;
+                                  }
+
+                                  const visibleMembers =
+                                    visibleMembersByGroupId.get(bestOfGroupId) ?? [];
+                                  if (visibleMembers[0]?.id !== workspace.id) {
+                                    skippedWorkspaceIds.add(workspace.id);
+                                    continue;
+                                  }
+
+                                  for (const member of visibleMembers) {
+                                    skippedWorkspaceIds.add(member.id);
+                                  }
+
+                                  const allMembers =
+                                    allMembersByGroupId.get(bestOfGroupId) ?? visibleMembers;
+                                  const depth =
+                                    rowMetaByWorkspaceId.get(workspace.id)?.depth ??
+                                    depthByWorkspaceId[workspace.id] ??
+                                    0;
+                                  const totalCount = Math.max(
+                                    allMembers[0]?.bestOf?.total ?? allMembers.length,
+                                    allMembers.length
+                                  );
+                                  const completedCount = allMembers.filter((member) =>
+                                    hasCompletedAgentReport(member)
+                                  ).length;
+                                  const runningCount = allMembers.filter(
+                                    (member) =>
+                                      member.taskStatus === "running" ||
+                                      member.taskStatus === "awaiting_report"
+                                  ).length;
+                                  const queuedCount = allMembers.filter(
+                                    (member) => member.taskStatus === "queued"
+                                  ).length;
+                                  const interruptedCount = allMembers.filter(
+                                    (member) =>
+                                      member.taskStatus === "interrupted" &&
+                                      !hasCompletedAgentReport(member)
+                                  ).length;
+                                  const groupTitle =
+                                    allMembers[0]?.title ?? allMembers[0]?.name ?? "Task group";
+                                  const isExpanded = expandedBestOfGroups[bestOfGroupId] ?? false;
+
+                                  renderedRows.push(
+                                    <BestOfGroupListItem
+                                      key={`best-of-group:${bestOfGroupId}`}
+                                      groupId={bestOfGroupId}
+                                      title={groupTitle}
+                                      depth={depth}
+                                      totalCount={totalCount}
+                                      visibleCount={visibleMembers.length}
+                                      completedCount={completedCount}
+                                      runningCount={runningCount}
+                                      queuedCount={queuedCount}
+                                      interruptedCount={interruptedCount}
+                                      isExpanded={isExpanded}
+                                      isSelected={allMembers.some(
+                                        (member) => member.id === selectedWorkspace?.workspaceId
+                                      )}
+                                      onToggle={() => {
+                                        toggleBestOfGroupExpansion(bestOfGroupId);
+                                      }}
+                                    />
+                                  );
+
+                                  if (isExpanded) {
+                                    for (const member of visibleMembers) {
+                                      renderedRows.push(
+                                        renderWorkspace(
+                                          member,
+                                          sectionId,
+                                          null,
+                                          depth + 1,
+                                          `best-of-member:${bestOfGroupId}:${member.id}`
+                                        )
+                                      );
+                                    }
+                                  }
+                                }
+
+                                return renderedRows;
                               };
 
                               const renderDraft = (
@@ -1772,13 +1984,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       </button>
                                       {isTierExpanded && (
                                         <>
-                                          {bucket.map((ws) =>
-                                            renderWorkspace(
-                                              ws,
-                                              sectionId,
-                                              rowMetaByVisibleWorkspaceId.get(ws.id)
-                                            )
-                                          )}
+                                          {renderWorkspaceRowsWithBestOfCoalescing({
+                                            rows: bucket,
+                                            allRows: workspaces,
+                                            sectionId,
+                                            rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
+                                          })}
                                           {(() => {
                                             const nextTier = findNextNonEmptyTier(
                                               buckets,
@@ -1794,13 +2005,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                 return (
                                   <>
-                                    {topVisibleRows.map((ws) =>
-                                      renderWorkspace(
-                                        ws,
-                                        sectionId,
-                                        rowMetaByVisibleWorkspaceId.get(ws.id)
-                                      )
-                                    )}
+                                    {renderWorkspaceRowsWithBestOfCoalescing({
+                                      rows: topVisibleRows,
+                                      allRows: workspaces,
+                                      sectionId,
+                                      rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
+                                    })}
                                     {firstTier !== -1 && renderTier(firstTier)}
                                   </>
                                 );

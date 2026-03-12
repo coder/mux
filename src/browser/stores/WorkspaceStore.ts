@@ -178,7 +178,7 @@ interface WorkspaceChatTransientState {
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
-  liveTaskIds: Map<string, string>;
+  liveTaskIds: Map<string, string[]>;
   autoRetryStatus: AutoRetryStatus | null;
 }
 
@@ -1527,9 +1527,9 @@ export class WorkspaceStore {
     return state ?? null;
   }
 
-  getTaskToolLiveTaskId(workspaceId: string, toolCallId: string): string | null {
-    const taskId = this.chatTransientState.get(workspaceId)?.liveTaskIds.get(toolCallId);
-    return taskId ?? null;
+  getTaskToolLiveTaskIds(workspaceId: string, toolCallId: string): string[] | null {
+    const taskIds = this.chatTransientState.get(workspaceId)?.liveTaskIds.get(toolCallId);
+    return taskIds ?? null;
   }
 
   /**
@@ -3724,11 +3724,10 @@ export class WorkspaceStore {
     if (isTaskCreatedEvent(data)) {
       const transient = this.assertChatTransientState(workspaceId);
 
-      // Avoid unnecessary re-renders if the taskId is unchanged.
-      const prev = transient.liveTaskIds.get(data.toolCallId);
-      if (prev === data.taskId) return;
+      const prev = transient.liveTaskIds.get(data.toolCallId) ?? [];
+      if (prev.includes(data.taskId)) return;
 
-      transient.liveTaskIds.set(data.toolCallId, data.taskId);
+      transient.liveTaskIds.set(data.toolCallId, [...prev, data.taskId]);
 
       // Low-frequency: bump immediately so the user can open the child workspace quickly.
       this.states.bump(workspaceId);
@@ -3913,10 +3912,10 @@ export function useBashToolLiveOutput(
  * This exists because foreground tasks (run_in_background=false) won't return a tool result
  * until the child workspace finishes, but we still want to expose the spawned taskId ASAP.
  */
-export function useTaskToolLiveTaskId(
+export function useTaskToolLiveTaskIds(
   workspaceId: string | undefined,
   toolCallId: string | undefined
-): string | null {
+): string[] | null {
   const store = getStoreInstance();
 
   return useSyncExternalStore(
@@ -3926,7 +3925,7 @@ export function useTaskToolLiveTaskId(
     },
     () => {
       if (!workspaceId || !toolCallId) return null;
-      return store.getTaskToolLiveTaskId(workspaceId, toolCallId);
+      return store.getTaskToolLiveTaskIds(workspaceId, toolCallId);
     }
   );
 }

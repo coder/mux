@@ -97,6 +97,12 @@ export interface TaskCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  /** Shared best-of grouping metadata when one tool call spawns multiple sibling tasks. */
+  bestOf?: {
+    groupId: string;
+    index: number;
+    total: number;
+  };
   /** Experiments to inherit to subagent */
   experiments?: {
     programmaticToolCalling?: boolean;
@@ -946,6 +952,29 @@ export class TaskService {
       return Err(`Task.create: invalid agentId (${normalizedAgentId})`);
     }
 
+    let normalizedBestOf: TaskCreateArgs["bestOf"];
+    const bestOf = args.bestOf;
+    if (bestOf) {
+      const groupId = coerceNonEmptyString(bestOf.groupId);
+      if (!groupId) {
+        return Err("Task.create: bestOf.groupId is required when bestOf is provided");
+      }
+      if (!Number.isInteger(bestOf.index) || bestOf.index < 0) {
+        return Err("Task.create: bestOf.index must be a non-negative integer");
+      }
+      if (!Number.isInteger(bestOf.total) || bestOf.total < 2) {
+        return Err("Task.create: bestOf.total must be an integer >= 2");
+      }
+      if (bestOf.index >= bestOf.total) {
+        return Err("Task.create: bestOf.index must be less than bestOf.total");
+      }
+      normalizedBestOf = {
+        groupId,
+        index: bestOf.index,
+        total: bestOf.total,
+      };
+    }
+
     const agentId = parsedAgentId.data;
     const agentType = agentId; // Legacy alias for on-disk compatibility.
 
@@ -1157,6 +1186,7 @@ export class TaskService {
           parentWorkspaceId,
           agentId,
           agentType,
+          bestOf: normalizedBestOf,
           taskStatus: "queued",
           taskPrompt: prompt,
           taskTrunkBranch: trunkBranch,
@@ -1273,6 +1303,7 @@ export class TaskService {
         agentId,
         parentWorkspaceId,
         agentType,
+        bestOf: normalizedBestOf,
         taskStatus: "running",
         taskTrunkBranch: trunkBranch,
         taskBaseCommitSha: taskBaseCommitSha ?? undefined,

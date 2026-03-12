@@ -10,6 +10,19 @@ export const ProjectRefSchema = z.object({
     .meta({ description: "Display name for the project (typically derived from projectPath)" }),
 });
 
+export const BestOfGroupSchema = z.object({
+  groupId: z.string().meta({
+    description:
+      "Stable identifier shared by sibling task workspaces spawned from the same best-of-n request.",
+  }),
+  index: z.number().int().min(0).meta({
+    description: "Zero-based candidate index within the best-of group.",
+  }),
+  total: z.number().int().min(2).meta({
+    description: "Total number of candidates spawned in the best-of group.",
+  }),
+});
+
 export const WorkspaceMetadataSchema = z.object({
   id: z.string().meta({
     description:
@@ -51,6 +64,10 @@ export const WorkspaceMetadataSchema = z.object({
   agentId: z.string().optional().meta({
     description:
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
+  }),
+  bestOf: BestOfGroupSchema.optional().meta({
+    description:
+      "Grouping metadata for best-of-n child tasks spawned from the same parent tool call.",
   }),
   taskStatus: z
     .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])

@@ -25,13 +25,14 @@ import {
   useOptionalWorkspaceContext,
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
-import { useTaskToolLiveTaskId } from "@/browser/stores/WorkspaceStore";
+import { useTaskToolLiveTaskIds } from "@/browser/stores/WorkspaceStore";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
   TaskToolArgs,
   TaskToolResult,
+  TaskToolSuccessResult,
   TaskAwaitToolArgs,
   TaskAwaitToolSuccessResult,
   TaskListToolArgs,
@@ -290,6 +291,140 @@ interface TaskToolCallProps {
   toolCallId?: string;
 }
 
+interface TaskToolDisplayEntry {
+  taskId: string;
+  status: string;
+  title?: string;
+  reportMarkdown?: string;
+}
+
+function getTaskIdsFromTaskToolSuccessResult(result: TaskToolSuccessResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  const taskIds = new Set<string>();
+
+  if (typeof result.taskId === "string" && result.taskId.trim().length > 0) {
+    taskIds.add(result.taskId.trim());
+  }
+
+  if (Array.isArray(result.taskIds)) {
+    for (const taskId of result.taskIds) {
+      if (typeof taskId === "string" && taskId.trim().length > 0) {
+        taskIds.add(taskId.trim());
+      }
+    }
+  }
+
+  if ("tasks" in result && Array.isArray(result.tasks)) {
+    for (const task of result.tasks) {
+      if (typeof task.taskId === "string" && task.taskId.trim().length > 0) {
+        taskIds.add(task.taskId.trim());
+      }
+    }
+  }
+
+  if ("reports" in result && Array.isArray(result.reports)) {
+    for (const report of result.reports) {
+      if (typeof report.taskId === "string" && report.taskId.trim().length > 0) {
+        taskIds.add(report.taskId.trim());
+      }
+    }
+  }
+
+  return Array.from(taskIds);
+}
+
+function getTaskStatusByTaskId(result: TaskToolSuccessResult | null): Map<string, string> {
+  const statusByTaskId = new Map<string, string>();
+  if (!result) {
+    return statusByTaskId;
+  }
+
+  if ("tasks" in result && Array.isArray(result.tasks)) {
+    for (const task of result.tasks) {
+      statusByTaskId.set(task.taskId, task.status);
+    }
+    return statusByTaskId;
+  }
+
+  const taskIds = getTaskIdsFromTaskToolSuccessResult(result);
+  for (const taskId of taskIds) {
+    statusByTaskId.set(taskId, result.status === "completed" ? "completed" : result.status);
+  }
+
+  return statusByTaskId;
+}
+
+function getOwnReportsByTaskId(
+  result: TaskToolSuccessResult | null
+): Map<string, { reportMarkdown: string; title?: string }> {
+  const reportByTaskId = new Map<string, { reportMarkdown: string; title?: string }>();
+  if (result?.status !== "completed") {
+    return reportByTaskId;
+  }
+
+  if (typeof result.taskId === "string" && typeof result.reportMarkdown === "string") {
+    reportByTaskId.set(result.taskId, {
+      reportMarkdown: result.reportMarkdown,
+      title: result.title,
+    });
+  }
+
+  if ("reports" in result && Array.isArray(result.reports)) {
+    for (const report of result.reports) {
+      reportByTaskId.set(report.taskId, {
+        reportMarkdown: report.reportMarkdown,
+        title: report.title,
+      });
+    }
+  }
+
+  return reportByTaskId;
+}
+
+const TaskToolCandidateCard: React.FC<{
+  entry: TaskToolDisplayEntry;
+  index: number;
+  total: number;
+  onOpenTranscript: (taskId: string) => void;
+}> = ({ entry, index, total, onOpenTranscript }) => {
+  const canViewTranscript = entry.status === "completed";
+  const hasReport =
+    typeof entry.reportMarkdown === "string" && entry.reportMarkdown.trim().length > 0;
+
+  return (
+    <div className="bg-code-bg rounded-sm p-2">
+      <div className={cn("flex flex-wrap items-center gap-2", hasReport && "mb-2")}>
+        {total > 1 && <span className="text-muted text-[10px]">candidate {index + 1}</span>}
+        <TaskId id={entry.taskId} />
+        <TaskStatusBadge status={entry.status} />
+        {entry.title && (
+          <span className="text-foreground text-[11px] font-medium">{entry.title}</span>
+        )}
+        {canViewTranscript && (
+          <button
+            type="button"
+            className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
+            onClick={() => {
+              onOpenTranscript(entry.taskId);
+            }}
+          >
+            View transcript
+          </button>
+        )}
+      </div>
+
+      {hasReport && entry.reportMarkdown && (
+        <div className="text-[11px]">
+          <MarkdownRenderer content={entry.reportMarkdown} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   workspaceId,
   args,
@@ -298,64 +433,87 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   taskReportLinking,
   toolCallId,
 }) => {
-  // Narrow result to error or success shape
   const errorResult = isToolErrorResult(result) ? result : null;
-  const successResult = result && typeof result === "object" && "status" in result ? result : null;
+  const successResult: TaskToolSuccessResult | null =
+    result && typeof result === "object" && "status" in result ? result : null;
 
-  const liveTaskId = useTaskToolLiveTaskId(workspaceId, toolCallId);
+  const liveTaskIds = useTaskToolLiveTaskIds(workspaceId, toolCallId) ?? [];
+  const resultTaskIds = getTaskIdsFromTaskToolSuccessResult(successResult);
+  const taskIds = Array.from(new Set([...resultTaskIds, ...liveTaskIds]));
+  const statusByTaskId = getTaskStatusByTaskId(successResult);
+  const ownReportsByTaskId = getOwnReportsByTaskId(successResult);
 
-  // Derive task state from the spawn response (or UI-only task-created event while executing)
-  const taskId = successResult?.taskId ?? liveTaskId ?? undefined;
-  const taskStatus = successResult?.status;
-
-  // Render-time linking: if a later task_await produced the final report, display it here.
-  // This keeps the report under the original spawn card without mutating history.
-  const linkedReport =
-    typeof taskId === "string" ? taskReportLinking?.reportByTaskId.get(taskId) : undefined;
-  const hasLinkedCompletion = Boolean(linkedReport);
-
-  const ownReportMarkdown =
-    successResult?.status === "completed" ? successResult.reportMarkdown : undefined;
-  const ownReportTitle = successResult?.status === "completed" ? successResult.title : undefined;
-
-  const reportMarkdown =
-    typeof ownReportMarkdown === "string" && ownReportMarkdown.trim().length > 0
-      ? ownReportMarkdown
-      : linkedReport?.reportMarkdown;
-  const reportTitle = ownReportTitle ?? linkedReport?.title;
-
-  const displayTaskStatus = hasLinkedCompletion ? "completed" : taskStatus;
-
-  // Override status for background tasks: the aggregator sees success=true and marks "completed",
-  // but if the task is still queued/running, we should show "backgrounded" instead.
-  // If we have a linked completion report, show the task as completed.
-  const effectiveStatus: ToolStatus = hasLinkedCompletion
-    ? "completed"
-    : status === "completed" &&
-        successResult &&
-        (successResult.status === "queued" || successResult.status === "running")
-      ? "backgrounded"
-      : status;
-
-  // Derive expansion: keep task cards collapsed by default (reports can be long),
-  // but auto-expand on error. Always respect the user's explicit toggle.
-  const hasReport = typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0;
-  const shouldAutoExpand = !!errorResult;
-  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
-  const expanded = userExpandedChoice ?? shouldAutoExpand;
-  const toggleExpanded = () => setUserExpandedChoice(!expanded);
-
-  const isBackground = args.run_in_background;
+  const requestedCandidateCount = args.n ?? 1;
+  const totalCandidateCount = Math.max(
+    requestedCandidateCount,
+    taskIds.length,
+    ownReportsByTaskId.size
+  );
+  const isBestOf = totalCandidateCount > 1;
 
   const title = args.title ?? "Task";
   const prompt = args.prompt ?? "";
   const agentType = args.agentId ?? args.subagent_type ?? "unknown";
   const kindBadge = <AgentTypeBadge type={agentType} />;
+  const isBackground = args.run_in_background;
 
-  const canViewTranscript = displayTaskStatus === "completed" && typeof taskId === "string";
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
-  // Show preview (first line or truncated)
+  const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId) => {
+    const ownReport = ownReportsByTaskId.get(taskId);
+    const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
+    const reportMarkdown =
+      typeof ownReport?.reportMarkdown === "string" && ownReport.reportMarkdown.trim().length > 0
+        ? ownReport.reportMarkdown
+        : linkedReport?.reportMarkdown;
+    const reportTitle = ownReport?.title ?? linkedReport?.title;
+    const derivedStatus = (ownReport ?? linkedReport) ? "completed" : statusByTaskId.get(taskId);
+
+    return {
+      taskId,
+      status:
+        derivedStatus ?? (status === "executing" ? "running" : (successResult?.status ?? "queued")),
+      title: reportTitle ?? title,
+      reportMarkdown,
+    };
+  });
+
+  const completedCandidateCount = displayEntries.filter(
+    (entry) =>
+      entry.status === "completed" ||
+      (typeof entry.reportMarkdown === "string" && entry.reportMarkdown.trim().length > 0)
+  ).length;
+  const hasAnyReport = displayEntries.some(
+    (entry) => typeof entry.reportMarkdown === "string" && entry.reportMarkdown.trim().length > 0
+  );
+  const aggregateTaskStatus =
+    displayEntries.length === 0
+      ? successResult?.status
+      : displayEntries.every((entry) => entry.status === "completed")
+        ? "completed"
+        : displayEntries.some((entry) => entry.status === "running")
+          ? "running"
+          : displayEntries.some((entry) => entry.status === "queued")
+            ? "queued"
+            : successResult?.status;
+
+  const effectiveStatus: ToolStatus =
+    aggregateTaskStatus === "completed"
+      ? "completed"
+      : status === "completed" &&
+          (aggregateTaskStatus === "queued" || aggregateTaskStatus === "running")
+        ? "backgrounded"
+        : status;
+
+  const shouldAutoExpand = !!errorResult;
+  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
+  const expanded = userExpandedChoice ?? shouldAutoExpand;
+  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+
+  const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
+  const collapsedPreview = isBestOf ? `Best of ${totalCandidateCount} · ${preview}` : preview;
+  const singleEntry = !isBestOf ? displayEntries[0] : undefined;
+  const createdCandidateCount = taskIds.length;
+  const shouldShowCreationProgress = isBestOf && createdCandidateCount < totalCandidateCount;
 
   return (
     <ToolContainer expanded={expanded}>
@@ -364,6 +522,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         <TaskIcon toolName="task" />
         <ToolName>task</ToolName>
         {kindBadge}
+        {isBestOf && <span className="text-muted text-[10px]">best of {totalCandidateCount}</span>}
         {isBackground && (
           <span className="text-backgrounded text-[10px] font-medium">background</span>
         )}
@@ -372,31 +531,42 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         </StatusIndicator>
       </ToolHeader>
 
-      {canViewTranscript && taskId && (
+      {transcriptTaskId && (
         <SubagentTranscriptDialog
-          open={transcriptOpen}
-          onOpenChange={setTranscriptOpen}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) {
+              setTranscriptTaskId(null);
+            }
+          }}
           workspaceId={workspaceId}
-          taskId={taskId}
+          taskId={transcriptTaskId}
         />
       )}
 
       {expanded && (
         <ToolDetails>
-          {/* Task info surface */}
           <div className="task-surface mt-1 rounded-md p-3">
             <div className="task-divider mb-2 flex flex-wrap items-center gap-2 border-b pb-2">
               <span className="text-task-mode text-[12px] font-semibold">
-                {reportTitle ?? title}
+                {isBestOf
+                  ? `Best of ${totalCandidateCount} · ${title}`
+                  : (singleEntry?.title ?? title)}
               </span>
-              {taskId && <TaskId id={taskId} />}
-              {displayTaskStatus && <TaskStatusBadge status={displayTaskStatus} />}
-              {canViewTranscript && (
+              {isBestOf ? (
+                <span className="text-muted text-[10px]">
+                  {completedCandidateCount}/{totalCandidateCount} completed
+                </span>
+              ) : (
+                singleEntry?.taskId && <TaskId id={singleEntry.taskId} />
+              )}
+              {!isBestOf && singleEntry?.status && <TaskStatusBadge status={singleEntry.status} />}
+              {!isBestOf && singleEntry?.status === "completed" && (
                 <button
                   type="button"
                   className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
                   onClick={() => {
-                    setTranscriptOpen(true);
+                    setTranscriptTaskId(singleEntry.taskId);
                   }}
                 >
                   View transcript
@@ -404,7 +574,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               )}
             </div>
 
-            {/* Prompt / script */}
             <div className="mb-2">
               <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Prompt</div>
               <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
@@ -412,34 +581,54 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               </div>
             </div>
 
-            {/* Report section */}
-            {hasReport && reportMarkdown && (
+            {isBestOf ? (
               <div className="task-divider border-t pt-2">
-                <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
-                <div
-                  className={cn("text-[11px]", hasLinkedCompletion && "bg-code-bg rounded-sm p-2")}
-                >
-                  <MarkdownRenderer content={reportMarkdown} />
+                <div className="text-muted mb-2 text-[10px] tracking-wide uppercase">
+                  Candidates
                 </div>
+                <div className="space-y-2">
+                  {displayEntries.map((entry, index) => (
+                    <TaskToolCandidateCard
+                      key={entry.taskId}
+                      entry={entry}
+                      index={index}
+                      total={totalCandidateCount}
+                      onOpenTranscript={setTranscriptTaskId}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              singleEntry?.reportMarkdown && (
+                <div className="task-divider border-t pt-2">
+                  <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
+                  <div className="text-[11px]">
+                    <MarkdownRenderer content={singleEntry.reportMarkdown} />
+                  </div>
+                </div>
+              )
+            )}
+
+            {shouldShowCreationProgress && (
+              <div className="text-muted mt-2 text-[11px] italic">
+                Creating candidates ({createdCandidateCount}/{totalCandidateCount})
+                <LoadingDots />
               </div>
             )}
 
-            {/* Pending state */}
-            {effectiveStatus === "executing" && !hasReport && (
-              <div className="text-muted text-[11px] italic">
+            {effectiveStatus === "executing" && !hasAnyReport && !shouldShowCreationProgress && (
+              <div className="text-muted mt-2 text-[11px] italic">
                 Task {isBackground ? "running in background" : "executing"}
                 <LoadingDots />
               </div>
             )}
 
-            {/* Error state */}
             {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
           </div>
         </ToolDetails>
       )}
 
-      {/* Collapsed preview */}
-      {!expanded && <div className="text-muted mt-1 truncate text-[10px]">{preview}</div>}
+      {!expanded && <div className="text-muted mt-1 truncate text-[10px]">{collapsedPreview}</div>}
     </ToolContainer>
   );
 };

@@ -253,7 +253,14 @@ export type AskUserQuestionToolSuccessResult = z.infer<typeof AskUserQuestionToo
 export type AskUserQuestionToolResult = AskUserQuestionToolSuccessResult | ToolErrorResult;
 
 // Task Tool Types
-export type TaskToolArgs = z.infer<typeof TOOL_DEFINITIONS.task.schema>;
+export interface TaskToolArgs {
+  agentId?: string | null;
+  subagent_type?: string | null;
+  prompt: string;
+  title: string;
+  run_in_background?: boolean;
+  n?: number | null;
+}
 
 export type TaskToolSuccessResult = z.infer<typeof TaskToolResultSchema>;
 

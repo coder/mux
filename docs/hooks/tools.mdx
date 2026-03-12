@@ -525,15 +525,16 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>task (5)</summary>
+<summary>task (6)</summary>
 
-| Env var                            | JSON path           | Type    | Description |
-| ---------------------------------- | ------------------- | ------- | ----------- |
-| `MUX_TOOL_INPUT_AGENT_ID`          | `agentId`           | string  | —           |
-| `MUX_TOOL_INPUT_PROMPT`            | `prompt`            | string  | —           |
-| `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | —           |
-| `MUX_TOOL_INPUT_SUBAGENT_TYPE`     | `subagent_type`     | string  | —           |
-| `MUX_TOOL_INPUT_TITLE`             | `title`             | string  | —           |
+| Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                            |
+| ---------------------------------- | ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_AGENT_ID`          | `agentId`           | string  | —                                                                                                                                                                                                                                      |
+| `MUX_TOOL_INPUT_N`                 | `n`                 | number  | Optional best-of count. Defaults to 1 when omitted. Usually leave unset unless the developer explicitly asks for best-of-n work. Only use this for sub-agents without interfering side effects, such as read-only agents like explore. |
+| `MUX_TOOL_INPUT_PROMPT`            | `prompt`            | string  | —                                                                                                                                                                                                                                      |
+| `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | —                                                                                                                                                                                                                                      |
+| `MUX_TOOL_INPUT_SUBAGENT_TYPE`     | `subagent_type`     | string  | —                                                                                                                                                                                                                                      |
+| `MUX_TOOL_INPUT_TITLE`             | `title`             | string  | —                                                                                                                                                                                                                                      |
 
 </details>
 

@@ -161,6 +161,11 @@ const TaskAgentIdSchema = z.preprocess(
   AgentIdSchema
 );
 
+const TaskToolBestOfCountSchema = z.preprocess(
+  (value) => value ?? undefined,
+  z.number().int().min(1).max(20).default(1)
+);
+
 const TaskToolAgentArgsSchema = z
   .object({
     // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
@@ -169,6 +174,9 @@ const TaskToolAgentArgsSchema = z
     prompt: z.string().min(1),
     title: z.string().min(1),
     run_in_background: z.boolean().default(false),
+    n: TaskToolBestOfCountSchema.describe(
+      "Optional best-of count. Defaults to 1 when omitted. Usually leave unset unless the developer explicitly asks for best-of-n work. Only use this for sub-agents without interfering side effects, such as read-only agents like explore."
+    ),
   })
   .strict()
   .superRefine((args, ctx) => {
@@ -198,20 +206,15 @@ const TaskToolAgentArgsSchema = z
 
 export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
 
-export const TaskToolQueuedResultSchema = z
+const TaskToolSpawnedTaskSchema = z
   .object({
-    status: z.enum(["queued", "running"]),
     taskId: z.string(),
-    note: z
-      .string()
-      .min(1)
-      .describe("Additional guidance for the caller (e.g., use task_await to monitor progress)."),
+    status: z.enum(["queued", "running"]),
   })
   .strict();
 
-export const TaskToolCompletedResultSchema = z
+const TaskToolCompletedReportSchema = z
   .object({
-    status: z.literal("completed"),
     taskId: z.string(),
     reportMarkdown: z.string(),
     title: z.string().optional(),
@@ -219,6 +222,79 @@ export const TaskToolCompletedResultSchema = z
     agentType: z.string().optional(),
   })
   .strict();
+
+export const TaskToolQueuedResultSchema = z
+  .object({
+    status: z.enum(["queued", "running"]),
+    taskId: z.string().optional(),
+    taskIds: z.array(z.string()).min(1).optional(),
+    tasks: z.array(TaskToolSpawnedTaskSchema).min(1).optional(),
+    note: z
+      .string()
+      .min(1)
+      .describe("Additional guidance for the caller (e.g., use task_await to monitor progress)."),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const hasSingleTaskId = typeof value.taskId === "string" && value.taskId.trim().length > 0;
+    const hasTaskIds = Array.isArray(value.taskIds) && value.taskIds.length > 0;
+    const hasTasks = Array.isArray(value.tasks) && value.tasks.length > 0;
+
+    if (!hasSingleTaskId && !hasTaskIds && !hasTasks) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide taskId for single-task results or taskIds/tasks for best-of results",
+        path: ["taskId"],
+      });
+    }
+  });
+
+export const TaskToolCompletedResultSchema = z
+  .object({
+    status: z.literal("completed"),
+    taskId: z.string().optional(),
+    taskIds: z.array(z.string()).min(1).optional(),
+    reportMarkdown: z.string().optional(),
+    title: z.string().optional(),
+    agentId: z.string().optional(),
+    agentType: z.string().optional(),
+    reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const hasSingleTaskId = typeof value.taskId === "string" && value.taskId.trim().length > 0;
+    const hasSingleReport = typeof value.reportMarkdown === "string";
+    const hasReports = Array.isArray(value.reports) && value.reports.length > 0;
+
+    if (hasSingleTaskId !== hasSingleReport) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Single-task completed results must include both taskId and reportMarkdown",
+        path: hasSingleTaskId ? ["reportMarkdown"] : ["taskId"],
+      });
+    }
+
+    if (!hasSingleTaskId && !hasReports) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Provide taskId/reportMarkdown for single-task results or reports for best-of results",
+        path: ["reports"],
+      });
+    }
+
+    const reports = value.reports;
+    if (hasReports && Array.isArray(reports)) {
+      const taskIds = value.taskIds;
+      if (Array.isArray(taskIds) && taskIds.length !== reports.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "taskIds length must match reports length when both are provided",
+          path: ["taskIds"],
+        });
+      }
+    }
+  });
 
 export const TaskToolResultSchema = z.discriminatedUnion("status", [
   TaskToolQueuedResultSchema,
@@ -1073,15 +1149,16 @@ export const TOOL_DEFINITIONS = {
       "Spawn a sub-agent task (child workspace). " +
       "\n\nIMPORTANT: Subagents only see committed state. Uncommitted changes are not available. " +
       "Commit any changes you want the sub-agent to consider before spawning a task. " +
-      "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background. " +
+      "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. " +
+      "Leave n unset unless the developer explicitly asks for best-of-n work, and only use it for sub-agents without interfering side effects (for example read-only agents like explore). " +
       "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
       "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
-      "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns a completed reportMarkdown. " +
-      "If the foreground wait times out, returns a queued/running taskId with a note (the task continues running); use task_await to monitor progress. " +
-      "If run_in_background is true, returns immediately with a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+      "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When n > 1, the completed result includes one report per spawned task. " +
+      "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
+      "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
       "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
       "Use run_in_background: true when launching multiple tasks in parallel so you can await them as a batch. " +
-      "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
+      "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
       "Use the bash tool to run shell commands.",
     schema: TaskToolArgsSchema,
   },

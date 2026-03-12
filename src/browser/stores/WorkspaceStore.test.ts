@@ -3276,7 +3276,44 @@ describe("WorkspaceStore", () => {
       createAndAddWorkspace(store, workspaceId);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-1")).toBe("child-workspace-1");
+      expect(store.getTaskToolLiveTaskIds(workspaceId, "call-task-1")).toEqual([
+        "child-workspace-1",
+      ]);
+    });
+
+    it("accumulates multiple live taskIds for best-of task tool calls", async () => {
+      const workspaceId = "task-created-workspace-best-of";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "task-created",
+          workspaceId,
+          toolCallId: "call-task-best-of",
+          taskId: "child-workspace-1",
+          timestamp: 1,
+        };
+        yield {
+          type: "task-created",
+          workspaceId,
+          toolCallId: "call-task-best-of",
+          taskId: "child-workspace-2",
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getTaskToolLiveTaskIds(workspaceId, "call-task-best-of")).toEqual([
+        "child-workspace-1",
+        "child-workspace-2",
+      ]);
     });
 
     it("clears live taskId on task tool-call-end", async () => {
@@ -3310,7 +3347,7 @@ describe("WorkspaceStore", () => {
       createAndAddWorkspace(store, workspaceId);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-2")).toBeNull();
+      expect(store.getTaskToolLiveTaskIds(workspaceId, "call-task-2")).toBeNull();
     });
 
     it("preserves pagination state across since reconnect retries", async () => {
@@ -3452,7 +3489,8 @@ describe("WorkspaceStore", () => {
       const seededLiveState = await waitUntil(() => {
         return (
           store.getBashToolLiveOutput(workspaceId, "call-bash-4") !== null &&
-          store.getTaskToolLiveTaskId(workspaceId, "call-task-4") === "child-workspace-4"
+          JSON.stringify(store.getTaskToolLiveTaskIds(workspaceId, "call-task-4")) ===
+            JSON.stringify(["child-workspace-4"])
         );
       });
       expect(seededLiveState).toBe(true);
@@ -3463,7 +3501,7 @@ describe("WorkspaceStore", () => {
         return (
           subscriptionCount >= 2 &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-4") === null &&
-          store.getTaskToolLiveTaskId(workspaceId, "call-task-4") === null
+          store.getTaskToolLiveTaskIds(workspaceId, "call-task-4") === null
         );
       });
       expect(clearedLiveState).toBe(true);
@@ -3559,7 +3597,8 @@ describe("WorkspaceStore", () => {
         return (
           store.getAggregator(workspaceId)?.getOnChatCursor()?.stream === undefined &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-7") !== null &&
-          store.getTaskToolLiveTaskId(workspaceId, "call-task-7") === "child-workspace-7"
+          JSON.stringify(store.getTaskToolLiveTaskIds(workspaceId, "call-task-7")) ===
+            JSON.stringify(["child-workspace-7"])
         );
       });
       expect(seededStaleLiveState).toBe(true);
@@ -3570,7 +3609,7 @@ describe("WorkspaceStore", () => {
         return (
           subscriptionCount >= 2 &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-7") === null &&
-          store.getTaskToolLiveTaskId(workspaceId, "call-task-7") === null
+          store.getTaskToolLiveTaskIds(workspaceId, "call-task-7") === null
         );
       });
       expect(clearedStaleLiveState).toBe(true);
@@ -3670,7 +3709,9 @@ describe("WorkspaceStore", () => {
       expect(store.getBashToolLiveOutput(workspaceId, "call-bash-5")?.stdout).toContain(
         "old-stream-output"
       );
-      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-5")).toBe("child-workspace-5");
+      expect(store.getTaskToolLiveTaskIds(workspaceId, "call-task-5")).toEqual([
+        "child-workspace-5",
+      ]);
 
       releaseFirstSubscription?.();
 
@@ -3680,7 +3721,7 @@ describe("WorkspaceStore", () => {
           store.getAggregator(workspaceId)?.getOnChatCursor()?.stream?.messageId ===
             "msg-new-stream" &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-5") === null &&
-          store.getTaskToolLiveTaskId(workspaceId, "call-task-5") === null
+          store.getTaskToolLiveTaskIds(workspaceId, "call-task-5") === null
         );
       });
       expect(switchedToNewStream).toBe(true);
@@ -3841,7 +3882,9 @@ describe("WorkspaceStore", () => {
       createAndAddWorkspace(store, workspaceId);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-3")).toBe("child-workspace-3");
+      expect(store.getTaskToolLiveTaskIds(workspaceId, "call-task-3")).toEqual([
+        "child-workspace-3",
+      ]);
     });
 
     it("preserves usage state while full replay resets the aggregator", async () => {

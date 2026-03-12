@@ -270,6 +270,73 @@ Found **47 test files** across the project:
 };
 
 /**
+ * Best-of-n task card: coalesces duplicate prompts into one grouped chat card.
+ */
+export const BestOfTaskGroup: Story = {
+  render: () => {
+    const client = createMockORPCClient();
+
+    return (
+      <TaskStoryFrame client={client}>
+        <TaskToolCall
+          workspaceId="ws-best-of"
+          args={{
+            subagent_type: "explore",
+            prompt: "Compare three implementation strategies for the sidebar grouping UI.",
+            title: "Compare implementation strategies",
+            run_in_background: false,
+            n: 3,
+          }}
+          result={{
+            status: "completed",
+            taskIds: ["task-best-of-1", "task-best-of-2", "task-best-of-3"],
+            reports: [
+              {
+                taskId: "task-best-of-1",
+                title: "Option 1",
+                agentId: "explore",
+                agentType: "explore",
+                reportMarkdown: "Focus on **shared helper utilities** for tree coalescing.",
+              },
+              {
+                taskId: "task-best-of-2",
+                title: "Option 2",
+                agentId: "explore",
+                agentType: "explore",
+                reportMarkdown: "Prefer a **synthetic group row** with expandable candidates.",
+              },
+              {
+                taskId: "task-best-of-3",
+                title: "Option 3",
+                agentId: "explore",
+                agentType: "explore",
+                reportMarkdown: "Keep the grouping logic **local to ProjectSidebar**.",
+              },
+            ],
+          }}
+          status="completed"
+        />
+      </TaskStoryFrame>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toolHeader = await canvas.findByText("task", { selector: "span" });
+    await userEvent.click(toolHeader);
+
+    await waitFor(() => {
+      const text = canvasElement.textContent ?? "";
+      if (!text.includes("Best of 3")) {
+        throw new Error("Expected grouped best-of task header to be rendered");
+      }
+      if (!text.includes("candidate 1") || !text.includes("candidate 3")) {
+        throw new Error("Expected grouped candidates to be rendered");
+      }
+    });
+  },
+};
+
+/**
  * Completed task with transcript viewer support.
  */
 export const TaskTranscriptViewer: Story = {

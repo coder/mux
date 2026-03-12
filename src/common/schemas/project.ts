@@ -1,6 +1,6 @@
 import { RuntimeConfigSchema } from "@/common/orpc/schemas/runtime";
 import { WorkspaceMCPOverridesSchema } from "@/common/orpc/schemas/mcp";
-import { ProjectRefSchema } from "@/common/orpc/schemas/workspace";
+import { BestOfGroupSchema, ProjectRefSchema } from "@/common/orpc/schemas/workspace";
 import {
   WorkspaceAISettingsByAgentSchema,
   WorkspaceAISettingsSchema,
@@ -67,6 +67,10 @@ export const WorkspaceConfigSchema = z.object({
   agentId: z.string().optional().meta({
     description:
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
+  }),
+  bestOf: BestOfGroupSchema.optional().meta({
+    description:
+      "Grouping metadata for best-of-n child tasks spawned from the same parent tool call.",
   }),
   taskStatus: z
     .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])

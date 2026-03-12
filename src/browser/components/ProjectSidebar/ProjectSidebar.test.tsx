@@ -287,6 +287,7 @@ function createWorkspace(
     parentWorkspaceId?: string;
     taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
     title?: string;
+    bestOf?: FrontendWorkspaceMetadata["bestOf"];
   }
 ): FrontendWorkspaceMetadata {
   return {
@@ -303,6 +304,7 @@ function createWorkspace(
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     parentWorkspaceId: opts?.parentWorkspaceId,
     taskStatus: opts?.taskStatus,
+    bestOf: opts?.bestOf,
   };
 }
 
@@ -393,5 +395,117 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(expandedParentRow.dataset.completedExpanded).toBe("true");
     expect(childRow.dataset.rowKind).toBe("subagent");
     expect(childRow.dataset.depth).toBe("1");
+  });
+
+  test("coalesces best-of sub-agents into a single sidebar row until expanded", async () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const bestOfGroup = { groupId: "best-of-demo", index: 0, total: 3 } as const;
+    const childOne = {
+      ...createWorkspace("child-1", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Compare implementation options",
+        bestOf: bestOfGroup,
+      }),
+      projects: singleProjectRefs,
+    };
+    const childTwo = {
+      ...createWorkspace("child-2", {
+        parentWorkspaceId: "parent",
+        taskStatus: "queued",
+        title: "Compare implementation options",
+        bestOf: { ...bestOfGroup, index: 1 },
+      }),
+      projects: singleProjectRefs,
+    };
+    const childThree = {
+      ...createWorkspace("child-3", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Compare implementation options",
+        bestOf: { ...bestOfGroup, index: 2 },
+      }),
+      projects: singleProjectRefs,
+    };
+
+    const sortedWorkspacesByProject = new Map([
+      ["/projects/demo-project", [parentWorkspace, childOne, childTwo, childThree]],
+    ]);
+
+    const projectConfig = { workspaces: [] };
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => ({
+      userProjects: new Map([["/projects/demo-project", projectConfig]]),
+      systemProjectPath: null,
+      resolveProjectPath: () => null,
+      getProjectConfig: () => projectConfig,
+      loading: false,
+      refreshProjects: () => Promise.resolve(),
+      addProject: () => undefined,
+      removeProject: () => Promise.resolve({ success: true }),
+      isProjectCreateModalOpen: false,
+      openProjectCreateModal: () => undefined,
+      closeProjectCreateModal: () => undefined,
+      workspaceModalState: {
+        isOpen: false,
+        projectPath: null,
+        projectName: "",
+        branches: [],
+        defaultTrunkBranch: undefined,
+        loadErrorMessage: null,
+        isLoading: false,
+      },
+      openWorkspaceModal: () => Promise.resolve(),
+      closeWorkspaceModal: () => undefined,
+      getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+      getSecrets: () => Promise.resolve([]),
+      updateSecrets: () => Promise.resolve(),
+      createSection: () =>
+        Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
+      updateSection: () => resolveVoidResult(),
+      removeSection: () => resolveVoidResult(),
+      reorderSections: () => resolveVoidResult(),
+      assignWorkspaceToSection: () => resolveVoidResult(),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    }));
+
+    const workspaceRecency = {
+      parent: Date.now(),
+      "child-1": Date.now(),
+      "child-2": Date.now(),
+      "child-3": Date.now(),
+    };
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        workspaceRecency={workspaceRecency}
+      />
+    );
+
+    expect(view.getByTestId(agentItemTestId("parent"))).toBeTruthy();
+    const groupRow = view.getByTestId("best-of-group-best-of-demo");
+    expect(groupRow.textContent).toContain("Best of 3");
+    expect(view.queryByTestId(agentItemTestId("child-1"))).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("child-2"))).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("child-3"))).toBeNull();
+
+    fireEvent.click(groupRow);
+
+    await waitFor(() => {
+      expect(view.getByTestId(agentItemTestId("child-1"))).toBeTruthy();
+      expect(view.getByTestId(agentItemTestId("child-2"))).toBeTruthy();
+      expect(view.getByTestId(agentItemTestId("child-3"))).toBeTruthy();
+    });
   });
 });
