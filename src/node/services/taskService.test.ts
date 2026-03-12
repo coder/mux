@@ -3552,7 +3552,10 @@ describe("TaskService", () => {
       await taskService.initialize();
 
       expect(sendMessage).toHaveBeenCalledTimes(2);
-      expect(sendMessage.mock.calls.map(([taskId]) => taskId)).toEqual([
+      const sendMessageCalls = sendMessage.mock.calls as unknown as Array<
+        Parameters<WorkspaceService["sendMessage"]>
+      >;
+      expect(sendMessageCalls.map(([taskId]) => taskId)).toEqual([
         awaitingReportTaskId,
         runningTaskId,
       ]);

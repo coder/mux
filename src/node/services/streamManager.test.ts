@@ -1632,7 +1632,7 @@ describe("StreamManager - processStreamWithCleanup cleanup", () => {
       stepTracker: {},
     };
 
-    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
+    const workspaceStreamsValue: unknown = Reflect.get(streamManager, "workspaceStreams");
     if (!(workspaceStreamsValue instanceof Map)) {
       throw new Error("StreamManager.workspaceStreams is not a Map");
     }
@@ -1804,7 +1804,7 @@ describe("StreamManager - previousResponseId recovery", () => {
       );
     }
 
-    const lostResponseIds = Reflect.get(streamManager, "lostResponseIds");
+    const lostResponseIds: unknown = Reflect.get(streamManager, "lostResponseIds");
     if (!(lostResponseIds instanceof Set)) {
       throw new Error("StreamManager.lostResponseIds is not a Set");
     }
