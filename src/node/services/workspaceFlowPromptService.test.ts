@@ -521,6 +521,7 @@ test("shouldEmitUpdate skips repeated clear notifications while deletion is pend
         },
         pendingFingerprint: string | null,
         inFlightFingerprint: string | null,
+        failedFingerprint: string | null,
         currentFingerprint: string
       ) => boolean;
     }
@@ -534,6 +535,7 @@ test("shouldEmitUpdate skips repeated clear notifications while deletion is pend
         autoSendMode: "end-of-turn",
       },
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      null,
       null,
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     )
@@ -555,6 +557,7 @@ test("shouldEmitUpdate respects auto-send being off", () => {
         },
         pendingFingerprint: string | null,
         inFlightFingerprint: string | null,
+        failedFingerprint: string | null,
         currentFingerprint: string
       ) => boolean;
     }
@@ -567,6 +570,7 @@ test("shouldEmitUpdate respects auto-send being off", () => {
         lastSentFingerprint: "previous-fingerprint",
         autoSendMode: "off",
       },
+      null,
       null,
       null,
       "new-fingerprint"
@@ -589,6 +593,7 @@ test("shouldEmitUpdate suppresses flow prompt revisions that are already in flig
         },
         pendingFingerprint: string | null,
         inFlightFingerprint: string | null,
+        failedFingerprint: string | null,
         currentFingerprint: string
       ) => boolean;
     }
@@ -603,6 +608,7 @@ test("shouldEmitUpdate suppresses flow prompt revisions that are already in flig
       },
       null,
       "new-fingerprint",
+      null,
       "new-fingerprint"
     )
   ).toBe(false);
