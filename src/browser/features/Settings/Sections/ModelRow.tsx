@@ -185,6 +185,11 @@ export interface ModelRowProps {
     isAuto: boolean;
     displayName: string;
   };
+  /** What route Auto would pick (priority-walk only, ignoring overrides) */
+  autoResolvedRoute?: {
+    route: string;
+    displayName: string;
+  };
   /** Configured routes that can serve this model */
   availableRoutes?: AvailableRoute[];
   /** Whether 1M context is enabled for this model */
@@ -221,6 +226,10 @@ export function ModelRow(props: ModelRowProps) {
   const mappedModelDisplayName = mappedModelId ? formatModelDisplayName(mappedModelId) : null;
 
   const configuredRoutes = (props.availableRoutes ?? []).filter((route) => route.isConfigured);
+  // The Auto label must show the priority-walk result (ignoring overrides), not the
+  // currently-active route — otherwise it mirrors whatever explicit override is selected.
+  const autoRouteDisplayName =
+    props.autoResolvedRoute?.displayName ?? configuredRoutes[0]?.displayName ?? "Direct";
   const routeDisplayName =
     props.resolvedRoute?.displayName ?? configuredRoutes[0]?.displayName ?? "Direct";
   const routeSelectValue =
@@ -389,7 +398,7 @@ export function ModelRow(props: ModelRowProps) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">Auto ({routeDisplayName})</SelectItem>
+              <SelectItem value="auto">Auto ({autoRouteDisplayName})</SelectItem>
               {configuredRoutes.map((route) => (
                 <SelectItem key={route.route} value={route.route}>
                   {route.displayName}

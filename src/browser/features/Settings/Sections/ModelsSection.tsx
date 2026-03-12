@@ -460,6 +460,7 @@ export function ModelsSection() {
                       saving={false}
                       hasActiveEdit={editing !== null}
                       resolvedRoute={routing.resolveRoute(model.fullId)}
+                      autoResolvedRoute={routing.resolveAutoRoute(model.fullId)}
                       availableRoutes={routing.availableRoutes(model.fullId)}
                       is1MContextEnabled={has1MContext(model.fullId)}
                       onSetDefault={() => setDefaultModel(model.fullId)}
@@ -538,6 +539,7 @@ export function ModelsSection() {
                   isDefault={defaultModel === model.fullId}
                   isEditing={false}
                   resolvedRoute={routing.resolveRoute(model.fullId)}
+                  autoResolvedRoute={routing.resolveAutoRoute(model.fullId)}
                   availableRoutes={routing.availableRoutes(model.fullId)}
                   is1MContextEnabled={has1MContext(model.fullId)}
                   onSetDefault={() => setDefaultModel(model.fullId)}

@@ -190,6 +190,27 @@ describe("resolveRoute", () => {
     expect(resolved.routeProvider).toBe("mux-gateway");
   });
 
+  test("empty overrides ignores per-model override and walks priority list", () => {
+    // With the override, resolves to openrouter:
+    const withOverride = resolveRoute(
+      MODEL,
+      ["direct", "openrouter"],
+      { [MODEL]: "openrouter" },
+      createIsConfigured(["anthropic", "openrouter"])
+    );
+    expect(withOverride.routeProvider).toBe("openrouter");
+
+    // With empty overrides (Auto), walks priority and picks direct:
+    const withoutOverride = resolveRoute(
+      MODEL,
+      ["direct", "openrouter"],
+      {},
+      createIsConfigured(["anthropic", "openrouter"])
+    );
+    expect(withoutOverride.routeProvider).toBe("anthropic");
+    expect(withoutOverride.routeModelId).toBe("claude-opus-4-6");
+  });
+
   test('matches "direct" route entry when origin is configured', () => {
     const resolved = resolveRoute(
       MODEL,

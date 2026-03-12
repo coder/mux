@@ -38,6 +38,13 @@ export interface RoutingState {
     displayName: string;
   };
 
+  /** What route would be used if all per-model overrides were cleared? */
+  resolveAutoRoute(canonicalModel: string): {
+    route: string;
+    isAuto: true;
+    displayName: string;
+  };
+
   /** Which routes can reach a given model's origin? */
   availableRoutes(canonicalModel: string): AvailableRoute[];
 
@@ -205,6 +212,27 @@ export function useRouting(): RoutingState {
     [isConfigured, routeOverrides, routePriority]
   );
 
+  // Resolve ignoring per-model overrides — answers "what would Auto pick?"
+  const resolveAutoRoute = useCallback(
+    (canonicalModel: string) => {
+      const normalized = normalizeToCanonical(canonicalModel);
+      const resolved: RouteContext = resolveRouteForModel(
+        normalized,
+        routePriority,
+        {}, // empty overrides — priority-walk only
+        isConfigured
+      );
+
+      const route = resolved.routeProvider === resolved.origin ? "direct" : resolved.routeProvider;
+      return {
+        route,
+        isAuto: true as const,
+        displayName: getRouteDisplayName(route),
+      };
+    },
+    [isConfigured, routePriority]
+  );
+
   const availableRoutes = useCallback(
     (canonicalModel: string): AvailableRoute[] => listAvailableRoutes(canonicalModel, isConfigured),
     [isConfigured]
@@ -214,6 +242,7 @@ export function useRouting(): RoutingState {
     routePriority,
     routeOverrides,
     resolveRoute,
+    resolveAutoRoute,
     availableRoutes,
     setRoutePreferences,
     setRoutePriority,
