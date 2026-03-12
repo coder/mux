@@ -1245,6 +1245,78 @@ describe("WorkspaceService Flow Prompting controls", () => {
     await cleanupHistory();
   });
 
+  test("marks an idle Flow Prompting revision as failed when sendMessage returns an error", async () => {
+    const workspaceId = "flow-idle-failure-workspace";
+    const flowPromptSession = {
+      isBusy: mock(() => false),
+      clearFlowPromptUpdate: mock(() => undefined),
+      getFlowPromptSendOptions: mock(() =>
+        Promise.resolve({
+          model: "openai:gpt-4o-mini",
+          agentId: "exec",
+        })
+      ),
+      queueFlowPromptUpdate: mock(() => undefined),
+    };
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = mock(() => flowPromptSession as unknown as AgentSession);
+
+    const flowPromptService = (
+      workspaceService as unknown as {
+        flowPromptService: {
+          isCurrentFingerprint: (workspaceId: string, fingerprint: string) => Promise<boolean>;
+          rememberUpdate: (workspaceId: string, fingerprint: string, nextContent: string) => void;
+          clearPendingUpdate: (workspaceId: string, fingerprint?: string) => void;
+          markInFlightUpdate: (workspaceId: string, fingerprint: string) => void;
+          clearInFlightUpdate: (workspaceId: string, fingerprint?: string) => void;
+          markFailedUpdate: (workspaceId: string, fingerprint: string) => void;
+          forgetUpdate: (workspaceId: string, fingerprint: string) => void;
+        };
+      }
+    ).flowPromptService;
+    spyOn(flowPromptService, "rememberUpdate").mockImplementation(() => undefined);
+    spyOn(flowPromptService, "isCurrentFingerprint").mockResolvedValue(true);
+    spyOn(flowPromptService, "clearPendingUpdate").mockImplementation(() => undefined);
+    spyOn(flowPromptService, "markInFlightUpdate").mockImplementation(() => undefined);
+    const clearInFlightUpdate = spyOn(flowPromptService, "clearInFlightUpdate").mockImplementation(
+      () => undefined
+    );
+    const markFailedUpdate = spyOn(flowPromptService, "markFailedUpdate").mockImplementation(
+      () => undefined
+    );
+    const forgetUpdate = spyOn(flowPromptService, "forgetUpdate").mockImplementation(
+      () => undefined
+    );
+    spyOn(workspaceService, "sendMessage").mockResolvedValue(
+      Err({ type: "unknown", raw: "invalid provider config" })
+    );
+
+    await (
+      workspaceService as unknown as {
+        handleFlowPromptUpdate: (event: {
+          workspaceId: string;
+          path: string;
+          nextContent: string;
+          nextFingerprint: string;
+          text: string;
+        }) => Promise<void>;
+      }
+    ).handleFlowPromptUpdate({
+      workspaceId,
+      path: "/tmp/test/workspace/.mux/prompts/test-workspace.md",
+      nextContent: "current flow prompt revision",
+      nextFingerprint: "current-fingerprint",
+      text: "[Flow prompt updated. Follow current agent instructions.]",
+    });
+
+    expect(clearInFlightUpdate).toHaveBeenCalledWith(workspaceId, "current-fingerprint");
+    expect(markFailedUpdate).toHaveBeenCalledWith(workspaceId, "current-fingerprint");
+    expect(forgetUpdate).toHaveBeenCalledWith(workspaceId, "current-fingerprint");
+  });
+
   test("switching auto-send off clears the queued Flow Prompting update", async () => {
     const workspaceId = "flow-controls-workspace";
     const session = {

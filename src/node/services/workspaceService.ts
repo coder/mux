@@ -3197,6 +3197,10 @@ export class WorkspaceService extends EventEmitter {
         prepared.event.workspaceId,
         prepared.event.nextFingerprint
       );
+      this.flowPromptService.markFailedUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
       this.flowPromptService.forgetUpdate(
         prepared.event.workspaceId,
         prepared.event.nextFingerprint
@@ -3225,6 +3229,10 @@ export class WorkspaceService extends EventEmitter {
 
     if (!result.success) {
       this.flowPromptService.clearInFlightUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      this.flowPromptService.markFailedUpdate(
         prepared.event.workspaceId,
         prepared.event.nextFingerprint
       );

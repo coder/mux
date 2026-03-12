@@ -608,6 +608,42 @@ test("shouldEmitUpdate suppresses flow prompt revisions that are already in flig
   ).toBe(false);
 });
 
+test("shouldEmitUpdate suppresses flow prompt revisions that most recently failed to send", () => {
+  const service = new WorkspaceFlowPromptService({
+    getSessionDir: () => "/tmp/flow-prompt-session",
+  } as unknown as Config);
+
+  const shouldEmitUpdate = (
+    service as unknown as {
+      shouldEmitUpdate: (
+        persisted: {
+          lastSentContent: string | null;
+          lastSentFingerprint: string | null;
+          autoSendMode: "off" | "end-of-turn";
+        },
+        pendingFingerprint: string | null,
+        inFlightFingerprint: string | null,
+        failedFingerprint: string | null,
+        currentFingerprint: string
+      ) => boolean;
+    }
+  ).shouldEmitUpdate.bind(service);
+
+  expect(
+    shouldEmitUpdate(
+      {
+        lastSentContent: "Keep this instruction active.",
+        lastSentFingerprint: "previous-fingerprint",
+        autoSendMode: "end-of-turn",
+      },
+      null,
+      null,
+      "failed-fingerprint",
+      "failed-fingerprint"
+    )
+  ).toBe(false);
+});
+
 test("getState waits for an in-flight refresh instead of returning stale state", async () => {
   const workspaceId = "workspace-1";
   const staleState = {
@@ -647,6 +683,7 @@ test("getState waits for an in-flight refresh instead of returning stale state",
           queuedRefreshEmitEvents: boolean;
           pendingFingerprint: string | null;
           inFlightFingerprint: string | null;
+          failedFingerprint: string | null;
           lastState: typeof staleState | null;
           activeChatSubscriptions: number;
           lastOpenedAtMs: number | null;
@@ -664,6 +701,7 @@ test("getState waits for an in-flight refresh instead of returning stale state",
     queuedRefreshEmitEvents: false,
     pendingFingerprint: null,
     inFlightFingerprint: null,
+    failedFingerprint: null,
     lastState: staleState,
     activeChatSubscriptions: 0,
     lastOpenedAtMs: null,
@@ -764,6 +802,7 @@ test("refreshMonitor reruns once when a save lands during an in-flight refresh",
           queuedRefreshEmitEvents: boolean;
           pendingFingerprint: string | null;
           inFlightFingerprint: string | null;
+          failedFingerprint: string | null;
           lastState: typeof staleState | null;
           activeChatSubscriptions: number;
           lastOpenedAtMs: number | null;
@@ -781,6 +820,7 @@ test("refreshMonitor reruns once when a save lands during an in-flight refresh",
     queuedRefreshEmitEvents: false,
     pendingFingerprint: null,
     inFlightFingerprint: null,
+    failedFingerprint: null,
     lastState: staleState,
     activeChatSubscriptions: 0,
     lastOpenedAtMs: null,
@@ -874,6 +914,7 @@ test("refreshMonitor keeps a queued clear update pending until the clear is acce
           queuedRefreshEmitEvents: boolean;
           pendingFingerprint: string | null;
           inFlightFingerprint: string | null;
+          failedFingerprint: string | null;
           lastState: null;
           activeChatSubscriptions: number;
           lastOpenedAtMs: number | null;
@@ -891,6 +932,7 @@ test("refreshMonitor keeps a queued clear update pending until the clear is acce
     queuedRefreshEmitEvents: false,
     pendingFingerprint: emptyFingerprint,
     inFlightFingerprint: null,
+    failedFingerprint: null,
     lastState: null,
     activeChatSubscriptions: 0,
     lastOpenedAtMs: null,

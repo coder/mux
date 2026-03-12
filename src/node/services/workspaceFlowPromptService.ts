@@ -75,6 +75,7 @@ interface FlowPromptMonitor {
   queuedRefreshEmitEvents: boolean;
   pendingFingerprint: string | null;
   inFlightFingerprint: string | null;
+  failedFingerprint: string | null;
   lastState: FlowPromptState | null;
   activeChatSubscriptions: number;
   lastOpenedAtMs: number | null;
@@ -569,6 +570,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
       queuedRefreshEmitEvents: false,
       pendingFingerprint: null,
       inFlightFingerprint: null,
+      failedFingerprint: null,
       lastState: null,
       activeChatSubscriptions: 0,
       lastOpenedAtMs: null,
@@ -625,6 +627,19 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     }
 
     monitor.inFlightFingerprint = fingerprint;
+    if (monitor.failedFingerprint === fingerprint) {
+      monitor.failedFingerprint = null;
+    }
+    this.refreshMonitorInBackground(workspaceId);
+  }
+
+  markFailedUpdate(workspaceId: string, fingerprint: string): void {
+    const monitor = this.monitors.get(workspaceId);
+    if (!monitor) {
+      return;
+    }
+
+    monitor.failedFingerprint = fingerprint;
     this.refreshMonitorInBackground(workspaceId);
   }
 
@@ -664,6 +679,11 @@ export class WorkspaceFlowPromptService extends EventEmitter {
         break;
       }
       updatesForWorkspace.delete(oldestFingerprint);
+    }
+
+    const monitor = this.monitors.get(workspaceId);
+    if (monitor?.failedFingerprint === fingerprint) {
+      monitor.failedFingerprint = null;
     }
   }
 
@@ -802,9 +822,16 @@ export class WorkspaceFlowPromptService extends EventEmitter {
             monitor.pendingFingerprint = null;
           }
         }
+        if (
+          monitor?.failedFingerprint != null &&
+          currentFingerprint !== monitor.failedFingerprint
+        ) {
+          monitor.failedFingerprint = null;
+        }
 
         const pendingFingerprint = monitor?.pendingFingerprint ?? null;
         const inFlightFingerprint = monitor?.inFlightFingerprint ?? null;
+        const failedFingerprint = monitor?.failedFingerprint ?? null;
         const state = this.buildState(snapshot, persisted, pendingFingerprint);
         const currentUpdate = this.buildCurrentUpdate(snapshot, persisted, state);
 
@@ -824,6 +851,7 @@ export class WorkspaceFlowPromptService extends EventEmitter {
             persisted,
             pendingFingerprint,
             inFlightFingerprint,
+            failedFingerprint,
             currentUpdate.nextFingerprint
           )
         ) {
@@ -867,12 +895,14 @@ export class WorkspaceFlowPromptService extends EventEmitter {
     persisted: PersistedFlowPromptState,
     pendingFingerprint: string | null,
     inFlightFingerprint: string | null,
+    failedFingerprint: string | null,
     currentFingerprint: string
   ): boolean {
     return (
       persisted.autoSendMode === "end-of-turn" &&
       pendingFingerprint !== currentFingerprint &&
-      inFlightFingerprint !== currentFingerprint
+      inFlightFingerprint !== currentFingerprint &&
+      failedFingerprint !== currentFingerprint
     );
   }
 
