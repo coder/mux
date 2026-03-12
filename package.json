@@ -179,6 +179,7 @@
     "@typescript-eslint/parser": "^8.44.1",
     "@typescript/native-preview": "^7.0.0-dev.20251014.1",
     "@vitejs/plugin-react": "^4.0.0",
+    "agent-browser": "^0.17.1",
     "autoprefixer": "^10.4.21",
     "babel-jest": "^30.2.0",
     "babel-plugin-react-compiler": "^1.0.0",
@@ -311,5 +312,20 @@
     },
     "npmRebuild": false,
     "buildDependenciesFromSource": false
-  }
+  },
+  "trustedDependencies": [
+    "@swc/core",
+    "agent-browser",
+    "core-js",
+    "cpu-features",
+    "edgedriver",
+    "electron",
+    "esbuild",
+    "geckodriver",
+    "lzma-native",
+    "node-pty",
+    "sharp",
+    "ssh2",
+    "unrs-resolver"
+  ]
 }
