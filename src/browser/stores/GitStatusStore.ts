@@ -738,7 +738,24 @@ export class GitStatusStore {
         const existingWorkspaceId = secondaryRepoProjectPaths.get(project.projectPath);
         if (existingWorkspaceId != null) {
           // Workspaces that share a fetch key can also share the same secondary repo.
-          // Keep the first owning workspace so one duplicate path cannot abort the fetch cycle.
+          // Prefer an owner whose runtime can passively run git commands so a stopped
+          // workspace does not suppress fetches that another workspace could perform.
+          const existingMetadata = workspaces.get(existingWorkspaceId);
+          assert(
+            existingMetadata != null,
+            `Secondary repo fetch owner ${existingWorkspaceId} must still exist in the workspace map`
+          );
+          const existingWorkspaceCanFetch = canRunPassiveRuntimeCommand(
+            existingMetadata.runtimeConfig,
+            this.runtimeStatusStore.getStatus(existingWorkspaceId)
+          );
+          const nextWorkspaceCanFetch = canRunPassiveRuntimeCommand(
+            metadata.runtimeConfig,
+            this.runtimeStatusStore.getStatus(metadata.id)
+          );
+          if (!existingWorkspaceCanFetch && nextWorkspaceCanFetch) {
+            secondaryRepoProjectPaths.set(project.projectPath, metadata.id);
+          }
           continue;
         }
         secondaryRepoProjectPaths.set(project.projectPath, metadata.id);
