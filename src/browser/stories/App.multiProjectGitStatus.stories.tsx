@@ -245,6 +245,7 @@ export const DialogOpen: AppStory = {
     const dialogScope = within(dialog);
     await dialogScope.findByText("Project");
     await dialogScope.findByText("docs");
-    await dialogScope.findByText("Dirty");
+    // Assert on the unique summary text instead of the repeated Dirty header/cell label.
+    await dialogScope.findByText("1 dirty");
   },
 };
