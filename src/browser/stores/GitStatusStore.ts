@@ -802,14 +802,68 @@ export class GitStatusStore {
     return Date.now() - cached.lastFetch > delay;
   }
 
+  private async executeWorkspaceFetch(
+    workspaceId: string,
+    repoRootProjectPath?: string | null
+  ): Promise<void> {
+    assert(this.client, "Git fetch requires an initialized client");
+
+    const result = await this.client.workspace.executeBash({
+      workspaceId,
+      script: GIT_FETCH_SCRIPT,
+      // Passive fetches use the runtime path because git fetch / git ls-remote
+      // may need remote credentials that only exist inside the runtime. These
+      // background fetches are only scheduled when that runtime is already running.
+      options: repoRootBashOptions(30, repoRootProjectPath),
+    });
+
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    if (!result.data.success) {
+      throw new Error(result.data.error || "Unknown error");
+    }
+  }
+
+  private async fetchSecondaryWorkspaceRepos(
+    fetchKey: string,
+    workspaceId: string,
+    projectPaths: readonly string[]
+  ): Promise<void> {
+    if (!this.client || !this.isActive || !this.workspaceMetadata.has(workspaceId)) {
+      return;
+    }
+
+    for (const projectPath of projectPaths) {
+      assert(projectPath.trim().length > 0, "Secondary repo fetch requires a projectPath");
+      try {
+        await this.executeWorkspaceFetch(workspaceId, projectPath);
+      } catch (secondaryError) {
+        // Secondary fetches are best-effort so a single stale repo does not back off
+        // the entire workspace's primary background refresh loop.
+        console.debug(
+          `[fetch] Secondary repo fetch failed for ${fetchKey} (${projectPath}):`,
+          secondaryError
+        );
+      }
+    }
+  }
+
   /**
    * Fetch updates for a workspace.
-   * For local workspaces: fetches the shared project repo.
+   * For local workspaces: fetches the shared primary repo and any secondary repo roots
+   * in multi-project workspaces.
    * For SSH workspaces: fetches the workspace's individual repo.
    */
   private async fetchWorkspace(fetchKey: string, workspaceId: string): Promise<void> {
     // Defensive: Return early if client is unavailable
     if (!this.client) {
+      return;
+    }
+
+    const metadata = this.workspaceMetadata.get(workspaceId);
+    if (!metadata) {
       return;
     }
 
@@ -825,21 +879,33 @@ export class GitStatusStore {
     this.fetchCache.set(fetchKey, { ...cache, inProgress: true });
 
     try {
-      const result = await this.client.workspace.executeBash({
-        workspaceId,
-        script: GIT_FETCH_SCRIPT,
-        // Passive fetches use the runtime path because git fetch / git ls-remote
-        // may need remote credentials that only exist inside the runtime. These
-        // background fetches are only scheduled when that runtime is already running.
-        options: repoRootBashOptions(30),
-      });
+      await this.executeWorkspaceFetch(workspaceId);
 
-      if (!result.success) {
-        throw new Error(result.error);
-      }
+      if (isMultiProject(metadata)) {
+        const secondaryRepoProjectPaths = Array.from(
+          new Set(
+            getProjects(metadata)
+              .filter((project) => project.projectPath !== metadata.projectPath)
+              .map((project) => project.projectPath)
+          )
+        );
 
-      if (!result.data.success) {
-        throw new Error(result.data.error || "Unknown error");
+        if (secondaryRepoProjectPaths.length > 0) {
+          // Keep passive refreshes non-blocking for the current status check while still
+          // refreshing every repo root in the workspace on the background path.
+          setTimeout(() => {
+            this.fetchSecondaryWorkspaceRepos(
+              fetchKey,
+              workspaceId,
+              secondaryRepoProjectPaths
+            ).catch((secondaryError) => {
+              console.debug(
+                `[fetch] Secondary repo refresh loop failed for ${fetchKey}:`,
+                secondaryError
+              );
+            });
+          }, 0);
+        }
       }
 
       // Success - reset failure counter
