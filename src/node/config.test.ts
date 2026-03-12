@@ -385,6 +385,626 @@ describe("Config", () => {
     });
   });
 
+  describe("system config layer", () => {
+    const originalSystemConfigEnv = process.env.MUX_SYSTEM_CONFIG;
+
+    const writeSystemConfig = (data: Record<string, unknown>) => {
+      fs.writeFileSync(path.join(tempDir, "config.system.json"), JSON.stringify(data));
+    };
+
+    const writeUserConfig = (data: Record<string, unknown>) => {
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify(data));
+    };
+
+    beforeEach(() => {
+      delete process.env.MUX_SYSTEM_CONFIG;
+      config = new Config(tempDir);
+    });
+
+    afterEach(() => {
+      if (originalSystemConfigEnv === undefined) {
+        delete process.env.MUX_SYSTEM_CONFIG;
+      } else {
+        process.env.MUX_SYSTEM_CONFIG = originalSystemConfigEnv;
+      }
+    });
+
+    it("system config provides defaults when user config is absent", () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [["/sys/project", { workspaces: [] }]],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+      expect(loaded.projects.get("/sys/project")).toEqual({ workspaces: [] });
+    });
+
+    it("preserves system config when user config is malformed", () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [["/sys/project", { workspaces: [] }]],
+      });
+      fs.writeFileSync(path.join(tempDir, "config.json"), "{ this is not valid json");
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+      expect(loaded.projects.get("/sys/project")).toEqual({ workspaces: [] });
+    });
+
+    it("user config overrides system config key-by-key", () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        defaultProjectDir: "/system/default",
+      });
+      writeUserConfig({
+        defaultModel: "openai:gpt-4o-mini",
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o-mini");
+      expect(loaded.defaultProjectDir).toBe("/system/default");
+    });
+
+    it("deep merge for nested objects", () => {
+      writeSystemConfig({
+        projects: [],
+        featureFlagOverrides: {
+          flagA: "on",
+        },
+        agentAiDefaults: {
+          plan: {
+            modelString: "openai:gpt-4o",
+          },
+        },
+      });
+      writeUserConfig({
+        projects: [],
+        featureFlagOverrides: {
+          flagB: "off",
+        },
+        agentAiDefaults: {
+          exec: {
+            modelString: "openai:gpt-4o-mini",
+            enabled: true,
+          },
+        },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.featureFlagOverrides).toEqual({
+        flagA: "on",
+        flagB: "off",
+      });
+      expect(loaded.agentAiDefaults).toMatchObject({
+        plan: {
+          modelString: "openai:gpt-4o",
+        },
+        exec: {
+          modelString: "openai:gpt-4o-mini",
+          enabled: true,
+        },
+      });
+    });
+
+    it("array fields use user value entirely (no array merge)", () => {
+      writeSystemConfig({
+        projects: [],
+        hiddenModels: ["openai:gpt-4o-mini"],
+      });
+      writeUserConfig({
+        projects: [],
+        hiddenModels: ["openai:gpt-4o"],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o"]);
+    });
+
+    it("system config ignored for writes", async () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [["/sys/project", { workspaces: [] }]],
+      });
+
+      const systemConfigPath = path.join(tempDir, "config.system.json");
+      const originalSystemConfig = fs.readFileSync(systemConfigPath, "utf-8");
+
+      const loaded = config.loadConfigOrDefault();
+      await config.saveConfig(loaded);
+
+      expect(fs.readFileSync(systemConfigPath, "utf-8")).toBe(originalSystemConfig);
+    });
+
+    it("system defaults are not materialized into user config on save", async () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        featureFlagOverrides: { flagA: "on" },
+        projects: [],
+      });
+      writeUserConfig({
+        projects: [["/user/proj", { workspaces: [] }]],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // Verify merge worked
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on" });
+
+      // Save — should NOT write system defaults to user config
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      expect(savedRaw.defaultModel).toBeUndefined();
+      expect(savedRaw.featureFlagOverrides).toBeUndefined();
+      // User project should still be there
+      expect(savedRaw.projects).toEqual([["/user/proj", expect.any(Object)]]);
+    });
+
+    it("system taskSettings and projects are stripped on save", async () => {
+      writeSystemConfig({
+        taskSettings: { maxConcurrentTasks: 5 },
+        projects: [["/sys/project", { workspaces: [] }]],
+      });
+      writeUserConfig({
+        projects: [["/user/project", { workspaces: [] }]],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      // System project should not be in saved user config.
+      const savedProjects = savedRaw.projects as Array<[string, unknown]>;
+      const projectPaths = savedProjects.map(([projectPath]) => projectPath);
+      expect(projectPaths).toContain("/user/project");
+      expect(projectPaths).not.toContain("/sys/project");
+    });
+
+    it("system project paths are normalized before stripping", async () => {
+      writeSystemConfig({
+        projects: [["/sys/project/", { workspaces: [] }]],
+      });
+      writeUserConfig({
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // Normalized path (no trailing slash) should be in the loaded config
+      expect(loaded.projects.has("/sys/project")).toBe(true);
+
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      // System project should be stripped despite trailing slash mismatch
+      const savedProjects = savedRaw.projects as Array<[string, unknown]> | undefined;
+      if (savedProjects) {
+        const projectPaths = savedProjects.map(([p]) => p);
+        expect(projectPaths).not.toContain("/sys/project");
+        expect(projectPaths).not.toContain("/sys/project/");
+      }
+    });
+
+    it("system default used as fallback when user value is invalid", () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [],
+      });
+      writeUserConfig({
+        // Invalid model string that normalizeOptionalModelString will reject
+        defaultModel: "not-a-valid-model",
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // System default should be used as fallback since user value is invalid
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+    });
+
+    it("system hiddenModels fallback when all user entries are invalid", () => {
+      writeSystemConfig({
+        hiddenModels: ["openai:gpt-4o-mini"],
+        projects: [],
+      });
+      writeUserConfig({
+        // All entries invalid — normalization strips them to []
+        hiddenModels: ["not-a-valid-model"],
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Should fall back to system hidden models, not empty array
+      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+    });
+
+    it("user intentionally empty hiddenModels is not overridden by system", () => {
+      writeSystemConfig({
+        hiddenModels: ["openai:gpt-4o-mini"],
+        projects: [],
+      });
+      writeUserConfig({
+        // Explicit empty array — user wants no hidden models
+        hiddenModels: [],
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // User's intentional [] should win over system defaults
+      expect(loaded.hiddenModels).toEqual([]);
+    });
+    it("type-mismatched user values fall back to system via normalization", () => {
+      writeSystemConfig({
+        mdnsAdvertisementEnabled: true,
+        updateChannel: "stable",
+        featureFlagOverrides: { flagA: "on" },
+        projects: [],
+      });
+      writeUserConfig({
+        // Wrong types: string for boolean, number for string, string for object
+        mdnsAdvertisementEnabled: "oops" as unknown as boolean,
+        updateChannel: 42 as unknown as string,
+        featureFlagOverrides: "bad" as unknown as Record<string, string>,
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // System defaults survive: fb() falls back for booleans/strings,
+      // inline type check falls back for raw objects (featureFlagOverrides)
+      expect(loaded.mdnsAdvertisementEnabled).toBe(true);
+      expect(loaded.updateChannel).toBe("stable");
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on" });
+    });
+
+    it("valid user overrides win even when system has wrong type", () => {
+      writeSystemConfig({
+        // Admin typo: "true" (string) instead of true (boolean)
+        mdnsAdvertisementEnabled: "true" as unknown as boolean,
+        projects: [],
+      });
+      writeUserConfig({
+        // User has the correct type — should not be blocked
+        mdnsAdvertisementEnabled: false,
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // User's valid boolean wins over system's malformed string
+      expect(loaded.mdnsAdvertisementEnabled).toBe(false);
+    });
+    it("non-object user value does not displace system object (runtimeEnablement)", () => {
+      writeSystemConfig({
+        runtimeEnablement: { docker: false },
+        projects: [],
+      });
+      writeUserConfig({
+        // Malformed: string instead of object
+        runtimeEnablement: "oops" as unknown as Record<string, unknown>,
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // System object survives — merge rejects non-object user value for object fields
+      expect(loaded.runtimeEnablement).toEqual({ docker: false });
+    });
+    it("type-mismatched sub-values in objects preserve system defaults", () => {
+      writeSystemConfig({
+        runtimeEnablement: { docker: false },
+        featureFlagOverrides: { flagA: "on" },
+        projects: [],
+      });
+      writeUserConfig({
+        // docker: "oops" has wrong type (string vs boolean) — system's false survives
+        runtimeEnablement: { docker: "oops" as unknown as false, ssh: false },
+        // flagA: 42 has wrong type (number vs string) — system's "on" survives
+        featureFlagOverrides: { flagA: 42 as unknown as string, flagB: "off" },
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Type-matched user entries win, type-mismatched ones keep system value
+      expect(loaded.runtimeEnablement).toEqual({ docker: false, ssh: false });
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on", flagB: "off" });
+    });
+
+    it("same-type but invalid user values fall back to system via normalization", () => {
+      writeSystemConfig({
+        updateChannel: "stable",
+        projects: [],
+      });
+      writeUserConfig({
+        // Same type (string) but invalid enum value
+        updateChannel: "garbage" as "stable",
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Normalization rejects "garbage", fb helper falls back to system "stable"
+      expect(loaded.updateChannel).toBe("stable");
+    });
+    it("system muxGatewayModels fallback when all user entries are invalid", () => {
+      writeSystemConfig({
+        muxGatewayModels: ["model-a", "model-b"],
+        projects: [],
+      });
+      writeUserConfig({
+        // All entries are non-strings — parseOptionalStringArray strips to []
+        muxGatewayModels: [123, 456] as unknown as string[],
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Should fall back to system models, not empty array
+      expect(loaded.muxGatewayModels).toEqual(["model-a", "model-b"]);
+    });
+
+    it("system object defaults are stripped key-by-key on save", async () => {
+      writeSystemConfig({
+        featureFlagOverrides: { flagA: "on", flagB: "off" },
+        projects: [],
+      });
+      writeUserConfig({
+        projects: [],
+        featureFlagOverrides: { flagB: "off", flagC: "on" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // Merged should have all three flags.
+      expect(loaded.featureFlagOverrides).toEqual({ flagA: "on", flagB: "off", flagC: "on" });
+
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      // Only user-specific flag should be saved; system defaults stripped.
+      expect(savedRaw.featureFlagOverrides).toEqual({ flagC: "on" });
+    });
+
+    it("null system config values do not crash save", async () => {
+      writeSystemConfig({
+        featureFlagOverrides: null as unknown as Record<string, unknown>,
+        projects: [],
+      });
+      writeUserConfig({
+        projects: [],
+        featureFlagOverrides: { flagA: "on" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // Should not throw
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      expect(savedRaw.featureFlagOverrides).toEqual({ flagA: "on" });
+    });
+
+    it("legacy subagentAiDefaults preserved when system provides agentAiDefaults", () => {
+      writeSystemConfig({
+        agentAiDefaults: {
+          plan: { modelString: "openai:gpt-4o" },
+        },
+        projects: [],
+      });
+      writeUserConfig({
+        subagentAiDefaults: {
+          explore: { modelString: "openai:gpt-4o-mini", enabled: true },
+        },
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      // Both system agentAiDefaults and user legacy subagentAiDefaults should be present.
+      // Legacy normalization only carries model/thinking fields.
+      expect(loaded.agentAiDefaults).toMatchObject({
+        plan: { modelString: "openai:gpt-4o" },
+        explore: { modelString: "openai:gpt-4o-mini" },
+      });
+    });
+
+    it("user-modified system defaults are persisted on save", async () => {
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [],
+      });
+      writeUserConfig({
+        projects: [],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      // User overrides the system default
+      loaded.defaultModel = "anthropic:claude-sonnet-4-20250514";
+
+      await config.saveConfig(loaded);
+
+      const savedRaw = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as Record<string, unknown>;
+      expect(savedRaw.defaultModel).toBe("anthropic:claude-sonnet-4-20250514");
+    });
+
+    it("malformed project tuples in system config are filtered", () => {
+      writeSystemConfig({
+        projects: [
+          42,
+          null,
+          ["/valid/proj", { workspaces: [] }],
+          "not-a-tuple",
+        ] as unknown as Array<[string, unknown]>,
+      });
+      writeUserConfig({
+        projects: [["/user/proj", { workspaces: [] }]],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.size).toBe(2);
+      expect(loaded.projects.has("/valid/proj")).toBe(true);
+      expect(loaded.projects.has("/user/proj")).toBe(true);
+    });
+
+    it("MUX_SYSTEM_CONFIG env var overrides system config path", () => {
+      const customSystemConfigPath = path.join(tempDir, "custom.system.json");
+      fs.writeFileSync(
+        customSystemConfigPath,
+        JSON.stringify({
+          defaultModel: "openai:gpt-4o-mini",
+          projects: [["/custom/project", { workspaces: [] }]],
+        })
+      );
+
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+        projects: [["/default/project", { workspaces: [] }]],
+      });
+
+      process.env.MUX_SYSTEM_CONFIG = customSystemConfigPath;
+      const envConfig = new Config(tempDir);
+      const loaded = envConfig.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o-mini");
+      expect(loaded.projects.has("/custom/project")).toBe(true);
+      expect(loaded.projects.has("/default/project")).toBe(false);
+    });
+
+    it("malformed system config logs warning and falls back to user-only", () => {
+      const systemConfigPath = path.join(tempDir, "config.system.json");
+      fs.writeFileSync(systemConfigPath, "{ this is not valid json");
+      writeUserConfig({
+        projects: [],
+        defaultModel: "openai:gpt-4o-mini",
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o-mini");
+      expect(config.systemConfigWarnings).toHaveLength(1);
+      expect(config.systemConfigWarnings[0]).toContain(systemConfigPath);
+    });
+
+    it("non-object JSON system config logs warning and falls back", () => {
+      const systemConfigPath = path.join(tempDir, "config.system.json");
+      fs.writeFileSync(systemConfigPath, JSON.stringify([1, 2, 3]));
+      writeUserConfig({
+        projects: [],
+        defaultModel: "openai:gpt-4o-mini",
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o-mini");
+      expect(config.systemConfigWarnings).toHaveLength(1);
+      expect(config.systemConfigWarnings[0]).toContain("not a JSON object");
+    });
+
+    it("permission-denied system config logs warning and falls back", () => {
+      if (process.platform === "win32") {
+        return;
+      }
+      // Root bypasses file permissions, so chmod(000) may not trigger EACCES.
+      if (process.getuid?.() === 0) {
+        return;
+      }
+
+      const systemConfigPath = path.join(tempDir, "config.system.json");
+      writeSystemConfig({
+        defaultModel: "openai:gpt-4o",
+      });
+      writeUserConfig({
+        projects: [],
+        defaultModel: "openai:gpt-4o-mini",
+      });
+
+      fs.chmodSync(systemConfigPath, 0o000);
+
+      try {
+        const loaded = config.loadConfigOrDefault();
+        expect(loaded.defaultModel).toBe("openai:gpt-4o-mini");
+        expect(config.systemConfigWarnings).toHaveLength(1);
+        expect(config.systemConfigWarnings[0]).toContain(systemConfigPath);
+      } finally {
+        fs.chmodSync(systemConfigPath, 0o644);
+      }
+    });
+
+    it("binary/garbage system config logs warning and falls back", () => {
+      const systemConfigPath = path.join(tempDir, "config.system.json");
+      fs.writeFileSync(systemConfigPath, Buffer.from([0x80, 0x81, 0x82, 0x83]));
+      writeUserConfig({
+        projects: [],
+        defaultModel: "openai:gpt-4o-mini",
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o-mini");
+      expect(config.systemConfigWarnings).toHaveLength(1);
+      expect(config.systemConfigWarnings[0]).toContain(systemConfigPath);
+    });
+
+    it("projects merge: system projects included, user projects override by path", () => {
+      writeSystemConfig({
+        projects: [
+          ["/sys/proj", { workspaces: [{ path: "/system/workspace" }] }],
+          ["/sys/only", { workspaces: [{ path: "/system/only" }] }],
+        ],
+      });
+      writeUserConfig({
+        projects: [
+          ["/sys/proj", { workspaces: [{ path: "/user/override" }], trusted: true }],
+          ["/user/proj", { workspaces: [{ path: "/user/project" }] }],
+        ],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.projects.size).toBe(3);
+      expect(loaded.projects.get("/sys/proj")).toEqual({
+        workspaces: [{ path: "/user/override" }],
+        trusted: true,
+      });
+      expect(loaded.projects.get("/sys/only")).toEqual({
+        workspaces: [{ path: "/system/only" }],
+      });
+      expect(loaded.projects.get("/user/proj")).toEqual({
+        workspaces: [{ path: "/user/project" }],
+      });
+    });
+
+    it("missing system config produces no warning", () => {
+      writeUserConfig({
+        projects: [],
+        defaultModel: "openai:gpt-4o-mini",
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.defaultModel).toBe("openai:gpt-4o-mini");
+      expect(config.systemConfigWarnings).toEqual([]);
+    });
+  });
+
   describe("secrets", () => {
     it("supports global secrets stored under a sentinel key", async () => {
       await config.updateGlobalSecrets([{ key: "GLOBAL_A", value: "1" }]);

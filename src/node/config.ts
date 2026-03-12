@@ -35,6 +35,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
+import { getErrorMessage } from "@/common/utils/errors";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
@@ -246,22 +247,258 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private readonly systemConfigFile: string;
+  readonly systemConfigWarnings: string[] = [];
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
     this.sessionsDir = path.join(this.rootDir, "sessions");
     this.srcDir = path.join(this.rootDir, "src");
     this.configFile = path.join(this.rootDir, "config.json");
+    this.systemConfigFile = this.resolveSystemConfigFile();
     this.providersFile = path.join(this.rootDir, "providers.jsonc");
     this.secretsFile = path.join(this.rootDir, "secrets.json");
   }
 
+  private resolveSystemConfigFile(): string {
+    if (process.env.MUX_SYSTEM_CONFIG) {
+      return process.env.MUX_SYSTEM_CONFIG;
+    }
+
+    return path.join(this.rootDir, "config.system.json");
+  }
+
+  /**
+   * Load the admin-managed system config baseline.
+   * Returns undefined if the file is absent or fails to load.
+   *
+   * SAFETY: This method never throws. Any failure is caught, logged as a warning,
+   * and stored in systemConfigWarnings. Missing file is the normal case.
+   */
+  private loadSystemConfig(): Partial<AppConfigOnDisk> | undefined {
+    this.systemConfigWarnings.length = 0;
+
+    try {
+      if (!fs.existsSync(this.systemConfigFile)) {
+        return undefined;
+      }
+
+      const data = fs.readFileSync(this.systemConfigFile, "utf-8");
+      const parsed: unknown = JSON.parse(data);
+      if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        const warning = `System config at ${this.systemConfigFile} is not a JSON object (skipping)`;
+        this.systemConfigWarnings.push(warning);
+        log.warn(warning);
+        return undefined;
+      }
+
+      return parsed as Partial<AppConfigOnDisk>;
+    } catch (error) {
+      const warning = `Failed to load system config at ${this.systemConfigFile}: ${getErrorMessage(error)}`;
+      this.systemConfigWarnings.push(warning);
+      log.warn(warning);
+      return undefined;
+    }
+  }
+
+  /**
+   * Load the user config from config.json.
+   * Returns undefined if the file is absent.
+   * Throws on parse errors (caught by loadConfigOrDefault's outer try/catch).
+   */
+  private loadUserConfig(): Partial<AppConfigOnDisk> | undefined {
+    if (!fs.existsSync(this.configFile)) {
+      return undefined;
+    }
+
+    const data = fs.readFileSync(this.configFile, "utf-8");
+    return JSON.parse(data) as Partial<AppConfigOnDisk>;
+  }
+
+  /**
+   * Merge system config (admin baseline) with user config (overrides).
+   * User values win for all present keys; absent user keys fall through to system.
+   *
+   * LIMITATION: Settings that use sparse storage (e.g., stopCoderWorkspaceOnArchive
+   * stores only `false`, runtimeEnablement stores only disabled entries) cannot be
+   * "reset to default" by users when system config provides a non-default value,
+   * because the user's default serializes as omission and the system value fills in.
+   * This is an inherent tension in the sparse storage pattern — a dedicated follow-up
+   * can address it by explicitly persisting defaults for sparse fields when they
+   * differ from the system baseline.
+   */
+  private mergeSystemAndUserConfig(
+    system: Partial<AppConfigOnDisk>,
+    user: Partial<AppConfigOnDisk>
+  ): Partial<AppConfigOnDisk> {
+    const merged: Partial<AppConfigOnDisk> = { ...system };
+    const mergedRecord = merged as Record<string, unknown>;
+    const systemRecord = system as Record<string, unknown>;
+
+    for (const [key, userVal] of Object.entries(user as Record<string, unknown>)) {
+      // Skip undefined user values — system defaults fill in.
+      // NOTE: This means sparse settings that serialize "default" as omission
+      // cannot override a non-default system value. See method doc for details.
+      if (userVal === undefined) continue;
+
+      const systemVal = systemRecord[key];
+      // For scalar/primitive fields, no type guard here — fb()/fbArray() in
+      // the normalization section reject invalid merged values and fall back
+      // to the raw system value. A blanket type guard would block valid user
+      // overrides when the system config itself has a typo (e.g., system
+      // "true" string vs user true boolean).
+      //
+      // For object fields, we protect the system object from being replaced
+      // by a non-object user value (e.g., runtimeEnablement: "oops"). This
+      // is safe because a non-object can never be a valid override for an
+      // object-valued setting.
+      if (systemVal != null && typeof systemVal === "object" && !Array.isArray(systemVal)) {
+        if (userVal != null && typeof userVal === "object" && !Array.isArray(userVal)) {
+          // Deep merge with per-key type validation: user sub-keys override system
+          // sub-keys, but only when the types are compatible. This prevents a
+          // malformed user entry (e.g., runtimeEnablement.docker: "oops" instead of
+          // false) from displacing a valid admin baseline. When both are same-type,
+          // user wins — consumer-level validation handles invalid values.
+          //
+          // LIMITATION (sparse storage): for fields like runtimeEnablement where only
+          // `false` is meaningful, a user's same-type `true` passes the type check
+          // but gets dropped by normalization — the system's `false` is lost. This is
+          // inherent to the sparse storage pattern; a dedicated follow-up can address
+          // it via per-value semantic validation in the normalizer.
+          const sysObj = systemVal as Record<string, unknown>;
+          const usrObj = userVal as Record<string, unknown>;
+          const merged: Record<string, unknown> = { ...sysObj };
+          for (const [subKey, usrSubVal] of Object.entries(usrObj)) {
+            const sysSubVal = sysObj[subKey];
+            if (sysSubVal !== undefined && typeof usrSubVal !== typeof sysSubVal) {
+              continue; // Type mismatch — keep system sub-value
+            }
+            merged[subKey] = usrSubVal;
+          }
+          mergedRecord[key] = merged;
+        }
+        // else: user value is non-object — skip it, system object survives.
+      } else {
+        mergedRecord[key] = userVal;
+      }
+    }
+
+    if (Array.isArray(system.projects) || Array.isArray(user.projects)) {
+      const systemProjects = Array.isArray(system.projects) ? system.projects : [];
+      const userProjects = Array.isArray(user.projects) ? user.projects : [];
+      const projectMap = new Map<string, ProjectConfig>();
+
+      for (const entry of systemProjects) {
+        if (Array.isArray(entry) && entry.length >= 2 && typeof entry[0] === "string") {
+          projectMap.set(entry[0], entry[1]);
+        }
+      }
+
+      for (const entry of userProjects) {
+        if (Array.isArray(entry) && entry.length >= 2 && typeof entry[0] === "string") {
+          projectMap.set(entry[0], entry[1]);
+        }
+      }
+
+      merged.projects = Array.from(projectMap.entries());
+    }
+
+    return merged;
+  }
+
+  /**
+   * Remove fields from save data that match system config defaults,
+   * preventing materialization of admin-managed baselines into user config.
+   */
+  private stripSystemDefaults(
+    data: Record<string, unknown>,
+    systemConfig: Partial<AppConfigOnDisk>
+  ): void {
+    const system = systemConfig as Record<string, unknown>;
+    for (const key of Object.keys(data)) {
+      // Projects handled separately below due to array-of-tuples structure.
+      if (key === "projects") continue;
+      const dataVal = data[key];
+      const sysVal = system[key];
+      if (sysVal === undefined) continue;
+
+      if (
+        dataVal != null &&
+        typeof dataVal === "object" &&
+        !Array.isArray(dataVal) &&
+        sysVal != null &&
+        typeof sysVal === "object" &&
+        !Array.isArray(sysVal)
+      ) {
+        // Strip individual matching keys from object-valued settings.
+        const dataObj = dataVal as Record<string, unknown>;
+        const sysObj = sysVal as Record<string, unknown>;
+        for (const subKey of Object.keys(dataObj)) {
+          if (
+            subKey in sysObj &&
+            JSON.stringify(dataObj[subKey]) === JSON.stringify(sysObj[subKey])
+          ) {
+            delete dataObj[subKey];
+          }
+        }
+        // If object is now empty, remove it entirely.
+        if (Object.keys(dataObj).length === 0) {
+          delete data[key];
+        }
+      } else {
+        // Scalars + arrays: strip if exact match.
+        if (JSON.stringify(dataVal) === JSON.stringify(sysVal)) {
+          delete data[key];
+        }
+      }
+    }
+
+    // Strip system-provided projects that haven't been modified.
+    // Projects are arrays of [path, config] tuples — compare by path key.
+    if (Array.isArray(data.projects) && Array.isArray(systemConfig.projects)) {
+      const systemProjectMap = new Map<string, string>();
+      for (const entry of systemConfig.projects) {
+        if (Array.isArray(entry) && entry.length >= 2 && typeof entry[0] === "string") {
+          const [projectPath, projectConfig] = entry;
+          systemProjectMap.set(stripTrailingSlashes(projectPath), JSON.stringify(projectConfig));
+        }
+      }
+      const dataProjects = data.projects as Array<[string, unknown]>;
+      const filtered = dataProjects.filter(([projectPath, projectConfig]) => {
+        const systemProjectConfigJson = systemProjectMap.get(projectPath);
+        if (systemProjectConfigJson === undefined) {
+          return true; // User-only project.
+        }
+
+        return JSON.stringify(projectConfig) !== systemProjectConfigJson;
+      });
+
+      if (filtered.length === 0) {
+        delete data.projects;
+      } else {
+        data.projects = filtered;
+      }
+    }
+  }
+
   loadConfigOrDefault(): ProjectsConfig {
     try {
-      if (fs.existsSync(this.configFile)) {
-        const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as Partial<AppConfigOnDisk>;
+      const systemParsed = this.loadSystemConfig();
+      let userParsed: Partial<AppConfigOnDisk> | undefined;
+      try {
+        userParsed = this.loadUserConfig();
+      } catch (userError) {
+        // Preserve system defaults when user config is malformed.
+        log.error("Error loading user config (falling back to system config):", userError);
+      }
 
+      // Merge precedence: system baseline + user overrides. Env var overrides are
+      // applied by per-setting getters above this layer.
+      const parsed = systemParsed
+        ? this.mergeSystemAndUserConfig(systemParsed, userParsed ?? {})
+        : userParsed;
+
+      if (parsed) {
         // Config is stored as array of [path, config] pairs.
         // Older/newer files may omit `projects`; treat missing/invalid values as an empty map
         // so top-level settings (provider/runtime/server preferences) still load.
@@ -288,42 +525,134 @@ export class Config {
 
         const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
-        const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
-        const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
+        // Helper: when normalization rejects a merged value (wrong type or
+        // invalid enum), try the raw system value so admin baselines survive.
+        // The merge-level type guard (above) catches cross-type mismatches,
+        // but same-type invalid values (e.g. "garbage" for updateChannel)
+        // still need normalization-level fallback.
+        const fb = <T>(
+          normalize: (v: unknown) => T | undefined,
+          mergedVal: unknown,
+          sysVal: unknown
+        ): T | undefined => normalize(mergedVal) ?? normalize(sysVal);
 
-        const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
-        const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
+        // Array-aware fallback: array normalizers return [] (not undefined)
+        // when filtering strips all entries, so `fb` alone won't trigger
+        // fallback. Detect "all entries stripped" (raw non-empty → normalized
+        // empty) and fall back to system defaults; preserve intentional [].
+        const fbArray = <T>(
+          normalize: (v: unknown) => T[] | undefined,
+          mergedVal: unknown,
+          sysVal: unknown
+        ): T[] | undefined => {
+          const result = normalize(mergedVal);
+          if (result?.length === 0 && Array.isArray(mergedVal) && mergedVal.length > 0) {
+            return normalize(sysVal) ?? result;
+          }
+          return result ?? normalize(sysVal);
+        };
+
+        const muxGatewayEnabled = fb(
+          parseOptionalBoolean,
+          parsed.muxGatewayEnabled,
+          systemParsed?.muxGatewayEnabled
+        );
+        const muxGatewayModels = fbArray(
+          parseOptionalStringArray,
+          parsed.muxGatewayModels,
+          systemParsed?.muxGatewayModels
+        );
+
+        const defaultModel = fb(
+          normalizeOptionalModelString,
+          parsed.defaultModel,
+          systemParsed?.defaultModel
+        );
+        const hiddenModels = fbArray(
+          normalizeOptionalModelStringArray,
+          parsed.hiddenModels,
+          systemParsed?.hiddenModels
+        );
         const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
 
         // Default ON: store `false` only so config.json stays minimal.
+        const stopCoderWorkspaceOnArchiveRaw = fb(
+          parseOptionalBoolean,
+          parsed.stopCoderWorkspaceOnArchive,
+          systemParsed?.stopCoderWorkspaceOnArchive
+        );
         const stopCoderWorkspaceOnArchive =
-          parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
-        const updateChannel = parseUpdateChannel(parsed.updateChannel);
+          stopCoderWorkspaceOnArchiveRaw === false ? false : undefined;
+        const updateChannel = fb(
+          parseUpdateChannel,
+          parsed.updateChannel,
+          systemParsed?.updateChannel
+        );
 
         const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
-        const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
+        const defaultRuntime = fb(
+          normalizeRuntimeEnablementId,
+          parsed.defaultRuntime,
+          systemParsed?.defaultRuntime
+        );
 
         const agentAiDefaults =
           parsed.agentAiDefaults !== undefined
-            ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
+            ? normalizeAgentAiDefaults({
+                ...legacySubagentAiDefaults,
+                ...parsed.agentAiDefaults,
+              })
             : normalizeAgentAiDefaults(legacySubagentAiDefaults);
 
         const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
         const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
           ? undefined
           : layoutPresetsRaw;
-
         return {
           projects: projectsMap,
-          apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
-          apiServerServeWebUi: parseOptionalBoolean(parsed.apiServerServeWebUi) ? true : undefined,
-          apiServerPort: parseOptionalPort(parsed.apiServerPort),
-          mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
-          mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
-          serverSshHost: parsed.serverSshHost,
-          serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
-          defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
-          viewedSplashScreens: parsed.viewedSplashScreens,
+          apiServerBindHost: fb(
+            parseOptionalNonEmptyString,
+            parsed.apiServerBindHost,
+            systemParsed?.apiServerBindHost
+          ),
+          apiServerServeWebUi: fb(
+            parseOptionalBoolean,
+            parsed.apiServerServeWebUi,
+            systemParsed?.apiServerServeWebUi
+          )
+            ? true
+            : undefined,
+          apiServerPort: fb(parseOptionalPort, parsed.apiServerPort, systemParsed?.apiServerPort),
+          mdnsAdvertisementEnabled: fb(
+            parseOptionalBoolean,
+            parsed.mdnsAdvertisementEnabled,
+            systemParsed?.mdnsAdvertisementEnabled
+          ),
+          mdnsServiceName: fb(
+            parseOptionalNonEmptyString,
+            parsed.mdnsServiceName,
+            systemParsed?.mdnsServiceName
+          ),
+          serverSshHost: fb(
+            parseOptionalNonEmptyString,
+            parsed.serverSshHost,
+            systemParsed?.serverSshHost
+          ),
+          serverAuthGithubOwner: fb(
+            parseOptionalNonEmptyString,
+            parsed.serverAuthGithubOwner,
+            systemParsed?.serverAuthGithubOwner
+          ),
+          defaultProjectDir: fb(
+            parseOptionalNonEmptyString,
+            parsed.defaultProjectDir,
+            systemParsed?.defaultProjectDir
+          ),
+          viewedSplashScreens: fbArray(
+            parseOptionalStringArray,
+            parsed.viewedSplashScreens,
+            systemParsed?.viewedSplashScreens
+          ),
           layoutPresets,
           taskSettings,
           muxGatewayEnabled,
@@ -334,16 +663,43 @@ export class Config {
           agentAiDefaults,
           // Legacy fields are still parsed and returned for downgrade compatibility.
           subagentAiDefaults: legacySubagentAiDefaults,
-          featureFlagOverrides: parsed.featureFlagOverrides,
-          useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
-          muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
-          muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
+          // featureFlagOverrides is a raw pass-through (no normalizer) — validate
+          // that the merged value is actually a plain object before accepting it.
+          featureFlagOverrides:
+            parsed.featureFlagOverrides != null &&
+            typeof parsed.featureFlagOverrides === "object" &&
+            !Array.isArray(parsed.featureFlagOverrides)
+              ? parsed.featureFlagOverrides
+              : systemParsed?.featureFlagOverrides,
+          useSSH2Transport: fb(
+            parseOptionalBoolean,
+            parsed.useSSH2Transport,
+            systemParsed?.useSSH2Transport
+          ),
+          muxGovernorUrl: fb(
+            parseOptionalNonEmptyString,
+            parsed.muxGovernorUrl,
+            systemParsed?.muxGovernorUrl
+          ),
+          muxGovernorToken: fb(
+            parseOptionalNonEmptyString,
+            parsed.muxGovernorToken,
+            systemParsed?.muxGovernorToken
+          ),
           stopCoderWorkspaceOnArchive,
-          terminalDefaultShell: parseOptionalNonEmptyString(parsed.terminalDefaultShell),
+          terminalDefaultShell: fb(
+            parseOptionalNonEmptyString,
+            parsed.terminalDefaultShell,
+            systemParsed?.terminalDefaultShell
+          ),
           updateChannel,
           defaultRuntime,
           runtimeEnablement,
-          onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
+          onePasswordAccountName: fb(
+            parseOptionalNonEmptyString,
+            parsed.onePasswordAccountName,
+            systemParsed?.onePasswordAccountName
+          ),
         };
       }
     } catch (error) {
@@ -508,6 +864,13 @@ export class Config {
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
       if (onePasswordAccountName) {
         data.onePasswordAccountName = onePasswordAccountName;
+      }
+
+      // Prevent materialization of system config defaults into user config.
+      // Only persist values that differ from the admin-managed baseline.
+      const systemConfig = this.loadSystemConfig();
+      if (systemConfig) {
+        this.stripSystemDefaults(data as Record<string, unknown>, systemConfig);
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
