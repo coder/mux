@@ -127,6 +127,7 @@ function buildPendingTaskResult(params: {
   tasks: readonly PendingTaskInfo[];
   note: string;
   reports?: readonly CompletedTaskInfo[];
+  forceGrouped?: boolean;
 }): z.infer<typeof TaskToolResultSchema> {
   const status = toAggregatePendingStatus(params.tasks.map((task) => task.status));
   const serializedReports =
@@ -134,7 +135,7 @@ function buildPendingTaskResult(params: {
       ? serializeCompletedReports(params.reports)
       : undefined;
 
-  if (params.tasks.length === 1) {
+  if (params.tasks.length === 1 && params.forceGrouped !== true) {
     const task = params.tasks[0];
     return {
       status,
@@ -287,6 +288,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
                 note:
                   `Best-of task creation stopped after spawning ${createdTasks.length} of ${bestOfCount} candidate(s): ${created.error}. ` +
                   "Use task_await on the returned task metadata before retrying, or you may duplicate work.",
+                forceGrouped: bestOfCount > 1,
               }),
               "task"
             );
@@ -316,6 +318,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           buildPendingTaskResult({
             tasks: createdTasks,
             note: buildBackgroundStartNote(createdTasks.length),
+            forceGrouped: bestOfCount > 1,
           }),
           "task"
         );
@@ -394,6 +397,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
               createdTasks.length,
               wasBackgrounded ? "backgrounded" : "timed_out"
             ),
+            forceGrouped: bestOfCount > 1,
           }),
           "task"
         );

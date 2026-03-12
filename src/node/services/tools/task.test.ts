@@ -140,6 +140,56 @@ describe("task tool", () => {
     expect(bestOfGroups[1]?.groupId).toBe(bestOfGroups[2]?.groupId);
   });
 
+  it("keeps grouped metadata when best-of task creation fails after only one candidate", async () => {
+    using tempDir = new TestTempDir("test-task-tool-best-of-single-partial-failure");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    let createCount = 0;
+    const create = mock(() => {
+      createCount += 1;
+      if (createCount === 2) {
+        return Err("workspace creation failed");
+      }
+
+      return Ok({
+        taskId: `child-task-${createCount}`,
+        kind: "agent" as const,
+        status: "running" as const,
+      });
+    });
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "compare two approaches",
+          title: "Best of 2",
+          run_in_background: false,
+          n: 2,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(waitForAgentReport).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: "running",
+      taskIds: ["child-task-1"],
+      tasks: [{ taskId: "child-task-1", status: "running" }],
+      note:
+        "Best-of task creation stopped after spawning 1 of 2 candidate(s): workspace creation failed. " +
+        "Use task_await on the returned task metadata before retrying, or you may duplicate work.",
+    });
+  });
+
   it("returns partial spawn metadata when best-of task creation fails mid-batch", async () => {
     using tempDir = new TestTempDir("test-task-tool-best-of-partial-failure");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
