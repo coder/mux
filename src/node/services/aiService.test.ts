@@ -1535,6 +1535,38 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(receivedWrapOptions?.system1Model).toBeUndefined();
   });
 
+  it("passes routeProvider into the System1 wrapper when System1 uses an explicit canonical model", async () => {
+    using muxHome = new DisposableTempDir("ai-service-system1-canonical-route-provider");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-system1-canonical-route-provider";
+    const metadata = createWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
+
+    let receivedWrapOptions:
+      | Parameters<typeof system1ToolWrapperModule.wrapToolsWithSystem1>[0]
+      | undefined;
+    spyOn(system1ToolWrapperModule, "wrapToolsWithSystem1").mockImplementation((options) => {
+      receivedWrapOptions = options;
+      return options.tools;
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+      system1Model: "openai:gpt-5.2",
+      experiments: { system1: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(receivedWrapOptions).toBeDefined();
+    expect(receivedWrapOptions?.routeProvider).toBe("openrouter");
+    expect(receivedWrapOptions?.system1Model).toBe("openai:gpt-5.2");
+  });
+
   it("derives sentinel tool names from assembled post-policy tools", async () => {
     using muxHome = new DisposableTempDir("ai-service-sentinel-tool-names");
     const projectPath = path.join(muxHome.path, "project");

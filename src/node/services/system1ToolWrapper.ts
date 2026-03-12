@@ -344,11 +344,11 @@ async function maybeFilterBashOutput(
     const system1 = await getSystem1Model();
     if (!system1) return undefined;
 
-    // When System1 uses an explicit model, derive route provider from any
-    // explicit gateway prefix so buildProviderOptions uses gateway-appropriate
-    // config. Fall back to the primary stream's route provider otherwise.
+    // When System1 uses a gateway-prefixed model, keep that explicit gateway so
+    // buildProviderOptions uses the override's gateway namespace. Canonical
+    // System1 models inherit the primary stream's active route provider.
     const system1RouteProvider = system1Ctx.modelString
-      ? getExplicitGatewayPrefix(system1Ctx.modelString)
+      ? (getExplicitGatewayPrefix(system1Ctx.modelString) ?? opts.routeProvider)
       : opts.routeProvider;
     const system1ProviderOptions = buildProviderOptions(
       system1.modelString,
