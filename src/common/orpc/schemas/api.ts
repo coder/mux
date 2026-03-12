@@ -185,6 +185,9 @@ export const ProviderConfigInfoSchema = z.object({
   isEnabled: z.boolean().default(true),
   /** Whether this provider is configured and ready to use */
   isConfigured: z.boolean(),
+  apiKeyFile: z.string().optional(),
+  /** Where the API key was actually resolved from (config, file, or env) */
+  apiKeySource: z.enum(["config", "file", "env"]).optional(),
   baseUrl: z.string().optional(),
   models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */

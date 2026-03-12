@@ -449,6 +449,7 @@ export default defineConfig([
       "src/node/services/tools/bash.ts",
       "src/node/services/tools/bash.test.ts",
       "src/node/services/tools/testHelpers.ts",
+      "src/node/utils/providerRequirements.ts",
     ],
     rules: {
       "local/no-sync-fs-methods": "off",

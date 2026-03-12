@@ -7,6 +7,10 @@
  * - CLI bootstrap: buildProvidersFromEnv() to create initial providers.jsonc
  */
 
+import { readFileSync, statSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import type {
@@ -131,10 +135,35 @@ export interface ResolvedCredentials {
   couponCode?: string; // mux-gateway
   baseUrl?: string; // from config or env
   organization?: string; // openai
+  apiKeySource?: "config" | "file" | "env";
 }
 
 /** Legacy alias for backward compatibility */
-export type ProviderConfigCheck = Pick<ResolvedCredentials, "isConfigured" | "missingRequirement">;
+export type ProviderConfigCheck = Pick<
+  ResolvedCredentials,
+  "isConfigured" | "missingRequirement" | "apiKeySource"
+>;
+
+/**
+ * Read an API key from a file path. Supports ~ for home directory.
+ * Returns null if the file doesn't exist, is empty, or is not a regular file.
+ */
+function resolveApiKeyFile(filePath: string | undefined): string | null {
+  if (typeof filePath !== "string" || !filePath) return null;
+
+  // Expand ~ to home directory
+  const expanded = filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
+
+  try {
+    // Guard against non-regular files (FIFOs, devices) that could block indefinitely
+    const stat = statSync(expanded);
+    if (!stat.isFile() || stat.size > 65536) return null;
+    const content = readFileSync(expanded, "utf-8").trim();
+    return content || null;
+  } catch {
+    return null;
+  }
+}
 
 // ============================================================================
 // Credential resolution
@@ -177,11 +206,12 @@ export function resolveProviderCredentials(
     return { isConfigured: hasExplicitConfig };
   }
 
-  // Standard API key providers: check config first, then env vars
+  // Standard API key providers: check config first, then apiKeyFile, then env vars
   const envMapping = PROVIDER_ENV_VARS[provider];
   const configKey =
     typeof config.apiKey === "string" && config.apiKey.trim().length > 0 ? config.apiKey : null;
-  const apiKey = configKey ?? resolveEnv(envMapping?.apiKey, env);
+  const fileKey = configKey ? null : resolveApiKeyFile(config.apiKeyFile as string | undefined);
+  const apiKey = configKey ?? fileKey ?? resolveEnv(envMapping?.apiKey, env);
   const configBaseUrl =
     (typeof config.baseURL === "string" && config.baseURL) ||
     (typeof config.baseUrl === "string" && config.baseUrl) ||
@@ -195,7 +225,8 @@ export function resolveProviderCredentials(
   const organization = configOrganization ?? resolveEnv(envMapping?.organization, env);
 
   if (apiKey) {
-    return { isConfigured: true, apiKey, baseUrl, organization };
+    const apiKeySource: "config" | "file" | "env" = configKey ? "config" : fileKey ? "file" : "env";
+    return { isConfigured: true, apiKey, baseUrl, organization, apiKeySource };
   }
 
   return { isConfigured: false, missingRequirement: "api_key" };

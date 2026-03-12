@@ -104,6 +104,7 @@ export class ProviderService {
     for (const provider of this.list()) {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
+        apiKeyFile?: string;
         apiKeyOpLabel?: string;
         baseUrl?: string;
         models?: unknown[];
@@ -156,6 +157,7 @@ export class ProviderService {
         isEnabled,
         isConfigured: false, // computed below
         baseUrl: forcedBaseUrl ?? config.baseUrl,
+        apiKeyFile: typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined,
         models: filteredModels,
       };
 
@@ -231,8 +233,9 @@ export class ProviderService {
       // Use providerInfo.isEnabled (not the local `isEnabled`) because gateway
       // overrides it from global config — using the providers.jsonc value would
       // make a disabled gateway appear configured.
-      providerInfo.isConfigured =
-        providerInfo.isEnabled && checkProviderConfigured(provider, config).isConfigured;
+      const configCheck = checkProviderConfigured(provider, config);
+      providerInfo.isConfigured = providerInfo.isEnabled && configCheck.isConfigured;
+      providerInfo.apiKeySource = configCheck.apiKeySource;
 
       if (provider === "openai" && isEnabled && codexOauthSet) {
         providerInfo.isConfigured = true;

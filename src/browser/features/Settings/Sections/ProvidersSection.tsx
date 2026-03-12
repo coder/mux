@@ -147,6 +147,13 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
   return [
     { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
     {
+      key: "apiKeyFile",
+      label: "API Key File",
+      placeholder: "~/.config/coder/session_token",
+      type: "text",
+      optional: true,
+    },
+    {
       key: "baseUrl",
       label: "Base URL",
       placeholder: "https://api.example.com",
@@ -381,7 +388,7 @@ export function ProvidersSection() {
   const [codexOauthAuthorizeUrl, setCodexOauthAuthorizeUrl] = useState<string | null>(null);
 
   const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
-  const openaiApiKeySet = config?.openai?.apiKeySet === true;
+  const openaiApiKeySet = config?.openai?.apiKeySet === true || !!config?.openai?.apiKeySource;
   const codexOauthDefaultAuth =
     config?.openai?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
   const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
@@ -1100,6 +1107,8 @@ export function ProvidersSection() {
       });
     } else if (field === "baseUrl") {
       updateOptimistically(provider, { baseUrl: editValue || undefined });
+    } else if (field === "apiKeyFile") {
+      updateOptimistically(provider, { apiKeyFile: editValue || undefined });
     }
 
     setEditingField(null);
@@ -1126,6 +1135,8 @@ export function ProvidersSection() {
         });
       } else if (field === "baseUrl") {
         updateOptimistically(provider, { baseUrl: undefined });
+      } else if (field === "apiKeyFile") {
+        updateOptimistically(provider, { apiKeyFile: undefined });
       }
 
       // Save in background
@@ -1340,7 +1351,9 @@ export function ProvidersSection() {
                             // OpenAI can be configured via ChatGPT OAuth, not just env vars
                             !(provider === "openai" && codexOauthIsConnected) && (
                               <div className="text-muted text-xs">
-                                Configured via environment variables.
+                                {config?.[provider]?.apiKeySource === "file"
+                                  ? "Configured via API key file."
+                                  : "Configured via environment variables."}
                               </div>
                             )}
                         </div>

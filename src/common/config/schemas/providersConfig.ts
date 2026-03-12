@@ -10,6 +10,7 @@ export const CodexOauthDefaultAuthSchema = z.enum(["oauth", "apiKey"]);
 export const BaseProviderConfigSchema = z
   .object({
     apiKey: z.string().optional(),
+    apiKeyFile: z.string().optional(),
     apiKeyOpLabel: z.string().optional(),
     baseUrl: z.string().optional(),
     baseURL: z.string().optional(),
