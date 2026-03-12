@@ -19,7 +19,11 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
-import { getModelProvider, supports1MContext } from "@/common/utils/ai/models";
+import {
+  getExplicitGatewayPrefix,
+  getModelProvider,
+  supports1MContext,
+} from "@/common/utils/ai/models";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { LAST_CUSTOM_MODEL_PROVIDER_KEY } from "@/common/constants/storage";
 import type { ProviderModelEntry } from "@/common/orpc/types";
@@ -103,6 +107,13 @@ export function shouldShowModelInSettings(modelId: string, codexOauthConfigured:
   // Keep OAuth-required OpenAI models out of Settings until OAuth is connected,
   // so users don't pick defaults that fail at send time.
   return codexOauthConfigured || !isCodexOauthRequiredModelId(modelId);
+}
+
+export function shouldAllowRouteOverrideInSettings(modelId: string): boolean {
+  // Explicit gateway rows already pin their route in the model ID. Wiring the
+  // route picker here would mutate the canonical sibling row's override while
+  // leaving the explicit row itself pinned to its gateway.
+  return getExplicitGatewayPrefix(modelId) === undefined;
 }
 
 export function ModelsSection() {
@@ -428,6 +439,7 @@ export function ModelsSection() {
                   const isModelEditing =
                     editing?.provider === model.provider &&
                     editing?.originalModelId === model.modelId;
+                  const allowRouteOverride = shouldAllowRouteOverrideInSettings(model.fullId);
                   return (
                     <ModelRow
                       key={model.fullId}
@@ -487,7 +499,11 @@ export function ModelsSection() {
                           ? unhideModel(model.fullId)
                           : hideModel(model.fullId)
                       }
-                      onSetRouteOverride={(route) => routing.setRouteOverride(model.fullId, route)}
+                      onSetRouteOverride={
+                        allowRouteOverride
+                          ? (route) => routing.setRouteOverride(model.fullId, route)
+                          : undefined
+                      }
                       onToggle1MContext={
                         supports1MContext(model.fullId)
                           ? () => toggle1MContext(model.fullId)

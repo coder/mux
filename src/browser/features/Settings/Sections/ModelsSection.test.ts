@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { shouldShowModelInSettings } from "./ModelsSection";
+import { shouldAllowRouteOverrideInSettings, shouldShowModelInSettings } from "./ModelsSection";
 
 describe("shouldShowModelInSettings", () => {
   test("hides OAuth-required Codex model when OpenAI OAuth is not configured", () => {
@@ -21,5 +21,19 @@ describe("shouldShowModelInSettings", () => {
 
   test("keeps non-required OpenAI models visible without OAuth", () => {
     expect(shouldShowModelInSettings(KNOWN_MODELS.GPT.id, false)).toBe(true);
+  });
+});
+
+describe("shouldAllowRouteOverrideInSettings", () => {
+  test("disables route overrides for explicit gateway rows", () => {
+    expect(shouldAllowRouteOverrideInSettings("openrouter:openai/gpt-5")).toBe(false);
+  });
+
+  test("keeps route overrides enabled for canonical rows", () => {
+    expect(shouldAllowRouteOverrideInSettings("openai:gpt-5")).toBe(true);
+  });
+
+  test("keeps route overrides enabled for direct custom providers", () => {
+    expect(shouldAllowRouteOverrideInSettings("ollama:gpt-oss:20b")).toBe(true);
   });
 });
