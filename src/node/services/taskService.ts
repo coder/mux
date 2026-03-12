@@ -3936,6 +3936,7 @@ export class TaskService {
   private async getTaskToolPartialState(workspaceId: string): Promise<{
     hasPendingBestOfTaskTool: boolean;
     pendingBestOfTaskToolCount: number;
+    pendingTaskToolCount: number;
     referencedTaskIds: Set<string>;
   }> {
     const partial = await this.historyService.readPartial(workspaceId);
@@ -3944,17 +3945,20 @@ export class TaskService {
       return {
         hasPendingBestOfTaskTool: false,
         pendingBestOfTaskToolCount: 0,
+        pendingTaskToolCount: 0,
         referencedTaskIds,
       };
     }
 
     let pendingBestOfTaskToolCount = 0;
+    let pendingTaskToolCount = 0;
     for (const part of partial.parts) {
       if (!isDynamicToolPart(part) || part.toolName !== "task") {
         continue;
       }
 
       if (part.state === "input-available") {
+        pendingTaskToolCount += 1;
         const parsedInput = TaskToolArgsSchema.safeParse(part.input);
         if (parsedInput.success && (parsedInput.data.n ?? 1) > 1) {
           pendingBestOfTaskToolCount += 1;
@@ -3994,6 +3998,7 @@ export class TaskService {
     return {
       hasPendingBestOfTaskTool: pendingBestOfTaskToolCount > 0,
       pendingBestOfTaskToolCount,
+      pendingTaskToolCount,
       referencedTaskIds,
     };
   }
@@ -4006,7 +4011,8 @@ export class TaskService {
     const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
     if (
       !parentTaskToolState.hasPendingBestOfTaskTool ||
-      parentTaskToolState.pendingBestOfTaskToolCount !== 1
+      parentTaskToolState.pendingBestOfTaskToolCount !== 1 ||
+      parentTaskToolState.pendingTaskToolCount !== 1
     ) {
       return false;
     }

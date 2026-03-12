@@ -5024,6 +5024,17 @@ describe("TaskService", () => {
           },
           state: "input-available",
         },
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-secondary-pending-call",
+          toolName: "task",
+          input: {
+            subagent_type: "explore",
+            prompt: "secondary task",
+            title: "Secondary task",
+          },
+          state: "input-available",
+        },
       ]
     );
     expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);

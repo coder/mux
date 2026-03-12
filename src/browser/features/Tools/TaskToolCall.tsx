@@ -745,10 +745,12 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const effectiveStatus: ToolStatus =
     aggregateTaskStatus === "completed"
       ? "completed"
-      : status === "completed" &&
-          (aggregateTaskStatus === "queued" || aggregateTaskStatus === "running")
-        ? "backgrounded"
-        : status;
+      : aggregateTaskStatus === "interrupted"
+        ? "interrupted"
+        : status === "completed" &&
+            (aggregateTaskStatus === "queued" || aggregateTaskStatus === "running")
+          ? "backgrounded"
+          : status;
 
   const shouldAutoExpand = !!errorResult;
   const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
