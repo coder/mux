@@ -188,6 +188,45 @@ describe("ProviderConfigInfoSchema conformance", () => {
   });
 });
 
+describe("workspace.getProjectGitStatuses schema", () => {
+  it("accepts omitted and null baseRef values", () => {
+    expect(workspace.getProjectGitStatuses.input.safeParse({ workspaceId: "ws" }).success).toBe(true);
+    expect(
+      workspace.getProjectGitStatuses.input.safeParse({ workspaceId: "ws", baseRef: null }).success
+    ).toBe(true);
+  });
+
+  it("preserves per-project git status entries", () => {
+    const full = [
+      {
+        projectPath: "/tmp/project-a",
+        projectName: "project-a",
+        gitStatus: {
+          branch: "feature/a",
+          ahead: 2,
+          behind: 1,
+          dirty: true,
+          outgoingAdditions: 10,
+          outgoingDeletions: 4,
+          incomingAdditions: 3,
+          incomingDeletions: 2,
+        },
+        error: null,
+      },
+      {
+        projectPath: "/tmp/project-b",
+        projectName: "project-b",
+        gitStatus: null,
+        error: "git status failed",
+      },
+    ];
+
+    const parsed = workspace.getProjectGitStatuses.output.parse(full);
+
+    expect(parsed).toEqual(full);
+  });
+});
+
 describe("workspace.createMultiProject schema", () => {
   it("rejects payloads with fewer than two projects", () => {
     const result = workspace.createMultiProject.input.safeParse({

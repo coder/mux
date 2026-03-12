@@ -38,6 +38,7 @@ import { validateWorkspaceName } from "@/common/utils/validation/workspaceValida
 import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
+import { generateGitStatusScript, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
@@ -72,6 +73,7 @@ import type { z } from "zod";
 import type { SendMessageError } from "@/common/types/errors";
 import type {
   FrontendWorkspaceMetadata,
+  GitStatus,
   ProjectRef,
   WorkspaceActivitySnapshot,
   WorkspaceMetadata,
@@ -186,6 +188,13 @@ interface ArchiveMergedInProjectResult {
   archivedWorkspaceIds: string[];
   skippedWorkspaceIds: string[];
   errors: Array<{ workspaceId: string; error: string }>;
+}
+
+interface ProjectGitStatusResult {
+  projectPath: string;
+  projectName: string;
+  gitStatus: GitStatus | null;
+  error: string | null;
 }
 
 interface ExecuteBashOptions {
@@ -3598,6 +3607,144 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return statuses;
+  }
+
+  async getProjectGitStatuses(
+    workspaceId: string,
+    baseRef?: string | null
+  ): Promise<ProjectGitStatusResult[]> {
+    assert(workspaceId.trim().length > 0, "getProjectGitStatuses requires a workspaceId");
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      throw new Error(`Failed to get workspace metadata: ${metadataResult.error}`);
+    }
+
+    const metadata = metadataResult.data;
+    assert(metadata, `Workspace ${workspaceId} metadata is required for git status checks`);
+
+    const projects = getProjects(metadata);
+    assert(projects.length > 0, `Workspace ${workspaceId} must include at least one project`);
+
+    const normalizedProjectPaths = projects.map((project) => {
+      assert(
+        project.projectPath.trim().length > 0,
+        `Workspace ${workspaceId} project ${project.projectName} is missing a projectPath`
+      );
+      assert(
+        project.projectName.trim().length > 0,
+        `Workspace ${workspaceId} project ${project.projectPath} is missing a projectName`
+      );
+      const normalizedProjectPath = normalizeRepoRootProjectPath(project.projectPath);
+      assert(
+        normalizedProjectPath.length > 0,
+        `Workspace ${workspaceId} project ${project.projectName} normalized to an empty projectPath`
+      );
+      return normalizedProjectPath;
+    });
+    const uniqueNormalizedProjectPaths = new Set(normalizedProjectPaths);
+    assert(
+      uniqueNormalizedProjectPaths.size === normalizedProjectPaths.length,
+      `Workspace ${workspaceId} has duplicate project paths`
+    );
+
+    const script = generateGitStatusScript(baseRef ?? undefined);
+    const results: ProjectGitStatusResult[] = [];
+
+    for (const project of projects) {
+      try {
+        const result = await this.executeBash(workspaceId, script, {
+          executionTarget: "host-workspace",
+          cwdMode: "repo-root",
+          repoRootProjectPath: project.projectPath,
+          timeout_secs: 5,
+        });
+
+        if (!result.success) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: result.error,
+          });
+          continue;
+        }
+
+        if (!result.data.success) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: result.data.error,
+          });
+          continue;
+        }
+
+        if (result.data.output.trim().length === 0) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: "Git status script returned empty output",
+          });
+          continue;
+        }
+
+        const parsed = parseGitStatusScriptOutput(result.data.output);
+        if (!parsed) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: "Failed to parse git status script output",
+          });
+          continue;
+        }
+
+        results.push({
+          projectPath: project.projectPath,
+          projectName: project.projectName,
+          gitStatus: {
+            branch: parsed.headBranch,
+            ahead: parsed.ahead,
+            behind: parsed.behind,
+            dirty: parsed.dirtyCount > 0,
+            outgoingAdditions: parsed.outgoingAdditions,
+            outgoingDeletions: parsed.outgoingDeletions,
+            incomingAdditions: parsed.incomingAdditions,
+            incomingDeletions: parsed.incomingDeletions,
+          },
+          error: null,
+        });
+      } catch (error) {
+        results.push({
+          projectPath: project.projectPath,
+          projectName: project.projectName,
+          gitStatus: null,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    assert(
+      results.length === projects.length,
+      `Workspace ${workspaceId} git status result count must match project count`
+    );
+    const resultProjectPaths = results.map((result) =>
+      normalizeRepoRootProjectPath(result.projectPath)
+    );
+    assert(
+      new Set(resultProjectPaths).size === uniqueNormalizedProjectPaths.size,
+      `Workspace ${workspaceId} git status results must contain one entry per project`
+    );
+    for (const resultProjectPath of resultProjectPaths) {
+      assert(
+        uniqueNormalizedProjectPaths.has(resultProjectPath),
+        `Workspace ${workspaceId} git status returned an unknown project path: ${resultProjectPath}`
+      );
+    }
+
+    return results;
   }
 
   /**

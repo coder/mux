@@ -38,6 +38,7 @@ import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
 import {
   FrontendWorkspaceMetadataSchema,
+  GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
 } from "./workspace";
@@ -120,6 +121,13 @@ export { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntr
 // --- API Router Schemas ---
 
 const BackgroundProcessStatusSchema = z.enum(["running", "exited", "killed", "failed"]);
+
+const ProjectGitStatusResultSchema = z.object({
+  projectPath: z.string(),
+  projectName: z.string(),
+  gitStatus: GitStatusSchema.nullish(),
+  error: z.string().nullish(),
+});
 
 // Background process info (for UI display)
 export const BackgroundProcessInfoSchema = z.object({
@@ -943,6 +951,13 @@ export const workspace = {
   getRuntimeStatuses: {
     input: z.object({ workspaceIds: z.array(z.string()) }),
     output: z.record(z.string(), z.enum(["running", "stopped", "unknown", "unsupported"])),
+  },
+  getProjectGitStatuses: {
+    input: z.object({
+      workspaceId: z.string(),
+      baseRef: z.string().nullish(),
+    }),
+    output: z.array(ProjectGitStatusResultSchema),
   },
   archiveMergedInProject: {
     input: z.object({ projectPath: z.string() }),

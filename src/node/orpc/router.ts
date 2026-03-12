@@ -2928,6 +2928,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.getRuntimeStatuses(input.workspaceIds);
         }),
+      getProjectGitStatuses: t
+        .input(schemas.workspace.getProjectGitStatuses.input)
+        .output(schemas.workspace.getProjectGitStatuses.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getProjectGitStatuses(input.workspaceId, input.baseRef);
+        }),
       archiveMergedInProject: t
         .input(schemas.workspace.archiveMergedInProject.input)
         .output(schemas.workspace.archiveMergedInProject.output)

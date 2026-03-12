@@ -1836,6 +1836,296 @@ describe("WorkspaceService executeBash host-workspace target", () => {
   });
 });
 
+describe("WorkspaceService getProjectGitStatuses", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  function createGitStatusOutput(params?: {
+    headBranch?: string;
+    primaryBranch?: string;
+    ahead?: number;
+    behind?: number;
+    dirtyCount?: number;
+    outgoingAdditions?: number;
+    outgoingDeletions?: number;
+    incomingAdditions?: number;
+    incomingDeletions?: number;
+  }): string {
+    return [
+      "---HEAD_BRANCH---",
+      params?.headBranch ?? "feature/test",
+      "---PRIMARY---",
+      params?.primaryBranch ?? "main",
+      "---AHEAD_BEHIND---",
+      `${params?.ahead ?? 1} ${params?.behind ?? 0}`,
+      "---DIRTY---",
+      String(params?.dirtyCount ?? 0),
+      "---LINE_DELTA---",
+      `${params?.outgoingAdditions ?? 5} ${params?.outgoingDeletions ?? 2} ${params?.incomingAdditions ?? 3} ${params?.incomingDeletions ?? 1}`,
+      "",
+    ].join("\n");
+  }
+
+  function bashOk(output: string): Result<BashToolResult> {
+    return {
+      success: true,
+      data: {
+        success: true,
+        output,
+        exitCode: 0,
+        wall_duration_ms: 0,
+      },
+    };
+  }
+
+  function createServiceHarness(params: {
+    metadata: WorkspaceMetadata;
+    executeBashImpl: (
+      workspaceId: string,
+      script: string,
+      options?: {
+        timeout_secs?: number | null;
+        cwdMode?: "default" | "repo-root" | null;
+        repoRootProjectPath?: string | null;
+        executionTarget?: "runtime" | "host-workspace";
+      }
+    ) => Promise<Result<BashToolResult>>;
+  }): {
+    workspaceService: WorkspaceService;
+    executeBashMock: ReturnType<typeof mock>;
+    getWorkspaceMetadataMock: ReturnType<typeof mock>;
+  } {
+    const getWorkspaceMetadataMock = mock(() => Promise.resolve(Ok(params.metadata)));
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: getWorkspaceMetadataMock,
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+    };
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const executeBashMock = mock(params.executeBashImpl);
+
+    interface WorkspaceServiceTestAccess {
+      executeBash: typeof executeBashMock;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.executeBash = executeBashMock;
+
+    return { workspaceService, executeBashMock, getWorkspaceMetadataMock };
+  }
+
+  test("returns a single entry for single-project workspaces", async () => {
+    const metadata: WorkspaceMetadata = {
+      id: "ws-single",
+      name: "ws-single",
+      projectName: "project-a",
+      projectPath: "/tmp/project-a",
+      runtimeConfig: { type: "local" },
+    };
+
+    const { workspaceService, executeBashMock, getWorkspaceMetadataMock } = createServiceHarness({
+      metadata,
+      executeBashImpl: () => Promise.resolve(bashOk(createGitStatusOutput({ dirtyCount: 2 }))),
+    });
+
+    const result = await workspaceService.getProjectGitStatuses(metadata.id);
+
+    expect(result).toEqual([
+      {
+        projectPath: "/tmp/project-a",
+        projectName: "project-a",
+        gitStatus: {
+          branch: "feature/test",
+          ahead: 1,
+          behind: 0,
+          dirty: true,
+          outgoingAdditions: 5,
+          outgoingDeletions: 2,
+          incomingAdditions: 3,
+          incomingDeletions: 1,
+        },
+        error: null,
+      },
+    ]);
+    expect(getWorkspaceMetadataMock).toHaveBeenCalledWith(metadata.id);
+    expect(executeBashMock).toHaveBeenCalledWith(
+      metadata.id,
+      expect.stringContaining('PREFERRED_BRANCH=""'),
+      expect.objectContaining({
+        executionTarget: "host-workspace",
+        cwdMode: "repo-root",
+        repoRootProjectPath: "/tmp/project-a",
+        timeout_secs: 5,
+      })
+    );
+  });
+
+  test("returns one entry per project in stable order for multi-project workspaces", async () => {
+    const metadata: WorkspaceMetadata = {
+      id: "ws-multi",
+      name: "ws-multi",
+      projectName: "project-a",
+      projectPath: "/tmp/project-a",
+      runtimeConfig: { type: "local" },
+      projects: [
+        { projectPath: "/tmp/project-a", projectName: "project-a" },
+        { projectPath: "/tmp/project-b", projectName: "project-b" },
+      ],
+    };
+
+    const { workspaceService, executeBashMock } = createServiceHarness({
+      metadata,
+      executeBashImpl: (_workspaceId, _script, options) => {
+        const repoRootProjectPath = options?.repoRootProjectPath;
+        if (repoRootProjectPath === "/tmp/project-a") {
+          return Promise.resolve(
+            bashOk(createGitStatusOutput({ headBranch: "feature/a", ahead: 2 }))
+          );
+        }
+        if (repoRootProjectPath === "/tmp/project-b") {
+          return Promise.resolve(
+            bashOk(createGitStatusOutput({ headBranch: "feature/b", behind: 3 }))
+          );
+        }
+        throw new Error(`Unexpected repoRootProjectPath: ${String(repoRootProjectPath)}`);
+      },
+    });
+
+    const result = await workspaceService.getProjectGitStatuses(metadata.id, "origin/release");
+
+    expect(result.map((entry) => entry.projectName)).toEqual(["project-a", "project-b"]);
+    expect(result[0]?.gitStatus?.branch).toBe("feature/a");
+    expect(result[0]?.gitStatus?.ahead).toBe(2);
+    expect(result[1]?.gitStatus?.branch).toBe("feature/b");
+    expect(result[1]?.gitStatus?.behind).toBe(3);
+    expect(executeBashMock).toHaveBeenNthCalledWith(
+      1,
+      metadata.id,
+      expect.stringContaining('PREFERRED_BRANCH="release"'),
+      expect.objectContaining({ repoRootProjectPath: "/tmp/project-a" })
+    );
+    expect(executeBashMock).toHaveBeenNthCalledWith(
+      2,
+      metadata.id,
+      expect.stringContaining('PREFERRED_BRANCH="release"'),
+      expect.objectContaining({ repoRootProjectPath: "/tmp/project-b" })
+    );
+  });
+
+  test("continues when one project bash execution fails", async () => {
+    const metadata: WorkspaceMetadata = {
+      id: "ws-multi-failure",
+      name: "ws-multi-failure",
+      projectName: "project-a",
+      projectPath: "/tmp/project-a",
+      runtimeConfig: { type: "local" },
+      projects: [
+        { projectPath: "/tmp/project-a", projectName: "project-a" },
+        { projectPath: "/tmp/project-b", projectName: "project-b" },
+      ],
+    };
+
+    const { workspaceService } = createServiceHarness({
+      metadata,
+      executeBashImpl: (_workspaceId, _script, options) => {
+        if (options?.repoRootProjectPath === "/tmp/project-a") {
+          return Promise.resolve(bashOk(createGitStatusOutput()));
+        }
+        return Promise.resolve(Err("git failed for project-b"));
+      },
+    });
+
+    const result = await workspaceService.getProjectGitStatuses(metadata.id);
+
+    expect(result).toEqual([
+      {
+        projectPath: "/tmp/project-a",
+        projectName: "project-a",
+        gitStatus: {
+          branch: "feature/test",
+          ahead: 1,
+          behind: 0,
+          dirty: false,
+          outgoingAdditions: 5,
+          outgoingDeletions: 2,
+          incomingAdditions: 3,
+          incomingDeletions: 1,
+        },
+        error: null,
+      },
+      {
+        projectPath: "/tmp/project-b",
+        projectName: "project-b",
+        gitStatus: null,
+        error: "git failed for project-b",
+      },
+    ]);
+  });
+
+  test("returns gitStatus null with an error when output cannot be parsed", async () => {
+    const metadata: WorkspaceMetadata = {
+      id: "ws-unparsable",
+      name: "ws-unparsable",
+      projectName: "project-a",
+      projectPath: "/tmp/project-a",
+      runtimeConfig: { type: "local" },
+    };
+
+    const { workspaceService } = createServiceHarness({
+      metadata,
+      executeBashImpl: () => Promise.resolve(bashOk("definitely not git status output")),
+    });
+
+    const result = await workspaceService.getProjectGitStatuses(metadata.id);
+
+    expect(result).toEqual([
+      {
+        projectPath: "/tmp/project-a",
+        projectName: "project-a",
+        gitStatus: null,
+        error: "Failed to parse git status script output",
+      },
+    ]);
+  });
+});
+
 describe("WorkspaceService post-compaction metadata refresh", () => {
   let workspaceService: WorkspaceService;
   let historyService: HistoryService;
