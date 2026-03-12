@@ -5256,11 +5256,21 @@ describe("TaskService", () => {
       metadata: { model: "test-model" },
       parts: [],
     });
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childTwoId,
+      messageId: "assistant-child-two-interrupted-repeat",
+      metadata: { model: "test-model" },
+      parts: [],
+    });
 
     const parentHistoryAfterInterrupt = await collectFullHistory(historyService, parentId);
     const serializedParentHistory = JSON.stringify(parentHistoryAfterInterrupt);
     expect(serializedParentHistory).toContain("<mux_subagent_report>");
     expect(serializedParentHistory).toContain("Report from child one");
+    expect(
+      serializedParentHistory.match(/<task_id>child-best-of-deferred-fallback-1<\/task_id>/g)
+    ).toHaveLength(1);
   });
 
   test("agent_report generates git format-patch artifact for exec tasks before cleanup", async () => {

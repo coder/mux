@@ -3442,6 +3442,27 @@ export class TaskService {
     groupId: string;
     total: number;
   }): Promise<void> {
+    const hasSyntheticSubagentReportInHistory = async (taskId: string): Promise<boolean> => {
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+        params.parentWorkspaceId
+      );
+      if (!historyResult.success) {
+        return false;
+      }
+
+      return historyResult.data.some((message) => {
+        if (message.role !== "user" || message.metadata?.synthetic !== true) {
+          return false;
+        }
+        const text = message.parts
+          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+        return (
+          text.includes("<mux_subagent_report>") && text.includes(`<task_id>${taskId}</task_id>`)
+        );
+      });
+    };
     assert(
       params.parentWorkspaceId.length > 0,
       "deliverDeferredBestOfSiblingReports: parentWorkspaceId must be non-empty"
@@ -3464,7 +3485,10 @@ export class TaskService {
       parentWorkspaceId: params.parentWorkspaceId,
       groupId: params.groupId,
     })) {
-      if (parentTaskToolState.referencedTaskIds.has(sibling.taskId)) {
+      if (
+        parentTaskToolState.referencedTaskIds.has(sibling.taskId) ||
+        (await hasSyntheticSubagentReportInHistory(sibling.taskId))
+      ) {
         continue;
       }
       if (!(sibling.taskStatus === "reported" || sibling.taskStatus === "interrupted")) {
