@@ -136,3 +136,4 @@ benchmarks/terminal_bench/.leaderboard_cache/
 # Terminal-Bench job output
 jobs/
 
+dogfood-output/
