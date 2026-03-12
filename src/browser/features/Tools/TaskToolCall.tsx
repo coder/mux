@@ -449,18 +449,6 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
     }
   }
 
-  if (!selectedGroup && groups.length === 1 && requestedTitle) {
-    const hasActiveCandidate = groups[0]?.some((candidate) => {
-      return (
-        candidate.status === "queued" ||
-        candidate.status === "running" ||
-        candidate.status === "awaiting_report"
-      );
-    });
-    if (hasActiveCandidate) {
-      selectedGroup = groups[0];
-    }
-  }
   if (!selectedGroup) {
     return [];
   }

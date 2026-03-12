@@ -141,6 +141,20 @@ async function createBestOfChildWorkspace(params: {
   };
 }
 
+function emitTaskCreated(params: {
+  env: Awaited<ReturnType<typeof createTestEnvironment>>;
+  parentWorkspaceId: string;
+  taskId: string;
+}): void {
+  params.env.services.aiService.emit("task-created", {
+    type: "task-created",
+    workspaceId: params.parentWorkspaceId,
+    toolCallId: TOOL_CALL_ID,
+    taskId: params.taskId,
+    timestamp: Date.now(),
+  });
+}
+
 async function renderBestOfParentWorkspace(): Promise<{
   env: Awaited<ReturnType<typeof createTestEnvironment>>;
   repoPath: string;
@@ -408,11 +422,22 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
     await preloadTestModules();
   });
 
-  test("recovers created best-of candidates from workspace metadata", async () => {
+  test("renders created best-of candidates once task-created events arrive", async () => {
     const setup = await renderBestOfParentWorkspace();
 
     try {
       const taskMessageBlock = await openTaskCard(setup.view);
+
+      emitTaskCreated({
+        env: setup.env,
+        parentWorkspaceId: setup.parentMetadata.id,
+        taskId: setup.childOne.id,
+      });
+      emitTaskCreated({
+        env: setup.env,
+        parentWorkspaceId: setup.parentMetadata.id,
+        taskId: setup.childTwo.id,
+      });
 
       await waitFor(() => {
         expect(taskMessageBlock.textContent).toContain("0/2 completed");
@@ -427,11 +452,22 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("updates the completed count as recovered child workspaces report", async () => {
+  test("updates the completed count as created child workspaces report", async () => {
     const setup = await renderBestOfParentWorkspace();
 
     try {
       const taskMessageBlock = await openTaskCard(setup.view);
+
+      emitTaskCreated({
+        env: setup.env,
+        parentWorkspaceId: setup.parentMetadata.id,
+        taskId: setup.childOne.id,
+      });
+      emitTaskCreated({
+        env: setup.env,
+        parentWorkspaceId: setup.parentMetadata.id,
+        taskId: setup.childTwo.id,
+      });
 
       await waitFor(() => {
         expect(taskMessageBlock.textContent).toContain("0/2 completed");
