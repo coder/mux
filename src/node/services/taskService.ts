@@ -3854,6 +3854,47 @@ export class TaskService {
     return false;
   }
 
+  private async hasTaskToolOutputForTaskInPartial(
+    workspaceId: string,
+    taskId: string
+  ): Promise<boolean> {
+    const partial = await this.historyService.readPartial(workspaceId);
+    if (!partial) {
+      return false;
+    }
+
+    for (const part of partial.parts) {
+      if (!isDynamicToolPart(part)) continue;
+      if (part.toolName !== "task") continue;
+      if (part.state !== "output-available") continue;
+
+      const parsedOutput = TaskToolResultSchema.safeParse(part.output);
+      if (!parsedOutput.success) {
+        continue;
+      }
+
+      const output = parsedOutput.data;
+      if (output.taskId === taskId) {
+        return true;
+      }
+      if (Array.isArray(output.taskIds) && output.taskIds.includes(taskId)) {
+        return true;
+      }
+      if ("tasks" in output && Array.isArray(output.tasks)) {
+        if (output.tasks.some((task) => task.taskId === taskId)) {
+          return true;
+        }
+      }
+      if ("reports" in output && Array.isArray(output.reports)) {
+        if (output.reports.some((report) => report.taskId === taskId)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
   private async deliverReportToParent(
     parentWorkspaceId: string,
     childWorkspaceId: string,
@@ -3908,12 +3949,17 @@ export class TaskService {
         return;
       }
 
-      if (
-        childEntry?.workspace.bestOf?.total != null &&
-        childEntry.workspace.bestOf.total > 1 &&
-        (await this.hasPendingBestOfTaskToolInPartial(parentWorkspaceId))
-      ) {
-        return;
+      if (childEntry?.workspace.bestOf?.total != null && childEntry.workspace.bestOf.total > 1) {
+        if (await this.hasPendingBestOfTaskToolInPartial(parentWorkspaceId)) {
+          return;
+        }
+
+        // Concurrent sibling completions can arrive after another sibling already finalized
+        // the grouped task output in the interrupted parent partial. Avoid appending an
+        // extra synthetic fallback report once that grouped result already contains this child.
+        if (await this.hasTaskToolOutputForTaskInPartial(parentWorkspaceId, childWorkspaceId)) {
+          return;
+        }
       }
     }
 

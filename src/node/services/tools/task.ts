@@ -39,6 +39,11 @@ interface SpawnedTaskInfo {
   status: "queued" | "running";
 }
 
+interface PendingTaskInfo {
+  taskId: string;
+  status: "queued" | "running" | "completed";
+}
+
 interface CompletedTaskInfo {
   taskId: string;
   reportMarkdown: string;
@@ -46,6 +51,13 @@ interface CompletedTaskInfo {
   agentId: string;
   agentType: string;
 }
+
+type ForegroundWaitOutcome =
+  | { kind: "completed"; report: CompletedTaskInfo }
+  | { kind: "backgrounded" }
+  | { kind: "timed_out" }
+  | { kind: "interrupted" }
+  | { kind: "error"; error: unknown };
 
 function buildBestOfGroupId(workspaceId: string, toolCallId: string | undefined): string {
   return `best-of:${workspaceId}:${toolCallId ?? randomUUID()}`;
@@ -70,21 +82,36 @@ function emitTaskCreatedEvent(params: {
   } satisfies TaskCreatedEvent);
 }
 
-function toAggregatePendingStatus(statuses: readonly string[]): "queued" | "running" {
+function toAggregatePendingStatus(
+  statuses: ReadonlyArray<PendingTaskInfo["status"]>
+): "queued" | "running" {
   return statuses.every((status) => status === "queued") ? "queued" : "running";
 }
 
 function buildPendingTaskResult(params: {
-  tasks: readonly SpawnedTaskInfo[];
+  tasks: readonly PendingTaskInfo[];
   note: string;
+  reports?: readonly CompletedTaskInfo[];
 }): z.infer<typeof TaskToolResultSchema> {
   const status = toAggregatePendingStatus(params.tasks.map((task) => task.status));
+  const serializedReports =
+    params.reports && params.reports.length > 0
+      ? params.reports.map((report) => ({
+          taskId: report.taskId,
+          reportMarkdown: report.reportMarkdown,
+          title: report.title,
+          agentId: report.agentId,
+          agentType: report.agentType,
+        }))
+      : undefined;
+
   if (params.tasks.length === 1) {
     const task = params.tasks[0];
     return {
       status,
       taskId: task?.taskId,
       note: params.note,
+      ...(serializedReports ? { reports: serializedReports } : {}),
     };
   }
 
@@ -93,6 +120,7 @@ function buildPendingTaskResult(params: {
     taskIds: params.tasks.map((task) => task.taskId),
     tasks: params.tasks.map((task) => ({ taskId: task.taskId, status: task.status })),
     note: params.note,
+    ...(serializedReports ? { reports: serializedReports } : {}),
   };
 }
 
@@ -127,8 +155,17 @@ function buildCompletedTaskResult(params: {
 function normalizePendingTaskStatuses(params: {
   taskService: ReturnType<typeof requireTaskService>;
   createdTasks: readonly SpawnedTaskInfo[];
-}): SpawnedTaskInfo[] {
+  completedReports?: readonly CompletedTaskInfo[];
+}): PendingTaskInfo[] {
+  const completedTaskIds = new Set((params.completedReports ?? []).map((report) => report.taskId));
   return params.createdTasks.map((createdTask) => {
+    if (completedTaskIds.has(createdTask.taskId)) {
+      return {
+        taskId: createdTask.taskId,
+        status: "completed",
+      };
+    }
+
     const currentStatus =
       params.taskService.getAgentTaskStatus(createdTask.taskId) ?? createdTask.status;
     return {
@@ -263,9 +300,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         );
       }
 
-      try {
-        const reports = await Promise.all(
-          createdTasks.map(async (createdTask) => {
+      const waitOutcomes = await Promise.all(
+        createdTasks.map(async (createdTask): Promise<ForegroundWaitOutcome> => {
+          try {
             const report = await taskService.waitForAgentReport(createdTask.taskId, {
               abortSignal,
               requestingWorkspaceId: workspaceId,
@@ -273,52 +310,78 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
             });
 
             return {
-              taskId: createdTask.taskId,
-              reportMarkdown: report.reportMarkdown,
-              title: report.title,
-              agentId: requestedAgentId,
-              agentType: requestedAgentId,
-            } satisfies CompletedTaskInfo;
-          })
-        );
+              kind: "completed",
+              report: {
+                taskId: createdTask.taskId,
+                reportMarkdown: report.reportMarkdown,
+                title: report.title,
+                agentId: requestedAgentId,
+                agentType: requestedAgentId,
+              } satisfies CompletedTaskInfo,
+            };
+          } catch (error: unknown) {
+            if (abortSignal?.aborted) {
+              return { kind: "interrupted" };
+            }
+            if (error instanceof ForegroundWaitBackgroundedError) {
+              return { kind: "backgrounded" };
+            }
+            if (getErrorMessage(error) === "Timed out waiting for agent_report") {
+              return { kind: "timed_out" };
+            }
+            return { kind: "error", error };
+          }
+        })
+      );
 
-        return parseToolResult(TaskToolResultSchema, buildCompletedTaskResult({ reports }), "task");
-      } catch (error: unknown) {
-        if (abortSignal?.aborted) {
-          throw new Error("Interrupted");
-        }
-
-        if (error instanceof ForegroundWaitBackgroundedError) {
-          return parseToolResult(
-            TaskToolResultSchema,
-            buildPendingTaskResult({
-              tasks: normalizePendingTaskStatuses({ taskService, createdTasks }),
-              note:
-                createdTasks.length === 1
-                  ? "Task sent to background because a new message was queued. Use task_await to monitor progress."
-                  : "Tasks were sent to background because a new message was queued. Use task_await to monitor progress.",
-            }),
-            "task"
-          );
-        }
-
-        const message = getErrorMessage(error);
-        if (message === "Timed out waiting for agent_report") {
-          return parseToolResult(
-            TaskToolResultSchema,
-            buildPendingTaskResult({
-              tasks: normalizePendingTaskStatuses({ taskService, createdTasks }),
-              note:
-                createdTasks.length === 1
-                  ? "Task exceeded foreground wait limit and continues running in background. Use task_await to monitor progress."
-                  : "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.",
-            }),
-            "task"
-          );
-        }
-
-        throw error;
+      if (waitOutcomes.some((outcome) => outcome.kind === "interrupted")) {
+        throw new Error("Interrupted");
       }
+
+      const unexpectedFailure = waitOutcomes.find(
+        (outcome): outcome is Extract<ForegroundWaitOutcome, { kind: "error" }> =>
+          outcome.kind === "error"
+      );
+      if (unexpectedFailure) {
+        throw unexpectedFailure.error;
+      }
+
+      const completedReports = waitOutcomes.flatMap((outcome) =>
+        outcome.kind === "completed" ? [outcome.report] : []
+      );
+      if (completedReports.length === createdTasks.length) {
+        return parseToolResult(
+          TaskToolResultSchema,
+          buildCompletedTaskResult({ reports: completedReports }),
+          "task"
+        );
+      }
+
+      const wasBackgrounded = waitOutcomes.some((outcome) => outcome.kind === "backgrounded");
+      const didTimeOut = waitOutcomes.some((outcome) => outcome.kind === "timed_out");
+      if (wasBackgrounded || didTimeOut) {
+        return parseToolResult(
+          TaskToolResultSchema,
+          buildPendingTaskResult({
+            tasks: normalizePendingTaskStatuses({
+              taskService,
+              createdTasks,
+              completedReports,
+            }),
+            reports: completedReports,
+            note: wasBackgrounded
+              ? createdTasks.length === 1
+                ? "Task sent to background because a new message was queued. Use task_await to monitor progress."
+                : "Tasks were sent to background because a new message was queued. Use task_await to monitor progress."
+              : createdTasks.length === 1
+                ? "Task exceeded foreground wait limit and continues running in background. Use task_await to monitor progress."
+                : "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.",
+          }),
+          "task"
+        );
+      }
+
+      throw new Error("Task foreground wait ended without a terminal result");
     },
   });
 };

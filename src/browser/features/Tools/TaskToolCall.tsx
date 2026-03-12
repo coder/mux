@@ -361,11 +361,15 @@ function getOwnReportsByTaskId(
   result: TaskToolSuccessResult | null
 ): Map<string, { reportMarkdown: string; title?: string }> {
   const reportByTaskId = new Map<string, { reportMarkdown: string; title?: string }>();
-  if (result?.status !== "completed") {
+  if (!result) {
     return reportByTaskId;
   }
 
-  if (typeof result.taskId === "string" && typeof result.reportMarkdown === "string") {
+  if (
+    result.status === "completed" &&
+    typeof result.taskId === "string" &&
+    typeof result.reportMarkdown === "string"
+  ) {
     reportByTaskId.set(result.taskId, {
       reportMarkdown: result.reportMarkdown,
       title: result.title,

@@ -209,7 +209,7 @@ export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
 const TaskToolSpawnedTaskSchema = z
   .object({
     taskId: z.string(),
-    status: z.enum(["queued", "running"]),
+    status: z.enum(["queued", "running", "completed"]),
   })
   .strict();
 
@@ -229,6 +229,7 @@ export const TaskToolQueuedResultSchema = z
     taskId: z.string().optional(),
     taskIds: z.array(z.string()).min(1).optional(),
     tasks: z.array(TaskToolSpawnedTaskSchema).min(1).optional(),
+    reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
     note: z
       .string()
       .min(1)

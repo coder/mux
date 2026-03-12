@@ -256,6 +256,79 @@ describe("task tool", () => {
     });
   });
 
+  it("preserves completed best-of reports when another foreground wait times out", async () => {
+    using tempDir = new TestTempDir("test-task-tool-best-of-timeout-partial-complete");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    let createCount = 0;
+    const create = mock(() => {
+      createCount += 1;
+      return Ok({
+        taskId: `child-task-${createCount}`,
+        kind: "agent" as const,
+        status: "running" as const,
+      });
+    });
+    const waitForAgentReport = mock((taskId: string) => {
+      if (taskId === "child-task-1") {
+        return Promise.resolve({
+          reportMarkdown: "report for child-task-1",
+          title: "Report child-task-1",
+        });
+      }
+      return Promise.reject(new Error("Timed out waiting for agent_report"));
+    });
+    const getAgentTaskStatus = mock((taskId: string) =>
+      taskId === "child-task-3" ? ("queued" as const) : ("running" as const)
+    );
+    const taskService = {
+      create,
+      waitForAgentReport,
+      getAgentTaskStatus,
+    } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "compare three approaches",
+          title: "Best of 3",
+          run_in_background: false,
+          n: 3,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(3);
+    expect(waitForAgentReport).toHaveBeenCalledTimes(3);
+    expect(getAgentTaskStatus).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      status: "running",
+      taskIds: ["child-task-1", "child-task-2", "child-task-3"],
+      tasks: [
+        { taskId: "child-task-1", status: "completed" },
+        { taskId: "child-task-2", status: "running" },
+        { taskId: "child-task-3", status: "queued" },
+      ],
+      reports: [
+        {
+          taskId: "child-task-1",
+          reportMarkdown: "report for child-task-1",
+          title: "Report child-task-1",
+          agentId: "explore",
+          agentType: "explore",
+        },
+      ],
+      note: "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.",
+    });
+  });
+
   it("should allow sub-agent workspaces to spawn nested tasks", async () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "child-workspace" });
