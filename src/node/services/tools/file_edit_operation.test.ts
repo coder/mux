@@ -66,52 +66,55 @@ describe("executeFileEditOperation", () => {
   });
 });
 
-describe("executeFileEditOperation cwd boundary enforcement", () => {
-  async function expectPathRejectedBeforeFileAccess(filePath: string): Promise<void> {
-    const statMock = jest.fn();
-    const readFileMock = jest.fn();
-    const writeFileMock = jest.fn();
+describe("executeFileEditOperation outside-cwd access", () => {
+  test("should allow traversal outside cwd", async () => {
+    using tempDir = new TestTempDir("outside-cwd-traversal");
 
-    const mockRuntime = {
-      stat: statMock,
-      readFile: readFileMock,
-      writeFile: writeFileMock,
-      normalizePath: jest.fn<(targetPath: string, basePath: string) => string>(
-        (targetPath: string, basePath: string) => {
-          if (targetPath.startsWith("/")) {
-            return targetPath;
-          }
-          return path.resolve(basePath, targetPath);
-        }
-      ),
-    } as unknown as Runtime;
+    const workspaceCwd = path.join(tempDir.path, "workspace");
+    const outsideDir = path.join(tempDir.path, "outside");
+    const outsidePath = path.join(outsideDir, "file.txt");
+    await fs.mkdir(workspaceCwd);
+    await fs.mkdir(outsideDir);
+    await fs.writeFile(outsidePath, "original");
 
     const result = await executeFileEditOperation({
       config: {
-        cwd: "/home/user/project",
-        runtime: mockRuntime,
-        runtimeTempDir: "/tmp",
+        cwd: workspaceCwd,
+        runtime: new LocalRuntime(workspaceCwd),
+        runtimeTempDir: tempDir.path,
         ...getTestDeps(),
       },
-      filePath,
-      operation: () => ({ success: true, newContent: "test", metadata: {} }),
+      filePath: "../outside/file.txt",
+      operation: () => ({ success: true, newContent: "updated", metadata: {} }),
     });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("restricted to the workspace directory");
-    }
-    expect(statMock).not.toHaveBeenCalled();
-    expect(readFileMock).not.toHaveBeenCalled();
-    expect(writeFileMock).not.toHaveBeenCalled();
-  }
-
-  test("should reject traversal outside cwd before reading or writing", async () => {
-    await expectPathRejectedBeforeFileAccess("../outside.txt");
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(outsidePath, "utf-8")).toBe("updated");
   });
 
-  test("should reject absolute paths outside cwd before reading or writing", async () => {
-    await expectPathRejectedBeforeFileAccess("/home/user/outside.txt");
+  test("should allow absolute paths outside cwd", async () => {
+    using tempDir = new TestTempDir("outside-cwd-absolute");
+
+    const workspaceCwd = path.join(tempDir.path, "workspace");
+    const outsideDir = path.join(tempDir.path, "outside");
+    const outsidePath = path.join(outsideDir, "file.txt");
+    await fs.mkdir(workspaceCwd);
+    await fs.mkdir(outsideDir);
+    await fs.writeFile(outsidePath, "original");
+
+    const result = await executeFileEditOperation({
+      config: {
+        cwd: workspaceCwd,
+        runtime: new LocalRuntime(workspaceCwd),
+        runtimeTempDir: tempDir.path,
+        ...getTestDeps(),
+      },
+      filePath: outsidePath,
+      operation: () => ({ success: true, newContent: "updated", metadata: {} }),
+    });
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(outsidePath, "utf-8")).toBe("updated");
   });
 });
 
@@ -239,8 +242,8 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     expect(await fs.readFile(testFile, "utf-8")).toBe("const x = 2;\n");
   });
 
-  test("should reject editing the configured plan file when it is outside cwd in exec mode", async () => {
-    using tempDir = new TestTempDir("exec-plan-readonly-test");
+  test("should allow editing the configured plan file when it is outside cwd in exec mode", async () => {
+    using tempDir = new TestTempDir("exec-plan-edit-test");
 
     const planPath = path.join(tempDir.path, "plan.md");
     await fs.writeFile(planPath, "# Plan\n");
@@ -259,21 +262,20 @@ describe("executeFileEditOperation plan mode enforcement", () => {
       operation: () => ({ success: true, newContent: "# Updated\n", metadata: {} }),
     });
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("restricted to the workspace directory");
-    }
-
-    expect(await fs.readFile(planPath, "utf-8")).toBe("# Plan\n");
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(planPath, "utf-8")).toBe("# Updated\n");
   });
 
-  test("should reject alternate plan file paths that escape cwd before resolving them", async () => {
+  test("should reject alternate plan file paths in plan mode after resolving them", async () => {
     const resolvePathCalls: string[] = [];
+    const statMock = jest.fn();
+    const readFileMock = jest.fn();
+    const writeFileMock = jest.fn();
 
     const mockRuntime = {
-      stat: jest.fn(),
-      readFile: jest.fn(),
-      writeFile: jest.fn(),
+      stat: statMock,
+      readFile: readFileMock,
+      writeFile: writeFileMock,
       normalizePath: jest.fn<(targetPath: string, basePath: string) => string>(
         (targetPath: string, basePath: string) => {
           if (targetPath === "../.mux/sessions/ws/plan.md") {
@@ -285,6 +287,9 @@ describe("executeFileEditOperation plan mode enforcement", () => {
       ),
       resolvePath: jest.fn<(targetPath: string) => Promise<string>>((targetPath: string) => {
         resolvePathCalls.push(targetPath);
+        if (targetPath === "../.mux/sessions/ws/plan.md") {
+          return Promise.resolve("/home/user/.mux/sessions/ws/plan.md");
+        }
         return Promise.resolve(targetPath);
       }),
     } as unknown as Runtime;
@@ -303,10 +308,17 @@ describe("executeFileEditOperation plan mode enforcement", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("restricted to the workspace directory");
+      expect(result.error).toContain("exact plan file path");
       expect(result.error).toContain("../.mux/sessions/ws/plan.md");
+      expect(result.error).toContain("/home/user/.mux/sessions/ws/plan.md");
     }
 
-    expect(resolvePathCalls).toEqual([]);
+    expect(resolvePathCalls).toEqual([
+      "../.mux/sessions/ws/plan.md",
+      "/home/user/.mux/sessions/ws/plan.md",
+    ]);
+    expect(statMock).not.toHaveBeenCalled();
+    expect(readFileMock).not.toHaveBeenCalled();
+    expect(writeFileMock).not.toHaveBeenCalled();
   });
 });

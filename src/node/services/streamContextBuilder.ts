@@ -225,7 +225,7 @@ export interface BuildStreamSystemContextOptions {
   agentDiscoveryPath: string;
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions: string | undefined;
-  /** Active workspace plan file path already allowlisted separately for reads. */
+  /** Active workspace plan file path used by mode instructions and tool configuration. */
   planFilePath?: string;
   modelString: string;
   cfg: ProjectsConfig;
@@ -246,7 +246,7 @@ export interface StreamSystemContextResult {
   agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
   /** Available skills for tool descriptions. */
   availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
-  /** Exact ancestor plan files surfaced in the prompt and allowlisted for file_read. */
+  /** Exact ancestor plan files surfaced in the prompt and forwarded through tool configuration. */
   ancestorPlanFilePaths: string[];
 }
 
@@ -378,7 +378,7 @@ function resolveAncestorPlanContext(args: {
   const ancestorPlanFilePaths: string[] = [];
   const seenPlanFilePaths = new Set<string>();
 
-  // Keep the prompt text and file_read allowlist on the same exact-file source of truth.
+  // Keep the prompt text and structured ancestor-plan metadata on the same exact-file source of truth.
   for (const entry of ancestorEntries) {
     const normalizedPlanFilePath = args.runtime.normalizePath(
       entry.planFilePath,

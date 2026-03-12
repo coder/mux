@@ -5,7 +5,6 @@ import {
 } from "@/common/types/tools";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import {
-  FileToolPathValidationError,
   generateDiff,
   resolvePathWithinCwd,
   validateFileSize,
@@ -53,7 +52,7 @@ export async function executeFileEditOperation<TMetadata>({
       correctedPath: validatedPath,
       warning: pathWarning,
       resolvedPath,
-    } = resolvePathWithinCwd(filePath, config.cwd, config.runtime, config);
+    } = resolvePathWithinCwd(filePath, config.cwd, config.runtime);
     filePath = validatedPath;
 
     // Validate plan mode access restrictions
@@ -154,13 +153,6 @@ export async function executeFileEditOperation<TMetadata>({
       ...(pathWarning && { warning: pathWarning }),
     };
   } catch (error) {
-    if (error instanceof FileToolPathValidationError) {
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-
     if (error && typeof error === "object" && "code" in error) {
       const nodeError = error as { code?: string };
       if (nodeError.code === "ENOENT") {

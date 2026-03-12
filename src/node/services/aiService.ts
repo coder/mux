@@ -1103,7 +1103,7 @@ export class AIService extends EventEmitter {
           backgroundProcessManager: this.backgroundProcessManager,
           // Plan agent configuration for plan file access.
           // - read: plan file is readable in all agents (useful context)
-          // - write: enforced by file_edit_* tools (plan file is read-only outside plan agent)
+          // - write: allowed in all agents; plan agents still lock other edits to the exact plan path
           planFileOnly: agentIsPlanLike,
           emitChatEvent: (event) => {
             // Defensive: tools should only emit events for the workspace they belong to.

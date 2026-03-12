@@ -2,7 +2,7 @@ import { tool } from "ai";
 import type { FileReadToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { FileToolPathValidationError, resolvePathWithinCwd, validateFileSize } from "./fileCommon";
+import { resolvePathWithinCwd, validateFileSize } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -28,12 +28,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
           correctedPath: validatedPath,
           warning: pathWarning,
           resolvedPath,
-        } = resolvePathWithinCwd(filePath, config.cwd, config.runtime, {
-          planFileOnly: config.planFileOnly,
-          planFilePath: config.planFilePath,
-          allowConfiguredPlanFileOutsideCwd: true,
-          extraReadFilePathsOutsideCwd: config.ancestorPlanFilePaths,
-        });
+        } = resolvePathWithinCwd(filePath, config.cwd, config.runtime);
         filePath = validatedPath;
 
         // Check if file exists using runtime
@@ -164,13 +159,6 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
           ...(pathWarning && { warning: pathWarning }),
         };
       } catch (error) {
-        if (error instanceof FileToolPathValidationError) {
-          return {
-            success: false,
-            error: error.message,
-          };
-        }
-
         // Handle specific errors
         if (error && typeof error === "object" && "code" in error) {
           if (error.code === "ENOENT") {

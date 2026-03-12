@@ -17,10 +17,9 @@ export interface PlanModeValidationError {
 }
 
 /**
- * Validate file path for plan mode restrictions.
- * Returns an error if:
- * - Editing the plan file outside the plan agent (read-only)
- * - Editing any non-plan file while the plan agent is locked to the plan file
+ * Validate file path for plan-mode edit restrictions.
+ * Returns an error only when the plan agent is locked to the configured plan file
+ * and the requested edit targets any other path or alternate spelling of that path.
  *
  * Returns null if validation passes.
  */
@@ -28,14 +27,8 @@ export async function validatePlanModeAccess(
   filePath: string,
   config: ToolConfiguration
 ): Promise<PlanModeValidationError | null> {
-  // Plan file is always read-only outside the plan agent.
-  if ((await isPlanFilePath(filePath, config)) && !config.planFileOnly) {
-    return {
-      success: false,
-      error: `Plan file is read-only outside the plan agent: ${filePath}`,
-    };
-  }
-
+  // Outside plan mode, the configured plan file should stay editable like any other file.
+  // Plan-mode agents still lock edits to the exact path string from the instructions.
   // Plan-agent restriction: only allow editing the plan file (and require exact string match).
   if (config.planFileOnly && config.planFilePath) {
     if (filePath !== config.planFilePath) {
@@ -80,7 +73,7 @@ export function generateDiff(filePath: string, oldContent: string, newContent: s
  * Uses runtime.resolvePath to properly expand tildes for comparison.
  *
  * Why mode-agnostic: the plan file is useful context in both plan + exec modes,
- * but should only be writable in plan mode.
+ * and plan-mode agents still need exact-path validation for plan-only edits.
  *
  * @param targetPath - The path being accessed (may contain ~ or be absolute)
  * @param config - Tool configuration containing planFilePath
@@ -179,13 +172,6 @@ type ComparablePathKind = "absolute" | "home";
 interface ComparablePath {
   kind: ComparablePathKind;
   value: string;
-}
-
-export class FileToolPathValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "FileToolPathValidationError";
-  }
 }
 
 function getRuntimePathModule(runtime: Runtime): RuntimePathModule {
@@ -317,57 +303,23 @@ export function validateAndCorrectPath(
   return { correctedPath: filePath };
 }
 
-interface ResolvePathWithinCwdOptions {
-  planFileOnly?: boolean;
-  planFilePath?: string;
-  allowConfiguredPlanFileOutsideCwd?: boolean;
-  extraReadFilePathsOutsideCwd?: string[];
-}
-
+/**
+ * Resolve a file-tool path after applying redundant-prefix auto-correction.
+ *
+ * Despite the historical name, this helper no longer enforces a cwd boundary.
+ * Bash already exposes unrestricted filesystem access, so file tools should resolve
+ * the exact path the user asked us to touch instead of imposing a stricter
+ * workspace-only rule.
+ */
 export function resolvePathWithinCwd(
   filePath: string,
   cwd: string,
-  runtime: Runtime,
-  planModeConfig?: ResolvePathWithinCwdOptions
+  runtime: Runtime
 ): { correctedPath: string; resolvedPath: string; warning?: string } {
   const { correctedPath, warning } = validateAndCorrectPath(filePath, cwd, runtime);
-  const resolvedPath = runtime.normalizePath(correctedPath, cwd);
-  const correctedPathIsAbsolute = isRuntimeAbsolutePath(correctedPath, runtime);
-  const canBypassCwdForConfiguredPlanFile =
-    planModeConfig?.planFileOnly === true ||
-    planModeConfig?.allowConfiguredPlanFileOutsideCwd === true;
-  const isExactConfiguredPlanFileOutsideCwd =
-    canBypassCwdForConfiguredPlanFile &&
-    planModeConfig?.planFilePath != null &&
-    correctedPath === planModeConfig.planFilePath;
-
-  const normalizedExtraReadFilePathsOutsideCwd =
-    planModeConfig?.extraReadFilePathsOutsideCwd
-      ?.map((allowedFilePath) => allowedFilePath.trim())
-      .filter((allowedFilePath) => allowedFilePath.length > 0)
-      .map((allowedFilePath) => {
-        assert(
-          isRuntimeAbsolutePath(allowedFilePath, runtime),
-          `extraReadFilePathsOutsideCwd must be absolute: '${allowedFilePath}'`
-        );
-        return runtime.normalizePath(allowedFilePath, cwd);
-      }) ?? [];
-  const isExactExtraReadFilePathOutsideCwd =
-    correctedPathIsAbsolute && normalizedExtraReadFilePathsOutsideCwd.includes(resolvedPath);
-
-  // Keep the exception narrow by only bypassing cwd enforcement for exact allowlisted plan files.
-  // Reads can opt in outside plan mode so compaction/context resets do not strand the agent away
-  // from plan context under mux home, but relative-path escapes must still stay inside cwd.
-  if (!isExactConfiguredPlanFileOutsideCwd && !isExactExtraReadFilePathOutsideCwd) {
-    const cwdValidation = validatePathInCwd(correctedPath, cwd, runtime);
-    if (cwdValidation) {
-      throw new FileToolPathValidationError(cwdValidation.error);
-    }
-  }
-
   return {
     correctedPath,
-    resolvedPath,
+    resolvedPath: runtime.normalizePath(correctedPath, cwd),
     warning,
   };
 }

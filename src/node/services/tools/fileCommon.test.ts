@@ -198,65 +198,28 @@ describe("fileCommon", () => {
   describe("resolvePathWithinCwd", () => {
     const cwd = "/workspace/project";
     const runtime = createRuntime({ type: "local", srcBaseDir: cwd });
-    const planFilePath = "/home/user/.mux/plans/plan.md";
 
-    it("allows the exact configured plan file outside cwd for reads in any mode", () => {
-      const result = resolvePathWithinCwd(planFilePath, cwd, runtime, {
-        planFilePath,
-        allowConfiguredPlanFileOutsideCwd: true,
-      });
+    it("keeps resolving configured plan files outside cwd", () => {
+      const planFilePath = "/home/user/.mux/plans/plan.md";
+      const result = resolvePathWithinCwd(planFilePath, cwd, runtime);
 
       expect(result.correctedPath).toBe(planFilePath);
       expect(result.resolvedPath).toBe(planFilePath);
     });
 
-    it("keeps rejecting writes to the configured plan file outside cwd outside plan mode", () => {
-      expect(() => resolvePathWithinCwd(planFilePath, cwd, runtime, { planFilePath })).toThrow(
-        "restricted to the workspace directory"
-      );
+    it("keeps resolving unrelated absolute paths outside cwd", () => {
+      const otherPath = "/home/user/.mux/plans/other.md";
+      const result = resolvePathWithinCwd(otherPath, cwd, runtime);
+
+      expect(result.correctedPath).toBe(otherPath);
+      expect(result.resolvedPath).toBe(otherPath);
     });
 
-    it("keeps rejecting other outside-cwd paths even when plan file reads are allowlisted", () => {
-      expect(() =>
-        resolvePathWithinCwd("/home/user/.mux/plans/other.md", cwd, runtime, {
-          planFilePath,
-          allowConfiguredPlanFileOutsideCwd: true,
-        })
-      ).toThrow("restricted to the workspace directory");
-    });
-    it("allows an exact ancestor plan file outside cwd when it is explicitly allowlisted", () => {
-      const ancestorPlanPath = "/home/user/.mux/plans/ancestor.md";
+    it("resolves relative paths that traverse outside cwd", () => {
+      const result = resolvePathWithinCwd("../plans/ancestor.md", cwd, runtime);
 
-      const result = resolvePathWithinCwd(ancestorPlanPath, cwd, runtime, {
-        extraReadFilePathsOutsideCwd: [ancestorPlanPath],
-      });
-
-      expect(result.correctedPath).toBe(ancestorPlanPath);
-      expect(result.resolvedPath).toBe(ancestorPlanPath);
-    });
-
-    it("rejects the same ancestor plan path without the explicit allowlist", () => {
-      expect(() => resolvePathWithinCwd("/home/user/.mux/plans/ancestor.md", cwd, runtime)).toThrow(
-        "restricted to the workspace directory"
-      );
-    });
-
-    it("keeps rejecting relative-path escapes even when the ancestor plan is allowlisted", () => {
-      const ancestorPlanPath = "/workspace/plans/ancestor.md";
-
-      expect(() =>
-        resolvePathWithinCwd("../plans/ancestor.md", cwd, runtime, {
-          extraReadFilePathsOutsideCwd: [ancestorPlanPath],
-        })
-      ).toThrow("restricted to the workspace directory");
-    });
-
-    it("requires extra outside-cwd file allowlist entries to be absolute", () => {
-      expect(() =>
-        resolvePathWithinCwd("/home/user/.mux/plans/ancestor.md", cwd, runtime, {
-          extraReadFilePathsOutsideCwd: ["relative/ancestor.md"],
-        })
-      ).toThrow("extraReadFilePathsOutsideCwd must be absolute");
+      expect(result.correctedPath).toBe("../plans/ancestor.md");
+      expect(result.resolvedPath).toBe("/workspace/plans/ancestor.md");
     });
   });
 
@@ -377,7 +340,7 @@ describe("fileCommon", () => {
       },
     } as unknown as Runtime;
 
-    const config: ToolConfiguration = {
+    const planModeConfig: ToolConfiguration = {
       cwd: "/home/user/project",
       runtime: mockRuntime,
       runtimeTempDir: "/tmp",
@@ -385,12 +348,22 @@ describe("fileCommon", () => {
       planFilePath,
     };
 
-    it("should allow editing when filePath is exactly planFilePath", async () => {
-      expect(await validatePlanModeAccess(planFilePath, config)).toBeNull();
+    const execConfig: ToolConfiguration = {
+      ...planModeConfig,
+      planFileOnly: false,
+    };
+
+    it("should allow editing the configured plan file outside plan mode", async () => {
+      expect(await validatePlanModeAccess(planFilePath, execConfig)).toBeNull();
+      expect(await validatePlanModeAccess(resolvedPlanFilePath, execConfig)).toBeNull();
     });
 
-    it("should reject alternate paths that resolve to the plan file", async () => {
-      const result = await validatePlanModeAccess(resolvedPlanFilePath, config);
+    it("should allow editing when filePath is exactly planFilePath in plan mode", async () => {
+      expect(await validatePlanModeAccess(planFilePath, planModeConfig)).toBeNull();
+    });
+
+    it("should reject alternate paths that resolve to the plan file in plan mode", async () => {
+      const result = await validatePlanModeAccess(resolvedPlanFilePath, planModeConfig);
       expect(result).not.toBeNull();
       expect(result?.error).toContain("exact plan file path");
       expect(result?.error).toContain(planFilePath);
@@ -399,7 +372,7 @@ describe("fileCommon", () => {
     });
 
     it("should reject non-plan files in plan mode", async () => {
-      const result = await validatePlanModeAccess("src/main.ts", config);
+      const result = await validatePlanModeAccess("src/main.ts", planModeConfig);
       expect(result).not.toBeNull();
       expect(result?.error).toContain("only the plan file can be edited");
       expect(result?.error).toContain("exact plan file path");
