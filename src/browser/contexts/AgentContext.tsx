@@ -99,7 +99,7 @@ function AgentProviderWithState(props: {
 
   const [scopedAgentId, setAgentIdRaw] = usePersistedState<string | null>(
     getAgentIdKey(scopeId),
-    isProjectScope ? null : WORKSPACE_DEFAULTS.agentId,
+    null,
     {
       listener: true,
     }
@@ -124,13 +124,13 @@ function AgentProviderWithState(props: {
     (value) => {
       setAgentIdRaw((prev) => {
         const previousAgentId = coerceAgentId(
-          isProjectScope ? (prev ?? globalDefaultAgentId) : prev
+          isProjectScope ? (prev ?? globalDefaultAgentId) : (prev ?? currentMeta?.agentId)
         );
         const next = typeof value === "function" ? value(previousAgentId) : value;
         return coerceAgentId(next);
       });
     },
-    [globalDefaultAgentId, isProjectScope, setAgentIdRaw]
+    [currentMeta?.agentId, globalDefaultAgentId, isProjectScope, setAgentIdRaw]
   );
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
@@ -246,7 +246,11 @@ function AgentProviderWithState(props: {
   const normalizedAgentId =
     isCurrentAgentLocked && currentMeta?.agentId
       ? currentMeta.agentId
-      : coerceAgentId(isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId);
+      : coerceAgentId(
+          isProjectScope
+            ? (scopedAgentId ?? globalDefaultAgentId)
+            : (scopedAgentId ?? currentMeta?.agentId)
+        );
   const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
 
   const flushSelectedAgentSync = useCallback(

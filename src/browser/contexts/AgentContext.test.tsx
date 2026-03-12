@@ -182,6 +182,31 @@ describe("AgentContext", () => {
     });
   });
 
+  test("workspace-scoped provider preserves an existing backend agent when no local value exists", async () => {
+    const workspaceId = "workspace-backend-agent";
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [AUTO_AGENT, EXEC_AGENT, PLAN_AGENT];
+    mockWorkspaceMetadata.set(workspaceId, { agentId: "plan" });
+
+    let contextValue: AgentContextValue | undefined;
+
+    render(
+      <AgentProvider workspaceId={workspaceId} projectPath={projectPath}>
+        <Harness onChange={(value) => (contextValue = value)} />
+      </AgentProvider>
+    );
+
+    await waitFor(() => {
+      expect(contextValue?.agentId).toBe("plan");
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(updateSelectedAgentMock).not.toHaveBeenCalled();
+  });
+
   test("workspace-scoped agent sync serializes rapid selection changes", async () => {
     const workspaceId = "workspace-sync-rapid";
     const projectPath = "/tmp/project";
