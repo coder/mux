@@ -903,8 +903,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // URL restoration is now handled by RouterContext which parses the URL on load
   // and provides currentWorkspaceId/currentProjectId that we derive state from.
 
-  // Check for launch project from server (for --add-project flag)
-  // This only applies in server mode, runs after metadata loads
+  // Check for launch project from server (for --add-project flag).
+  // This is explicit startup intent from the CLI/server, so it should still win
+  // even when RouterContext suppresses passive /workspace URL restores in dashboard mode.
+  // This only applies in server mode, runs after metadata loads.
   useEffect(() => {
     if (loading || !api) return;
 
@@ -924,10 +926,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
     // Skip if user is in the middle of creating a workspace
     if (pendingNewWorkspaceProject) return;
-
-    // Don't restore a launch-project workspace when startup should stay on the dashboard.
-    const launchBehavior = readPersistedState<LaunchBehavior>(LAUNCH_BEHAVIOR_KEY, "dashboard");
-    if (launchBehavior === "dashboard") return;
 
     let cancelled = false;
 

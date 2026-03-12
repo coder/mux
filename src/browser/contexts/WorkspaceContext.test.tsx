@@ -874,7 +874,7 @@ describe("WorkspaceContext", () => {
     expect(ctx().pendingNewWorkspaceProject).toBe(systemProjectPath);
   });
 
-  test("dashboard mode blocks launch-project auto-selection", async () => {
+  test("dashboard mode still honors explicit launch-project selection", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -902,10 +902,13 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().selectedWorkspace).toBeNull();
+
+    await waitFor(() => {
+      expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-launch");
+    });
   });
 
-  test("default launch behavior blocks launch-project auto-selection", async () => {
+  test("default launch behavior still honors explicit launch-project selection", async () => {
     createMockAPI({
       workspace: {
         list: () =>
@@ -930,7 +933,10 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().loading).toBe(false));
-    expect(ctx().selectedWorkspace).toBeNull();
+
+    await waitFor(() => {
+      expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-launch");
+    });
   });
 
   test("last-workspace mode allows launch-project auto-selection", async () => {
@@ -1001,7 +1007,7 @@ describe("WorkspaceContext", () => {
     });
   });
 
-  test("launch project opens project creation when no workspace exists yet", async () => {
+  test("launch project opens project creation when no workspace exists yet, even in dashboard mode", async () => {
     createMockAPI({
       workspace: {
         list: () => Promise.resolve([]),
@@ -1013,7 +1019,7 @@ describe("WorkspaceContext", () => {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
       localStorage: {
-        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
       },
     });
 
