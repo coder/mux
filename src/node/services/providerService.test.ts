@@ -392,6 +392,46 @@ describe("ProviderService gateway lifecycle", () => {
     });
   });
 
+  it("does not auto-insert configured-but-disabled gateways into routePriority", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["direct"],
+      });
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+
+      const result = await service.setConfig("mux-gateway", ["enabled"], false);
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual(["direct"]);
+    });
+  });
+
+  it("auto-removes gateway from routePriority when disabled", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const existingConfig = config.loadConfigOrDefault();
+      await config.saveConfig({
+        ...existingConfig,
+        routePriority: ["mux-gateway", "direct"],
+      });
+      config.saveProvidersConfig({
+        "mux-gateway": {
+          couponCode: "gateway-token",
+        },
+      });
+
+      const result = await service.setConfig("mux-gateway", ["enabled"], false);
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().routePriority).toEqual(["direct"]);
+    });
+  });
+
   it("does not auto-insert bedrock into routePriority when only region is configured", async () => {
     await withTempConfigAsync(async (config, service) => {
       const existingConfig = config.loadConfigOrDefault();

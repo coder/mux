@@ -8,6 +8,7 @@
  */
 
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import type {
   BedrockProviderConfig,
   MuxGatewayProviderConfig,
@@ -210,6 +211,12 @@ export function isProviderAutoRouteEligible(
   config: ProviderConfigRaw,
   env: Record<string, string | undefined> = process.env
 ): boolean {
+  // Keep auto-route admission aligned with runtime availability: saved credentials alone
+  // must not reinsert a provider the user has explicitly disabled.
+  if (isProviderDisabledInConfig(config)) {
+    return false;
+  }
+
   const credentials = resolveProviderCredentials(provider, config, env);
   if (!credentials.isConfigured) {
     return false;

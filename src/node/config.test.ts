@@ -633,6 +633,16 @@ describe("Config", () => {
       expect(directIndex).toBeGreaterThan(muxGatewayIndex);
     });
 
+    it("does not seed routePriority when a configured gateway is disabled", () => {
+      writeProvidersConfig({
+        "mux-gateway": { couponCode: "test-coupon", enabled: false },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toBeUndefined();
+    });
+
     it("leaves routePriority undefined on fresh installs without configured gateways", () => {
       const loaded = config.loadConfigOrDefault();
 

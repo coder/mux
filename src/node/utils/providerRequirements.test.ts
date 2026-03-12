@@ -36,8 +36,20 @@ describe("isProviderAutoRouteEligible", () => {
     ).toBe(true);
   });
 
-  it("delegates to configured-state checks for non-bedrock providers", () => {
+  it("returns false for disabled non-bedrock providers even when configured", () => {
+    expect(
+      isProviderAutoRouteEligible("mux-gateway", { couponCode: "x", enabled: false }, {})
+    ).toBe(false);
+  });
+
+  it("returns true for non-bedrock providers when enabled is omitted", () => {
     expect(isProviderAutoRouteEligible("mux-gateway", { couponCode: "x" }, {})).toBe(true);
+  });
+
+  it("returns true for non-bedrock providers when explicitly enabled", () => {
+    expect(isProviderAutoRouteEligible("mux-gateway", { couponCode: "x", enabled: true }, {})).toBe(
+      true
+    );
   });
 });
 
