@@ -11,6 +11,7 @@ import {
   getNotifyOnResponseAutoEnableKey,
 } from "@/common/constants/storage";
 import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
+import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
 import { BranchSelector } from "../BranchSelector/BranchSelector";
 import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
@@ -45,7 +46,8 @@ import { SkillIndicator } from "../SkillIndicator/SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
 
-import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
+import { useWorkspaceActions, useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { isMultiProject } from "@/common/utils/multiProject";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
@@ -78,12 +80,15 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { api } = useAPI();
   const { disableWorkspaceAgents } = useAgent();
   const { archiveWorkspace } = useWorkspaceActions();
+  const { workspaceMetadata } = useWorkspaceContext();
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
   const runtimeStatus = useRuntimeStatus(workspaceId);
+  const workspaceEntry = workspaceMetadata.get(workspaceId);
+  const showMultiProjectStatus = workspaceEntry != null && isMultiProject(workspaceEntry);
   const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills, skillLoadErrors } =
     useWorkspaceSidebarState(workspaceId);
@@ -436,13 +441,21 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               {devcontainerChip.label}
             </span>
           )}
-          <GitStatusIndicator
-            gitStatus={gitStatus}
-            workspaceId={workspaceId}
-            projectPath={projectPath}
-            tooltipPosition="bottom"
-            isWorking={isWorking}
-          />
+          {showMultiProjectStatus ? (
+            <MultiProjectGitStatusIndicator
+              workspaceId={workspaceId}
+              tooltipPosition="bottom"
+              isWorking={isWorking}
+            />
+          ) : (
+            <GitStatusIndicator
+              gitStatus={gitStatus}
+              workspaceId={workspaceId}
+              projectPath={projectPath}
+              tooltipPosition="bottom"
+              isWorking={isWorking}
+            />
+          )}
         </div>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>

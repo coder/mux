@@ -190,7 +190,9 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
 describe("workspace.getProjectGitStatuses schema", () => {
   it("accepts omitted and null baseRef values", () => {
-    expect(workspace.getProjectGitStatuses.input.safeParse({ workspaceId: "ws" }).success).toBe(true);
+    expect(workspace.getProjectGitStatuses.input.safeParse({ workspaceId: "ws" }).success).toBe(
+      true
+    );
     expect(
       workspace.getProjectGitStatuses.input.safeParse({ workspaceId: "ws", baseRef: null }).success
     ).toBe(true);
