@@ -1,6 +1,7 @@
 import "../../../../tests/ui/dom";
 
 import { type PropsWithChildren } from "react";
+import type ProjectSidebarComponent from "./ProjectSidebar";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import * as MuxLogoDarkModule from "@/browser/assets/logos/mux-logo-dark.svg?react";
@@ -46,7 +47,7 @@ function TestWrapper(props: PropsWithChildren) {
 
 const passthroughRef = <T,>(value: T): T => value;
 
-let ProjectSidebar: (typeof import("./ProjectSidebar"))["default"];
+let ProjectSidebar: typeof ProjectSidebarComponent;
 
 function installProjectSidebarModuleMocks() {
   void mock.module("react-dnd", () => ({
@@ -300,7 +301,7 @@ function createWorkspace(
 let cleanupDom: (() => void) | null = null;
 
 describe("ProjectSidebar multi-project completed-subagent toggles", () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     cleanupDom = installDom();
     window.localStorage.clear();
     window.localStorage.setItem(
@@ -309,7 +310,10 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     );
     installProjectSidebarModuleMocks();
     installProjectSidebarTestDoubles();
-    ({ default: ProjectSidebar } = await import("./ProjectSidebar"));
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- module mocks must be registered before loading ProjectSidebar in bun tests.
+    ({ default: ProjectSidebar } = require("./ProjectSidebar") as {
+      default: typeof ProjectSidebarComponent;
+    });
   });
 
   afterEach(() => {

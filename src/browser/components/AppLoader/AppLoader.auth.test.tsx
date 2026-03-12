@@ -1,6 +1,7 @@
 import "../../../../tests/ui/dom";
 
 import React from "react";
+import type { AppLoader as AppLoaderComponent } from "../AppLoader/AppLoader";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -101,13 +102,16 @@ function installAppLoaderModuleMocks() {
   }));
 }
 
-let AppLoader: (typeof import("../AppLoader/AppLoader"))["AppLoader"];
+let AppLoader: typeof AppLoaderComponent;
 
 describe("AppLoader", () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     cleanupDom = installDom();
     installAppLoaderModuleMocks();
-    ({ AppLoader } = await import("../AppLoader/AppLoader"));
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- module mocks must be registered before loading AppLoader in bun tests.
+    ({ AppLoader } = require("../AppLoader/AppLoader") as {
+      AppLoader: typeof AppLoaderComponent;
+    });
   });
 
   afterEach(() => {
