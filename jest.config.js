@@ -1,3 +1,11 @@
+const os = require("node:os");
+
+const cpuWorkerCap = Math.max(1, Math.floor(os.cpus().length * 0.5));
+const memoryWorkerCap = Math.floor(
+  os.totalmem() / (1024 * 1024 * 1024) / 1.5,
+);
+const maxWorkers = Math.max(1, Math.min(cpuWorkerCap, memoryWorkerCap));
+
 /** @type {import('jest').Config} */
 module.exports = {
   testEnvironment: "node",
@@ -37,8 +45,9 @@ module.exports = {
     // This is slower but ensures compatibility
     "node_modules/(?!\\.pnpm)(?!.*)",
   ],
-  // Run tests in parallel (use 50% of available cores, or 4 minimum)
-  maxWorkers: "50%",
+  // High core-count containers with limited RAM (for example 96 cores / 32 GB)
+  // can OOM if Jest uses CPU-only parallelism, so keep roughly 1.5 GB per worker.
+  maxWorkers,
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,
   // 10 minute timeout for integration tests, 10s for unit tests
