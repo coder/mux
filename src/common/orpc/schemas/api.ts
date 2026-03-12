@@ -122,12 +122,14 @@ export { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntr
 
 const BackgroundProcessStatusSchema = z.enum(["running", "exited", "killed", "failed"]);
 
-const ProjectGitStatusResultSchema = z.object({
+export const ProjectGitStatusResultSchema = z.object({
   projectPath: z.string(),
   projectName: z.string(),
   gitStatus: GitStatusSchema.nullish(),
   error: z.string().nullish(),
 });
+
+export type ProjectGitStatusResult = z.infer<typeof ProjectGitStatusResultSchema>;
 
 // Background process info (for UI display)
 export const BackgroundProcessInfoSchema = z.object({

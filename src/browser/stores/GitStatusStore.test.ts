@@ -3,9 +3,13 @@ import type { BashToolResult } from "@/common/types/tools";
 
 import { describe, it, test, expect, beforeEach, afterEach, jest } from "@jest/globals";
 import { GIT_FETCH_SCRIPT } from "@/common/utils/git/gitStatus";
-import { GitStatusStore } from "./GitStatusStore";
+import {
+  GitStatusStore,
+  type ProjectGitStatusResult,
+  type MultiProjectGitSummary,
+} from "./GitStatusStore";
 import type { RuntimeStatus, RuntimeStatusStore } from "./RuntimeStatusStore";
-import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 /**
@@ -21,6 +25,10 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
  */
 
 const mockExecuteBash = jest.fn<() => Promise<Result<BashToolResult, string>>>();
+const mockGetProjectGitStatuses =
+  jest.fn<
+    (input: { workspaceId: string; baseRef: string | null }) => Promise<ProjectGitStatusResult[]>
+  >();
 
 const DEVCONTAINER_RUNTIME = {
   type: "devcontainer" as const,
@@ -51,6 +59,75 @@ function createWorkspaceMetadata(
     namedWorkspacePath: `/home/user/.mux/src/test-project/${workspaceId}`,
     runtimeConfig,
   };
+}
+
+function createMultiProjectWorkspaceMetadata(
+  workspaceId: string,
+  runtimeConfig: FrontendWorkspaceMetadata["runtimeConfig"] = DEFAULT_RUNTIME_CONFIG
+): FrontendWorkspaceMetadata {
+  return {
+    ...createWorkspaceMetadata(workspaceId, runtimeConfig),
+    projectName: "project-a",
+    projectPath: "/home/user/project-a",
+    projects: [
+      { projectPath: "/home/user/project-a", projectName: "project-a" },
+      { projectPath: "/home/user/project-b", projectName: "project-b" },
+    ],
+  };
+}
+
+function createGitStatus(overrides: Partial<GitStatus> = {}): GitStatus {
+  return {
+    branch: "feature-branch",
+    ahead: 0,
+    behind: 0,
+    dirty: false,
+    outgoingAdditions: 0,
+    outgoingDeletions: 0,
+    incomingAdditions: 0,
+    incomingDeletions: 0,
+    ...overrides,
+  };
+}
+
+function createProjectStatusResult(
+  overrides: Partial<ProjectGitStatusResult> &
+    Pick<ProjectGitStatusResult, "projectPath" | "projectName">
+): ProjectGitStatusResult {
+  return {
+    projectPath: overrides.projectPath,
+    projectName: overrides.projectName,
+    gitStatus: "gitStatus" in overrides ? (overrides.gitStatus ?? null) : createGitStatus(),
+    error: overrides.error ?? null,
+  };
+}
+
+function createGitStatusOutput(
+  overrides: Partial<ReturnType<typeof createGitStatus>> = {}
+): string {
+  const status = createGitStatus(overrides);
+  return [
+    "---HEAD_BRANCH---",
+    status.branch,
+    "---PRIMARY---",
+    "main",
+    "---AHEAD_BEHIND---",
+    `${status.ahead} ${status.behind}`,
+    "---DIRTY---",
+    status.dirty ? "1" : "0",
+    "---LINE_DELTA---",
+    `${status.outgoingAdditions} ${status.outgoingDeletions} ${status.incomingAdditions} ${status.incomingDeletions}`,
+  ].join("\n");
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function createRuntimeStatusStoreMock(initialStatus: RuntimeStatus | null) {
@@ -100,6 +177,7 @@ function createStore(
   store.setClient({
     workspace: {
       executeBash: mockExecuteBash,
+      getProjectGitStatuses: mockGetProjectGitStatuses,
     },
   } as unknown as Parameters<GitStatusStore["setClient"]>[0]);
   return store;
@@ -110,6 +188,7 @@ describe("GitStatusStore", () => {
 
   beforeEach(() => {
     mockExecuteBash.mockReset();
+    mockGetProjectGitStatuses.mockReset();
     mockExecuteBash.mockResolvedValue({
       success: true,
       data: {
@@ -119,11 +198,13 @@ describe("GitStatusStore", () => {
         wall_duration_ms: 0,
       },
     } as Result<BashToolResult, string>);
+    mockGetProjectGitStatuses.mockResolvedValue([]);
 
     (globalThis as unknown as { window: unknown }).window = {
       api: {
         workspace: {
           executeBash: mockExecuteBash,
+          getProjectGitStatuses: mockGetProjectGitStatuses,
         },
       },
     } as unknown as Window & typeof globalThis;
@@ -562,5 +643,296 @@ describe("GitStatusStore", () => {
     expect(mockExecuteBash).toHaveBeenCalled();
 
     unsub();
+  });
+
+  describe("multi-project refreshes", () => {
+    it("uses one project-status IPC call and derives workspace summaries", async () => {
+      store.dispose();
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+
+      const workspaceId = "multi-summary";
+      const metadata = createMultiProjectWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME);
+      const projectResults = [
+        createProjectStatusResult({
+          projectPath: "/home/user/project-a",
+          projectName: "project-a",
+          gitStatus: createGitStatus({
+            branch: "primary-branch",
+            ahead: 2,
+            behind: 1,
+            dirty: true,
+            outgoingAdditions: 10,
+            outgoingDeletions: 3,
+            incomingAdditions: 4,
+            incomingDeletions: 1,
+          }),
+        }),
+        createProjectStatusResult({
+          projectPath: "/home/user/project-b",
+          projectName: "project-b",
+          gitStatus: createGitStatus({
+            branch: "secondary-branch",
+            ahead: 1,
+            behind: 0,
+            dirty: false,
+            outgoingAdditions: 6,
+            outgoingDeletions: 2,
+            incomingAdditions: 7,
+            incomingDeletions: 5,
+          }),
+        }),
+      ];
+      mockGetProjectGitStatuses.mockResolvedValue(projectResults);
+
+      store.syncWorkspaces(new Map([[workspaceId, metadata]]));
+      await sleep(0);
+      mockGetProjectGitStatuses.mockClear();
+      mockExecuteBash.mockClear();
+      // @ts-expect-error - Accessing private field for targeted subscription control
+      const unsubscribe = store.projectStatuses.subscribeKey(workspaceId, jest.fn());
+
+      // @ts-expect-error - Accessing private method for refresh coverage
+      await store.updateGitStatus();
+
+      expect(mockGetProjectGitStatuses).toHaveBeenCalledTimes(1);
+      expect(mockGetProjectGitStatuses).toHaveBeenCalledWith({
+        workspaceId,
+        baseRef: expect.any(String),
+      });
+      expect(mockExecuteBash).not.toHaveBeenCalled();
+      expect(store.getProjectStatuses(workspaceId)).toEqual(projectResults);
+      expect(store.getProjectStatuses(workspaceId)).toBe(store.getProjectStatuses(workspaceId));
+
+      const expectedSummary: MultiProjectGitSummary = {
+        totalProjectCount: 2,
+        divergedProjectCount: 2,
+        dirtyProjectCount: 1,
+        unknownProjectCount: 0,
+        projects: store.getProjectStatuses(workspaceId)!,
+      };
+      expect(store.getMultiProjectSummary(workspaceId)).toEqual(expectedSummary);
+      expect(store.getStatus(workspaceId)).toEqual({
+        branch: "primary-branch",
+        ahead: 3,
+        behind: 1,
+        dirty: true,
+        outgoingAdditions: 16,
+        outgoingDeletions: 5,
+        incomingAdditions: 11,
+        incomingDeletions: 6,
+      });
+
+      unsubscribe();
+    });
+
+    it("preserves per-project errors in the summary instead of dropping failed rows", async () => {
+      store.dispose();
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+
+      const workspaceId = "multi-errors";
+      const metadata = createMultiProjectWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME);
+      const projectResults = [
+        createProjectStatusResult({
+          projectPath: "/home/user/project-a",
+          projectName: "project-a",
+          gitStatus: createGitStatus({ branch: "primary-branch", dirty: true, ahead: 4 }),
+        }),
+        createProjectStatusResult({
+          projectPath: "/home/user/project-b",
+          projectName: "project-b",
+          gitStatus: null,
+          error: "project-b exploded",
+        }),
+      ];
+      mockGetProjectGitStatuses.mockResolvedValue(projectResults);
+
+      store.syncWorkspaces(new Map([[workspaceId, metadata]]));
+      await sleep(0);
+      mockGetProjectGitStatuses.mockClear();
+      mockExecuteBash.mockClear();
+      // @ts-expect-error - Accessing private field for targeted subscription control
+      const unsubscribe = store.projectStatuses.subscribeKey(workspaceId, jest.fn());
+
+      // @ts-expect-error - Accessing private method for refresh coverage
+      await store.updateGitStatus();
+
+      expect(store.getProjectStatuses(workspaceId)).toEqual(projectResults);
+      expect(store.getMultiProjectSummary(workspaceId)).toEqual({
+        totalProjectCount: 2,
+        divergedProjectCount: 1,
+        dirtyProjectCount: 1,
+        unknownProjectCount: 1,
+        projects: store.getProjectStatuses(workspaceId)!,
+      });
+      expect(store.getStatus(workspaceId)).toEqual({
+        branch: "primary-branch",
+        ahead: 4,
+        behind: 0,
+        dirty: true,
+        outgoingAdditions: 0,
+        outgoingDeletions: 0,
+        incomingAdditions: 0,
+        incomingDeletions: 0,
+      });
+
+      unsubscribe();
+    });
+
+    it("ignores stale multi-project results after invalidation generation changes", async () => {
+      store.dispose();
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+
+      const workspaceId = "multi-stale";
+      const metadata = createMultiProjectWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME);
+      const firstRefresh = createDeferred<ProjectGitStatusResult[]>();
+      const secondResults = [
+        createProjectStatusResult({
+          projectPath: "/home/user/project-a",
+          projectName: "project-a",
+          gitStatus: createGitStatus({ branch: "fresh-branch", ahead: 1, dirty: true }),
+        }),
+        createProjectStatusResult({
+          projectPath: "/home/user/project-b",
+          projectName: "project-b",
+          gitStatus: createGitStatus({ branch: "fresh-secondary", behind: 2 }),
+        }),
+      ];
+      const staleResults = [
+        createProjectStatusResult({
+          projectPath: "/home/user/project-a",
+          projectName: "project-a",
+          gitStatus: createGitStatus({ branch: "stale-branch", ahead: 9 }),
+        }),
+        createProjectStatusResult({
+          projectPath: "/home/user/project-b",
+          projectName: "project-b",
+          gitStatus: createGitStatus({ branch: "stale-secondary", dirty: true }),
+        }),
+      ];
+      mockGetProjectGitStatuses
+        .mockImplementationOnce(() => firstRefresh.promise)
+        .mockResolvedValueOnce(secondResults);
+
+      store.syncWorkspaces(new Map([[workspaceId, metadata]]));
+      await sleep(0);
+      mockGetProjectGitStatuses.mockClear();
+      mockExecuteBash.mockClear();
+      // @ts-expect-error - Accessing private field for targeted subscription control
+      const unsubscribe = store.projectStatuses.subscribeKey(workspaceId, jest.fn());
+
+      // @ts-expect-error - Accessing private method for concurrent refresh coverage
+      const staleUpdate = store.updateGitStatus();
+      await waitUntil(() => mockGetProjectGitStatuses.mock.calls.length === 1);
+
+      // @ts-expect-error - Accessing private invalidation generation for stale-result coverage
+      store.invalidationGeneration.set(workspaceId, 1);
+
+      // @ts-expect-error - Accessing private method for concurrent refresh coverage
+      await store.updateGitStatus();
+      expect(store.getProjectStatuses(workspaceId)).toEqual(secondResults);
+
+      firstRefresh.resolve(staleResults);
+      await staleUpdate;
+      expect(store.getProjectStatuses(workspaceId)).toEqual(secondResults);
+      expect(store.getStatus(workspaceId)?.branch).toBe("fresh-branch");
+
+      unsubscribe();
+    });
+
+    it("tracks refreshing state while a multi-project refresh is pending", async () => {
+      store.dispose();
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+
+      const workspaceId = "multi-refreshing";
+      const metadata = createMultiProjectWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME);
+      const refresh = createDeferred<ProjectGitStatusResult[]>();
+      mockGetProjectGitStatuses.mockImplementation(() => refresh.promise);
+
+      store.syncWorkspaces(new Map([[workspaceId, metadata]]));
+      await sleep(0);
+      mockGetProjectGitStatuses.mockClear();
+      mockExecuteBash.mockClear();
+      // @ts-expect-error - Accessing private field for targeted subscription control
+      const unsubscribe = store.projectStatuses.subscribeKey(workspaceId, jest.fn());
+
+      expect(store.isWorkspaceRefreshing(workspaceId)).toBe(false);
+      store.invalidateWorkspace(workspaceId);
+      expect(store.isWorkspaceRefreshing(workspaceId)).toBe(true);
+      await waitUntil(() => mockGetProjectGitStatuses.mock.calls.length === 1);
+
+      refresh.resolve([
+        createProjectStatusResult({
+          projectPath: "/home/user/project-a",
+          projectName: "project-a",
+          gitStatus: createGitStatus({ branch: "done" }),
+        }),
+        createProjectStatusResult({
+          projectPath: "/home/user/project-b",
+          projectName: "project-b",
+          gitStatus: createGitStatus({ branch: "done-too" }),
+        }),
+      ]);
+
+      await waitUntil(() => store.isWorkspaceRefreshing(workspaceId) === false);
+      unsubscribe();
+    });
+
+    it("keeps the single-project executeBash refresh path unchanged", async () => {
+      store.dispose();
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+
+      const workspaceId = "single-regression";
+      mockExecuteBash.mockResolvedValue({
+        success: true,
+        data: {
+          success: true,
+          output: createGitStatusOutput({
+            branch: "single-branch",
+            ahead: 2,
+            behind: 1,
+            dirty: true,
+            outgoingAdditions: 9,
+            outgoingDeletions: 4,
+            incomingAdditions: 3,
+            incomingDeletions: 2,
+          }),
+          exitCode: 0,
+          wall_duration_ms: 0,
+        },
+      } as Result<BashToolResult, string>);
+
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME)]])
+      );
+      await sleep(0);
+      mockGetProjectGitStatuses.mockClear();
+      mockExecuteBash.mockClear();
+      // @ts-expect-error - Accessing private field for targeted subscription control
+      const unsubscribe = store.statuses.subscribeKey(workspaceId, jest.fn());
+
+      // @ts-expect-error - Accessing private method for refresh coverage
+      await store.updateGitStatus();
+
+      expect(mockGetProjectGitStatuses).not.toHaveBeenCalled();
+      expect(mockExecuteBash).toHaveBeenCalledTimes(1);
+      expect(store.getStatus(workspaceId)).toEqual({
+        branch: "single-branch",
+        ahead: 2,
+        behind: 1,
+        dirty: true,
+        outgoingAdditions: 9,
+        outgoingDeletions: 4,
+        incomingAdditions: 3,
+        incomingDeletions: 2,
+      });
+      expect(store.getProjectStatuses(workspaceId)).toBeNull();
+
+      unsubscribe();
+    });
   });
 });

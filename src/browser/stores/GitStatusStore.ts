@@ -1,22 +1,25 @@
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
+import type { ProjectGitStatusResult as ApiProjectGitStatusResult } from "@/common/orpc/schemas/api";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
-import {
-  generateGitStatusScript,
-  GIT_FETCH_SCRIPT,
-  parseGitStatusScriptOutput,
-} from "@/common/utils/git/gitStatus";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { useSyncExternalStore } from "react";
-import { MapStore } from "./MapStore";
-import { isSSHRuntime } from "@/common/types/runtime";
 import { RefreshController } from "@/browser/utils/RefreshController";
 import { repoRootBashOptions } from "@/browser/utils/executeBash";
 import {
   canRunPassiveRuntimeCommand,
   onPassiveRuntimeEligible,
 } from "@/browser/utils/runtimeExecutionPolicy";
+import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { isSSHRuntime } from "@/common/types/runtime";
+import { getProjects, isMultiProject } from "@/common/utils/multiProject";
+import assert from "@/common/utils/assert";
+import {
+  generateGitStatusScript,
+  GIT_FETCH_SCRIPT,
+  parseGitStatusScriptOutput,
+} from "@/common/utils/git/gitStatus";
+import { useSyncExternalStore } from "react";
+import { MapStore } from "./MapStore";
 import {
   useRuntimeStatusStoreRaw as getRuntimeStatusStore,
   type RuntimeStatusStore,
@@ -52,8 +55,45 @@ interface FetchState {
   consecutiveFailures: number;
 }
 
+export interface ProjectGitStatusResult {
+  projectPath: string;
+  projectName: string;
+  gitStatus: GitStatus | null;
+  error: string | null;
+}
+
+export interface MultiProjectGitSummary {
+  totalProjectCount: number;
+  divergedProjectCount: number;
+  dirtyProjectCount: number;
+  unknownProjectCount: number;
+  projects: ProjectGitStatusResult[];
+}
+
+interface SingleWorkspaceStatusUpdate {
+  kind: "single";
+  workspaceId: string;
+  status: GitStatus | null;
+}
+
+interface MultiWorkspaceStatusUpdate {
+  kind: "multi";
+  workspaceId: string;
+  legacyStatus: GitStatus | null;
+  projectStatuses: ProjectGitStatusResult[] | null;
+  summary: MultiProjectGitSummary | null;
+}
+
+function sumGitStatusField(
+  statuses: readonly GitStatus[],
+  getValue: (status: GitStatus) => number
+): number {
+  return statuses.reduce((sum, status) => sum + getValue(status), 0);
+}
+
 export class GitStatusStore {
   private statuses = new MapStore<string, GitStatus | null>();
+  private projectStatuses = new MapStore<string, ProjectGitStatusResult[] | null>();
   private fetchCache = new Map<string, FetchState>();
   private runtimeRetryUnsubscribers = new Map<string, () => void>();
   private client: RouterClient<AppRouter> | null = null;
@@ -106,6 +146,18 @@ export class GitStatusStore {
    */
   subscribe = this.statuses.subscribeAny;
 
+  private queueImmediateUpdate(): void {
+    if (this.immediateUpdateQueued || !this.isActive || !this.client) {
+      return;
+    }
+
+    this.immediateUpdateQueued = true;
+    queueMicrotask(() => {
+      this.immediateUpdateQueued = false;
+      this.refreshController.requestImmediate();
+    });
+  }
+
   /**
    * Subscribe to git status changes for a specific workspace.
    * Only notified when this workspace's status changes.
@@ -116,14 +168,14 @@ export class GitStatusStore {
     // If a component subscribes after initial load, kick an immediate update
     // so the UI doesn't wait. Uses microtask to batch multiple subscriptions.
     // Routes through RefreshController to respect in-flight guards.
-    if (!this.immediateUpdateQueued && this.isActive && this.client) {
-      this.immediateUpdateQueued = true;
-      queueMicrotask(() => {
-        this.immediateUpdateQueued = false;
-        this.refreshController.requestImmediate();
-      });
-    }
+    this.queueImmediateUpdate();
 
+    return unsubscribe;
+  };
+
+  subscribeProjectStatusesKey = (workspaceId: string, listener: () => void) => {
+    const unsubscribe = this.projectStatuses.subscribeKey(workspaceId, listener);
+    this.queueImmediateUpdate();
     return unsubscribe;
   };
 
@@ -141,6 +193,24 @@ export class GitStatusStore {
     return this.statuses.get(workspaceId, () => {
       return this.statusCache.get(workspaceId) ?? null;
     });
+  }
+
+  getProjectStatuses(workspaceId: string): ProjectGitStatusResult[] | null {
+    if (!this.projectStatuses.has(workspaceId)) {
+      return null;
+    }
+
+    return this.projectStatuses.get(workspaceId, () => {
+      return this.projectStatusCache.get(workspaceId) ?? null;
+    });
+  }
+
+  getMultiProjectSummary(workspaceId: string): MultiProjectGitSummary | null {
+    if (!this.projectStatuses.has(workspaceId)) {
+      return null;
+    }
+
+    return this.multiProjectSummaryCache.get(workspaceId) ?? null;
   }
 
   /**
@@ -170,6 +240,9 @@ export class GitStatusStore {
   }
 
   private refreshingWorkspacesCache = new Map<string, boolean>();
+  private statusCache = new Map<string, GitStatus | null>();
+  private projectStatusCache = new Map<string, ProjectGitStatusResult[] | null>();
+  private multiProjectSummaryCache = new Map<string, MultiProjectGitSummary | null>();
 
   /**
    * Check if a workspace is currently refreshing.
@@ -193,7 +266,19 @@ export class GitStatusStore {
     return this.refreshingWorkspaces.subscribeKey(workspaceId, listener);
   };
 
-  private statusCache = new Map<string, GitStatus | null>();
+  private hasWorkspaceSubscribers(workspaceId: string): boolean {
+    return (
+      this.statuses.hasKeySubscribers(workspaceId) ||
+      this.projectStatuses.hasKeySubscribers(workspaceId)
+    );
+  }
+
+  private clearMultiProjectState(workspaceId: string): void {
+    this.projectStatusCache.delete(workspaceId);
+    this.multiProjectSummaryCache.delete(workspaceId);
+    this.projectStatuses.delete(workspaceId);
+  }
+
   // Generation counter to detect and ignore stale status updates after invalidation.
   // Incremented on invalidate; status updates check generation to avoid race conditions.
   private invalidationGeneration = new Map<string, number>();
@@ -225,6 +310,13 @@ export class GitStatusStore {
         this.statusCache.delete(id);
         this.invalidationGeneration.delete(id);
         this.statuses.delete(id); // Also clean up reactive state
+        this.clearMultiProjectState(id);
+      }
+    }
+
+    for (const [id, workspace] of metadata) {
+      if (!isMultiProject(workspace)) {
+        this.clearMultiProjectState(id);
       }
     }
 
@@ -243,16 +335,16 @@ export class GitStatusStore {
       return;
     }
 
-    // Only poll workspaces that have active subscribers
+    // Only poll workspaces that have active subscribers.
     const workspaces = Array.from(this.workspaceMetadata.values()).filter((ws) =>
-      this.statuses.hasKeySubscribers(ws.id)
+      this.hasWorkspaceSubscribers(ws.id)
     );
 
     if (workspaces.length === 0) {
       return;
     }
 
-    // Capture current generation for each workspace to detect stale results
+    // Capture current generation for each workspace to detect stale results.
     const generationSnapshot = new Map<string, number>();
     for (const ws of workspaces) {
       generationSnapshot.set(ws.id, this.invalidationGeneration.get(ws.id) ?? 0);
@@ -262,50 +354,131 @@ export class GitStatusStore {
     const workspacesMap = new Map(workspaces.map((ws) => [ws.id, ws]));
     this.tryFetchWorkspaces(workspacesMap);
 
-    // Query git status for each workspace
-    // Rate limit: Process in batches to prevent bash process explosion
-    const results: Array<[string, GitStatus | null]> = [];
+    // Query git status for each workspace.
+    // Rate limit: Process in batches to prevent bash process explosion.
+    const results: Array<SingleWorkspaceStatusUpdate | MultiWorkspaceStatusUpdate> = [];
 
     for (let i = 0; i < workspaces.length; i += MAX_CONCURRENT_GIT_OPS) {
-      if (!this.isActive) break; // Stop if disposed
+      if (!this.isActive) {
+        break;
+      }
 
       const batch = workspaces.slice(i, i + MAX_CONCURRENT_GIT_OPS);
-      const batchPromises = batch.map((metadata) => this.checkWorkspaceStatus(metadata));
+      const batchPromises = batch.map((metadata) => {
+        if (isMultiProject(metadata)) {
+          return this.checkMultiProjectWorkspaceStatus(metadata);
+        }
+        return this.checkWorkspaceStatus(metadata);
+      });
 
       const batchResults = await Promise.all(batchPromises);
       results.push(...batchResults);
     }
 
-    if (!this.isActive) return; // Don't update state if disposed
+    if (!this.isActive) {
+      return;
+    }
 
-    // Update statuses - bump version if changed
-    for (const [workspaceId, newStatus] of results) {
-      // Skip stale results: if generation changed since we started, the result is outdated
+    for (const result of results) {
+      const workspaceId = result.workspaceId;
+
+      // Skip stale results: if generation changed since we started, the result is outdated.
       const snapshotGen = generationSnapshot.get(workspaceId) ?? 0;
       const currentGen = this.invalidationGeneration.get(workspaceId) ?? 0;
       if (snapshotGen !== currentGen) {
-        // Status was invalidated during check - discard this stale result
         continue;
       }
 
-      // Clear refreshing state now that we have a result
       if (this.refreshingWorkspacesCache.get(workspaceId)) {
         this.setWorkspaceRefreshing(workspaceId, false);
       }
 
-      const oldStatus = this.statusCache.get(workspaceId) ?? null;
-
-      // Check if status actually changed (cheap for simple objects)
-      if (!this.areStatusesEqual(oldStatus, newStatus)) {
-        // Only update cache on successful status check (preserve old status on failure)
-        // This prevents UI flicker when git operations timeout or fail transiently
-        if (newStatus !== null) {
-          this.statusCache.set(workspaceId, newStatus);
-          this.statuses.bump(workspaceId); // Invalidate cache + notify
+      if (result.kind === "multi") {
+        const { legacyStatus, projectStatuses, summary } = result;
+        if (legacyStatus === null || projectStatuses === null || summary === null) {
+          continue;
         }
-        // On failure (newStatus === null): keep old status, don't bump (no re-render)
+
+        const oldProjectStatuses = this.projectStatusCache.get(workspaceId) ?? null;
+        const oldSummary = this.multiProjectSummaryCache.get(workspaceId) ?? null;
+        const oldStatus = this.statusCache.get(workspaceId) ?? null;
+        const projectStatusesChanged = !this.areProjectStatusResultsEqual(
+          oldProjectStatuses,
+          projectStatuses
+        );
+        const summaryChanged = !this.areMultiProjectSummariesEqual(oldSummary, summary);
+
+        if (projectStatusesChanged || summaryChanged) {
+          this.projectStatusCache.set(workspaceId, projectStatuses);
+          this.multiProjectSummaryCache.set(workspaceId, summary);
+          this.projectStatuses.bump(workspaceId);
+        }
+
+        if (!this.areStatusesEqual(oldStatus, legacyStatus)) {
+          this.statusCache.set(workspaceId, legacyStatus);
+          this.statuses.bump(workspaceId);
+        }
+
+        continue;
+      }
+
+      this.clearMultiProjectState(workspaceId);
+
+      const oldStatus = this.statusCache.get(workspaceId) ?? null;
+      if (!this.areStatusesEqual(oldStatus, result.status)) {
+        // Only update cache on successful status check (preserve old status on failure).
+        // This prevents UI flicker when git operations timeout or fail transiently.
+        if (result.status !== null) {
+          this.statusCache.set(workspaceId, result.status);
+          this.statuses.bump(workspaceId);
+        }
       }
     }
+  }
+
+  private getBaseRef(metadata: FrontendWorkspaceMetadata): string {
+    const projectDefaultBase = readPersistedState<string>(
+      STORAGE_KEYS.reviewDefaultBase(metadata.projectPath),
+      WORKSPACE_DEFAULTS.reviewBase
+    );
+    return readPersistedState<string>(STORAGE_KEYS.reviewDiffBase(metadata.id), projectDefaultBase);
+  }
+
+  private buildMultiProjectSummary(results: ProjectGitStatusResult[]): MultiProjectGitSummary {
+    return {
+      totalProjectCount: results.length,
+      divergedProjectCount: results.filter(
+        (row) => row.gitStatus !== null && (row.gitStatus.ahead > 0 || row.gitStatus.behind > 0)
+      ).length,
+      dirtyProjectCount: results.filter((row) => row.gitStatus?.dirty === true).length,
+      unknownProjectCount: results.filter((row) => row.gitStatus === null).length,
+      projects: results,
+    };
+  }
+
+  private buildLegacyMultiProjectStatus(
+    metadata: FrontendWorkspaceMetadata,
+    results: ProjectGitStatusResult[]
+  ): GitStatus {
+    const knownStatuses = results.flatMap((row) => (row.gitStatus ? [row.gitStatus] : []));
+
+    // Multi-project workspaces still expose the primary project's branch string for
+    // backcompat because existing branch consumers only understand one branch label.
+    const primaryRow =
+      results.find((row) => row.projectPath === metadata.projectPath && row.gitStatus !== null) ??
+      results.find((row) => row.gitStatus !== null) ??
+      null;
+
+    return {
+      branch: primaryRow?.gitStatus?.branch ?? "",
+      ahead: sumGitStatusField(knownStatuses, (status) => status.ahead),
+      behind: sumGitStatusField(knownStatuses, (status) => status.behind),
+      dirty: knownStatuses.some((status) => status.dirty),
+      outgoingAdditions: sumGitStatusField(knownStatuses, (status) => status.outgoingAdditions),
+      outgoingDeletions: sumGitStatusField(knownStatuses, (status) => status.outgoingDeletions),
+      incomingAdditions: sumGitStatusField(knownStatuses, (status) => status.incomingAdditions),
+      incomingDeletions: sumGitStatusField(knownStatuses, (status) => status.incomingDeletions),
+    };
   }
 
   /**
@@ -328,28 +501,54 @@ export class GitStatusStore {
     );
   }
 
+  private areProjectStatusResultsEqual(
+    a: ProjectGitStatusResult[] | null,
+    b: ProjectGitStatusResult[] | null
+  ): boolean {
+    if (a === null && b === null) return true;
+    if (a === null || b === null) return false;
+    if (a.length !== b.length) return false;
+
+    return a.every((row, index) => {
+      const other = b[index];
+      return (
+        row.projectPath === other.projectPath &&
+        row.projectName === other.projectName &&
+        (row.error ?? null) === (other.error ?? null) &&
+        this.areStatusesEqual(row.gitStatus ?? null, other.gitStatus ?? null)
+      );
+    });
+  }
+
+  private areMultiProjectSummariesEqual(
+    a: MultiProjectGitSummary | null,
+    b: MultiProjectGitSummary | null
+  ): boolean {
+    if (a === null && b === null) return true;
+    if (a === null || b === null) return false;
+
+    return (
+      a.totalProjectCount === b.totalProjectCount &&
+      a.divergedProjectCount === b.divergedProjectCount &&
+      a.dirtyProjectCount === b.dirtyProjectCount &&
+      a.unknownProjectCount === b.unknownProjectCount &&
+      this.areProjectStatusResultsEqual(a.projects, b.projects)
+    );
+  }
+
   /**
    * Check git status for a single workspace.
    */
   private async checkWorkspaceStatus(
     metadata: FrontendWorkspaceMetadata
-  ): Promise<[string, GitStatus | null]> {
+  ): Promise<SingleWorkspaceStatusUpdate> {
     // Defensive: Return null if client is unavailable
     if (!this.client) {
-      return [metadata.id, null];
+      return { kind: "single", workspaceId: metadata.id, status: null };
     }
 
     try {
-      // Use the same diff base as the review panel (per-workspace override,
-      // falling back to the project default).
-      const projectDefaultBase = readPersistedState<string>(
-        STORAGE_KEYS.reviewDefaultBase(metadata.projectPath),
-        WORKSPACE_DEFAULTS.reviewBase
-      );
-      const baseRef = readPersistedState<string>(
-        STORAGE_KEYS.reviewDiffBase(metadata.id),
-        projectDefaultBase
-      );
+      const baseRef = this.getBaseRef(metadata);
 
       // Generate script with the configured base ref
       const script = generateGitStatusScript(baseRef);
@@ -367,7 +566,7 @@ export class GitStatusStore {
 
       if (!result.success) {
         console.debug(`[gitStatus] IPC failed for ${metadata.id}:`, result.error);
-        return [metadata.id, null];
+        return { kind: "single", workspaceId: metadata.id, status: null };
       }
 
       if (!result.data.success) {
@@ -378,11 +577,11 @@ export class GitStatusStore {
         ) {
           console.debug(`[gitStatus] Script failed for ${metadata.id}:`, result.data.error);
         }
-        return [metadata.id, null];
+        return { kind: "single", workspaceId: metadata.id, status: null };
       }
 
       if (result.data.note?.includes("OUTPUT OVERFLOW")) {
-        return [metadata.id, null];
+        return { kind: "single", workspaceId: metadata.id, status: null };
       }
 
       // Parse the output using centralized function
@@ -390,7 +589,7 @@ export class GitStatusStore {
 
       if (!parsed) {
         console.debug(`[gitStatus] Could not parse output for ${metadata.id}`);
-        return [metadata.id, null];
+        return { kind: "single", workspaceId: metadata.id, status: null };
       }
 
       const {
@@ -405,9 +604,10 @@ export class GitStatusStore {
       } = parsed;
       const dirty = dirtyCount > 0;
 
-      return [
-        metadata.id,
-        {
+      return {
+        kind: "single",
+        workspaceId: metadata.id,
+        status: {
           branch: headBranch,
           ahead,
           behind,
@@ -417,11 +617,74 @@ export class GitStatusStore {
           incomingAdditions,
           incomingDeletions,
         },
-      ];
+      };
     } catch (err) {
       // Silently fail - git status failures shouldn't crash the UI
       console.debug(`[gitStatus] Exception for ${metadata.id}:`, err);
-      return [metadata.id, null];
+      return { kind: "single", workspaceId: metadata.id, status: null };
+    }
+  }
+
+  private async checkMultiProjectWorkspaceStatus(
+    metadata: FrontendWorkspaceMetadata
+  ): Promise<MultiWorkspaceStatusUpdate> {
+    assert(
+      isMultiProject(metadata),
+      "Multi-project refresh requires multi-project workspace metadata"
+    );
+
+    if (!this.client) {
+      return {
+        kind: "multi",
+        workspaceId: metadata.id,
+        legacyStatus: null,
+        projectStatuses: null,
+        summary: null,
+      };
+    }
+
+    try {
+      const baseRef = this.getBaseRef(metadata);
+      const results: ApiProjectGitStatusResult[] =
+        await this.client.workspace.getProjectGitStatuses({
+          workspaceId: metadata.id,
+          baseRef,
+        });
+      assert(results.length > 0, `Expected project git statuses for workspace ${metadata.id}`);
+
+      const normalizedResults = results.map((row) => {
+        assert(row.projectPath.trim().length > 0, "Project git status rows require a projectPath");
+        assert(row.projectName.trim().length > 0, "Project git status rows require a projectName");
+        return {
+          projectPath: row.projectPath,
+          projectName: row.projectName,
+          gitStatus: row.gitStatus ?? null,
+          error: row.error ?? null,
+        } satisfies ProjectGitStatusResult;
+      });
+
+      const expectedProjects = getProjects(metadata);
+      assert(
+        normalizedResults.length === expectedProjects.length,
+        `Expected ${expectedProjects.length} project git status rows for workspace ${metadata.id}`
+      );
+
+      return {
+        kind: "multi",
+        workspaceId: metadata.id,
+        legacyStatus: this.buildLegacyMultiProjectStatus(metadata, normalizedResults),
+        projectStatuses: normalizedResults,
+        summary: this.buildMultiProjectSummary(normalizedResults),
+      };
+    } catch (err) {
+      console.debug(`[gitStatus] Multi-project exception for ${metadata.id}:`, err);
+      return {
+        kind: "multi",
+        workspaceId: metadata.id,
+        legacyStatus: null,
+        projectStatuses: null,
+        summary: null,
+      };
     }
   }
 
@@ -598,8 +861,13 @@ export class GitStatusStore {
   dispose(): void {
     this.isActive = false;
     this.statuses.clear();
+    this.projectStatuses.clear();
     this.refreshingWorkspaces.clear();
     this.refreshingWorkspacesCache.clear();
+    this.statusCache.clear();
+    this.projectStatusCache.clear();
+    this.multiProjectSummaryCache.clear();
+    this.invalidationGeneration.clear();
     this.fetchCache.clear();
     this.fileModifyUnsubscribe?.();
     this.fileModifyUnsubscribe = null;
@@ -625,7 +893,7 @@ export class GitStatusStore {
 
     this.fileModifyUnsubscribe = subscribeAny((workspaceId) => {
       // Only schedule if workspace has subscribers (same optimization as before)
-      if (!this.statuses.hasKeySubscribers(workspaceId)) {
+      if (!this.hasWorkspaceSubscribers(workspaceId)) {
         return;
       }
 
@@ -663,6 +931,24 @@ export function useGitStatus(workspaceId: string): GitStatus | null {
   return useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getStatus(workspaceId)
+  );
+}
+
+export function useProjectGitStatuses(workspaceId: string): ProjectGitStatusResult[] | null {
+  const store = getGitStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeProjectStatusesKey(workspaceId, listener),
+    () => store.getProjectStatuses(workspaceId)
+  );
+}
+
+export function useMultiProjectGitSummary(workspaceId: string): MultiProjectGitSummary | null {
+  const store = getGitStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeProjectStatusesKey(workspaceId, listener),
+    () => store.getMultiProjectSummary(workspaceId)
   );
 }
 
