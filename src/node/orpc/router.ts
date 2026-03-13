@@ -2427,6 +2427,21 @@ export const router = (authToken?: string) => {
             return config;
           });
         }),
+      setDisplayName: t
+        .input(schemas.projects.setDisplayName.input)
+        .output(schemas.projects.setDisplayName.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedPath = stripTrailingSlashes(input.projectPath);
+            let project = config.projects.get(normalizedPath);
+            if (!project) {
+              project = { workspaces: [] };
+              config.projects.set(normalizedPath, project);
+            }
+            project.displayName = input.displayName ?? undefined;
+            return config;
+          });
+        }),
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)

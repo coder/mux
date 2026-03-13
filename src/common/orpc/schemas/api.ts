@@ -590,6 +590,15 @@ export const projects = {
     input: z.object({ projectPath: z.string(), trusted: z.boolean() }),
     output: z.void(),
   },
+  setDisplayName: {
+    input: z
+      .object({
+        projectPath: z.string(),
+        displayName: z.string().nullish(),
+      })
+      .passthrough(),
+    output: z.void(),
+  },
   mcp: {
     list: {
       input: z.object({ projectPath: z.string() }),

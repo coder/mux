@@ -132,6 +132,9 @@ export const WorkspaceConfigSchema = z.object({
 });
 
 export const ProjectConfigSchema = z.object({
+  displayName: z.string().nullish().meta({
+    description: "Custom display name for the project",
+  }),
   workspaces: z.array(WorkspaceConfigSchema),
   sections: z.array(SectionConfigSchema).optional().meta({
     description: "Sections for organizing workspaces within this project",
