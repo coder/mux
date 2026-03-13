@@ -78,7 +78,6 @@ describe("buildReadFileScript", () => {
   });
 });
 
-
 describe("buildGitCheckIgnoreScript", () => {
   test("passes each path as an isolated printf argument", () => {
     const script = buildGitCheckIgnoreScript(["safe", "$(touch /tmp/pwn)", "with'quote"]);
