@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import React from "react";
 import { ThinkingProvider } from "./ThinkingContext";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import {
@@ -15,7 +16,6 @@ import {
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 let currentClientMock: RecursivePartial<APIClient> = {};
 
@@ -163,7 +163,7 @@ describe("ThinkingContext", () => {
       expect(view.getByTestId("thinking").textContent).toBe("high:ws-legacy-thinking");
     });
     expect(readPersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {})).toEqual({
-      auto: { model: WORKSPACE_DEFAULTS.model, thinkingLevel: "high" },
+      auto: { model: getDefaultModel(), thinkingLevel: "high" },
     });
   });
 
