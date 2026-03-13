@@ -76,31 +76,34 @@ function resetStorybookPersistedStateForStory(): void {
     localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
   }
 }
-function getStorybookStoryId(): string | null {
+function getStorybookRenderKey(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
 
   const params = new URLSearchParams(window.location.search);
-  return params.get("id") ?? params.get("path");
+  const storyId = params.get("id") ?? params.get("path");
+  const viewportBucket = window.innerWidth <= 768 ? "narrow" : "wide";
+  return storyId ? `${storyId}:${viewportBucket}` : viewportBucket;
 }
 
 export const AppWithMocks: FC<AppWithMocksProps> = ({ setup }) => {
-  const lastStoryIdRef = useRef<string | null>(null);
+  const lastRenderKeyRef = useRef<string | null>(null);
   const clientRef = useRef<APIClient | null>(null);
 
-  const storyId = getStorybookStoryId();
-  const shouldReset = clientRef.current === null || lastStoryIdRef.current !== storyId;
+  const renderKey = getStorybookRenderKey();
+  const shouldReset = clientRef.current === null || lastRenderKeyRef.current !== renderKey;
   if (shouldReset) {
     resetStorybookPersistedStateForStory();
-    lastStoryIdRef.current = storyId;
+    lastRenderKeyRef.current = renderKey;
     clientRef.current = null;
   }
 
   clientRef.current ??= setup();
 
-  // Key by storyId to force full remount between stories.
-  // Without this, RouterProvider keeps its initial route and APIProvider
-  // doesn't re-initialize, causing flaky "loading page vs left screen" states.
-  return <AppLoader key={storyId} client={clientRef.current} />;
+  // Key by story + viewport bucket so Storybook fully remounts when switching
+  // stories or crossing the mobile breakpoint that changes the left sidebar default.
+  // Without this, RouterProvider keeps its initial route and APIProvider doesn't
+  // re-initialize, causing flaky "loading page vs left screen" states.
+  return <AppLoader key={renderKey} client={clientRef.current} />;
 };
