@@ -6411,7 +6411,10 @@ describe("TaskService", () => {
       return Ok(undefined);
     });
     const { workspaceService } = createWorkspaceServiceMocks({ remove });
-    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -6424,6 +6427,9 @@ describe("TaskService", () => {
       metadata: { model: "test-model" },
       parts: [],
     });
+
+    const parentHistory = await collectFullHistory(historyService, parentId);
+    expect(JSON.stringify(parentHistory)).not.toContain("<mux_subagent_report>");
 
     const remainingTaskIds = Array.from(config.loadConfigOrDefault().projects.values())
       .flatMap((project) => project.workspaces)

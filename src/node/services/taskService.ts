@@ -3463,6 +3463,14 @@ export class TaskService {
       "deliverDeferredBestOfReportsForParent: parentWorkspaceId must be non-empty"
     );
 
+    const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
+    if (
+      parentTaskToolState.pendingBestOfTaskToolCount !== 1 ||
+      parentTaskToolState.pendingTaskToolCount !== 1
+    ) {
+      return;
+    }
+
     const cfg = this.config.loadConfigOrDefault();
     const seenGroupIds = new Set<string>();
     for (const project of cfg.projects.values()) {
