@@ -177,18 +177,6 @@ export const GATEWAY_PROVIDERS = Object.entries(PROVIDER_DEFINITIONS)
   .filter(([, def]) => def.kind === "gateway")
   .map(([name]) => name as ProviderName);
 
-export const DIRECT_PROVIDERS = Object.entries(PROVIDER_DEFINITIONS)
-  .filter(([, def]) => def.kind === "direct")
-  .map(([name]) => name as ProviderName);
-
-/** Which gateways can route a given origin? */
-export function gatewaysForOrigin(origin: ProviderName): ProviderName[] {
-  return GATEWAY_PROVIDERS.filter((gateway) => {
-    const gatewayDefinition = PROVIDER_DEFINITIONS[gateway] as ProviderDefinition;
-    return gatewayDefinition.routes?.includes(origin);
-  });
-}
-
 /**
  * Array of all supported provider names (for UI lists, iteration, etc.)
  */
