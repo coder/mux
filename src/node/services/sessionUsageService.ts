@@ -189,7 +189,7 @@ export class SessionUsageService {
           await this.rebuildFromMessagesInternal(workspaceId, messages);
           current = await this.readFile(workspaceId);
         } else {
-          current = { byModel: {}, version: 1 };
+          current = this.createEmptyUsageFile();
         }
       }
 
@@ -244,7 +244,7 @@ export class SessionUsageService {
           await this.rebuildFromMessagesInternal(parentWorkspaceId, messages);
           current = await this.readFile(parentWorkspaceId);
         } else {
-          current = { byModel: {}, version: 1 };
+          current = this.createEmptyUsageFile();
         }
       }
 
@@ -402,7 +402,7 @@ export class SessionUsageService {
     workspaceId: string,
     messages: MuxMessage[]
   ): Promise<void> {
-    const result: SessionUsageFile = { byModel: {}, version: 1 };
+    const result: SessionUsageFile = this.createEmptyUsageFile();
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
 
     for (const msg of messages) {
