@@ -238,14 +238,6 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
 }
 
 /**
- * Helper to check if a runtime config requires projectPath for createRuntime.
- */
-export function runtimeRequiresProjectPath(config: RuntimeConfig): boolean {
-  // Project-dir local runtime (no srcBaseDir) requires projectPath
-  return config.type === "local" && !hasSrcBaseDir(config);
-}
-
-/**
  * Check if a project has a .git directory (is a git repository).
  */
 async function isGitRepository(projectPath: string): Promise<boolean> {
