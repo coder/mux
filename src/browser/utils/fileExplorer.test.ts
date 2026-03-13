@@ -11,6 +11,7 @@ import {
   base64ToUint8Array,
   processFileContents,
   EXIT_CODE_TOO_LARGE,
+  buildGitCheckIgnoreScript,
 } from "./fileExplorer";
 
 describe("parseReadFileOutput", () => {
@@ -74,6 +75,21 @@ describe("buildReadFileScript", () => {
   test("escapes paths with quotes", () => {
     const script = buildReadFileScript("file'with'quotes.txt");
     expect(script).toContain("'file'\\''with'\\''quotes.txt'");
+  });
+});
+
+
+describe("buildGitCheckIgnoreScript", () => {
+  test("passes each path as an isolated printf argument", () => {
+    const script = buildGitCheckIgnoreScript(["safe", "$(touch /tmp/pwn)", "with'quote"]);
+    expect(script).toBe(
+      "printf '%s\\n' 'safe' '$(touch /tmp/pwn)' 'with'\\''quote' | git check-ignore --stdin 2>/dev/null || true"
+    );
+  });
+
+  test("supports empty input without interpolation", () => {
+    const script = buildGitCheckIgnoreScript([]);
+    expect(script).toBe("true");
   });
 });
 
