@@ -983,6 +983,28 @@ describe("TerminalService.openNative", () => {
     srcDir: "/tmp",
   } as unknown as Config;
 
+  const configWithWindowsDevcontainerWorkspace = {
+    getAllWorkspaceMetadata: mock(() =>
+      Promise.resolve([
+        {
+          id: "ws-devcontainer-win",
+          projectPath: "C:/tmp/project",
+          name: "main",
+          namedWorkspacePath: "C:/tmp/project/main%PATH%",
+          runtimeConfig: {
+            type: "devcontainer",
+            configPath: "C:/tmp/project/.devcontainer/%TEMP%/devcontainer.json",
+          },
+        },
+      ])
+    ),
+    loadConfigOrDefault: mock(() => ({
+      projects: new Map(),
+      terminalDefaultShell: undefined,
+    })),
+    srcDir: "/tmp",
+  } as unknown as Config;
+
   beforeEach(() => {
     // Store original platform
     originalPlatform = process.platform;
@@ -1125,6 +1147,23 @@ describe("TerminalService.openNative", () => {
       expect(call[1]).toContain("-p");
       expect(call[1]).toContain("2222");
       expect(call[1]).toContain("remote.example.com");
+    });
+
+    it("escapes devcontainer paths for cmd.exe", async () => {
+      service = new TerminalService(configWithWindowsDevcontainerWorkspace, mockPTYService, undefined);
+
+      await service.openNative("ws-devcontainer-win");
+
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+      const call = spawnSpy.mock.calls[0] as [string, string[], childProcess.SpawnOptions];
+      expect(call[0]).toBe("cmd");
+      const cmdString = call[1]?.[4];
+      expect(typeof cmdString).toBe("string");
+      expect(cmdString).toContain('devcontainer exec --workspace-folder "C:/tmp/project/main%%PATH%%"');
+      expect(cmdString).toContain(
+        '--config "C:/tmp/project/.devcontainer/%%TEMP%%/devcontainer.json"'
+      );
+      expect(cmdString).not.toContain("'C:/tmp/project/main%PATH%'");
     });
   });
 

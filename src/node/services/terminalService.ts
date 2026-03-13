@@ -25,6 +25,14 @@ import { NO_OSC_IDLE_FALLBACK_MS } from "@/constants/terminalActivity";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shellQuote } from "@/common/utils/shell";
 
+function quoteForNativeTerminalCommandArg(value: string): string {
+  if (process.platform === "win32") {
+    // cmd.exe expands %VAR% even in double quotes, so escape literal % as %%.
+    return `"${value.replace(/%/g, "%%").replace(/"/g, '""')}"`;
+  }
+  return shellQuote(value);
+}
+
 /**
  * Configuration for opening a native terminal
  */
@@ -419,10 +427,10 @@ export class TerminalService {
         });
       } else if (isDevcontainerRuntime(runtimeConfig)) {
         // These arguments are executed via `sh -c` in terminal launchers, so they
-        // must be shell-escaped to prevent command substitution from crafted paths.
-        const quotedPath = shellQuote(workspace.namedWorkspacePath);
+        // must be escaped for the current host shell to prevent path-based injection.
+        const quotedPath = quoteForNativeTerminalCommandArg(workspace.namedWorkspacePath);
         const configArg = runtimeConfig.configPath
-          ? ` --config ${shellQuote(runtimeConfig.configPath)}`
+          ? ` --config ${quoteForNativeTerminalCommandArg(runtimeConfig.configPath)}`
           : "";
         await this.openNativeTerminal({
           type: "local",
