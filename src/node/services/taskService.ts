@@ -3495,6 +3495,7 @@ export class TaskService {
       "deliverDeferredBestOfSiblingReports: parentWorkspaceId must be non-empty"
     );
 
+    const cleanupTaskIds = new Set<string>();
     await this.deferredBestOfLocks.withLock(params.parentWorkspaceId, async () => {
       const cfg = this.config.loadConfigOrDefault();
       const siblings = this.listBestOfSiblingTasks({
@@ -3517,7 +3518,7 @@ export class TaskService {
           );
           if (finalization.kind === "finalized") {
             for (const taskId of finalization.taskIds) {
-              await this.requestReportedTaskCleanupRecheck(taskId);
+              cleanupTaskIds.add(taskId);
             }
             return;
           }
@@ -3577,14 +3578,21 @@ export class TaskService {
           continue;
         }
 
-        await this.deliverReportToParentUnlocked(
+        const siblingCleanupTaskIds = await this.deliverReportToParentUnlocked(
           params.parentWorkspaceId,
           sibling.taskId,
           findWorkspaceEntry(cfg, sibling.taskId),
           { reportMarkdown: artifact.reportMarkdown, title: artifact.title }
         );
+        for (const taskId of siblingCleanupTaskIds) {
+          cleanupTaskIds.add(taskId);
+        }
       }
     });
+
+    for (const taskId of cleanupTaskIds) {
+      await this.requestReportedTaskCleanupRecheck(taskId);
+    }
   }
 
   private async fallbackReportMissingCompletionTool(
@@ -4147,25 +4155,29 @@ export class TaskService {
       "deliverReportToParent: childWorkspaceId must be non-empty"
     );
 
+    let cleanupTaskIds: readonly string[] = [];
     const bestOfTotal = childEntry?.workspace.bestOf?.total ?? 1;
     if (bestOfTotal > 1) {
       await this.deferredBestOfLocks.withLock(parentWorkspaceId, async () => {
-        await this.deliverReportToParentUnlocked(
+        cleanupTaskIds = await this.deliverReportToParentUnlocked(
           parentWorkspaceId,
           childWorkspaceId,
           childEntry,
           report
         );
       });
-      return;
+    } else {
+      cleanupTaskIds = await this.deliverReportToParentUnlocked(
+        parentWorkspaceId,
+        childWorkspaceId,
+        childEntry,
+        report
+      );
     }
 
-    await this.deliverReportToParentUnlocked(
-      parentWorkspaceId,
-      childWorkspaceId,
-      childEntry,
-      report
-    );
+    for (const taskId of cleanupTaskIds) {
+      await this.requestReportedTaskCleanupRecheck(taskId);
+    }
   }
 
   private async deliverReportToParentUnlocked(
@@ -4173,7 +4185,7 @@ export class TaskService {
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
     report: { reportMarkdown: string; title?: string }
-  ): Promise<void> {
+  ): Promise<readonly string[]> {
     const agentType = childEntry?.workspace.agentType ?? "agent";
 
     const output = {
@@ -4186,7 +4198,7 @@ export class TaskService {
     const parsedOutput = TaskToolResultSchema.safeParse(output);
     if (!parsedOutput.success) {
       log.error("Task tool output schema validation failed", { error: parsedOutput.error.message });
-      return;
+      return [];
     }
 
     // If someone is actively awaiting this report (foreground task tool call or task_await),
@@ -4194,7 +4206,7 @@ export class TaskService {
     if (childWorkspaceId) {
       const waiters = this.pendingWaitersByTaskId.get(childWorkspaceId);
       if (waiters && waiters.length > 0) {
-        return;
+        return [];
       }
     }
 
@@ -4208,13 +4220,7 @@ export class TaskService {
         childEntry
       );
       if (finalization.kind === "finalized") {
-        for (const taskId of finalization.taskIds) {
-          if (taskId === childWorkspaceId) {
-            continue;
-          }
-          await this.requestReportedTaskCleanupRecheck(taskId);
-        }
-        return;
+        return finalization.taskIds.filter((taskId) => taskId !== childWorkspaceId);
       }
 
       if (childEntry?.workspace.bestOf?.total != null && childEntry.workspace.bestOf.total > 1) {
@@ -4224,7 +4230,7 @@ export class TaskService {
         // the grouped task output in the interrupted parent partial. Avoid appending an
         // extra synthetic fallback report once that grouped result already contains this child.
         if (parentTaskToolState.referencedTaskIds.has(childWorkspaceId)) {
-          return;
+          return [];
         }
 
         if (
@@ -4235,7 +4241,7 @@ export class TaskService {
             total: childEntry.workspace.bestOf.total,
           }))
         ) {
-          return;
+          return [];
         }
       }
     }
@@ -4270,6 +4276,8 @@ export class TaskService {
         error: appendResult.error,
       });
     }
+
+    return [];
   }
 
   private async tryFinalizePendingTaskToolCallInPartial(
