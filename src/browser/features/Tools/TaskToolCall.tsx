@@ -304,8 +304,16 @@ interface TaskToolOwnReport {
   title?: string;
 }
 
+function hasNonEmptyText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function trimToNonEmptyString(value: unknown): string | null {
+  return hasNonEmptyText(value) ? value.trim() : null;
+}
+
 function normalizeTaskId(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  return trimToNonEmptyString(value);
 }
 
 interface TaskToolWorkspaceEntry {
@@ -317,18 +325,20 @@ interface TaskToolWorkspaceEntry {
 }
 
 function normalizeTaskAgent(value: string | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : null;
+  const normalized = trimToNonEmptyString(value);
+  return normalized ? normalized.toLowerCase() : null;
 }
 
 function normalizeTaskTitle(value: string | undefined): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  return trimToNonEmptyString(value);
 }
 
 function parseWorkspaceCreatedAtMs(createdAt: string | undefined): number | undefined {
-  if (typeof createdAt !== "string" || createdAt.trim().length === 0) {
+  const normalizedCreatedAt = trimToNonEmptyString(createdAt);
+  if (!normalizedCreatedAt) {
     return undefined;
   }
-  const timestamp = Date.parse(createdAt);
+  const timestamp = Date.parse(normalizedCreatedAt);
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
@@ -348,14 +358,10 @@ function getTaskToolWorkspaceStatus(
   }
 }
 
-function getTaskToolWorkspaceTitle(metadata: FrontendWorkspaceMetadata): string | undefined {
-  const title = metadata.title?.trim();
-  if (title && title.length > 0) {
-    return title;
-  }
-
-  const name = metadata.name?.trim();
-  return name && name.length > 0 ? name : undefined;
+function getTaskToolWorkspaceTitle(
+  metadata: FrontendWorkspaceMetadata | null | undefined
+): string | undefined {
+  return normalizeTaskTitle(metadata?.title) ?? normalizeTaskTitle(metadata?.name) ?? undefined;
 }
 
 function mergeTaskIdsInDisplayOrder(taskIdLists: ReadonlyArray<readonly string[]>): string[] {
@@ -431,7 +437,7 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
   }
 
   const groups = Array.from(groupedCandidates.values()).filter(
-    (group) => group.length > 0 && group.length <= params.requestedCandidateCount
+    (group) => group.length <= params.requestedCandidateCount
   );
   if (groups.length === 0) {
     return [];
@@ -478,32 +484,6 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
     (left, right) =>
       (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
   );
-}
-
-function collectWorkspaceTaskEntriesById(params: {
-  taskIds: readonly string[];
-  workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
-}): Map<string, TaskToolWorkspaceEntry> {
-  const entriesByTaskId = new Map<string, TaskToolWorkspaceEntry>();
-  if (!params.workspaceMetadata) {
-    return entriesByTaskId;
-  }
-
-  for (const taskId of params.taskIds) {
-    const metadata = params.workspaceMetadata.get(taskId);
-    if (!metadata) {
-      continue;
-    }
-
-    entriesByTaskId.set(taskId, {
-      taskId,
-      index: metadata.bestOf?.index,
-      status: getTaskToolWorkspaceStatus(metadata.taskStatus),
-      title: getTaskToolWorkspaceTitle(metadata),
-    });
-  }
-
-  return entriesByTaskId;
 }
 
 function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null): {
@@ -567,7 +547,7 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
   }
 
   if (!taskStatuses) {
-    const fallbackStatus = result.status === "completed" ? "completed" : result.status;
+    const fallbackStatus = result.status;
     for (const taskId of taskIds) {
       statusByTaskId.set(taskId, fallbackStatus);
     }
@@ -611,8 +591,7 @@ const TaskToolCandidateCard: React.FC<{
   onOpenTranscript: (taskId: string) => void;
 }> = ({ entry, index, total, onOpenTranscript }) => {
   const canViewTranscript = entry.status === "completed";
-  const hasReport =
-    typeof entry.reportMarkdown === "string" && entry.reportMarkdown.trim().length > 0;
+  const hasReport = hasNonEmptyText(entry.reportMarkdown);
 
   return (
     <div className="bg-code-bg rounded-sm p-2">
@@ -692,10 +671,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     recoveredWorkspaceEntries.map((entry) => entry.taskId),
     liveTaskIds,
   ]);
-  const workspaceEntriesByTaskId = collectWorkspaceTaskEntriesById({
-    taskIds,
-    workspaceMetadata,
-  });
 
   const totalCandidateCount = Math.max(
     successResult && (resultTaskIds.length > 0 || ownReportsByTaskId.size > 0)
@@ -712,34 +687,29 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId) => {
     const ownReport = ownReportsByTaskId.get(taskId);
     const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
-    const workspaceEntry = workspaceEntriesByTaskId.get(taskId);
-    const reportMarkdown =
-      typeof ownReport?.reportMarkdown === "string" && ownReport.reportMarkdown.trim().length > 0
-        ? ownReport.reportMarkdown
-        : linkedReport?.reportMarkdown;
+    const metadata = workspaceMetadata?.get(taskId);
+    const reportMarkdown = hasNonEmptyText(ownReport?.reportMarkdown)
+      ? ownReport.reportMarkdown
+      : linkedReport?.reportMarkdown;
     const reportTitle = ownReport?.title ?? linkedReport?.title;
     const derivedStatus =
       (ownReport ?? linkedReport)
         ? "completed"
-        : (workspaceEntry?.status ?? statusByTaskId.get(taskId));
+        : (getTaskToolWorkspaceStatus(metadata?.taskStatus) ?? statusByTaskId.get(taskId));
 
     return {
       taskId,
       status:
         derivedStatus ?? (status === "executing" ? "running" : (successResult?.status ?? "queued")),
-      title: reportTitle ?? workspaceEntry?.title ?? title,
+      title: reportTitle ?? getTaskToolWorkspaceTitle(metadata) ?? title,
       reportMarkdown,
     };
   });
 
   const completedCandidateCount = displayEntries.filter(
-    (entry) =>
-      entry.status === "completed" ||
-      (typeof entry.reportMarkdown === "string" && entry.reportMarkdown.trim().length > 0)
+    (entry) => entry.status === "completed"
   ).length;
-  const hasAnyReport = displayEntries.some(
-    (entry) => typeof entry.reportMarkdown === "string" && entry.reportMarkdown.trim().length > 0
-  );
+  const hasAnyReport = displayEntries.some((entry) => hasNonEmptyText(entry.reportMarkdown));
   const aggregateTaskStatus = getAggregateTaskStatus(displayEntries, successResult?.status);
 
   const effectiveStatus: ToolStatus =
@@ -962,14 +932,6 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     }
   }
 
-  function getWorkspaceTitle(taskId: string): string | undefined {
-    const metadata = workspaceMetadata?.get(taskId);
-    const title = metadata?.title?.trim();
-    if (title && title.length > 0) return title;
-
-    const name = metadata?.name?.trim();
-    return name && name.length > 0 ? name : undefined;
-  }
   // Keep task_await collapsed by default, but auto-expand when failures are present.
   // This avoids hiding failures behind a "completed" badge in the header.
   const shouldAutoExpand = failedCount > 0;
@@ -1018,9 +980,10 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
                   const spawnTitle = taskId
                     ? taskReportLinking?.spawnTitleByTaskId.get(taskId)
                     : undefined;
-                  const fallbackTitle =
-                    (spawnTitle && spawnTitle.trim().length > 0 ? spawnTitle.trim() : undefined) ??
-                    (taskId ? getWorkspaceTitle(taskId) : undefined);
+                  const workspaceTitle = taskId
+                    ? getTaskToolWorkspaceTitle(workspaceMetadata?.get(taskId))
+                    : undefined;
+                  const fallbackTitle = trimToNonEmptyString(spawnTitle) ?? workspaceTitle;
 
                   return (
                     <TaskAwaitResult
@@ -1062,14 +1025,9 @@ const TaskAwaitResult: React.FC<{
   const reportMarkdown = isCompleted ? result.reportMarkdown : undefined;
 
   const rawReportTitle = isCompleted ? result.title : undefined;
-  const reportTitle =
-    typeof rawReportTitle === "string" && rawReportTitle.trim().length > 0
-      ? rawReportTitle.trim()
-      : undefined;
+  const reportTitle = trimToNonEmptyString(rawReportTitle) ?? undefined;
 
-  const title =
-    reportTitle ??
-    (fallbackTitle && fallbackTitle.trim().length > 0 ? fallbackTitle.trim() : undefined);
+  const title = reportTitle ?? trimToNonEmptyString(fallbackTitle) ?? undefined;
 
   const output = "output" in result ? result.output : undefined;
   const note = "note" in result ? result.note : undefined;
@@ -1081,7 +1039,7 @@ const TaskAwaitResult: React.FC<{
   const patchSummary = formatGitPatchArtifactSummary(gitPatchArtifact);
   const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
 
-  const showDetails = suppressReport !== true;
+  const showDetails = !suppressReport;
 
   return (
     <div className="bg-code-bg rounded-sm p-2">

@@ -1557,8 +1557,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   if ((workspace.bestOf?.total ?? 1) < 2) {
                                     return null;
                                   }
-                                  const hasChildren =
-                                    (childrenByParentId.get(workspace.id)?.length ?? 0) > 0;
+                                  const hasChildren = childrenByParentId.has(workspace.id);
                                   return hasChildren ? null : groupId;
                                 };
 
@@ -1636,7 +1635,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   const visibleMembers =
                                     visibleMembersByGroupId.get(bestOfGroupId) ?? [];
                                   if (visibleMembers[0]?.id !== workspace.id) {
-                                    skippedWorkspaceIds.add(workspace.id);
                                     continue;
                                   }
 
@@ -1654,22 +1652,31 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     allMembers[0]?.bestOf?.total ?? allMembers.length,
                                     allMembers.length
                                   );
-                                  const completedCount = allMembers.filter((member) =>
-                                    hasCompletedAgentReport(member)
-                                  ).length;
-                                  const runningCount = allMembers.filter(
-                                    (member) =>
+                                  let completedCount = 0;
+                                  let runningCount = 0;
+                                  let queuedCount = 0;
+                                  let interruptedCount = 0;
+                                  for (const member of allMembers) {
+                                    const hasCompletedReport = hasCompletedAgentReport(member);
+                                    if (hasCompletedReport) {
+                                      completedCount += 1;
+                                      continue;
+                                    }
+                                    if (
                                       member.taskStatus === "running" ||
                                       member.taskStatus === "awaiting_report"
-                                  ).length;
-                                  const queuedCount = allMembers.filter(
-                                    (member) => member.taskStatus === "queued"
-                                  ).length;
-                                  const interruptedCount = allMembers.filter(
-                                    (member) =>
-                                      member.taskStatus === "interrupted" &&
-                                      !hasCompletedAgentReport(member)
-                                  ).length;
+                                    ) {
+                                      runningCount += 1;
+                                      continue;
+                                    }
+                                    if (member.taskStatus === "queued") {
+                                      queuedCount += 1;
+                                      continue;
+                                    }
+                                    if (member.taskStatus === "interrupted") {
+                                      interruptedCount += 1;
+                                    }
+                                  }
                                   const groupTitle =
                                     allMembers[0]?.title ?? allMembers[0]?.name ?? "Task group";
                                   const isExpanded = expandedBestOfGroups[bestOfGroupId] ?? false;

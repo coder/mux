@@ -156,7 +156,6 @@ interface AgentTaskIndex {
 
 interface PendingTaskWaiter {
   taskId: string;
-  createdAt: number;
   resolve: (report: { reportMarkdown: string; title?: string }) => void;
   reject: (error: Error) => void;
   cleanup: () => void;
@@ -165,7 +164,6 @@ interface PendingTaskWaiter {
 }
 
 interface PendingTaskStartWaiter {
-  createdAt: number;
   start: () => void;
   cleanup: () => void;
 }
@@ -1840,7 +1838,6 @@ export class TaskService {
 
         const entry: PendingTaskWaiter = {
           taskId,
-          createdAt: Date.now(),
           requestingWorkspaceId: undefined,
           backgroundOnMessageQueued: false,
           resolve: (report) => {
@@ -1907,7 +1904,6 @@ export class TaskService {
         const initialStatus = taskWorkspaceEntry.workspace.taskStatus;
         if (initialStatus === "queued") {
           const startWaiterEntry: PendingTaskStartWaiter = {
-            createdAt: Date.now(),
             start: startReportTimeout,
             cleanup: () => {
               const currentStartWaiters = this.pendingStartWaitersByTaskId.get(taskId);
@@ -3471,31 +3467,38 @@ export class TaskService {
     groupId: string;
     total: number;
   }): Promise<void> {
-    const hasSyntheticSubagentReportInHistory = async (taskId: string): Promise<boolean> => {
-      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
-        params.parentWorkspaceId
-      );
-      if (!historyResult.success) {
-        return false;
-      }
-
-      return historyResult.data.some((message) => {
-        if (message.role !== "user" || message.metadata?.synthetic !== true) {
-          return false;
-        }
-        const text = message.parts
-          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-          .map((part) => part.text)
-          .join("\n");
-        return (
-          text.includes("<mux_subagent_report>") && text.includes(`<task_id>${taskId}</task_id>`)
-        );
-      });
-    };
     assert(
       params.parentWorkspaceId.length > 0,
       "deliverDeferredBestOfSiblingReports: parentWorkspaceId must be non-empty"
     );
+
+    const cfg = this.config.loadConfigOrDefault();
+    const siblings = this.listBestOfSiblingTasks({
+      parentWorkspaceId: params.parentWorkspaceId,
+      groupId: params.groupId,
+    });
+    const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
+      parentWorkspaceId: params.parentWorkspaceId,
+      groupId: params.groupId,
+      total: params.total,
+    });
+    if (groupedOutput) {
+      const representativeTaskId = siblings[0]?.taskId;
+      if (representativeTaskId) {
+        const finalization = await this.tryFinalizePendingTaskToolCallInPartial(
+          params.parentWorkspaceId,
+          groupedOutput,
+          representativeTaskId,
+          findWorkspaceEntry(cfg, representativeTaskId)
+        );
+        if (finalization.kind === "finalized") {
+          for (const taskId of finalization.taskIds) {
+            await this.requestReportedTaskCleanupRecheck(taskId);
+          }
+          return;
+        }
+      }
+    }
 
     if (
       await this.shouldDeferBestOfFallback({
@@ -3508,15 +3511,36 @@ export class TaskService {
     }
 
     const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
+    const syntheticReportTaskIds = new Set<string>();
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+      params.parentWorkspaceId
+    );
+    if (historyResult.success) {
+      for (const message of historyResult.data) {
+        if (message.role !== "user" || message.metadata?.synthetic !== true) {
+          continue;
+        }
+        const text = message.parts
+          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+        if (!text.includes("<mux_subagent_report>")) {
+          continue;
+        }
+        for (const match of text.matchAll(/<task_id>([^<]+)<\/task_id>/g)) {
+          const taskId = coerceNonEmptyString(match[1]);
+          if (taskId) {
+            syntheticReportTaskIds.add(taskId);
+          }
+        }
+      }
+    }
+
     const parentSessionDir = this.config.getSessionDir(params.parentWorkspaceId);
-    const cfg = this.config.loadConfigOrDefault();
-    for (const sibling of this.listBestOfSiblingTasks({
-      parentWorkspaceId: params.parentWorkspaceId,
-      groupId: params.groupId,
-    })) {
+    for (const sibling of siblings) {
       if (
         parentTaskToolState.referencedTaskIds.has(sibling.taskId) ||
-        (await hasSyntheticSubagentReportInHistory(sibling.taskId))
+        syntheticReportTaskIds.has(sibling.taskId)
       ) {
         continue;
       }
@@ -3874,7 +3898,6 @@ export class TaskService {
     agentId?: string;
     agentType?: string;
     taskStatus?: WorkspaceConfigEntry["taskStatus"];
-    reportedAt?: WorkspaceConfigEntry["reportedAt"];
   }> {
     const cfg = this.config.loadConfigOrDefault();
     const siblings: Array<{
@@ -3883,7 +3906,6 @@ export class TaskService {
       agentId?: string;
       agentType?: string;
       taskStatus?: WorkspaceConfigEntry["taskStatus"];
-      reportedAt?: WorkspaceConfigEntry["reportedAt"];
     }> = [];
 
     for (const project of cfg.projects.values()) {
@@ -3908,7 +3930,6 @@ export class TaskService {
           agentId: coerceNonEmptyString(workspace.agentId),
           agentType: coerceNonEmptyString(workspace.agentType),
           taskStatus: workspace.taskStatus,
-          reportedAt: workspace.reportedAt,
         });
       }
     }
@@ -3987,7 +4008,6 @@ export class TaskService {
   }
 
   private async getTaskToolPartialState(workspaceId: string): Promise<{
-    hasPendingBestOfTaskTool: boolean;
     pendingBestOfTaskToolCount: number;
     pendingTaskToolCount: number;
     referencedTaskIds: Set<string>;
@@ -3996,7 +4016,6 @@ export class TaskService {
     const referencedTaskIds = new Set<string>();
     if (!partial) {
       return {
-        hasPendingBestOfTaskTool: false,
         pendingBestOfTaskToolCount: 0,
         pendingTaskToolCount: 0,
         referencedTaskIds,
@@ -4049,7 +4068,6 @@ export class TaskService {
     }
 
     return {
-      hasPendingBestOfTaskTool: pendingBestOfTaskToolCount > 0,
       pendingBestOfTaskToolCount,
       pendingTaskToolCount,
       referencedTaskIds,
@@ -4063,7 +4081,6 @@ export class TaskService {
   }): Promise<boolean> {
     const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
     if (
-      !parentTaskToolState.hasPendingBestOfTaskTool ||
       parentTaskToolState.pendingBestOfTaskToolCount !== 1 ||
       parentTaskToolState.pendingTaskToolCount !== 1
     ) {
@@ -4253,21 +4270,29 @@ export class TaskService {
 
     let finalizedOutput: z.infer<typeof TaskToolResultSchema> = parsedOutput.data;
     if ((parsedInput.data.n ?? 1) > 1) {
-      const bestOf = childEntry?.workspace.bestOf;
-      if (!bestOf) {
-        return { kind: "failed" };
-      }
+      const hasGroupedCompletedOutput =
+        Array.isArray(parsedOutput.data.taskIds) &&
+        "reports" in parsedOutput.data &&
+        Array.isArray(parsedOutput.data.reports);
+      if (hasGroupedCompletedOutput) {
+        finalizedOutput = parsedOutput.data;
+      } else {
+        const bestOf = childEntry?.workspace.bestOf;
+        if (!bestOf) {
+          return { kind: "failed" };
+        }
 
-      const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
-        parentWorkspaceId: workspaceId,
-        groupId: bestOf.groupId,
-        total: bestOf.total,
-      });
-      if (!groupedOutput) {
-        return { kind: "not_ready" };
-      }
+        const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
+          parentWorkspaceId: workspaceId,
+          groupId: bestOf.groupId,
+          total: bestOf.total,
+        });
+        if (!groupedOutput) {
+          return { kind: "not_ready" };
+        }
 
-      finalizedOutput = groupedOutput;
+        finalizedOutput = groupedOutput;
+      }
     }
 
     const updated: MuxMessage = {

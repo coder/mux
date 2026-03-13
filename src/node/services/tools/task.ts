@@ -142,13 +142,12 @@ function buildPendingTaskResult(params: {
       ? serializeCompletedReports(params.reports)
       : undefined;
 
-  if (params.tasks.length === 1 && params.forceGrouped !== true) {
+  if (params.tasks.length === 1 && !params.forceGrouped) {
     const task = params.tasks[0];
     return {
       status,
-      taskId: task?.taskId,
+      taskId: task.taskId,
       note: params.note,
-      ...(serializedReports ? { reports: serializedReports } : {}),
     };
   }
 
@@ -169,11 +168,11 @@ function buildCompletedTaskResult(params: {
     const report = serializedReports[0];
     return {
       status: "completed",
-      taskId: report?.taskId,
-      reportMarkdown: report?.reportMarkdown,
-      title: report?.title,
-      agentId: report?.agentId,
-      agentType: report?.agentType,
+      taskId: report.taskId,
+      reportMarkdown: report.reportMarkdown,
+      title: report.title,
+      agentId: report.agentId,
+      agentType: report.agentType,
     };
   }
 
@@ -240,7 +239,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const { agentId, subagent_type, prompt, title, run_in_background, n } = validatedArgs;
       const requestedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0 ? agentId : subagent_type;
-      if (!requestedAgentId || !prompt || !title) {
+      if (!requestedAgentId) {
         throw new Error("task tool input validation failed: expected agent task args");
       }
 
