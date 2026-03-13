@@ -6,8 +6,8 @@ import {
   type ExtensionAgentStatus,
   type ExtensionMetadata,
   type ExtensionMetadataFile,
-  getExtensionMetadataPath,
 } from "@/node/utils/extensionMetadata";
+import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 import { log } from "@/node/services/log";
 
@@ -91,7 +91,7 @@ export class ExtensionMetadataService {
   }
 
   constructor(filePath?: string) {
-    this.filePath = filePath ?? getExtensionMetadataPath();
+    this.filePath = filePath ?? getMuxExtensionMetadataPath();
   }
 
   /**

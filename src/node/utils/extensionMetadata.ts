@@ -35,14 +35,6 @@ export interface ExtensionMetadataFile {
 }
 
 /**
- * Get the path to the extension metadata file.
- * @param rootDir - Optional root directory (defaults to getMuxHome())
- */
-export function getExtensionMetadataPath(rootDir?: string): string {
-  return getMuxExtensionMetadataPath(rootDir);
-}
-
-/**
  * Coerce an unknown value into a valid ExtensionAgentStatus, or null if invalid.
  * Shared between the sync reader (extensionMetadata.ts) and ExtensionMetadataService.
  */
@@ -80,7 +72,7 @@ export function coerceStatusUrl(url: unknown): string | null {
  * Used by both the main app and VS Code extension (vscode/src/muxConfig.ts).
  */
 export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
-  const metadataPath = getExtensionMetadataPath();
+  const metadataPath = getMuxExtensionMetadataPath();
 
   if (!existsSync(metadataPath)) {
     return new Map();
