@@ -407,6 +407,20 @@ describe("SessionUsageService", () => {
     });
   });
 
+  describe("resetSessionUsage", () => {
+    it("should replace existing usage with an explicit empty ledger", async () => {
+      const workspaceId = "test-workspace";
+      const model = "claude-sonnet-4-20250514";
+
+      await service.recordUsage(workspaceId, model, createUsageWithCosts(100, 50, 0.12, 0.08));
+
+      await service.resetSessionUsage(workspaceId);
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result).toEqual({ byModel: {}, version: 1 });
+    });
+  });
+
   describe("setTokenStatsCache", () => {
     it("should persist tokenStatsCache and preserve existing usage fields", async () => {
       const projectPath = "/tmp/mux-session-usage-test-project";

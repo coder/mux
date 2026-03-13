@@ -13,6 +13,7 @@ import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
 import type { SessionTimingService } from "./sessionTimingService";
+import { SessionUsageService } from "./sessionUsageService";
 import type { AIService } from "./aiService";
 import type { InitStateManager, InitStatus } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
@@ -4224,11 +4225,18 @@ describe("WorkspaceService regenerateTitle", () => {
 });
 
 describe("WorkspaceService fork", () => {
+  let config: Config;
+  let tempDir: string;
   let historyService: HistoryService;
   let cleanupHistory: () => Promise<void>;
 
   beforeEach(async () => {
-    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+    ({
+      config,
+      tempDir,
+      historyService,
+      cleanup: cleanupHistory,
+    } = await createTestHistoryService());
   });
 
   afterEach(async () => {
@@ -4318,6 +4326,126 @@ describe("WorkspaceService fork", () => {
       orchestrateForkSpy.mockRestore();
       createRuntimeSpy.mockRestore();
       getOrCreateSessionSpy.mockRestore();
+    }
+  });
+  test("resets forked session usage while preserving copied history", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = path.join(tempDir, "project");
+    const sourceMetadata: FrontendWorkspaceMetadata = {
+      id: sourceWorkspaceId,
+      name: "source-branch",
+      projectPath: sourceProjectPath,
+      projectName: "project",
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: path.join(sourceProjectPath, "source-branch"),
+    };
+
+    await fsPromises.mkdir(sourceProjectPath, { recursive: true });
+    await config.addWorkspace(sourceProjectPath, sourceMetadata);
+    await config.editConfig((current) => {
+      const project = current.projects.get(sourceProjectPath);
+      if (!project) {
+        throw new Error("Expected test project config to exist");
+      }
+      project.trusted = true;
+      return current;
+    });
+
+    // Seed source history with assistant usage so the source cost ledger is non-empty
+    // before we fork. The fork should keep this history but not inherit its costs.
+    await historyService.appendToHistory(
+      sourceWorkspaceId,
+      createMuxMessage("assistant-1", "assistant", "Hello", {
+        model: "claude-sonnet-4-20250514",
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      })
+    );
+
+    const sessionUsageService = new SessionUsageService(config, historyService);
+    const sourceUsage = await sessionUsageService.getSessionUsage(sourceWorkspaceId);
+    expect(sourceUsage?.byModel["claude-sonnet-4-20250514"]?.input.tokens).toBe(100);
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(sourceMetadata))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: mock(() => undefined),
+      endInit: mock(() => Promise.resolve()),
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const workspaceService = new WorkspaceService(
+      config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager,
+      sessionUsageService
+    );
+
+    const targetRuntime = {
+      getWorkspacePath: mock(() => path.join(sourceProjectPath, "fork-child")),
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+
+    const generateStableIdSpy = spyOn(config, "generateStableId").mockReturnValue(newWorkspaceId);
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
+      undefined
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockResolvedValue(
+      Ok({
+        workspacePath: path.join(sourceProjectPath, "fork-child"),
+        trunkBranch: "main",
+        forkedRuntimeConfig: { type: "local" },
+        targetRuntime,
+        forkedFromSource: true,
+        sourceRuntimeConfigUpdated: false,
+      })
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId, "fork-child");
+      expect(result.success).toBe(true);
+
+      const forkedUsage = await sessionUsageService.getSessionUsage(newWorkspaceId);
+      expect(forkedUsage).toEqual({ byModel: {}, version: 1 });
+
+      const forkedMessages: string[] = [];
+      const historyResult = await historyService.iterateFullHistory(
+        newWorkspaceId,
+        "forward",
+        (chunk) => {
+          forkedMessages.push(...chunk.map((message) => message.id));
+        }
+      );
+      expect(historyResult.success).toBe(true);
+      expect(forkedMessages).toContain("assistant-1");
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      copyPlanSpy.mockRestore();
+      runBackgroundInitSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+      generateStableIdSpy.mockRestore();
     }
   });
 });

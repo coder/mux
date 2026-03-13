@@ -385,6 +385,22 @@ async function copyIfExists(sourcePath: string, destinationPath: string): Promis
   }
 }
 
+async function resetForkedSessionUsage(
+  sessionUsageService: SessionUsageService | undefined,
+  workspaceId: string,
+  sessionDir: string
+): Promise<void> {
+  if (sessionUsageService) {
+    await sessionUsageService.resetSessionUsage(workspaceId);
+    return;
+  }
+
+  await fsPromises.writeFile(
+    path.join(sessionDir, "session-usage.json"),
+    JSON.stringify({ byModel: {}, version: 1 }, null, 2)
+  );
+}
+
 function isPathInsideDir(dirPath: string, filePath: string): boolean {
   const resolvedDir = path.resolve(dirPath);
   const resolvedFile = path.resolve(filePath);
@@ -4271,18 +4287,18 @@ export class WorkspaceService extends EventEmitter {
       try {
         await ensurePrivateDir(newSessionDir);
 
-        const sessionFiles = [
-          "chat.jsonl",
-          "partial.json",
-          "session-timing.json",
-          "session-usage.json",
-        ] as const;
+        const sessionFiles = ["chat.jsonl", "partial.json", "session-timing.json"] as const;
         for (const fileName of sessionFiles) {
           await copyIfExists(
             path.join(sourceSessionDir, fileName),
             path.join(newSessionDir, fileName)
           );
         }
+
+        // Forks inherit chat history, but their cost ledger must start fresh.
+        // Persist an explicit empty usage file so later reads do not rebuild
+        // historical costs from the copied messages.
+        await resetForkedSessionUsage(this.sessionUsageService, newWorkspaceId, newSessionDir);
       } catch (copyError) {
         const forkTrusted = projectConfig.trusted ?? false;
         await targetRuntime.deleteWorkspace(
