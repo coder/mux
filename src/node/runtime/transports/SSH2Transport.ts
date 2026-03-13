@@ -35,7 +35,14 @@ class SSH2ChildProcess extends EventEmitter {
     const stdinPipe = new PassThrough();
 
     channel.pipe(stdoutPipe);
-    (channel.stderr ?? new PassThrough()).pipe(stderrPipe);
+    if (channel.stderr) {
+      channel.stderr.pipe(stderrPipe);
+    } else {
+      // SSH2 PTY exec merges remote stderr into stdout. Expose an already-closed
+      // stderr stream so init-hook readers never hang waiting for a channel that
+      // cannot exist; otherwise SSH workspaces can get stuck on "Running init hook...".
+      stderrPipe.end();
+    }
     stdinPipe.pipe(channel);
 
     this.stdout = stdoutPipe;
