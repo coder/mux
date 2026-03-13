@@ -84,9 +84,7 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
       try {
         const [storedBaseUrl, storedAuthToken] = await Promise.all([
           Storage.getItem(STORAGE_KEY_BASE_URL),
-          IS_WEB
-            ? Promise.resolve<string | null>(null)
-            : Storage.getItem(STORAGE_KEY_AUTH_TOKEN),
+          IS_WEB ? Promise.resolve<string | null>(null) : Storage.getItem(STORAGE_KEY_AUTH_TOKEN),
         ]);
         if (!mounted) return;
         if (typeof storedBaseUrl === "string") {
