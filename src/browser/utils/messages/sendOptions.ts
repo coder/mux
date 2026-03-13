@@ -59,7 +59,7 @@ function isExistingWorkspaceScopeId(scopeId: string): boolean {
   );
 }
 
-function readLegacyScopedThinkingLevel(scopeId: string, baseModel: string): ThinkingLevel {
+export function readLegacyScopedThinkingLevel(scopeId: string, baseModel: string): ThinkingLevel {
   const scopedKey = getThinkingLevelKey(scopeId);
   const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
   const thinkingLevel =
@@ -100,10 +100,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
         ),
         fallbackModel: defaultModel,
         currentModel: baseModel,
-        legacyThinkingLevel: readPersistedState<ThinkingLevel>(
-          getThinkingLevelKey(workspaceId),
-          WORKSPACE_DEFAULTS.thinkingLevel
-        ),
+        legacyThinkingLevel: readLegacyScopedThinkingLevel(workspaceId, baseModel),
       })
     : readLegacyScopedThinkingLevel(workspaceId, baseModel);
 

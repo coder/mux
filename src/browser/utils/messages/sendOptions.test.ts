@@ -4,6 +4,7 @@ import {
   AGENT_AI_DEFAULTS_KEY,
   getAgentIdKey,
   getModelKey,
+  getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
@@ -92,6 +93,32 @@ describe("getSendOptionsFromStorage", () => {
     const options = getSendOptionsFromStorage(workspaceId);
 
     expect(options.thinkingLevel).toBe("medium");
+  });
+
+  test("falls back to per-model thinking key for unmigrated existing workspace", () => {
+    const workspaceId = "ws-unmigrated";
+    const model = "openai:gpt-5.2";
+
+    window.localStorage.setItem(getModelKey(workspaceId), JSON.stringify(model));
+    window.localStorage.setItem(getThinkingLevelByModelKey(model), JSON.stringify("high"));
+
+    const options = getSendOptionsFromStorage(workspaceId);
+
+    expect(options.thinkingLevel).toBe("high");
+  });
+
+  test("migrates per-model thinking to workspace key on first read", () => {
+    const workspaceId = "ws-migrate";
+    const model = "openai:gpt-5.2";
+
+    window.localStorage.setItem(getModelKey(workspaceId), JSON.stringify(model));
+    window.localStorage.setItem(getThinkingLevelByModelKey(model), JSON.stringify("medium"));
+
+    getSendOptionsFromStorage(workspaceId);
+
+    expect(window.localStorage.getItem(getThinkingLevelKey(workspaceId))).toBe(
+      JSON.stringify("medium")
+    );
   });
 
   test("uses legacy thinking level when auto agent has only legacy plan/exec workspace cache entries", () => {

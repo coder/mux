@@ -41,7 +41,6 @@ import {
   getAgentsInitNudgeKey,
   getModelKey,
   getNotifyOnResponseKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getWorkspaceLastReadKey,
   EXPANDED_PROJECTS_KEY,
@@ -65,6 +64,7 @@ import {
   type WorkspaceAISettingsCache,
 } from "@/browser/utils/workspaceModeAi";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal/AuthTokenModal";
+import { readLegacyScopedThinkingLevel } from "@/browser/utils/messages/sendOptions";
 
 import { ProjectPage } from "@/browser/components/ProjectPage/ProjectPage";
 
@@ -382,6 +382,8 @@ function AppInner() {
         return "off";
       }
 
+      const currentModel = getModelForWorkspace(workspaceId);
+
       return resolveActiveWorkspaceThinkingForAgent({
         agentId: readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.agentId),
         agentAiDefaults: readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {}),
@@ -390,11 +392,8 @@ function AppInner() {
           {}
         ),
         fallbackModel: getDefaultModel(),
-        currentModel: getModelForWorkspace(workspaceId),
-        legacyThinkingLevel: readPersistedState<ThinkingLevel>(
-          getThinkingLevelKey(workspaceId),
-          "off"
-        ),
+        currentModel,
+        legacyThinkingLevel: readLegacyScopedThinkingLevel(workspaceId, currentModel),
       });
     },
     [getModelForWorkspace]
