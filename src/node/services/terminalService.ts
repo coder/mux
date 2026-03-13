@@ -23,6 +23,7 @@ import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { NO_OSC_IDLE_FALLBACK_MS } from "@/constants/terminalActivity";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
 
 /**
  * Configuration for opening a native terminal
@@ -417,9 +418,11 @@ export class TerminalService {
           command: `docker exec -it ${containerName} /bin/sh -c "cd ${workspace.namedWorkspacePath} && exec /bin/sh"`,
         });
       } else if (isDevcontainerRuntime(runtimeConfig)) {
-        const quotedPath = JSON.stringify(workspace.namedWorkspacePath);
+        // These arguments are executed via `sh -c` in terminal launchers, so they
+        // must be shell-escaped to prevent command substitution from crafted paths.
+        const quotedPath = shellQuote(workspace.namedWorkspacePath);
         const configArg = runtimeConfig.configPath
-          ? ` --config ${JSON.stringify(runtimeConfig.configPath)}`
+          ? ` --config ${shellQuote(runtimeConfig.configPath)}`
           : "";
         await this.openNativeTerminal({
           type: "local",
