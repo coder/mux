@@ -283,6 +283,10 @@ export class TaskService {
   // Serialize stream-end processing per workspace to avoid races when
   // finalizing reported tasks and cleanup state transitions.
   private readonly workspaceEventLocks = new MutexMap<string>();
+  // Separate parent-scoped lock for deferred best-of fallback/finalization. This path can run
+  // concurrently from multiple child stream-end handlers for the same parent, and it must remain
+  // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
+  private readonly deferredBestOfLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
@@ -3491,94 +3495,96 @@ export class TaskService {
       "deliverDeferredBestOfSiblingReports: parentWorkspaceId must be non-empty"
     );
 
-    const cfg = this.config.loadConfigOrDefault();
-    const siblings = this.listBestOfSiblingTasks({
-      parentWorkspaceId: params.parentWorkspaceId,
-      groupId: params.groupId,
-    });
-    const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
-      parentWorkspaceId: params.parentWorkspaceId,
-      groupId: params.groupId,
-      total: params.total,
-    });
-    if (groupedOutput) {
-      const representativeTaskId = siblings[0]?.taskId;
-      if (representativeTaskId) {
-        const finalization = await this.tryFinalizePendingTaskToolCallInPartial(
-          params.parentWorkspaceId,
-          groupedOutput,
-          representativeTaskId,
-          findWorkspaceEntry(cfg, representativeTaskId)
-        );
-        if (finalization.kind === "finalized") {
-          for (const taskId of finalization.taskIds) {
-            await this.requestReportedTaskCleanupRecheck(taskId);
-          }
-          return;
-        }
-      }
-    }
-
-    if (
-      await this.shouldDeferBestOfFallback({
+    await this.deferredBestOfLocks.withLock(params.parentWorkspaceId, async () => {
+      const cfg = this.config.loadConfigOrDefault();
+      const siblings = this.listBestOfSiblingTasks({
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+      });
+      const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
         parentWorkspaceId: params.parentWorkspaceId,
         groupId: params.groupId,
         total: params.total,
-      })
-    ) {
-      return;
-    }
-
-    const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
-    const syntheticReportTaskIds = new Set<string>();
-    const historyResult = await this.historyService.getHistoryFromLatestBoundary(
-      params.parentWorkspaceId
-    );
-    if (historyResult.success) {
-      for (const message of historyResult.data) {
-        if (message.role !== "user" || message.metadata?.synthetic !== true) {
-          continue;
-        }
-        const text = message.parts
-          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-          .map((part) => part.text)
-          .join("\n");
-        if (!text.includes("<mux_subagent_report>")) {
-          continue;
-        }
-        for (const match of text.matchAll(/<task_id>([^<]+)<\/task_id>/g)) {
-          const taskId = coerceNonEmptyString(match[1]);
-          if (taskId) {
-            syntheticReportTaskIds.add(taskId);
+      });
+      if (groupedOutput) {
+        const representativeTaskId = siblings[0]?.taskId;
+        if (representativeTaskId) {
+          const finalization = await this.tryFinalizePendingTaskToolCallInPartial(
+            params.parentWorkspaceId,
+            groupedOutput,
+            representativeTaskId,
+            findWorkspaceEntry(cfg, representativeTaskId)
+          );
+          if (finalization.kind === "finalized") {
+            for (const taskId of finalization.taskIds) {
+              await this.requestReportedTaskCleanupRecheck(taskId);
+            }
+            return;
           }
         }
       }
-    }
 
-    const parentSessionDir = this.config.getSessionDir(params.parentWorkspaceId);
-    for (const sibling of siblings) {
       if (
-        parentTaskToolState.referencedTaskIds.has(sibling.taskId) ||
-        syntheticReportTaskIds.has(sibling.taskId)
+        await this.shouldDeferBestOfFallback({
+          parentWorkspaceId: params.parentWorkspaceId,
+          groupId: params.groupId,
+          total: params.total,
+        })
       ) {
-        continue;
-      }
-      if (!(sibling.taskStatus === "reported" || sibling.taskStatus === "interrupted")) {
-        continue;
+        return;
       }
 
-      const artifact = await readSubagentReportArtifact(parentSessionDir, sibling.taskId);
-      if (!artifact) {
-        continue;
-      }
-
-      await this.deliverReportToParent(
-        params.parentWorkspaceId,
-        sibling.taskId,
-        findWorkspaceEntry(cfg, sibling.taskId),
-        { reportMarkdown: artifact.reportMarkdown, title: artifact.title }
+      const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
+      const syntheticReportTaskIds = new Set<string>();
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+        params.parentWorkspaceId
       );
-    }
+      if (historyResult.success) {
+        for (const message of historyResult.data) {
+          if (message.role !== "user" || message.metadata?.synthetic !== true) {
+            continue;
+          }
+          const text = message.parts
+            .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+          if (!text.includes("<mux_subagent_report>")) {
+            continue;
+          }
+          for (const match of text.matchAll(/<task_id>([^<]+)<\/task_id>/g)) {
+            const taskId = coerceNonEmptyString(match[1]);
+            if (taskId) {
+              syntheticReportTaskIds.add(taskId);
+            }
+          }
+        }
+      }
+
+      const parentSessionDir = this.config.getSessionDir(params.parentWorkspaceId);
+      for (const sibling of siblings) {
+        if (
+          parentTaskToolState.referencedTaskIds.has(sibling.taskId) ||
+          syntheticReportTaskIds.has(sibling.taskId)
+        ) {
+          continue;
+        }
+        if (!(sibling.taskStatus === "reported" || sibling.taskStatus === "interrupted")) {
+          continue;
+        }
+
+        const artifact = await readSubagentReportArtifact(parentSessionDir, sibling.taskId);
+        if (!artifact) {
+          continue;
+        }
+
+        await this.deliverReportToParent(
+          params.parentWorkspaceId,
+          sibling.taskId,
+          findWorkspaceEntry(cfg, sibling.taskId),
+          { reportMarkdown: artifact.reportMarkdown, title: artifact.title }
+        );
+      }
+    });
   }
 
   private async fallbackReportMissingCompletionTool(
