@@ -555,7 +555,9 @@ describe("ProposePlanToolCall", () => {
     if (updatePersistedStateMaybeMock.mock) {
       expect(updatePersistedState).toHaveBeenCalledWith(
         workspaceAiSettingsKey,
-        expect.any(Function),
+        {
+          exec: { model: execModel, thinkingLevel: execThinking },
+        },
         {}
       );
       expect(updatePersistedState).toHaveBeenCalledWith(agentKey, "exec");
@@ -693,6 +695,7 @@ describe("ProposePlanToolCall", () => {
     expect(
       JSON.parse(window.localStorage.getItem(getWorkspaceAISettingsByAgentKey(workspaceId))!)
     ).toEqual({
+      plan: { model: planModel, thinkingLevel: planThinking },
       exec: { model: planModel, thinkingLevel: planThinking },
     });
   });
@@ -866,7 +869,9 @@ describe("ProposePlanToolCall", () => {
     if (updatePersistedStateMaybeMock.mock) {
       expect(updatePersistedState).toHaveBeenCalledWith(
         workspaceAiSettingsKey,
-        expect.any(Function),
+        {
+          orchestrator: { model: orchestratorModel, thinkingLevel: orchestratorThinking },
+        },
         {}
       );
       expect(updatePersistedState).toHaveBeenCalledWith(agentKey, "orchestrator");
@@ -941,6 +946,7 @@ describe("ProposePlanToolCall", () => {
     expect(
       JSON.parse(window.localStorage.getItem(getWorkspaceAISettingsByAgentKey(workspaceId))!)
     ).toEqual({
+      plan: { model: planModel, thinkingLevel: planThinking },
       orchestrator: { model: planModel, thinkingLevel: planThinking },
     });
   });

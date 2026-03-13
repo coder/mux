@@ -36,29 +36,16 @@ import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
-import {
-  AGENT_AI_DEFAULTS_KEY,
-  getAgentIdKey,
-  getModelKey,
-  getPlanContentKey,
-  getWorkspaceAISettingsByAgentKey,
-} from "@/common/constants/storage";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { getAgentIdKey, getModelKey, getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  getSendOptionsFromStorage,
-  readLegacyScopedThinkingLevel,
-} from "@/browser/utils/messages/sendOptions";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
-  resolveActiveWorkspaceThinkingForAgent,
-  resolveWorkspaceAiSettingsForAgent,
-  type WorkspaceAISettingsCache,
-} from "@/browser/utils/workspaceModeAi";
-import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+  getWorkspaceAiSettings,
+  setWorkspaceAiSettings,
+} from "@/browser/services/workspaceAiSettings";
 import type { ReviewActionCallbacks } from "../Shared/InlineReviewNote";
 import { isPlanFilePath, normalizePlanFilePath } from "@/common/types/review";
-import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   Clipboard,
   ClipboardCheck,
@@ -473,58 +460,23 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const resolveAndPersistTargetAgentSettings = (args: {
     workspaceId: string;
     targetAgentId: "auto" | "exec" | "orchestrator";
-  }): { resolvedModel: string; resolvedThinking: ThinkingLevel } => {
-    const modelKey = getModelKey(args.workspaceId);
-    const fallbackModel = getDefaultModel();
-
-    const existingModel = readPersistedState<string>(modelKey, fallbackModel);
-    const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
-    const workspaceByAgent = readPersistedState<WorkspaceAISettingsCache>(
-      getWorkspaceAISettingsByAgentKey(args.workspaceId),
-      {}
-    );
-
-    // First-switch plan actions should inherit the workspace's currently resolved thinking,
-    // even before the target agent has its own cached workspace settings.
-    const existingThinking = resolveActiveWorkspaceThinkingForAgent({
-      agentId: currentAgentId,
-      agentAiDefaults,
-      workspaceByAgent,
-      fallbackModel,
-      currentModel: existingModel,
-      legacyThinkingLevel: readLegacyScopedThinkingLevel(args.workspaceId, existingModel),
+  }) => {
+    const existingModel = readPersistedState<string>(getModelKey(args.workspaceId), "");
+    const resolvedSettings = getWorkspaceAiSettings(args.workspaceId, args.targetAgentId, {
+      inheritFromAgentId: currentAgentId,
     });
 
-    const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
-      agentId: args.targetAgentId,
-      agentAiDefaults,
-      // Propose-plan actions are explicit mode switches; honor any per-agent
-      // workspace override before inheriting the target agent's current workspace state.
-      workspaceByAgent,
-      useWorkspaceByAgentFallback: true,
-      fallbackModel,
-      existingModel,
-      existingThinking,
-    });
-
-    updatePersistedState<WorkspaceAISettingsCache>(
-      getWorkspaceAISettingsByAgentKey(args.workspaceId),
-      (prev) => {
-        const record: WorkspaceAISettingsCache = prev && typeof prev === "object" ? prev : {};
-        return {
-          ...record,
-          [args.targetAgentId]: { model: resolvedModel, thinkingLevel: resolvedThinking },
-        };
-      },
-      {}
-    );
+    setWorkspaceAiSettings(args.workspaceId, args.targetAgentId, resolvedSettings);
     updatePersistedState(getAgentIdKey(args.workspaceId), args.targetAgentId);
 
-    if (existingModel !== resolvedModel) {
-      setWorkspaceModelWithOrigin(args.workspaceId, resolvedModel, "agent");
+    if (existingModel !== resolvedSettings.model) {
+      setWorkspaceModelWithOrigin(args.workspaceId, resolvedSettings.model, "agent");
     }
 
-    return { resolvedModel, resolvedThinking };
+    return {
+      resolvedModel: resolvedSettings.model,
+      resolvedThinking: resolvedSettings.thinkingLevel,
+    };
   };
 
   const handleStartOrchestrator = async () => {

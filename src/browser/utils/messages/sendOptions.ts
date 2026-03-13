@@ -1,11 +1,9 @@
 import {
-  AGENT_AI_DEFAULTS_KEY,
   GLOBAL_SCOPE_ID,
   getAgentIdKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByAgentKey,
   getDisableWorkspaceAgentsKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
@@ -24,13 +22,9 @@ import {
 } from "@/browser/utils/messages/buildSendMessageOptions";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import {
-  resolveActiveWorkspaceThinkingForAgent,
-  type WorkspaceAISettingsCache,
-} from "@/browser/utils/workspaceModeAi";
+import { getWorkspaceAiSettings } from "@/browser/services/workspaceAiSettings";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -60,7 +54,7 @@ function isExistingWorkspaceScopeId(scopeId: string): boolean {
   );
 }
 
-export function readLegacyPerModelThinking(rawModel: string): ThinkingLevel | undefined {
+function readLegacyPerModelThinking(rawModel: string): ThinkingLevel | undefined {
   const canonicalModel = normalizeToCanonical(rawModel);
   const canonicalThinking = readPersistedState<ThinkingLevel | undefined>(
     getThinkingLevelByModelKey(canonicalModel),
@@ -81,7 +75,7 @@ export function readLegacyPerModelThinking(rawModel: string): ThinkingLevel | un
   return undefined;
 }
 
-export function readLegacyScopedThinkingLevel(scopeId: string, baseModel: string): ThinkingLevel {
+function readLegacyScopedThinkingLevel(scopeId: string, baseModel: string): ThinkingLevel {
   const scopedKey = getThinkingLevelKey(scopeId);
   const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
   const thinkingLevel =
@@ -109,17 +103,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   );
 
   const thinkingLevel = isExistingWorkspaceScopeId(workspaceId)
-    ? resolveActiveWorkspaceThinkingForAgent({
-        agentId,
-        agentAiDefaults: readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {}),
-        workspaceByAgent: readPersistedState<WorkspaceAISettingsCache>(
-          getWorkspaceAISettingsByAgentKey(workspaceId),
-          {}
-        ),
-        fallbackModel: defaultModel,
-        currentModel: baseModel,
-        legacyThinkingLevel: readLegacyScopedThinkingLevel(workspaceId, baseModel),
-      })
+    ? getWorkspaceAiSettings(workspaceId, agentId).thinkingLevel
     : readLegacyScopedThinkingLevel(workspaceId, baseModel);
 
   const providerOptions = getProviderOptions();

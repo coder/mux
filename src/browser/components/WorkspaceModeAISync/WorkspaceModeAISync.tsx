@@ -1,26 +1,20 @@
 import { useEffect, useRef } from "react";
 import { useAgent } from "@/browser/contexts/AgentContext";
-import {
-  readPersistedState,
-  updatePersistedState,
-  usePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   getModelKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
-import { readLegacyPerModelThinking } from "@/browser/utils/messages/sendOptions";
 import {
-  resolveActiveWorkspaceThinkingForAgent,
-  resolveWorkspaceAiSettingsForAgent,
+  getWorkspaceAiSettings,
+  normalizeAgentId,
+  setWorkspaceAiSettings,
   type WorkspaceAISettingsCache,
-} from "@/browser/utils/workspaceModeAi";
+} from "@/browser/services/workspaceAiSettings";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import type { ThinkingLevel } from "@/common/types/thinking";
 
 export function WorkspaceModeAISync(props: { workspaceId: string }): null {
   const workspaceId = props.workspaceId;
@@ -46,79 +40,44 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
 
   useEffect(() => {
     const fallbackModel = getDefaultModel();
-    const modelKey = getModelKey(workspaceId);
-
-    const normalizedAgentId =
-      typeof agentId === "string" && agentId.trim().length > 0
-        ? agentId.trim().toLowerCase()
-        : "exec";
+    const existingModel = readPersistedState<string>(getModelKey(workspaceId), fallbackModel);
+    const normalizedCurrentAgentId = normalizeAgentId(agentId);
     const previousAgentId = prevAgentIdRef.current;
     const isExplicitAgentSwitch =
       previousAgentId !== null &&
       prevWorkspaceIdRef.current === workspaceId &&
-      previousAgentId !== normalizedAgentId;
-    const sourceAgentId =
-      isExplicitAgentSwitch && previousAgentId !== null ? previousAgentId : normalizedAgentId;
+      previousAgentId !== normalizedCurrentAgentId;
 
     // Update refs for the next run (even if no model changes).
-    prevAgentIdRef.current = normalizedAgentId;
+    prevAgentIdRef.current = normalizedCurrentAgentId;
     prevWorkspaceIdRef.current = workspaceId;
 
-    const existingModel = readPersistedState<string>(modelKey, fallbackModel);
-    const legacyThinkingLevel =
-      readPersistedState<ThinkingLevel | undefined>(getThinkingLevelKey(workspaceId), undefined) ??
-      readLegacyPerModelThinking(existingModel);
-    const existingThinking = resolveActiveWorkspaceThinkingForAgent({
-      agentId: sourceAgentId,
-      agentAiDefaults,
-      workspaceByAgent,
-      fallbackModel,
-      currentModel: existingModel,
-      legacyThinkingLevel,
-    });
-    const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
-      agentId: normalizedAgentId,
-      agentAiDefaults,
-      // Keep deterministic handoff behavior: background sync should trust the
-      // currently active workspace model, but explicit mode switches should
-      // restore the selected agent's per-workspace override (if any).
-      workspaceByAgent,
-      useWorkspaceByAgentFallback: isExplicitAgentSwitch,
-      fallbackModel,
-      existingModel,
-      existingThinking,
-    });
+    if (isExplicitAgentSwitch && previousAgentId !== null) {
+      const sourceSettings = getWorkspaceAiSettings(workspaceId, previousAgentId);
+      const resolvedSettings = getWorkspaceAiSettings(workspaceId, normalizedCurrentAgentId, {
+        inheritFromAgentId: previousAgentId,
+      });
 
-    // Preserve first-switch inheritance in the per-agent cache without backfilling the
-    // legacy flat thinking key from this sync path.
-    if (isExplicitAgentSwitch) {
-      const existingTargetSettings = workspaceByAgent[normalizedAgentId];
-      if (
-        existingTargetSettings?.model !== resolvedModel ||
-        existingTargetSettings?.thinkingLevel !== resolvedThinking
-      ) {
-        updatePersistedState<WorkspaceAISettingsCache>(
-          workspaceAiSettingsKey,
-          (prev) => {
-            const record: WorkspaceAISettingsCache = prev && typeof prev === "object" ? prev : {};
-            return {
-              ...record,
-              [normalizedAgentId]: { model: resolvedModel, thinkingLevel: resolvedThinking },
-            };
-          },
-          {}
-        );
+      // Preserve first-switch inheritance in the per-agent cache without backfilling the
+      // legacy flat thinking key from this sync path.
+      setWorkspaceAiSettings(workspaceId, normalizedCurrentAgentId, resolvedSettings);
+
+      if (sourceSettings.model !== resolvedSettings.model) {
+        setWorkspaceModelWithOrigin(workspaceId, resolvedSettings.model, "agent");
       }
+      return;
     }
 
-    if (existingModel !== resolvedModel) {
-      setWorkspaceModelWithOrigin(
-        workspaceId,
-        resolvedModel,
-        isExplicitAgentSwitch ? "agent" : "sync"
-      );
+    const configuredModelCandidate = agentAiDefaults[normalizedCurrentAgentId]?.modelString;
+    const configuredModel =
+      typeof configuredModelCandidate === "string" && configuredModelCandidate.trim().length > 0
+        ? configuredModelCandidate.trim()
+        : undefined;
+
+    if (configuredModel && existingModel !== configuredModel) {
+      setWorkspaceModelWithOrigin(workspaceId, configuredModel, "sync");
     }
-  }, [agentAiDefaults, agentId, workspaceAiSettingsKey, workspaceByAgent, workspaceId]);
+  }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
 
   return null;
 }
