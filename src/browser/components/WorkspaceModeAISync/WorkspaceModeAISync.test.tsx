@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
 import { AgentProvider } from "@/browser/contexts/AgentContext";
@@ -118,6 +118,35 @@ describe("WorkspaceModeAISync", () => {
     await waitFor(() => {
       expect(readPersistedState(getModelKey(workspaceId), "")).toBe(configuredModel);
       expect(readPersistedState(getThinkingLevelKey(workspaceId), "high")).toBe(configuredThinking);
+    });
+  });
+
+  test("does not overwrite thinking level during background sync from workspaceByAgent change", async () => {
+    const workspaceId = nextWorkspaceId();
+
+    const execModel = "openai:gpt-5.2";
+    const defaultThinking = "medium";
+    const userThinking = "high";
+
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+      exec: { modelString: execModel, thinkingLevel: defaultThinking },
+    });
+
+    renderSync({ workspaceId, agentId: "exec" });
+
+    await waitFor(() => {
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(defaultThinking);
+    });
+
+    act(() => {
+      updatePersistedState(getThinkingLevelKey(workspaceId), userThinking);
+      updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+        exec: { model: execModel, thinkingLevel: userThinking },
+      });
+    });
+
+    await waitFor(() => {
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(userThinking);
     });
   });
 

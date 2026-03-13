@@ -55,6 +55,9 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       prevAgentIdRef.current !== null &&
       prevWorkspaceIdRef.current === workspaceId &&
       prevAgentIdRef.current !== normalizedAgentId;
+    const isInitialMount = prevAgentIdRef.current === null;
+    const isWorkspaceSwitch =
+      prevWorkspaceIdRef.current !== null && prevWorkspaceIdRef.current !== workspaceId;
 
     // Update refs for the next run (even if no model changes).
     prevAgentIdRef.current = normalizedAgentId;
@@ -84,7 +87,15 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       );
     }
 
-    if (existingThinking !== resolvedThinking) {
+    // Only apply thinking-level from resolved defaults on initial mount,
+    // explicit agent switch, or workspace switch. Background syncs
+    // (triggered by the user's own thinking-level change rippling through
+    // workspaceByAgent) must not overwrite the user's manual selection
+    // with agentAiDefaults.
+    if (
+      (isInitialMount || isExplicitAgentSwitch || isWorkspaceSwitch) &&
+      existingThinking !== resolvedThinking
+    ) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
   }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
