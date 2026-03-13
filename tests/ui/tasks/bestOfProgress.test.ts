@@ -230,15 +230,21 @@ async function renderBestOfParentWorkspace(): Promise<{
 async function openTaskCard(view: RenderedApp): Promise<HTMLElement> {
   await waitFor(
     () => {
-      const toolName = view.queryByText(/^task$/);
-      if (!toolName) {
+      const toolNames = view.queryAllByText(/^task$/);
+      if (toolNames.length === 0) {
         throw new Error("Task tool call not rendered yet");
       }
     },
     { timeout: 10_000 }
   );
 
-  const taskToolName = view.getByText(/^task$/);
+  const taskToolName = view
+    .getAllByText(/^task$/)
+    .find((element) => element.closest('[data-testid="chat-message"]'));
+  if (!taskToolName) {
+    throw new Error("Task tool call not found in a chat message");
+  }
+
   const taskMessageBlock = taskToolName.closest(
     '[data-testid="chat-message"]'
   ) as HTMLElement | null;
@@ -500,6 +506,110 @@ describe("Best-of parent task progress UI (mock AI router)", () => {
       await cleanupView(setup.view, setup.cleanupDom);
       await cleanupTestEnvironment(setup.env);
       await cleanupTempGitRepo(setup.repoPath);
+    }
+  }, 60_000);
+
+  test("does not rebind historical best-of cards to a later matching group", async () => {
+    const env = await createTestEnvironment();
+    env.services.aiService.enableMockMode();
+
+    const repoPath = await createTempGitRepo();
+    await trustProject(env, repoPath);
+    const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+    const parentResult = await env.orpc.workspace.create({
+      projectPath: repoPath,
+      branchName: generateBranchName("ui-best-of-historical-parent"),
+      trunkBranch,
+      title: "Parent workspace",
+    });
+    if (!parentResult.success) {
+      throw new Error(`Failed to create parent workspace: ${parentResult.error}`);
+    }
+
+    const historyService = new HistoryService(env.config);
+    const userMessage = createMuxMessage(
+      "user-best-of-historical",
+      "user",
+      "Compare the best options"
+    );
+    const taskToolMessage = createMuxMessage(
+      "assistant-best-of-historical",
+      "assistant",
+      "",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool" as const,
+          toolCallId: "tool-task-best-of-historical",
+          toolName: "task" as const,
+          state: "output-available" as const,
+          input: {
+            agentId: "explore" as const,
+            prompt: "Compare the best options",
+            title: "Best of options",
+            n: 2,
+          },
+          output: {
+            status: "running" as const,
+            taskIds: ["historical-child-1", "historical-child-2"],
+            tasks: [
+              { taskId: "historical-child-1", status: "running" as const },
+              { taskId: "historical-child-2", status: "running" as const },
+            ],
+            note: "Waiting on historical candidates.",
+          },
+        },
+      ]
+    );
+
+    for (const message of [userMessage, taskToolMessage]) {
+      const appendResult = await historyService.appendToHistory(parentResult.metadata.id, message);
+      if (!appendResult.success) {
+        throw new Error(`Failed to append historical best-of history: ${appendResult.error}`);
+      }
+    }
+
+    const cleanupDom = installDom();
+    const view = renderApp({ apiClient: env.orpc, metadata: parentResult.metadata });
+    await setupWorkspaceView(view, parentResult.metadata, parentResult.metadata.id);
+    await waitForWorkspaceChatToRender(view.container);
+
+    try {
+      await createBestOfChildWorkspace({
+        env,
+        repoPath,
+        trunkBranch,
+        parentWorkspaceId: parentResult.metadata.id,
+        title: "Best of options",
+        branchPrefix: "ui-best-of-historical-child-1",
+        index: 0,
+        taskStatus: "running",
+      });
+      await createBestOfChildWorkspace({
+        env,
+        repoPath,
+        trunkBranch,
+        parentWorkspaceId: parentResult.metadata.id,
+        title: "Best of options",
+        branchPrefix: "ui-best-of-historical-child-2",
+        index: 1,
+        taskStatus: "running",
+      });
+
+      const taskMessageBlock = await openTaskCard(view);
+
+      await waitFor(() => {
+        expect(taskMessageBlock.textContent).toContain("Best of 2 · Best of options");
+      });
+      expect(taskMessageBlock.textContent).toContain("historical-child-1");
+      expect(taskMessageBlock.textContent).toContain("historical-child-2");
+      expect(taskMessageBlock.textContent).not.toContain("ui-best-of-historical-child-1");
+      expect(taskMessageBlock.textContent).not.toContain("ui-best-of-historical-child-2");
+    } finally {
+      await cleanupView(view, cleanupDom);
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
     }
   }, 60_000);
 

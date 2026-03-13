@@ -906,6 +906,25 @@ export class TaskService {
       }
     }
 
+    // Restart-safety for grouped best-of completion: if child report artifacts already exist
+    // on disk after a restart, there may be no later child stream-end to finalize the pending
+    // parent task tool call. Re-run the deferred parent delivery/finalization pass first so
+    // cleanup rechecks do not stay blocked forever behind a stale input-available partial.
+    const bestOfParentWorkspaceIds = new Set<string>();
+    for (const task of completedReportTasks) {
+      const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
+      if (!parentWorkspaceId || (task.bestOf?.total ?? 1) <= 1) {
+        continue;
+      }
+      if (this.aiService.isStreaming(parentWorkspaceId)) {
+        continue;
+      }
+      bestOfParentWorkspaceIds.add(parentWorkspaceId);
+    }
+    for (const parentWorkspaceId of bestOfParentWorkspaceIds) {
+      await this.deliverDeferredBestOfReportsForParent(parentWorkspaceId);
+    }
+
     // Best-effort completed-report ancestor recheck after restart.
     for (const task of completedReportTasks) {
       if (!task.id) continue;

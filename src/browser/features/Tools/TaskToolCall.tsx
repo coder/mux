@@ -468,7 +468,7 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
   }
 
   const toolStartedAt = params.toolStartedAt;
-  if (!selectedGroup && groups.length === 1 && toolStartedAt != null) {
+  if (!selectedGroup && knownTaskIds.size === 0 && groups.length === 1 && toolStartedAt != null) {
     const createdAfterToolStart = groups[0]?.every((candidate) => {
       return candidate.createdAtMs != null && candidate.createdAtMs >= toolStartedAt;
     });
