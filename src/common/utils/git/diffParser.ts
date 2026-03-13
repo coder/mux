@@ -3,6 +3,7 @@
  */
 
 import type { DiffHunk, FileDiff } from "@/common/types/review";
+import { shellQuote } from "@/common/utils/shell";
 
 /**
  * Generate a stable content-based ID for a hunk
@@ -226,15 +227,19 @@ export function buildGitDiffCommand(
     return `git diff HEAD${flags}${pathFilter}`;
   }
 
+  // SECURITY: diffBase can come from repository branch names (including auto-detected trunk refs).
+  // Quote it before embedding in shell command strings to prevent command injection.
+  const quotedDiffBase = shellQuote(diffBase);
+
   // Branch diff: use three-dot for committed only, or merge-base for committed+uncommitted
   if (includeUncommitted) {
     // Use merge-base to get a unified diff from branch point to working directory
     // This includes both committed changes on the branch AND uncommitted working changes
     // Single command avoids duplicate hunks from concatenation
     // Stable comparison point: merge-base doesn't change when diffBase ref moves forward
-    return `git diff $(git merge-base ${diffBase} HEAD)${flags}${pathFilter}`;
+    return `git diff $(git merge-base ${quotedDiffBase} HEAD)${flags}${pathFilter}`;
   } else {
     // Three-dot: committed changes only (merge-base to HEAD)
-    return `git diff ${diffBase}...HEAD${flags}${pathFilter}`;
+    return `git diff ${quotedDiffBase}...HEAD${flags}${pathFilter}`;
   }
 }
