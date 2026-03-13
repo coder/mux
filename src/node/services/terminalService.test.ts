@@ -1150,7 +1150,11 @@ describe("TerminalService.openNative", () => {
     });
 
     it("escapes devcontainer paths for cmd.exe", async () => {
-      service = new TerminalService(configWithWindowsDevcontainerWorkspace, mockPTYService, undefined);
+      service = new TerminalService(
+        configWithWindowsDevcontainerWorkspace,
+        mockPTYService,
+        undefined
+      );
 
       await service.openNative("ws-devcontainer-win");
 
@@ -1159,7 +1163,9 @@ describe("TerminalService.openNative", () => {
       expect(call[0]).toBe("cmd");
       const cmdString = call[1]?.[4];
       expect(typeof cmdString).toBe("string");
-      expect(cmdString).toContain('devcontainer exec --workspace-folder "C:/tmp/project/main%%PATH%%"');
+      expect(cmdString).toContain(
+        'devcontainer exec --workspace-folder "C:/tmp/project/main%%PATH%%"'
+      );
       expect(cmdString).toContain(
         '--config "C:/tmp/project/.devcontainer/%%TEMP%%/devcontainer.json"'
       );
