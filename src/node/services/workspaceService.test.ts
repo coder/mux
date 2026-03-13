@@ -2034,7 +2034,7 @@ describe("WorkspaceService getProjectGitStatuses", () => {
     expect(executeBashMock).toHaveBeenNthCalledWith(
       1,
       metadata.id,
-      expect.stringContaining('PREFERRED_BRANCH=""'),
+      expect.stringContaining("PREFERRED_BRANCH=''"),
       expect.objectContaining({
         cwdMode: "repo-root",
         repoRootProjectPath: "/tmp/project-a",
@@ -2089,13 +2089,13 @@ describe("WorkspaceService getProjectGitStatuses", () => {
     expect(executeBashMock).toHaveBeenNthCalledWith(
       1,
       metadata.id,
-      expect.stringContaining('PREFERRED_BRANCH="release"'),
+      expect.stringContaining("PREFERRED_BRANCH='release'"),
       expect.objectContaining({ repoRootProjectPath: "/tmp/project-a", timeout_secs: 5 })
     );
     expect(executeBashMock).toHaveBeenNthCalledWith(
       2,
       metadata.id,
-      expect.stringContaining('PREFERRED_BRANCH="release"'),
+      expect.stringContaining("PREFERRED_BRANCH='release'"),
       expect.objectContaining({ repoRootProjectPath: "/tmp/project-b", timeout_secs: 5 })
     );
     expect(executeBashMock.mock.calls.some(([, script]) => script === "git fetch --quiet")).toBe(
