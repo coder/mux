@@ -122,9 +122,13 @@ async function main(): Promise<void> {
       return;
     }
 
-    const originAllowed = normalizedOriginHeader
-      ? allowedOrigins.has(normalizedOriginHeader)
-      : true;
+    if (!normalizedOriginHeader) {
+      clientRes.writeHead(403, { vary: "Origin" });
+      clientRes.end("Origin header required");
+      return;
+    }
+
+    const originAllowed = allowedOrigins.has(normalizedOriginHeader);
 
     if (!originAllowed) {
       clientRes.writeHead(403, { vary: "Origin" });
@@ -132,17 +136,9 @@ async function main(): Promise<void> {
       return;
     }
 
-    const corsHeaders = normalizedOriginHeader
-      ? buildCorsHeaders(normalizedOriginHeader)
-      : ({ vary: "Origin" } satisfies http.OutgoingHttpHeaders);
+    const corsHeaders = buildCorsHeaders(normalizedOriginHeader);
 
     if (clientReq.method === "OPTIONS") {
-      if (!normalizedOriginHeader) {
-        clientRes.writeHead(403, { vary: "Origin" });
-        clientRes.end("Origin required for preflight");
-        return;
-      }
-
       clientRes.writeHead(204, corsHeaders);
       clientRes.end();
       return;
@@ -155,6 +151,13 @@ async function main(): Promise<void> {
     }
 
     const upstreamUrl = new URL(clientReq.url, targetOrigin);
+    if (upstreamUrl.origin !== targetOrigin) {
+      // User rationale: absolute-form URLs (for example, http://host/path)
+      // must not override the configured backend target.
+      clientRes.writeHead(400, corsHeaders);
+      clientRes.end("Absolute URLs are not allowed");
+      return;
+    }
 
     const upstreamHeaders: http.OutgoingHttpHeaders = { ...clientReq.headers };
     // User rationale: validate caller Origin before dropping it so we preserve
