@@ -1,5 +1,6 @@
 import type { JSX, ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native";
 import * as Storage from "../lib/storage";
 import Constants from "expo-constants";
 import { assert } from "@/common/utils/assert";
@@ -8,6 +9,7 @@ const STORAGE_KEY_BASE_URL = "com.coder.mux.app-settings.baseUrl";
 const STORAGE_KEY_AUTH_TOKEN = "com.coder.mux.app-settings.authToken";
 const DEFAULT_BASE_URL = "http://localhost:3000";
 const URL_SCHEME_REGEX = /^[a-z][a-z0-9+.-]*:\/\//i;
+const IS_WEB = Platform.OS === "web";
 
 interface ExpoMuxExtra {
   baseUrl?: string;
@@ -82,7 +84,9 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
       try {
         const [storedBaseUrl, storedAuthToken] = await Promise.all([
           Storage.getItem(STORAGE_KEY_BASE_URL),
-          Storage.getItem(STORAGE_KEY_AUTH_TOKEN),
+          IS_WEB
+            ? Promise.resolve<string | null>(null)
+            : Storage.getItem(STORAGE_KEY_AUTH_TOKEN),
         ]);
         if (!mounted) return;
         if (typeof storedBaseUrl === "string") {
@@ -91,6 +95,11 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
         }
         if (typeof storedAuthToken === "string") {
           setAuthTokenInput(storedAuthToken);
+        }
+
+        if (IS_WEB) {
+          // Web localStorage is script-readable, so ensure legacy persisted tokens are removed.
+          await Storage.deleteItem(STORAGE_KEY_AUTH_TOKEN);
         }
       } catch (error) {
         console.error("Failed to load persisted app settings", error);
@@ -135,6 +144,11 @@ export function AppConfigProvider({ children }: { children: ReactNode }): JSX.El
 
   const persistAuthToken = useCallback(async (value: string): Promise<void> => {
     setAuthTokenInput(value);
+    if (IS_WEB) {
+      // Keep web tokens in memory only to reduce exfiltration risk via localStorage reads.
+      return;
+    }
+
     const trimmed = value.trim();
     try {
       if (trimmed.length > 0) {
