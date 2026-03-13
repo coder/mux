@@ -6711,6 +6711,139 @@ describe("TaskService", () => {
     ).toHaveLength(1);
   });
 
+  test("concurrent direct and deferred best-of fallback delivery does not duplicate reports", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-best-of-concurrent-direct-fallback";
+    const childOneId = "child-best-of-concurrent-direct-fallback-1";
+    const childTwoId = "child-best-of-concurrent-direct-fallback-2";
+    const bestOf = {
+      groupId: "best-of-concurrent-direct-fallback-group",
+      index: 0,
+      total: 2,
+    } as const;
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child-1"),
+                id: childOneId,
+                name: "agent_explore_child_1",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                bestOf,
+              },
+              {
+                path: path.join(projectPath, "child-2"),
+                id: childTwoId,
+                name: "agent_explore_child_2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "interrupted",
+                bestOf: { ...bestOf, index: 1 },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-best-of-concurrent-direct-fallback",
+      "assistant",
+      "Waiting on best-of subagents…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-best-of-concurrent-direct-fallback-call",
+          toolName: "task",
+          input: {
+            subagent_type: "explore",
+            prompt: "compare options",
+            title: "Best of 2",
+            n: 2,
+          },
+          state: "input-available",
+        },
+      ]
+    );
+    expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
+
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childOneId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "Report from child one",
+      title: "Option one",
+      nowMs: Date.now(),
+    });
+
+    const cfg = config.loadConfigOrDefault();
+    const childOneEntry = Array.from(cfg.projects.entries())
+      .flatMap(([projectPathEntry, project]) =>
+        project.workspaces.map((workspace) => ({ projectPath: projectPathEntry, workspace }))
+      )
+      .find((entry) => entry.workspace.id === childOneId);
+    if (!childOneEntry) {
+      throw new Error("Expected child one entry to exist");
+    }
+
+    const internal = taskService as unknown as {
+      deliverReportToParent: (
+        parentWorkspaceId: string,
+        childWorkspaceId: string,
+        childEntry: { projectPath: string; workspace: unknown },
+        report: { reportMarkdown: string; title?: string }
+      ) => Promise<void>;
+      deliverDeferredBestOfSiblingReports: (params: {
+        parentWorkspaceId: string;
+        groupId: string;
+        total: number;
+      }) => Promise<void>;
+    };
+
+    await Promise.all([
+      internal.deliverReportToParent(parentId, childOneId, childOneEntry, {
+        reportMarkdown: "Report from child one",
+        title: "Option one",
+      }),
+      internal.deliverDeferredBestOfSiblingReports({
+        parentWorkspaceId: parentId,
+        groupId: bestOf.groupId,
+        total: bestOf.total,
+      }),
+    ]);
+
+    const parentHistory = await collectFullHistory(historyService, parentId);
+    const serializedParentHistory = JSON.stringify(parentHistory);
+    expect(serializedParentHistory).toContain("<mux_subagent_report>");
+    expect(serializedParentHistory).toContain("Report from child one");
+    expect(
+      serializedParentHistory.match(
+        /<task_id>child-best-of-concurrent-direct-fallback-1<\/task_id>/g
+      )
+    ).toHaveLength(1);
+  });
+
   test("initialize finalizes ready best-of partials before cleanup rechecks", async () => {
     const config = await createTestConfig(rootDir);
 

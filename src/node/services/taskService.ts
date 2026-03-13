@@ -3577,7 +3577,7 @@ export class TaskService {
           continue;
         }
 
-        await this.deliverReportToParent(
+        await this.deliverReportToParentUnlocked(
           params.parentWorkspaceId,
           sibling.taskId,
           findWorkspaceEntry(cfg, sibling.taskId),
@@ -4147,6 +4147,33 @@ export class TaskService {
       "deliverReportToParent: childWorkspaceId must be non-empty"
     );
 
+    const bestOfTotal = childEntry?.workspace.bestOf?.total ?? 1;
+    if (bestOfTotal > 1) {
+      await this.deferredBestOfLocks.withLock(parentWorkspaceId, async () => {
+        await this.deliverReportToParentUnlocked(
+          parentWorkspaceId,
+          childWorkspaceId,
+          childEntry,
+          report
+        );
+      });
+      return;
+    }
+
+    await this.deliverReportToParentUnlocked(
+      parentWorkspaceId,
+      childWorkspaceId,
+      childEntry,
+      report
+    );
+  }
+
+  private async deliverReportToParentUnlocked(
+    parentWorkspaceId: string,
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
+    report: { reportMarkdown: string; title?: string }
+  ): Promise<void> {
     const agentType = childEntry?.workspace.agentType ?? "agent";
 
     const output = {
