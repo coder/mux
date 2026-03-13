@@ -1,4 +1,8 @@
-import { usePersistedState, readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  usePersistedState,
+  readPersistedState,
+  updatePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
@@ -16,7 +20,10 @@ import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
-type WorkspaceAiSettings = { model: string; thinkingLevel: ThinkingLevel };
+interface WorkspaceAiSettings {
+  model: string;
+  thinkingLevel: ThinkingLevel;
+}
 
 interface WorkspaceAiSettingsApi {
   workspace: {
@@ -61,8 +68,9 @@ function readWorkspaceAiSettingsCache(workspaceId: string): WorkspaceAISettingsC
 
 function readCurrentWorkspaceModel(workspaceId: string): string {
   return (
-    normalizeModelString(readPersistedState<string>(getModelKey(workspaceId), WORKSPACE_DEFAULTS.model)) ??
-    WORKSPACE_DEFAULTS.model
+    normalizeModelString(
+      readPersistedState<string>(getModelKey(workspaceId), WORKSPACE_DEFAULTS.model)
+    ) ?? WORKSPACE_DEFAULTS.model
   );
 }
 
@@ -79,7 +87,10 @@ function resolveModel(args: {
   );
 }
 
-function getWorkspaceScopedKey(workspaceId: string | undefined, buildKey: (workspaceId: string) => string): string {
+function getWorkspaceScopedKey(
+  workspaceId: string | undefined,
+  buildKey: (workspaceId: string) => string
+): string {
   return workspaceId ? buildKey(workspaceId) : buildKey(NOOP_WORKSPACE_SCOPE_ID);
 }
 
@@ -88,7 +99,9 @@ function hasOwnCacheEntry(cache: WorkspaceAISettingsCache, agentId: string): boo
 }
 
 function readLegacyWorkspaceThinking(workspaceId: string): ThinkingLevel | undefined {
-  return coerceThinkingLevel(readPersistedState<unknown>(getThinkingLevelKey(workspaceId), undefined));
+  return coerceThinkingLevel(
+    readPersistedState<unknown>(getThinkingLevelKey(workspaceId), undefined)
+  );
 }
 
 function readLegacyPerModelThinking(rawModel: string): ThinkingLevel | undefined {
@@ -167,13 +180,17 @@ export function getWorkspaceAiSettings(
   if (legacyWorkspaceThinking !== undefined) {
     // Seed the per-agent cache as soon as we recover from legacy keys so later reads
     // can stay on the new storage boundary without revisiting workspace-scoped thinking.
-    setWorkspaceAiSettings(workspaceId, normalizedAgentId, { thinkingLevel: legacyWorkspaceThinking });
+    setWorkspaceAiSettings(workspaceId, normalizedAgentId, {
+      thinkingLevel: legacyWorkspaceThinking,
+    });
     return { model, thinkingLevel: legacyWorkspaceThinking };
   }
 
   const legacyPerModelThinking = readLegacyPerModelThinking(currentModel);
   if (legacyPerModelThinking !== undefined) {
-    setWorkspaceAiSettings(workspaceId, normalizedAgentId, { thinkingLevel: legacyPerModelThinking });
+    setWorkspaceAiSettings(workspaceId, normalizedAgentId, {
+      thinkingLevel: legacyPerModelThinking,
+    });
     return { model, thinkingLevel: legacyPerModelThinking };
   }
 
@@ -245,9 +262,13 @@ export function useWorkspaceAiSettings(
     WORKSPACE_DEFAULTS.agentId,
     { listener: true }
   );
-  usePersistedState<string>(getWorkspaceScopedKey(workspaceId, getModelKey), WORKSPACE_DEFAULTS.model, {
-    listener: true,
-  });
+  usePersistedState<string>(
+    getWorkspaceScopedKey(workspaceId, getModelKey),
+    WORKSPACE_DEFAULTS.model,
+    {
+      listener: true,
+    }
+  );
   usePersistedState<ThinkingLevel | undefined>(
     getWorkspaceScopedKey(workspaceId, getThinkingLevelKey),
     undefined,
