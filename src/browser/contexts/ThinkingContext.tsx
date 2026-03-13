@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from "react";
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   readPersistedState,
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import {
+  AGENT_AI_DEFAULTS_KEY,
   getAgentIdKey,
   getModelKey,
   getProjectScopeId,
@@ -19,6 +21,10 @@ import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { useAPI } from "@/browser/contexts/API";
+import {
+  resolveActiveWorkspaceThinkingForAgent,
+  type WorkspaceAISettingsCache,
+} from "@/browser/utils/workspaceModeAi";
 import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
@@ -53,13 +59,52 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   const defaultModel = getDefaultModel();
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
   const thinkingKey = getThinkingLevelKey(scopeId);
+  const workspaceAiSettingsKey = getWorkspaceAISettingsByAgentKey(props.workspaceId ?? scopeId);
 
-  // Workspace-scoped thinking. (No longer per-model.)
-  const [thinkingLevel, setThinkingLevelInternal] = usePersistedState<ThinkingLevel>(
-    thinkingKey,
-    THINKING_LEVEL_OFF,
+  // Project/new-workspace flows still use the flat thinking key directly.
+  const [persistedThinkingLevel, setPersistedThinkingLevelInternal] =
+    usePersistedState<ThinkingLevel>(thinkingKey, THINKING_LEVEL_OFF, { listener: true });
+  const [activeAgentId] = usePersistedState<string>(
+    getAgentIdKey(scopeId),
+    WORKSPACE_DEFAULTS.agentId,
     { listener: true }
   );
+  const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
+    AGENT_AI_DEFAULTS_KEY,
+    {},
+    {
+      listener: true,
+    }
+  );
+  const [workspaceByAgent] = usePersistedState<WorkspaceAISettingsCache>(
+    workspaceAiSettingsKey,
+    {},
+    {
+      listener: true,
+    }
+  );
+
+  const thinkingLevel = useMemo(() => {
+    if (!props.workspaceId) {
+      return persistedThinkingLevel;
+    }
+
+    return resolveActiveWorkspaceThinkingForAgent({
+      agentId: activeAgentId,
+      agentAiDefaults,
+      workspaceByAgent,
+      fallbackModel: defaultModel,
+      currentModel: getCanonicalModelForScope(scopeId, defaultModel),
+    });
+  }, [
+    activeAgentId,
+    agentAiDefaults,
+    defaultModel,
+    persistedThinkingLevel,
+    props.workspaceId,
+    scopeId,
+    workspaceByAgent,
+  ]);
 
   // One-time migration: if the new workspace-scoped key is missing, seed from the legacy per-model key.
   useEffect(() => {
@@ -80,31 +125,22 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
   const setThinkingLevel = useCallback(
     (level: ThinkingLevel) => {
-      const model = getCanonicalModelForScope(scopeId, defaultModel);
-
-      setThinkingLevelInternal(level);
-
-      // Workspace variant: persist to backend so settings follow the workspace across devices.
       if (!props.workspaceId) {
+        setPersistedThinkingLevelInternal(level);
         return;
       }
 
       const workspaceId = props.workspaceId;
-
-      type WorkspaceAISettingsByAgentCache = Partial<
-        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
-      >;
-
+      const model = getCanonicalModelForScope(scopeId, defaultModel);
       const normalizedAgentId =
         readPersistedState<string>(getAgentIdKey(scopeId), WORKSPACE_DEFAULTS.agentId)
           .trim()
           .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
 
-      updatePersistedState<WorkspaceAISettingsByAgentCache>(
+      updatePersistedState<WorkspaceAISettingsCache>(
         getWorkspaceAISettingsByAgentKey(workspaceId),
         (prev) => {
-          const record: WorkspaceAISettingsByAgentCache =
-            prev && typeof prev === "object" ? prev : {};
+          const record: WorkspaceAISettingsCache = prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
             [normalizedAgentId]: { model, thinkingLevel: level },
@@ -140,7 +176,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
           // Best-effort only. If offline or backend is old, the next sendMessage will persist.
         });
     },
-    [api, defaultModel, props.workspaceId, scopeId, setThinkingLevelInternal]
+    [api, defaultModel, props.workspaceId, scopeId, setPersistedThinkingLevelInternal]
   );
 
   // Global keybind: cycle thinking level (Ctrl/Cmd+Shift+T).

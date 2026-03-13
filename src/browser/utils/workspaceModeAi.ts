@@ -56,3 +56,24 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
 
   return { resolvedModel, resolvedThinking };
 }
+
+// Existing workspaces derive their active thinking level from the current agent's
+// cached workspace settings plus any configured agent defaults through the shared resolver.
+export function resolveActiveWorkspaceThinkingForAgent(args: {
+  agentId: string;
+  agentAiDefaults: AgentAiDefaults;
+  workspaceByAgent?: WorkspaceAISettingsCache;
+  fallbackModel: string;
+  currentModel: string;
+}): ThinkingLevel {
+  const normalizedAgentId = normalizeAgentId(args.agentId);
+
+  return resolveWorkspaceAiSettingsForAgent({
+    agentId: normalizedAgentId,
+    agentAiDefaults: args.agentAiDefaults,
+    workspaceByAgent: args.workspaceByAgent,
+    fallbackModel: args.fallbackModel,
+    existingModel: args.currentModel,
+    existingThinking: args.workspaceByAgent?.[normalizedAgentId]?.thinkingLevel ?? "off",
+  }).resolvedThinking;
+}

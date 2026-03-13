@@ -41,7 +41,6 @@ import {
   getAgentIdKey,
   getModelKey,
   getPlanContentKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -472,11 +471,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     targetAgentId: "auto" | "exec" | "orchestrator";
   }): { resolvedModel: string; resolvedThinking: ThinkingLevel } => {
     const modelKey = getModelKey(args.workspaceId);
-    const thinkingKey = getThinkingLevelKey(args.workspaceId);
     const fallbackModel = getDefaultModel();
 
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
-    const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
     const workspaceByAgent = readPersistedState<WorkspaceAISettingsCache>(
       getWorkspaceAISettingsByAgentKey(args.workspaceId),
@@ -487,21 +484,29 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       agentId: args.targetAgentId,
       agentAiDefaults,
       // Propose-plan actions are explicit mode switches; honor any per-agent
-      // workspace override before inheriting the previously active plan settings.
+      // workspace override before inheriting the target agent's current workspace state.
       workspaceByAgent,
       useWorkspaceByAgentFallback: true,
       fallbackModel,
       existingModel,
-      existingThinking,
+      existingThinking: workspaceByAgent[args.targetAgentId]?.thinkingLevel ?? "off",
     });
 
+    updatePersistedState<WorkspaceAISettingsCache>(
+      getWorkspaceAISettingsByAgentKey(args.workspaceId),
+      (prev) => {
+        const record: WorkspaceAISettingsCache = prev && typeof prev === "object" ? prev : {};
+        return {
+          ...record,
+          [args.targetAgentId]: { model: resolvedModel, thinkingLevel: resolvedThinking },
+        };
+      },
+      {}
+    );
     updatePersistedState(getAgentIdKey(args.workspaceId), args.targetAgentId);
 
     if (existingModel !== resolvedModel) {
       setWorkspaceModelWithOrigin(args.workspaceId, resolvedModel, "agent");
-    }
-    if (existingThinking !== resolvedThinking) {
-      updatePersistedState(thinkingKey, resolvedThinking);
     }
 
     return { resolvedModel, resolvedThinking };

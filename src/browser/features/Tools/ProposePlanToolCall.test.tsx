@@ -543,24 +543,31 @@ describe("ProposePlanToolCall", () => {
     expect(sendMessageCalls[0]?.options.model).toBe(execModel);
     expect(sendMessageCalls[0]?.options.thinkingLevel).toBe(execThinking);
 
-    // Clicking Implement should switch the workspace agent to exec.
-    //
-    // Note: some tests in this repo mock the `usePersistedState` module globally. In that case,
-    // `updatePersistedState` won't actually write to localStorage here, so we assert the call.
+    // Clicking Implement should switch the workspace agent to exec and persist the
+    // resolved per-agent workspace settings without rewriting the legacy thinking key.
     const agentKey = getAgentIdKey(workspaceId);
     const modelKey = getModelKey(workspaceId);
     const thinkingKey = getThinkingLevelKey(workspaceId);
+    const workspaceAiSettingsKey = getWorkspaceAISettingsByAgentKey(workspaceId);
     const updatePersistedStateMaybeMock = updatePersistedState as unknown as {
       mock?: { calls: unknown[][] };
     };
     if (updatePersistedStateMaybeMock.mock) {
+      expect(updatePersistedState).toHaveBeenCalledWith(
+        workspaceAiSettingsKey,
+        expect.any(Function),
+        {}
+      );
       expect(updatePersistedState).toHaveBeenCalledWith(agentKey, "exec");
       expect(updatePersistedState).toHaveBeenCalledWith(modelKey, execModel);
-      expect(updatePersistedState).toHaveBeenCalledWith(thinkingKey, execThinking);
+      expect(updatePersistedState).not.toHaveBeenCalledWith(thinkingKey, execThinking);
     } else {
       expect(JSON.parse(window.localStorage.getItem(agentKey)!)).toBe("exec");
       expect(JSON.parse(window.localStorage.getItem(modelKey)!)).toBe(execModel);
-      expect(JSON.parse(window.localStorage.getItem(thinkingKey)!)).toBe(execThinking);
+      expect(JSON.parse(window.localStorage.getItem(thinkingKey)!)).toBe(planThinking);
+      expect(JSON.parse(window.localStorage.getItem(workspaceAiSettingsKey)!)).toEqual({
+        exec: { model: execModel, thinkingLevel: execThinking },
+      });
     }
   });
 
@@ -784,21 +791,31 @@ describe("ProposePlanToolCall", () => {
     expect(sendMessageCalls[0]?.options.thinkingLevel).toBe(orchestratorThinking);
     expect(replaceChatHistoryCalls.length).toBe(0);
 
-    // Clicking Start Orchestrator should switch the workspace agent to orchestrator.
+    // Clicking Start Orchestrator should switch the workspace agent and persist the
+    // resolved per-agent workspace settings without rewriting the legacy thinking key.
     const agentKey = getAgentIdKey(workspaceId);
     const modelKey = getModelKey(workspaceId);
     const thinkingKey = getThinkingLevelKey(workspaceId);
+    const workspaceAiSettingsKey = getWorkspaceAISettingsByAgentKey(workspaceId);
     const updatePersistedStateMaybeMock = updatePersistedState as unknown as {
       mock?: { calls: unknown[][] };
     };
     if (updatePersistedStateMaybeMock.mock) {
+      expect(updatePersistedState).toHaveBeenCalledWith(
+        workspaceAiSettingsKey,
+        expect.any(Function),
+        {}
+      );
       expect(updatePersistedState).toHaveBeenCalledWith(agentKey, "orchestrator");
       expect(updatePersistedState).toHaveBeenCalledWith(modelKey, orchestratorModel);
-      expect(updatePersistedState).toHaveBeenCalledWith(thinkingKey, orchestratorThinking);
+      expect(updatePersistedState).not.toHaveBeenCalledWith(thinkingKey, orchestratorThinking);
     } else {
       expect(JSON.parse(window.localStorage.getItem(agentKey)!)).toBe("orchestrator");
       expect(JSON.parse(window.localStorage.getItem(modelKey)!)).toBe(orchestratorModel);
-      expect(JSON.parse(window.localStorage.getItem(thinkingKey)!)).toBe(orchestratorThinking);
+      expect(JSON.parse(window.localStorage.getItem(thinkingKey)!)).toBe(planThinking);
+      expect(JSON.parse(window.localStorage.getItem(workspaceAiSettingsKey)!)).toEqual({
+        orchestrator: { model: orchestratorModel, thinkingLevel: orchestratorThinking },
+      });
     }
   });
 

@@ -14,6 +14,7 @@ import {
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
@@ -454,7 +455,7 @@ describe("WorkspaceContext", () => {
     });
   });
 
-  test("seeds model + thinking localStorage from backend metadata", async () => {
+  test("seeds model + workspace-by-agent localStorage from backend metadata", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({
         id: "ws-ai",
@@ -467,7 +468,7 @@ describe("WorkspaceContext", () => {
         list: () => Promise.resolve(initialWorkspaces),
       },
       localStorage: {
-        // Seed with different values; backend should win.
+        // Seed with different values; backend should win for model + per-agent cache.
         [getModelKey("ws-ai")]: JSON.stringify("anthropic:claude-3.5"),
         [getThinkingLevelKey("ws-ai")]: JSON.stringify("low"),
       },
@@ -480,9 +481,13 @@ describe("WorkspaceContext", () => {
     expect(JSON.parse(globalThis.localStorage.getItem(getModelKey("ws-ai"))!)).toBe(
       "openai:gpt-5.2"
     );
-    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe(
-      "xhigh"
-    );
+    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe("low");
+    expect(
+      JSON.parse(globalThis.localStorage.getItem(getWorkspaceAISettingsByAgentKey("ws-ai"))!)
+    ).toEqual({
+      exec: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
+      plan: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
+    });
   });
   test("loads workspace metadata on mount", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [

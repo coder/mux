@@ -100,9 +100,6 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     getThinkingLevelKey(projectScopeId),
     null
   );
-  if (projectThinkingLevel !== null) {
-    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinkingLevel);
-  }
 
   if (projectModel) {
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";

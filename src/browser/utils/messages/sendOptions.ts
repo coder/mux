@@ -1,8 +1,11 @@
 import {
+  AGENT_AI_DEFAULTS_KEY,
+  GLOBAL_SCOPE_ID,
   getAgentIdKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
   getDisableWorkspaceAgentsKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
@@ -20,8 +23,13 @@ import {
   normalizeSystem1ThinkingLevel,
 } from "@/browser/utils/messages/buildSendMessageOptions";
 import type { SendMessageOptions } from "@/common/orpc/types";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import {
+  resolveActiveWorkspaceThinkingForAgent,
+  type WorkspaceAISettingsCache,
+} from "@/browser/utils/workspaceModeAi";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -42,6 +50,33 @@ function getProviderOptions(): MuxProviderOptions {
   };
 }
 
+function isExistingWorkspaceScopeId(scopeId: string): boolean {
+  return (
+    scopeId !== GLOBAL_SCOPE_ID &&
+    !scopeId.startsWith("__project__/") &&
+    !scopeId.startsWith("__pending__") &&
+    !scopeId.startsWith("__draft__/")
+  );
+}
+
+function readLegacyScopedThinkingLevel(scopeId: string, baseModel: string): ThinkingLevel {
+  const scopedKey = getThinkingLevelKey(scopeId);
+  const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
+  const thinkingLevel =
+    existingScoped ??
+    readPersistedState<ThinkingLevel>(
+      getThinkingLevelByModelKey(baseModel),
+      WORKSPACE_DEFAULTS.thinkingLevel
+    );
+
+  if (existingScoped === undefined) {
+    // Best-effort: avoid losing a user's existing per-model preference.
+    updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
+  }
+
+  return thinkingLevel;
+}
+
 /**
  * Non-hook equivalent of useSendMessageOptions — reads current preferences from localStorage.
  * Used by compaction, resume, idle-compaction, and plan execution outside React context.
@@ -50,27 +85,23 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   const defaultModel = getDefaultModel();
   const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
   const baseModel = normalizeModelPreference(rawModel, defaultModel);
-
-  // Read thinking level (workspace-scoped).
-  // Migration: if the workspace-scoped value is missing, fall back to legacy per-model storage
-  // once, then persist into the workspace-scoped key.
-  const scopedKey = getThinkingLevelKey(workspaceId);
-  const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
-  const thinkingLevel =
-    existingScoped ??
-    readPersistedState<ThinkingLevel>(
-      getThinkingLevelByModelKey(baseModel),
-      WORKSPACE_DEFAULTS.thinkingLevel
-    );
-  if (existingScoped === undefined) {
-    // Best-effort: avoid losing a user's existing per-model preference.
-    updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
-  }
-
   const agentId = readPersistedState<string>(
     getAgentIdKey(workspaceId),
     WORKSPACE_DEFAULTS.agentId
   );
+
+  const thinkingLevel = isExistingWorkspaceScopeId(workspaceId)
+    ? resolveActiveWorkspaceThinkingForAgent({
+        agentId,
+        agentAiDefaults: readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {}),
+        workspaceByAgent: readPersistedState<WorkspaceAISettingsCache>(
+          getWorkspaceAISettingsByAgentKey(workspaceId),
+          {}
+        ),
+        fallbackModel: defaultModel,
+        currentModel: baseModel,
+      })
+    : readLegacyScopedThinkingLevel(workspaceId, baseModel);
 
   const providerOptions = getProviderOptions();
 

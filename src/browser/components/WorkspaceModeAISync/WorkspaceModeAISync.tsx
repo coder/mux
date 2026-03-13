@@ -1,13 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useAgent } from "@/browser/contexts/AgentContext";
-import {
-  readPersistedState,
-  updatePersistedState,
-  usePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   getModelKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
@@ -17,7 +12,6 @@ import {
   resolveWorkspaceAiSettingsForAgent,
   type WorkspaceAISettingsCache,
 } from "@/browser/utils/workspaceModeAi";
-import type { ThinkingLevel } from "@/common/types/thinking";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
 export function WorkspaceModeAISync(props: { workspaceId: string }): null {
@@ -44,7 +38,6 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
   useEffect(() => {
     const fallbackModel = getDefaultModel();
     const modelKey = getModelKey(workspaceId);
-    const thinkingKey = getThinkingLevelKey(workspaceId);
 
     const normalizedAgentId =
       typeof agentId === "string" && agentId.trim().length > 0
@@ -55,18 +48,13 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       prevAgentIdRef.current !== null &&
       prevWorkspaceIdRef.current === workspaceId &&
       prevAgentIdRef.current !== normalizedAgentId;
-    const isInitialMount = prevAgentIdRef.current === null;
-    const isWorkspaceSwitch =
-      prevWorkspaceIdRef.current !== null && prevWorkspaceIdRef.current !== workspaceId;
 
     // Update refs for the next run (even if no model changes).
     prevAgentIdRef.current = normalizedAgentId;
     prevWorkspaceIdRef.current = workspaceId;
 
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
-    const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
-
-    const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
+    const { resolvedModel } = resolveWorkspaceAiSettingsForAgent({
       agentId: normalizedAgentId,
       agentAiDefaults,
       // Keep deterministic handoff behavior: background sync should trust the
@@ -76,7 +64,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       useWorkspaceByAgentFallback: isExplicitAgentSwitch,
       fallbackModel,
       existingModel,
-      existingThinking,
+      existingThinking: workspaceByAgent[normalizedAgentId]?.thinkingLevel ?? "off",
     });
 
     if (existingModel !== resolvedModel) {
@@ -85,18 +73,6 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
         resolvedModel,
         isExplicitAgentSwitch ? "agent" : "sync"
       );
-    }
-
-    // Only apply thinking-level from resolved defaults on initial mount,
-    // explicit agent switch, or workspace switch. Background syncs
-    // (triggered by the user's own thinking-level change rippling through
-    // workspaceByAgent) must not overwrite the user's manual selection
-    // with agentAiDefaults.
-    if (
-      (isInitialMount || isExplicitAgentSwitch || isWorkspaceSwitch) &&
-      existingThinking !== resolvedThinking
-    ) {
-      updatePersistedState(thinkingKey, resolvedThinking);
     }
   }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
 

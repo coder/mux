@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import {
+  AGENT_AI_DEFAULTS_KEY,
+  getAgentIdKey,
   getModelKey,
+  getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
@@ -51,6 +55,33 @@ describe("getSendOptionsFromStorage", () => {
     expect(normalizeModelPreference(" openai:gpt-5.2 ", "anthropic:default")).toBe(
       "openai:gpt-5.2"
     );
+  });
+
+  test("derives workspace thinking from per-agent settings and defaults instead of the flat key", () => {
+    const workspaceId = "ws-derived";
+
+    window.localStorage.setItem(getModelKey(workspaceId), JSON.stringify("openai:gpt-5.2"));
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("exec"));
+    window.localStorage.setItem(getThinkingLevelKey(workspaceId), JSON.stringify("medium"));
+    window.localStorage.setItem(
+      getWorkspaceAISettingsByAgentKey(workspaceId),
+      JSON.stringify({
+        exec: { model: "openai:gpt-5.2", thinkingLevel: "low" },
+      })
+    );
+    window.localStorage.setItem(
+      AGENT_AI_DEFAULTS_KEY,
+      JSON.stringify({
+        exec: { thinkingLevel: "high" },
+      })
+    );
+
+    const withDefaults = getSendOptionsFromStorage(workspaceId);
+    expect(withDefaults.thinkingLevel).toBe("high");
+
+    window.localStorage.setItem(AGENT_AI_DEFAULTS_KEY, JSON.stringify({}));
+    const withWorkspaceCache = getSendOptionsFromStorage(workspaceId);
+    expect(withWorkspaceCache.thinkingLevel).toBe("low");
   });
 
   test("omits system1 thinking when set to off", () => {
