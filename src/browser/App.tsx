@@ -78,6 +78,7 @@ import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
 import { createProjectRefs } from "@/common/utils/multiProject";
@@ -370,7 +371,10 @@ function AppInner() {
       }
 
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
-      const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), "");
+      const agentId = readPersistedState<string>(
+        getAgentIdKey(workspaceId),
+        WORKSPACE_DEFAULTS.agentId
+      );
 
       setWorkspaceAiSettings(workspaceId, agentId, { thinkingLevel: normalized }, api ?? undefined);
 

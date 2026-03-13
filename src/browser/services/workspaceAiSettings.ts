@@ -241,7 +241,7 @@ export function setWorkspaceAiSettings(
       // Best-effort only; local storage remains authoritative for the current session.
     })
     .finally(() => {
-      clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
+      clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, merged);
     });
 }
 
