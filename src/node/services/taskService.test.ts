@@ -6443,6 +6443,160 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenCalledWith(childTwoId, true);
   });
 
+  test("parent stream-end targets the pending best-of group when older groups still exist", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-best-of-pending-group-target";
+    const staleChildOneId = "child-best-of-pending-group-target-stale-1";
+    const staleChildTwoId = "child-best-of-pending-group-target-stale-2";
+    const currentChildOneId = "child-best-of-pending-group-target-current-1";
+    const currentChildTwoId = "child-best-of-pending-group-target-current-2";
+    const partialTimestamp = Date.now();
+    const staleCreatedAt = new Date(partialTimestamp - 60_000).toISOString();
+    const currentCreatedAt = new Date(partialTimestamp + 60_000).toISOString();
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "stale-1"),
+                id: staleChildOneId,
+                name: "agent_explore_stale_1",
+                title: "Best of 2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                createdAt: staleCreatedAt,
+                bestOf: { groupId: "best-of-stale-group", index: 0, total: 2 },
+              },
+              {
+                path: path.join(projectPath, "stale-2"),
+                id: staleChildTwoId,
+                name: "agent_explore_stale_2",
+                title: "Best of 2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                createdAt: staleCreatedAt,
+                bestOf: { groupId: "best-of-stale-group", index: 1, total: 2 },
+              },
+              {
+                path: path.join(projectPath, "current-1"),
+                id: currentChildOneId,
+                name: "agent_explore_current_1",
+                title: "Best of 2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                createdAt: currentCreatedAt,
+                bestOf: { groupId: "best-of-current-group", index: 0, total: 2 },
+              },
+              {
+                path: path.join(projectPath, "current-2"),
+                id: currentChildTwoId,
+                name: "agent_explore_current_2",
+                title: "Best of 2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                createdAt: currentCreatedAt,
+                bestOf: { groupId: "best-of-current-group", index: 1, total: 2 },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-best-of-pending-group-target",
+      "assistant",
+      "Waiting on best-of subagents…",
+      { timestamp: partialTimestamp },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-best-of-pending-group-target-call",
+          toolName: "task",
+          input: {
+            subagent_type: "explore",
+            prompt: "compare options",
+            title: "Best of 2",
+            n: 2,
+          },
+          state: "input-available",
+        },
+      ]
+    );
+    expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
+
+    for (const [childTaskId, reportMarkdown, title] of [
+      [staleChildOneId, "Stale report one", "Stale option one"],
+      [staleChildTwoId, "Stale report two", "Stale option two"],
+      [currentChildOneId, "Current report one", "Current option one"],
+      [currentChildTwoId, "Current report two", "Current option two"],
+    ] as const) {
+      await upsertSubagentReportArtifact({
+        workspaceId: parentId,
+        workspaceSessionDir: config.getSessionDir(parentId),
+        childTaskId,
+        parentWorkspaceId: parentId,
+        ancestorWorkspaceIds: [parentId],
+        reportMarkdown,
+        title,
+        nowMs: Date.now(),
+      });
+    }
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: parentId,
+      messageId: "assistant-parent-pending-group-target",
+      metadata: { model: "test-model" },
+      parts: [],
+    });
+
+    const updatedParentPartial = await partialService.readPartial(parentId);
+    expect(updatedParentPartial).not.toBeNull();
+    if (updatedParentPartial) {
+      const toolPart = updatedParentPartial.parts.find(
+        (part) => isDynamicToolPart(part) && part.toolName === "task"
+      ) as (DynamicToolPart & { state: string; output?: unknown }) | undefined;
+      expect(toolPart?.state).toBe("output-available");
+      const outputJson = JSON.stringify(toolPart?.output);
+      expect(outputJson).toContain(currentChildOneId);
+      expect(outputJson).toContain(currentChildTwoId);
+      expect(outputJson).toContain("Current report one");
+      expect(outputJson).toContain("Current report two");
+      expect(outputJson).not.toContain(staleChildOneId);
+      expect(outputJson).not.toContain(staleChildTwoId);
+      expect(outputJson).not.toContain("Stale report one");
+      expect(outputJson).not.toContain("Stale report two");
+    }
+  });
+
   test("parent stream-end finalizes ready best-of partials before cleanup rechecks", async () => {
     const config = await createTestConfig(rootDir);
 

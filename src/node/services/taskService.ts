@@ -3463,34 +3463,105 @@ export class TaskService {
       "deliverDeferredBestOfReportsForParent: parentWorkspaceId must be non-empty"
     );
 
-    const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
-    if (
-      parentTaskToolState.pendingBestOfTaskToolCount !== 1 ||
-      parentTaskToolState.pendingTaskToolCount !== 1
-    ) {
+    const pendingGroup = await this.resolvePendingBestOfGroupForParent(parentWorkspaceId);
+    if (!pendingGroup) {
       return;
     }
 
+    await this.deliverDeferredBestOfSiblingReports({
+      parentWorkspaceId,
+      groupId: pendingGroup.groupId,
+      total: pendingGroup.total,
+    });
+  }
+
+  private async resolvePendingBestOfGroupForParent(
+    parentWorkspaceId: string
+  ): Promise<{ groupId: string; total: number } | null> {
+    const partial = await this.historyService.readPartial(parentWorkspaceId);
+    if (!partial) {
+      return null;
+    }
+
+    const pendingParts = partial.parts.filter(
+      (part): part is DynamicToolPart & { toolName: "task"; state: "input-available" } =>
+        isDynamicToolPart(part) && part.toolName === "task" && part.state === "input-available"
+    );
+    if (pendingParts.length !== 1) {
+      return null;
+    }
+
+    const parsedInput = TaskToolArgsSchema.safeParse(pendingParts[0].input);
+    if (!parsedInput.success) {
+      return null;
+    }
+
+    const requestedTotal = parsedInput.data.n ?? 1;
+    if (requestedTotal <= 1) {
+      return null;
+    }
+
+    const requestedAgentId = coerceNonEmptyString(
+      parsedInput.data.agentId ?? parsedInput.data.subagent_type
+    )?.toLowerCase();
+    const requestedTitle = coerceNonEmptyString(parsedInput.data.title);
+    const partialStartedAt =
+      typeof partial.metadata?.timestamp === "number" ? partial.metadata.timestamp : undefined;
+
     const cfg = this.config.loadConfigOrDefault();
-    const seenGroupIds = new Set<string>();
+    const groups = new Map<string, { groupId: string; total: number; createdAtMs: number[] }>();
     for (const project of cfg.projects.values()) {
       for (const workspace of project.workspaces) {
         if (workspace.parentWorkspaceId !== parentWorkspaceId) {
           continue;
         }
+
         const groupId = coerceNonEmptyString(workspace.bestOf?.groupId);
         const total = workspace.bestOf?.total;
-        if (!groupId || total == null || total <= 1 || seenGroupIds.has(groupId)) {
+        if (!groupId || total !== requestedTotal) {
           continue;
         }
-        seenGroupIds.add(groupId);
-        await this.deliverDeferredBestOfSiblingReports({
-          parentWorkspaceId,
-          groupId,
-          total,
-        });
+
+        const workspaceAgentId = coerceNonEmptyString(
+          workspace.agentId ?? workspace.agentType
+        )?.toLowerCase();
+        if (requestedAgentId && workspaceAgentId && workspaceAgentId !== requestedAgentId) {
+          continue;
+        }
+
+        const workspaceTitle = coerceNonEmptyString(workspace.title);
+        if (requestedTitle && workspaceTitle && workspaceTitle !== requestedTitle) {
+          continue;
+        }
+
+        const entry = groups.get(groupId) ?? { groupId, total, createdAtMs: [] };
+        const createdAtMs =
+          typeof workspace.createdAt === "string" ? Date.parse(workspace.createdAt) : Number.NaN;
+        if (Number.isFinite(createdAtMs)) {
+          entry.createdAtMs.push(createdAtMs);
+        }
+        groups.set(groupId, entry);
       }
     }
+
+    const matchingGroups = Array.from(groups.values());
+    if (matchingGroups.length === 0) {
+      return null;
+    }
+    if (matchingGroups.length === 1) {
+      return matchingGroups[0];
+    }
+    if (partialStartedAt == null) {
+      return null;
+    }
+
+    const startedAfterPartial = matchingGroups.filter((group) => {
+      return (
+        group.createdAtMs.length > 0 &&
+        group.createdAtMs.every((createdAtMs) => createdAtMs >= partialStartedAt)
+      );
+    });
+    return startedAfterPartial.length === 1 ? startedAfterPartial[0] : null;
   }
 
   private async deliverDeferredBestOfSiblingReports(params: {
