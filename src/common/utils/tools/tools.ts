@@ -1,6 +1,7 @@
 import { type Tool } from "ai";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
+import { createAttachFileTool } from "@/node/services/tools/attach_file";
 import { createBashTool } from "@/node/services/tools/bash";
 import { createBashOutputTool } from "@/node/services/tools/bash_output";
 import { createBashBackgroundListTool } from "@/node/services/tools/bash_background_list";
@@ -316,6 +317,7 @@ export async function getToolsForModel(
   // Wrap them to handle init waiting centrally instead of in each tool
   const runtimeTools: Record<string, Tool> = {
     file_read: wrap(createFileReadTool(config)),
+    attach_file: wrap(createAttachFileTool(config)),
     agent_skill_read: wrap(createAgentSkillReadTool(config)),
     agent_skill_read_file: wrap(createAgentSkillReadFileTool(config)),
     file_edit_replace_string: wrap(createFileEditReplaceStringTool(config)),

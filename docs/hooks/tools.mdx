@@ -311,6 +311,17 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>attach_file (3)</summary>
+
+| Env var                     | JSON path   | Type   | Description                                                            |
+| --------------------------- | ----------- | ------ | ---------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_FILENAME`   | `filename`  | string | Optional filename override to present to the model.                    |
+| `MUX_TOOL_INPUT_MEDIA_TYPE` | `mediaType` | string | Optional media type override when the filename/extension is ambiguous. |
+| `MUX_TOOL_INPUT_PATH`       | `path`      | string | The path to the file to attach (absolute or relative)                  |
+
+</details>
+
+<details>
 <summary>bash (4)</summary>
 
 | Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |

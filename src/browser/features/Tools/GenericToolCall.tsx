@@ -25,8 +25,8 @@ interface GenericToolCallProps {
 }
 
 /**
- * Filter out image data from result for JSON display (to avoid showing huge base64 strings).
- * Replaces media content with a placeholder indicator.
+ * Filter out attachment data from result for JSON display (to avoid showing huge payloads).
+ * Replaces media content with a placeholder indicator while preserving lightweight metadata.
  */
 function filterResultForDisplay(result: unknown): unknown {
   if (typeof result !== "object" || result === null) return result;
@@ -37,8 +37,13 @@ function filterResultForDisplay(result: unknown): unknown {
   // Replace media entries with placeholder
   const filteredValue = contentResult.value.map((item) => {
     if (typeof item === "object" && item !== null && (item as { type?: string }).type === "media") {
-      const mediaItem = item as { mediaType?: string };
-      return { type: "media", mediaType: mediaItem.mediaType, data: "[image data]" };
+      const mediaItem = item as { mediaType?: string; filename?: string };
+      return {
+        type: "media",
+        mediaType: mediaItem.mediaType,
+        filename: mediaItem.filename,
+        data: "[attachment data]",
+      };
     }
     return item;
   });

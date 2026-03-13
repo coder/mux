@@ -159,7 +159,7 @@ export async function prepareMessagesForProvider(
       ? sanitizeAnthropicPdfFilenames(messagesWithInlinedSvg)
       : messagesWithInlinedSvg;
 
-  // Rewrite MCP tool-result images (base64) to small text placeholders + file parts.
+  // Rewrite supported tool-result attachments to small text placeholders + file parts.
   // Prevents providers from treating large base64 payloads as text/JSON context.
   const messagesWithToolMediaExtracted = extractToolMediaAsUserMessages(messagesWithSanitizedPdf);
 

@@ -23,6 +23,7 @@ import type {
   MuxAgentsReadToolResultSchema,
   MuxAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
+  AttachFileToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
   TaskApplyGitPatchToolResultSchema,
@@ -126,6 +127,12 @@ export interface ToolOutputUiOnlyFields {
 
 // FileReadToolResult derived from Zod schema (single source of truth)
 export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
+
+// Attach File Tool Types — derived from schema (avoid drift)
+export type AttachFileToolArgs = z.infer<typeof TOOL_DEFINITIONS.attach_file.schema>;
+
+// AttachFileToolResult derived from Zod schema (single source of truth)
+export type AttachFileToolResult = z.infer<typeof AttachFileToolResultSchema>;
 
 // mux_config_read tool types
 export type MuxConfigReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_read.schema>;

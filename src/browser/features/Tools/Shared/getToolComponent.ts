@@ -62,6 +62,7 @@ interface ToolRegistryEntry {
 const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
   file_read: { component: FileReadToolCall, schema: TOOL_DEFINITIONS.file_read.schema },
+  attach_file: { component: GenericToolCall, schema: TOOL_DEFINITIONS.attach_file.schema },
   agent_skill_read: {
     component: AgentSkillReadToolCall,
     schema: TOOL_DEFINITIONS.agent_skill_read.schema,

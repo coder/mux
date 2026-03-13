@@ -766,6 +766,28 @@ export const TOOL_DEFINITIONS = {
       })
     ),
   },
+  attach_file: {
+    description:
+      "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
+      "Accepts absolute or relative paths, including files outside the workspace. " +
+      "Currently supports raster images, SVG, and PDF.",
+    schema: z.preprocess(
+      normalizeFilePath,
+      z
+        .object({
+          path: z.string().describe("The path to the file to attach (absolute or relative)"),
+          mediaType: z
+            .string()
+            .nullish()
+            .describe("Optional media type override when the filename/extension is ambiguous."),
+          filename: z
+            .string()
+            .nullish()
+            .describe("Optional filename override to present to the model."),
+        })
+        .strict()
+    ),
+  },
   mux_agents_read: {
     description:
       "Read the AGENTS.md instructions file. In a project workspace, reads the project's AGENTS.md. " +
@@ -1598,6 +1620,39 @@ export const FileReadToolResultSchema = z.union([
   }),
 ]);
 
+const AttachFileToolTextPartSchema = z
+  .object({
+    type: z.literal("text"),
+    text: z.string(),
+  })
+  .strict();
+
+const AttachFileToolMediaPartSchema = z
+  .object({
+    type: z.literal("media"),
+    data: z.string(),
+    mediaType: z.string(),
+    filename: z.string().optional(),
+  })
+  .strict();
+
+const AttachFileToolSuccessResultSchema = z
+  .object({
+    type: z.literal("content"),
+    value: z.tuple([AttachFileToolTextPartSchema, AttachFileToolMediaPartSchema]),
+  })
+  .strict();
+
+export const AttachFileToolResultSchema = z.union([
+  AttachFileToolSuccessResultSchema,
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+    })
+    .strict(),
+]);
+
 /**
  * Agent Skill read tool result - full SKILL.md package or error.
  */
@@ -1688,6 +1743,7 @@ export type BridgeableToolName =
   | "bash_background_list"
   | "bash_background_terminate"
   | "file_read"
+  | "attach_file"
   | "agent_skill_read"
   | "agent_skill_read_file"
   | "file_edit_insert"
@@ -1714,6 +1770,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   bash_background_list: BashBackgroundListResultSchema,
   bash_background_terminate: BashBackgroundTerminateResultSchema,
   file_read: FileReadToolResultSchema,
+  attach_file: AttachFileToolResultSchema,
   agent_skill_read: AgentSkillReadToolResultSchema,
   agent_skill_read_file: AgentSkillReadFileToolResultSchema,
   file_edit_insert: FileEditInsertToolResultSchema,
@@ -1777,6 +1834,7 @@ export function getAvailableTools(
     "mux_config_read",
     "mux_config_write",
     "file_read",
+    "attach_file",
     "agent_skill_read",
     "agent_skill_read_file",
     "file_edit_replace_string",
