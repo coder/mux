@@ -5,7 +5,6 @@
 
 import { LRUCache } from "lru-cache";
 import CRC32 from "crc-32";
-import escapeHtml from "escape-html";
 
 export interface SearchHighlightConfig {
   searchTerm: string;
@@ -55,73 +54,6 @@ function walkTextNodes(node: Node, callback: (textNode: Text) => void): void {
     for (const child of children) {
       walkTextNodes(child, callback);
     }
-  }
-}
-
-/**
- * Highlight search matches in plain text by wrapping in <mark> tags
- * For use with non-HTML text like file paths
- *
- * @param text - Plain text to highlight
- * @param config - Search configuration
- * @returns HTML string with matches wrapped in <mark class="search-highlight">
- */
-export function highlightSearchInText(text: string, config: SearchHighlightConfig): string {
-  const { searchTerm, useRegex, matchCase } = config;
-
-  // No highlighting if search term is empty
-  if (!searchTerm.trim()) {
-    return text;
-  }
-
-  try {
-    // Build regex pattern (with caching)
-    const regexCacheKey = `${searchTerm}:${useRegex}:${matchCase}`;
-    let pattern = regexCache.get(regexCacheKey);
-
-    if (!pattern) {
-      try {
-        pattern = useRegex
-          ? new RegExp(searchTerm, matchCase ? "g" : "gi")
-          : new RegExp(escapeRegex(searchTerm), matchCase ? "g" : "gi");
-        regexCache.set(regexCacheKey, pattern);
-      } catch {
-        // Invalid regex pattern - return original text
-        return text;
-      }
-    }
-
-    let result = "";
-    let lastIndex = 0;
-    pattern.lastIndex = 0;
-
-    let match;
-    while ((match = pattern.exec(text)) !== null) {
-      // Add text before match (escaped)
-      if (match.index > lastIndex) {
-        result += escapeHtml(text.slice(lastIndex, match.index));
-      }
-
-      // Add highlighted match (escaped)
-      result += `<mark class="search-highlight">${escapeHtml(match[0])}</mark>`;
-
-      lastIndex = match.index + match[0].length;
-
-      // Prevent infinite loop on zero-length matches
-      if (match[0].length === 0) {
-        pattern.lastIndex++;
-      }
-    }
-
-    // Add remaining text after last match (escaped)
-    if (lastIndex < text.length) {
-      result += escapeHtml(text.slice(lastIndex));
-    }
-
-    return result;
-  } catch (error) {
-    console.warn("Failed to highlight search in text:", error);
-    return text;
   }
 }
 
