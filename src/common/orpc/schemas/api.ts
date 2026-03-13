@@ -218,7 +218,13 @@ export const providers = {
   setProviderConfig: {
     input: z.object({
       provider: z.string(),
-      keyPath: z.array(z.string()),
+      keyPath: z
+        .array(z.string())
+        .refine(
+          (path) =>
+            !path.some((segment) => ["__proto__", "prototype", "constructor"].includes(segment)),
+          { message: "keyPath contains a denied segment" }
+        ),
       value: z.union([z.string(), z.boolean()]),
     }),
     output: ResultSchema(z.void(), z.string()),
