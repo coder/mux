@@ -1,0 +1,38 @@
+---
+title: Best of N
+description: Improve plans, analysis, and reviews by asking Mux to explore multiple candidate answers in parallel
+---
+
+Best of N asks Mux to run several sibling agents on the same task, then synthesize the strongest result.
+
+Use it when you care more about answer quality than speed. In practice it often improves:
+
+- plans
+- deep analysis
+- debugging
+- code review
+- anomaly detection in production metrics
+- hard math or proof-style work
+
+It tends to help most when the first plausible answer is often incomplete.
+
+## Good fits
+
+- **Gnarly debugging**: multiple plausible root causes, weak logs, or flaky repro steps
+- **Deep math**: different solution paths may unlock the problem
+- **Code review**: broader coverage of correctness, tests, design, and edge cases
+- **Production metrics**: several competing explanations for an anomaly
+
+## Prompt examples
+
+```text
+Do a best of 5 plan for this migration.
+Use best of 8 to debug this flaky integration test.
+Run a best of 6 review on this branch and flag correctness risks.
+Do a best of 10 pass on these production metrics and explain the likely anomalies.
+```
+
+<Note>
+  Start with `best of 3` or `best of 5`. Larger batches cost more and take longer, but can pay off
+  on high-stakes or unusually open-ended problems.
+</Note>

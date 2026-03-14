@@ -88,7 +88,8 @@
               "agents/agent-skills",
               "agents/plan-mode",
               "agents/system-prompt",
-              "agents/prompting-tips"
+              "agents/prompting-tips",
+              "agents/best-of-n"
             ]
           },
           {
@@ -175,6 +176,7 @@
     { "source": "/prompting-tips", "destination": "/agents/prompting-tips" },
     { "source": "/prompting-tips.html", "destination": "/agents/prompting-tips" },
     { "source": "/guides/prompting-tips", "destination": "/agents/prompting-tips" },
+    { "source": "/best-of-n", "destination": "/agents/best-of-n" },
     { "source": "/vim-mode", "destination": "/config/vim-mode" },
     { "source": "/guides/vim-mode", "destination": "/config/vim-mode" },
     { "source": "/vscode-extension", "destination": "/integrations/vscode-extension" },
