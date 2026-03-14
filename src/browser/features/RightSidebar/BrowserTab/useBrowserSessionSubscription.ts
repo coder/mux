@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import type {
@@ -19,15 +19,18 @@ export function useBrowserSessionSubscription(workspaceId: string) {
   const [session, setSession] = useState<BrowserSession | null>(null);
   const [recentActions, setRecentActions] = useState<BrowserAction[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!api) {
+      sessionIdRef.current = null;
       setSession(null);
       setRecentActions([]);
       setError(null);
       return;
     }
 
+    sessionIdRef.current = null;
     setSession(null);
     setRecentActions([]);
     setError(null);
@@ -51,14 +54,21 @@ export function useBrowserSessionSubscription(workspaceId: string) {
 
         switch (event.type) {
           case "snapshot":
+            sessionIdRef.current = event.session?.id ?? null;
             setSession(event.session);
             setRecentActions(normalizeRecentActions(event.recentActions));
             setError(null);
             break;
-          case "session-updated":
+          case "session-updated": {
+            const previousSessionId = sessionIdRef.current;
+            sessionIdRef.current = event.session.id;
             setSession(event.session);
+            if (previousSessionId !== null && previousSessionId !== event.session.id) {
+              setRecentActions([]);
+            }
             setError(null);
             break;
+          }
           case "action":
             setRecentActions((previousActions) => {
               const deduplicatedActions = previousActions.filter(

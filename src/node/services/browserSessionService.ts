@@ -42,7 +42,10 @@ export class BrowserSessionService extends EventEmitter {
     // existing-session check. Return the existing starting session instead.
     if (this.startingWorkspaces.has(workspaceId)) {
       const existingStartingSession = this.activeSessions.get(workspaceId);
-      if (existingStartingSession) {
+      if (
+        existingStartingSession &&
+        (existingStartingSession.status === "starting" || existingStartingSession.status === "live")
+      ) {
         return existingStartingSession;
       }
     }
