@@ -316,6 +316,27 @@ function buildWorkspaceTitleConversationContext(
 }
 
 /**
+ * Find the highest sequential number among items that match `prefix<digits>trailingSuffix`.
+ * Returns 0 when no items match.
+ */
+function findMaxSequentialNumber(items: string[], prefix: string, trailingSuffix = ""): number {
+  let max = 0;
+  for (const item of items) {
+    if (!item.startsWith(prefix)) continue;
+    if (trailingSuffix && !item.endsWith(trailingSuffix)) continue;
+
+    const numberStr = trailingSuffix
+      ? item.slice(prefix.length, -trailingSuffix.length)
+      : item.slice(prefix.length);
+    if (!/^\d+$/.test(numberStr)) continue;
+
+    const n = Number(numberStr);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+/**
  * Generate a unique fork branch name from the parent workspace name.
  * Scans existing workspace names for the parent fork family pattern and picks N+1,
  * guaranteeing a valid git-safe branch name.
@@ -325,23 +346,7 @@ export function generateForkBranchName(parentName: string, existingNames: string
   // e.g. `feature-fork-2` -> `feature-fork-3`, not `feature-fork-2-fork-1`.
   const base = parentName.replace(/-fork-\d+$/, "");
   const prefix = `${base}-fork-`;
-  let max = 0;
-  for (const name of existingNames) {
-    if (!name.startsWith(prefix)) {
-      continue;
-    }
-
-    const suffix = name.slice(prefix.length);
-    if (!/^\d+$/.test(suffix)) {
-      continue;
-    }
-
-    const n = Number(suffix);
-    if (n > max) {
-      max = n;
-    }
-  }
-  return `${prefix}${max + 1}`;
+  return `${prefix}${findMaxSequentialNumber(existingNames, prefix) + 1}`;
 }
 
 /**
@@ -352,26 +357,9 @@ export function generateForkTitle(parentTitle: string, existingTitles: string[])
   // Strip any existing " (N)" suffix from the parent title to get the base
   const base = parentTitle.replace(/ \(\d+\)$/, "");
   const prefix = `${base} (`;
-
-  let max = 0;
-  for (const title of existingTitles) {
-    if (!title.startsWith(prefix) || !title.endsWith(")")) {
-      continue;
-    }
-
-    const suffix = title.slice(prefix.length, -1);
-    if (!/^\d+$/.test(suffix)) {
-      continue;
-    }
-
-    const n = Number(suffix);
-    if (n > max) {
-      max = n;
-    }
-  }
   // If parent title itself exists in the list (without suffix), start at (1)
   // Otherwise continue from the highest found suffix
-  return `${base} (${max + 1})`;
+  return `${base} (${findMaxSequentialNumber(existingTitles, prefix, ")") + 1})`;
 }
 
 function isErrnoWithCode(error: unknown, code: string): boolean {
