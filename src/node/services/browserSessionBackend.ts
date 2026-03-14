@@ -115,6 +115,11 @@ export class BrowserSessionBackend {
 
     const openResult = await this.runCliCommand(["open", this.options.initialUrl]);
     if (!openResult.ok) {
+      // If stop/dispose interrupts the CLI command, the session already transitioned
+      // to a terminal state elsewhere; keep that state instead of overwriting it.
+      if (this.disposed) {
+        return this.getSession();
+      }
       this.transitionToError(openResult.error);
       return this.getSession();
     }
