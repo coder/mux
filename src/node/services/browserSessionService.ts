@@ -133,7 +133,9 @@ export class BrowserSessionService extends EventEmitter {
   private cleanupWorkspace(workspaceId: string): void {
     const backend = this.activeBackends.get(workspaceId);
     if (backend) {
-      backend.dispose();
+      // Use stop() to send agent-browser close before cleanup, preventing
+      // orphaned browser processes on session replacement/error recovery.
+      void backend.stop();
     }
 
     this.activeBackends.delete(workspaceId);
