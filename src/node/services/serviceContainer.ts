@@ -353,17 +353,33 @@ export class ServiceContainer {
   }
 
   async initialize(): Promise<void> {
-    await this.extensionMetadata.initialize();
+    const startupStartedAt = Date.now();
+    const stepDurationsMs: Record<string, number> = {};
+    const recordStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+      const stepStartedAt = Date.now();
+      try {
+        return await fn();
+      } finally {
+        stepDurationsMs[name] = Date.now() - stepStartedAt;
+      }
+    };
+
+    log.info("[startup] ServiceContainer.initialize starting");
+
+    await recordStep("extensionMetadata.initialize", () => this.extensionMetadata.initialize());
     // Initialize telemetry service
-    await this.telemetryService.initialize();
+    await recordStep("telemetryService.initialize", () => this.telemetryService.initialize());
 
     // Initialize policy service (startup gating)
-    await this.policyService.initialize();
+    await recordStep("policyService.initialize", () => this.policyService.initialize());
 
-    await this.experimentsService.initialize();
-    await this.taskService.initialize();
+    await recordStep("experimentsService.initialize", () => this.experimentsService.initialize());
+    await recordStep("taskService.initialize", () => this.taskService.initialize());
+
+    const idleCompactionStartedAt = Date.now();
     // Start idle compaction checker
     this.idleCompactionService.start();
+    stepDurationsMs["idleCompactionService.start"] = Date.now() - idleCompactionStartedAt;
 
     // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
@@ -373,11 +389,19 @@ export class ServiceContainer {
 
     // Ensure the built-in Chat with Mux system workspace exists.
     // Defensive: startup-time initialization must never crash the app.
+    const ensureMuxChatWorkspaceStartedAt = Date.now();
     try {
       await this.ensureMuxChatWorkspace();
     } catch (error) {
       log.warn("[ServiceContainer] Failed to ensure Chat with Mux workspace", { error });
+    } finally {
+      stepDurationsMs.ensureMuxChatWorkspace = Date.now() - ensureMuxChatWorkspaceStartedAt;
     }
+
+    log.info("[startup] ServiceContainer.initialize completed", {
+      totalMs: Date.now() - startupStartedAt,
+      stepDurationsMs,
+    });
   }
 
   private async ensureMuxChatWorkspace(): Promise<void> {

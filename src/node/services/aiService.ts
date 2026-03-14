@@ -99,6 +99,8 @@ import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAs
 import { getErrorMessage } from "@/common/utils/errors";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
+const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
+
 // ---------------------------------------------------------------------------
 // streamMessage options
 // ---------------------------------------------------------------------------
@@ -700,6 +702,11 @@ export class AIService extends EventEmitter {
     const combinedAbortSignal = pendingAbortController.signal;
 
     let pendingRunMetadataId: string | null = null;
+    const startupPhaseTimingsMs: Record<string, number> = {};
+    const recordStartupPhaseTiming = (phase: string, phaseStartedAt: number): void => {
+      startupPhaseTimingsMs[phase] = Date.now() - phaseStartedAt;
+    };
+    let logSlowStreamStartup: ((details: Record<string, unknown>) => void) | undefined;
 
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
@@ -721,7 +728,9 @@ export class AIService extends EventEmitter {
 
       // Before starting a new stream, commit any existing partial to history
       // This is idempotent - won't double-commit if already in chat.jsonl
+      const commitPartialStartedAt = Date.now();
       await this.historyService.commitPartial(workspaceId);
+      recordStartupPhaseTiming("commitPartialMs", commitPartialStartedAt);
 
       // Helper: clean up an assistant placeholder that was appended to history but never
       // streamed (due to abort during setup). Used in two abort-check sites below.
@@ -739,12 +748,14 @@ export class AIService extends EventEmitter {
       const effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? THINKING_LEVEL_OFF;
 
       // Resolve model string (xAI variant mapping + gateway routing) and create the model.
+      const resolveAndCreateModelStartedAt = Date.now();
       const modelResult = await this.providerModelFactory.resolveAndCreateModel(
         modelString,
         effectiveThinkingLevel,
         effectiveMuxProviderOptions,
         { agentInitiated, workspaceId }
       );
+      recordStartupPhaseTiming("resolveAndCreateModelMs", resolveAndCreateModelStartedAt);
       if (!modelResult.success) {
         return Err(modelResult.error);
       }
@@ -789,7 +800,9 @@ export class AIService extends EventEmitter {
       const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
 
       // Get workspace metadata to retrieve workspace path
+      const getWorkspaceMetadataStartedAt = Date.now();
       const metadataResult = await this.getWorkspaceMetadata(workspaceId);
+      recordStartupPhaseTiming("getWorkspaceMetadataMs", getWorkspaceMetadataStartedAt);
       if (!metadataResult.success) {
         return Err({ type: "unknown", raw: metadataResult.error });
       }
@@ -805,6 +818,20 @@ export class AIService extends EventEmitter {
         }
       }
       const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
+      logSlowStreamStartup = (details: Record<string, unknown>) => {
+        const totalMs = Date.now() - startTime;
+        if (totalMs < STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS) {
+          return;
+        }
+
+        workspaceLog.info("[stream-startup] Slow pre-stream preparation", {
+          workspaceId,
+          modelString,
+          totalMs,
+          startupPhaseTimingsMs,
+          ...details,
+        });
+      };
 
       if (!this.config.findWorkspace(workspaceId)) {
         return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
@@ -845,7 +872,9 @@ export class AIService extends EventEmitter {
 
       // Wait for init to complete before any runtime I/O operations
       // (SSH/devcontainer may not be ready until init finishes pulling the container)
+      const waitForInitStartedAt = Date.now();
       await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
+      recordStartupPhaseTiming("waitForInitMs", waitForInitStartedAt);
       if (combinedAbortSignal.aborted) {
         return Ok(undefined);
       }
@@ -854,6 +883,7 @@ export class AIService extends EventEmitter {
       // For Docker workspaces, this checks the container exists and starts it if stopped.
       // For Coder workspaces, this may start a stopped workspace and wait for it.
       // If init failed during container creation, ensureReady() will return an error.
+      const ensureReadyStartedAt = Date.now();
       const readyResult = await runtime.ensureReady({
         signal: combinedAbortSignal,
         statusSink: (status) => {
@@ -867,6 +897,7 @@ export class AIService extends EventEmitter {
           });
         },
       });
+      recordStartupPhaseTiming("ensureReadyMs", ensureReadyStartedAt);
       if (!readyResult.ready) {
         // Generate message ID for the error event (frontend needs this for synthetic message)
         const errorMessageId = createAssistantMessageId();
@@ -891,6 +922,13 @@ export class AIService extends EventEmitter {
           })
         );
 
+        logSlowStreamStartup?.({
+          outcome: "runtime_not_ready",
+          runtimeType,
+          errorType,
+          errorMessage,
+        });
+
         return Err({
           type: errorType,
           message: errorMessage,
@@ -899,6 +937,7 @@ export class AIService extends EventEmitter {
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
+      const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
         workspaceId,
         metadata,
@@ -910,6 +949,7 @@ export class AIService extends EventEmitter {
         cfg,
         emitError: (event) => this.emit("error", event),
       });
+      recordStartupPhaseTiming("resolveAgentForStreamMs", resolveAgentForStreamStartedAt);
       if (!agentResult.success) {
         return agentResult;
       }
@@ -936,6 +976,7 @@ export class AIService extends EventEmitter {
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
       let mcpOverrides: WorkspaceMCPOverrides | undefined;
+      const loadWorkspaceMcpOverridesStartedAt = Date.now();
       try {
         mcpOverrides =
           await this.workspaceMcpOverridesService.getOverridesForWorkspace(workspaceId);
@@ -946,10 +987,12 @@ export class AIService extends EventEmitter {
         });
         mcpOverrides = undefined;
       }
+      recordStartupPhaseTiming("loadWorkspaceMcpOverridesMs", loadWorkspaceMcpOverridesStartedAt);
 
       // Fetch MCP server config for system prompt (before building message).
       // The built-in mux help agent must not see project MCP inventory, even outside the
       // dedicated mux-help workspace; project-scoped overrides of the same ID keep normal access.
+      const listMcpServersStartedAt = Date.now();
       const mcpServers =
         this.mcpServerManager &&
         workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID &&
@@ -960,10 +1003,12 @@ export class AIService extends EventEmitter {
               projectTrusted
             )
           : undefined;
+      recordStartupPhaseTiming("listMcpServersMs", listMcpServersStartedAt);
 
       // Build plan-aware instructions and determine plan→exec transition content.
       // IMPORTANT: Derive this from the same boundary-sliced message payload that is sent to
       // the model so plan hints/handoffs cannot be suppressed by pre-boundary history.
+      const buildPlanInstructionsStartedAt = Date.now();
       const { effectiveAdditionalInstructions, planFilePath, planContentForTransition } =
         await buildPlanInstructions({
           runtime,
@@ -980,6 +1025,7 @@ export class AIService extends EventEmitter {
           taskSettings,
           requestPayloadMessages: providerRequestMessages,
         });
+      recordStartupPhaseTiming("buildPlanInstructionsMs", buildPlanInstructionsStartedAt);
 
       const runtimeType = metadata.runtimeConfig.type;
       const muxScope: MuxToolScope =
@@ -1006,6 +1052,7 @@ export class AIService extends EventEmitter {
             };
 
       // Build agent system prompt, system message, and discover agents/skills.
+      const buildStreamSystemContextStartedAt = Date.now();
       const streamSystemContext = await buildStreamSystemContext({
         runtime,
         metadata,
@@ -1023,6 +1070,7 @@ export class AIService extends EventEmitter {
         muxScope,
         loadDesktopCapability,
       });
+      recordStartupPhaseTiming("buildStreamSystemContextMs", buildStreamSystemContextStartedAt);
       const { agentSystemPrompt, agentDefinitions, availableSkills, ancestorPlanFilePaths } =
         streamSystemContext;
       let systemMessageTokens = streamSystemContext.systemMessageTokens;
@@ -1043,7 +1091,7 @@ export class AIService extends EventEmitter {
       let mcpSetupDurationMs = 0;
 
       if (this.mcpServerManager && !isBuiltInMuxHelpAgent) {
-        const start = Date.now();
+        const mcpToolSetupStartedAt = Date.now();
         try {
           const result = await this.mcpServerManager.getToolsForWorkspace({
             workspaceId,
@@ -1060,7 +1108,8 @@ export class AIService extends EventEmitter {
         } catch (error) {
           workspaceLog.error("Failed to start MCP servers", { error });
         } finally {
-          mcpSetupDurationMs = Date.now() - start;
+          mcpSetupDurationMs = Date.now() - mcpToolSetupStartedAt;
+          startupPhaseTimingsMs.mcpToolSetupMs = mcpSetupDurationMs;
         }
       }
 
@@ -1078,9 +1127,12 @@ export class AIService extends EventEmitter {
         systemMessageTokens = await tokenizer.countTokens(systemMessage);
       }
 
+      const createTempDirForStreamStartedAt = Date.now();
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
+      recordStartupPhaseTiming("createTempDirForStreamMs", createTempDirForStreamStartedAt);
 
       // Extract tool-specific instructions from AGENTS.md files and agent definition
+      const readToolInstructionsStartedAt = Date.now();
       const toolInstructions = await readToolInstructions(
         metadata,
         runtime,
@@ -1088,9 +1140,11 @@ export class AIService extends EventEmitter {
         modelString,
         agentSystemPrompt
       );
+      recordStartupPhaseTiming("readToolInstructionsMs", readToolInstructionsStartedAt);
 
       // Calculate cumulative session costs for MUX_COSTS_USD env var
       let sessionCostsUsd: number | undefined;
+      const loadSessionUsageStartedAt = Date.now();
       if (this.sessionUsageService) {
         const sessionUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
         if (sessionUsage) {
@@ -1098,8 +1152,10 @@ export class AIService extends EventEmitter {
           sessionCostsUsd = getTotalCost(allUsage);
         }
       }
+      recordStartupPhaseTiming("loadSessionUsageMs", loadSessionUsageStartedAt);
 
       // Get model-specific tools with workspace path (correct for local or remote)
+      const getToolsForModelStartedAt = Date.now();
       const allTools = await getToolsForModel(
         modelString,
         {
@@ -1157,6 +1213,7 @@ export class AIService extends EventEmitter {
         toolInstructions,
         mcpTools
       );
+      recordStartupPhaseTiming("getToolsForModelMs", getToolsForModelStartedAt);
       const toolsWithDelegation = this.wrapToolsForDelegation(
         workspaceId,
         allTools,
@@ -1168,6 +1225,7 @@ export class AIService extends EventEmitter {
       const assistantMessageId = createAssistantMessageId();
 
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
+      const applyToolPolicyAndExperimentsStartedAt = Date.now();
       const tools = await applyToolPolicyAndExperiments({
         allTools: toolsWithDelegation,
         extraTools: this.extraTools,
@@ -1181,11 +1239,16 @@ export class AIService extends EventEmitter {
           }
         },
       });
+      recordStartupPhaseTiming(
+        "applyToolPolicyAndExperimentsMs",
+        applyToolPolicyAndExperimentsStartedAt
+      );
 
       const toolNamesForSentinel = Object.keys(tools).sort();
 
       // Run the full message preparation pipeline (inject context, transform, validate).
       // This is a purely functional pipeline with no service dependencies.
+      const prepareMessagesForProviderStartedAt = Date.now();
       const finalMessages = await prepareMessagesForProvider({
         messagesWithSentinel,
         effectiveAgentId,
@@ -1203,6 +1266,7 @@ export class AIService extends EventEmitter {
         anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
         workspaceId,
       });
+      recordStartupPhaseTiming("prepareMessagesForProviderMs", prepareMessagesForProviderStartedAt);
 
       captureMcpToolTelemetry({
         telemetryService: this.telemetryService,
@@ -1275,6 +1339,7 @@ export class AIService extends EventEmitter {
       // Use the same boundary-sliced payload history that we send to the provider.
       // This keeps OpenAI request state aligned with the explicit history Mux sends.
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching.
+      const buildProviderOptionsStartedAt = Date.now();
       const providerOptions = buildProviderOptions(
         modelString,
         effectiveThinkingLevel,
@@ -1286,11 +1351,13 @@ export class AIService extends EventEmitter {
         this.providerService.getConfig(),
         routeProvider
       );
+      recordStartupPhaseTiming("buildProviderOptionsMs", buildProviderOptionsStartedAt);
 
       // Build per-request HTTP headers (e.g., workspace correlation and
       // anthropic-beta for 1M context). This is the single injection site for
       // provider-specific headers, handling both direct and gateway-routed models
       // identically.
+      const buildRequestConfigStartedAt = Date.now();
       let requestHeaders = buildRequestHeaders(
         modelString,
         effectiveMuxProviderOptions,
@@ -1327,6 +1394,8 @@ export class AIService extends EventEmitter {
               : resolvedOverrides.providerExtras,
           }
         : providerOptions;
+
+      recordStartupPhaseTiming("buildRequestConfigMs", buildRequestConfigStartedAt);
 
       if (Object.keys(resolvedOverrides.standard).length > 0 || resolvedOverrides.providerExtras) {
         log.debug(
@@ -1451,6 +1520,7 @@ export class AIService extends EventEmitter {
         };
       }
 
+      const startStreamStartedAt = Date.now();
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
@@ -1486,6 +1556,7 @@ export class AIService extends EventEmitter {
         forceToolChoice,
         resolvedOverrides.standard
       );
+      recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 
       if (!streamResult.success) {
         // StreamManager failed before registering a stream. Clear queued run
@@ -1494,6 +1565,21 @@ export class AIService extends EventEmitter {
           this.clearTrackedPendingDevToolsRunMetadata(assistantMessageId);
           pendingRunMetadataId = null;
         }
+
+        logSlowStreamStartup?.({
+          outcome: "stream_start_failed",
+          providerName: canonicalProviderName,
+          routeProvider,
+          agentId: effectiveAgentId,
+          mode: effectiveMode,
+          runtimeType: metadata.runtimeConfig.type,
+          errorType: streamResult.error.type,
+          toolCount: Object.keys(toolsForStream).length,
+          mcpToolCount: Object.keys(mcpTools ?? {}).length,
+          mcpFailedServerCount: mcpStats?.failedServerCount ?? 0,
+          providerRequestMessageCount: providerRequestMessages.length,
+          finalMessageCount: finalMessages.length,
+        });
 
         // StreamManager already returns SendMessageError
         return Err(streamResult.error);
@@ -1509,6 +1595,20 @@ export class AIService extends EventEmitter {
         await deleteAbortedPlaceholder(assistantMessageId);
       }
 
+      logSlowStreamStartup?.({
+        outcome: "started",
+        providerName: canonicalProviderName,
+        routeProvider,
+        agentId: effectiveAgentId,
+        mode: effectiveMode,
+        runtimeType: metadata.runtimeConfig.type,
+        toolCount: Object.keys(toolsForStream).length,
+        mcpToolCount: Object.keys(mcpTools ?? {}).length,
+        mcpFailedServerCount: mcpStats?.failedServerCount ?? 0,
+        providerRequestMessageCount: providerRequestMessages.length,
+        finalMessageCount: finalMessages.length,
+      });
+
       // StreamManager now handles history updates directly on stream-end
       // No need for event listener here
       return Ok(undefined);
@@ -1519,6 +1619,10 @@ export class AIService extends EventEmitter {
       }
 
       const errorMessage = getErrorMessage(error);
+      logSlowStreamStartup?.({
+        outcome: "error",
+        errorMessage,
+      });
       log.error("Stream message error:", error);
       // Return as unknown error type
       return Err({ type: "unknown", raw: `Failed to stream message: ${errorMessage}` });

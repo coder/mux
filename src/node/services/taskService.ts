@@ -794,7 +794,19 @@ export class TaskService {
   }
 
   async initialize(): Promise<void> {
+    const startupStartedAt = Date.now();
+    const startupConfig = this.config.loadConfigOrDefault();
+    const queuedTaskCountAtStartup = this.listAgentTaskWorkspaces(startupConfig).filter(
+      (task) => task.taskStatus === "queued" && typeof task.id === "string"
+    ).length;
+
+    log.info("[startup] TaskService.initialize starting", {
+      queuedTaskCountAtStartup,
+    });
+
+    const maybeStartQueuedTasksStartedAt = Date.now();
     await this.maybeStartQueuedTasks();
+    const maybeStartQueuedTasksMs = Date.now() - maybeStartQueuedTasksStartedAt;
 
     const config = this.config.loadConfigOrDefault();
     const awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
@@ -804,12 +816,17 @@ export class TaskService {
       (t) => t.taskStatus === "running"
     );
 
+    let resumedAwaitingReportCount = 0;
+    let skippedAwaitingReportDueToActiveDescendants = 0;
+    let failedAwaitingReportCount = 0;
+
     for (const task of awaitingReportTasks) {
       if (!task.id) continue;
 
       // Avoid resuming a task while it still has active descendants (it shouldn't report yet).
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
+        skippedAwaitingReportDueToActiveDescendants += 1;
         continue;
       }
 
@@ -824,6 +841,16 @@ export class TaskService {
       const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
 
       const model = task.taskModelString ?? defaultModel;
+      const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+      log.info("[startup] Resuming awaiting_report task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        completionToolName,
+      });
+      const resumeStartedAt = Date.now();
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
         isPlanLike
@@ -831,15 +858,23 @@ export class TaskService {
           : "This task is awaiting its final agent_report. Call agent_report exactly once now.",
         {
           model,
-          agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+          agentId,
           thinkingLevel: task.taskThinkingLevel,
           toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
         },
         { synthetic: true, agentInitiated: true }
       );
+      const durationMs = Date.now() - resumeStartedAt;
       if (!sendResult.success) {
+        failedAwaitingReportCount += 1;
         log.error("Failed to resume awaiting_report task on startup", {
           taskId: task.id,
+          taskName: task.name,
+          projectPath: task.projectPath,
+          model,
+          agentId,
+          completionToolName,
+          durationMs,
           error: sendResult.error,
         });
 
@@ -850,8 +885,24 @@ export class TaskService {
           },
           completionToolName
         );
+        continue;
       }
+
+      resumedAwaitingReportCount += 1;
+      log.info("[startup] Resumed awaiting_report task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        completionToolName,
+        durationMs,
+      });
     }
+
+    let resumedRunningCount = 0;
+    let skippedRunningDueToActiveDescendants = 0;
+    let failedRunningCount = 0;
 
     for (const task of runningTasks) {
       if (!task.id) continue;
@@ -859,6 +910,7 @@ export class TaskService {
       // Only do this when the task has no running descendants, to avoid duplicate spawns.
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
+        skippedRunningDueToActiveDescendants += 1;
         continue;
       }
 
@@ -868,7 +920,17 @@ export class TaskService {
       });
 
       const model = task.taskModelString ?? defaultModel;
-      await this.workspaceService.sendMessage(
+      const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+      log.info("[startup] Resuming running task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        isPlanLike,
+      });
+      const resumeStartedAt = Date.now();
+      const sendResult = await this.workspaceService.sendMessage(
         task.id,
         isPlanLike
           ? "Mux restarted while this task was running. Continue where you left off. " +
@@ -877,12 +939,38 @@ export class TaskService {
               "When you have a final answer, call agent_report exactly once.",
         {
           model,
-          agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+          agentId,
           thinkingLevel: task.taskThinkingLevel,
           experiments: task.taskExperiments,
         },
         { synthetic: true, agentInitiated: true }
       );
+      const durationMs = Date.now() - resumeStartedAt;
+      if (!sendResult.success) {
+        failedRunningCount += 1;
+        log.error("Failed to resume running task on startup", {
+          taskId: task.id,
+          taskName: task.name,
+          projectPath: task.projectPath,
+          model,
+          agentId,
+          isPlanLike,
+          durationMs,
+          error: sendResult.error,
+        });
+        continue;
+      }
+
+      resumedRunningCount += 1;
+      log.info("[startup] Resumed running task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        isPlanLike,
+        durationMs,
+      });
     }
 
     // Restart-safety for git patch artifacts:
@@ -893,6 +981,7 @@ export class TaskService {
       (task) => hasCompletedAgentReport(task) && typeof task.id === "string" && task.id.length > 0
     );
 
+    const patchGenerationRecoveryStartedAt = Date.now();
     for (const task of completedReportTasks) {
       if (!task.parentWorkspaceId) continue;
       try {
@@ -909,11 +998,13 @@ export class TaskService {
         });
       }
     }
+    const patchGenerationRecoveryMs = Date.now() - patchGenerationRecoveryStartedAt;
 
     // Restart-safety for grouped best-of completion: if child report artifacts already exist
     // on disk after a restart, there may be no later child stream-end to finalize the pending
     // parent task tool call. Re-run the deferred parent delivery/finalization pass first so
     // cleanup rechecks do not stay blocked forever behind a stale input-available partial.
+    const bestOfRecoveryStartedAt = Date.now();
     const bestOfParentWorkspaceIds = new Set<string>();
     for (const task of completedReportTasks) {
       const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
@@ -928,12 +1019,33 @@ export class TaskService {
     for (const parentWorkspaceId of bestOfParentWorkspaceIds) {
       await this.deliverDeferredBestOfReportsForParent(parentWorkspaceId);
     }
+    const bestOfRecoveryMs = Date.now() - bestOfRecoveryStartedAt;
 
     // Best-effort completed-report ancestor recheck after restart.
+    const cleanupReportedTasksStartedAt = Date.now();
     for (const task of completedReportTasks) {
       if (!task.id) continue;
       await this.cleanupReportedLeafTask(task.id);
     }
+    const cleanupReportedTasksMs = Date.now() - cleanupReportedTasksStartedAt;
+
+    log.info("[startup] TaskService.initialize completed", {
+      totalMs: Date.now() - startupStartedAt,
+      maybeStartQueuedTasksMs,
+      awaitingReportTaskCount: awaitingReportTasks.length,
+      resumedAwaitingReportCount,
+      skippedAwaitingReportDueToActiveDescendants,
+      failedAwaitingReportCount,
+      runningTaskCount: runningTasks.length,
+      resumedRunningCount,
+      skippedRunningDueToActiveDescendants,
+      failedRunningCount,
+      completedReportTaskCount: completedReportTasks.length,
+      patchGenerationRecoveryMs,
+      bestOfParentRecoveryCount: bestOfParentWorkspaceIds.size,
+      bestOfRecoveryMs,
+      cleanupReportedTasksMs,
+    });
   }
 
   private startWorkspaceInit(workspaceId: string, projectPath: string): InitLogger {
