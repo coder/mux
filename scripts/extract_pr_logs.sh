@@ -94,7 +94,7 @@ suggest_local_command() {
   local job_name="$1"
   case "$job_name" in
     *"Static Checks"* | *"lint"* | *"typecheck"* | *"fmt"*)
-      echo "💡 Reproduce locally: make static-check"
+      echo "💡 Reproduce locally: make static-check-full"
       ;;
     *"Integration Tests"*)
       echo "💡 Reproduce locally: make test-integration"
