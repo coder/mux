@@ -102,7 +102,10 @@ export class BrowserSessionService extends EventEmitter {
 
     this.disposed = true;
     for (const [, backend] of this.activeBackends) {
-      backend.dispose();
+      // Shutdown is already in progress, so fire-and-forget is acceptable here:
+      // no observers remain, and stop() best-effort sends agent-browser close
+      // before the backend marks the session as ended.
+      void backend.stop();
     }
     this.activeBackends.clear();
     this.activeSessions.clear();
