@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
-import sharp from "sharp";
 import type {
   BrowserAction,
   BrowserSession,
@@ -18,6 +17,41 @@ const MISSING_BROWSER_BINARY_ERROR =
   "agent-browser binary not found. Install it with: bun install -g @anthropic-ai/agent-browser";
 
 type CliResult = { ok: true; data: unknown } | { ok: false; error: string };
+
+interface SharpTransformer {
+  jpeg(options: { quality: number }): { toBuffer(): Promise<Buffer> };
+}
+
+type SharpFactory = (input: Buffer) => SharpTransformer;
+
+let sharpFactoryPromise: Promise<SharpFactory | null> | null = null;
+
+function isSharpFactory(value: unknown): value is SharpFactory {
+  return typeof value === "function";
+}
+
+async function getSharpFactory(): Promise<SharpFactory | null> {
+  if (sharpFactoryPromise !== null) {
+    return await sharpFactoryPromise;
+  }
+
+  sharpFactoryPromise = (async () => {
+    try {
+      // Keep this native dependency lazy: Bun test environments import this module transitively,
+      // but should not crash during evaluation when libstdc++ is unavailable for sharp.
+      // eslint-disable-next-line no-restricted-syntax -- sharp is an optional native dependency here.
+      const sharpModule: unknown = await import("sharp");
+      const sharpCandidate =
+        isRecord(sharpModule) && "default" in sharpModule ? sharpModule.default : sharpModule;
+      assert(isSharpFactory(sharpCandidate), "sharp default export must be callable");
+      return sharpCandidate;
+    } catch {
+      return null;
+    }
+  })();
+
+  return await sharpFactoryPromise;
+}
 
 export interface BrowserSessionBackendOptions {
   workspaceId: string;
@@ -393,8 +427,17 @@ export class BrowserSessionBackend {
   }
 
   private async convertScreenshot(pngPath: string): Promise<string> {
+    assert(pngPath.trim().length > 0, "convertScreenshot requires a non-empty pngPath");
+
     try {
-      const imageBuffer = await sharp(pngPath).jpeg({ quality: 70 }).toBuffer();
+      const pngBuffer = await fs.readFile(pngPath);
+      const sharpFactory = await getSharpFactory();
+      if (sharpFactory === null) {
+        // Best-effort fallback when the optional native converter is unavailable.
+        return pngBuffer.toString("base64");
+      }
+
+      const imageBuffer = await sharpFactory(pngBuffer).jpeg({ quality: 70 }).toBuffer();
       return imageBuffer.toString("base64");
     } finally {
       await fs.unlink(pngPath).catch(() => undefined);
