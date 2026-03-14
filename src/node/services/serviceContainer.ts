@@ -559,7 +559,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     this.idleCompactionService.stop();
-    await this.browserSessionService.dispose();
+    this.browserSessionService.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
@@ -582,6 +582,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     await this.browserSessionService.dispose();
+    this.browserSessionService.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();

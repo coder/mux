@@ -1080,7 +1080,7 @@ export const router = (authToken?: string) => {
       getActive: t
         .input(schemas.browserSession.getActive.input)
         .output(schemas.browserSession.getActive.output)
-        .handler(async ({ context, input }) => {
+        .handler(({ context, input }) => {
           return context.browserSessionService.getActiveSession(input.workspaceId);
         }),
       start: t

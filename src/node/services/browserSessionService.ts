@@ -95,7 +95,7 @@ export class BrowserSessionService extends EventEmitter {
     return this.recentActions.get(workspaceId) ?? [];
   }
 
-  async dispose(): Promise<void> {
+  dispose(): void {
     if (this.disposed) {
       return;
     }
