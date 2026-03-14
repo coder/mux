@@ -38,6 +38,7 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
 } from "@/common/types/stream";
+import { BrowserSessionService } from "@/node/services/browserSessionService";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
@@ -120,6 +121,7 @@ export class ServiceContainer {
   public readonly telemetryService: TelemetryService;
   public readonly sessionTimingService: SessionTimingService;
   public readonly devToolsService: DevToolsService;
+  public readonly browserSessionService: BrowserSessionService;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
@@ -147,6 +149,7 @@ export class ServiceContainer {
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);
     this.devToolsService = new DevToolsService(config);
+    this.browserSessionService = new BrowserSessionService();
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -534,6 +537,7 @@ export class ServiceContainer {
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
       devToolsService: this.devToolsService,
+      browserSessionService: this.browserSessionService,
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
@@ -555,6 +559,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     this.idleCompactionService.stop();
+    await this.browserSessionService.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
@@ -576,6 +581,7 @@ export class ServiceContainer {
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
+    await this.browserSessionService.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();

@@ -72,6 +72,7 @@ import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
+import type { BrowserSessionEvent } from "@/common/types/browserSession";
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
@@ -1059,6 +1060,110 @@ export const router = (authToken?: string) => {
               }
 
               const event = await new Promise<DevToolsEvent | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (event == null || ended) {
+                break;
+              }
+
+              yield event;
+            }
+          } finally {
+            ended = true;
+            signal?.removeEventListener("abort", onAbort);
+            service.off(eventName, onEvent);
+          }
+        }),
+    },
+    browserSession: {
+      getActive: t
+        .input(schemas.browserSession.getActive.input)
+        .output(schemas.browserSession.getActive.output)
+        .handler(async ({ context, input }) => {
+          return context.browserSessionService.getActiveSession(input.workspaceId);
+        }),
+      start: t
+        .input(schemas.browserSession.start.input)
+        .output(schemas.browserSession.start.output)
+        .handler(async ({ context, input }) => {
+          return context.browserSessionService.startSession(input.workspaceId, {
+            ownership: input.ownership,
+            initialUrl: input.initialUrl,
+          });
+        }),
+      stop: t
+        .input(schemas.browserSession.stop.input)
+        .output(schemas.browserSession.stop.output)
+        .handler(async ({ context, input }) => {
+          await context.browserSessionService.stopSession(input.workspaceId);
+          return { success: true };
+        }),
+      subscribe: t
+        .input(schemas.browserSession.subscribe.input)
+        .output(schemas.browserSession.subscribe.output)
+        .handler(async function* ({ context, input, signal }) {
+          const service = context.browserSessionService;
+          let resolveNext: ((value: BrowserSessionEvent | null) => void) | null = null;
+          const queue: BrowserSessionEvent[] = [];
+          let ended = false;
+
+          const push = (event: BrowserSessionEvent) => {
+            if (ended) {
+              return;
+            }
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(event);
+              return;
+            }
+
+            queue.push(event);
+          };
+
+          const eventName = `update:${input.workspaceId}`;
+          const onEvent = (event: BrowserSessionEvent) => {
+            push(event);
+          };
+
+          service.on(eventName, onEvent);
+
+          const onAbort = () => {
+            if (ended) {
+              return;
+            }
+
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            const session = service.getActiveSession(input.workspaceId);
+            const recentActions = service.getRecentActions(input.workspaceId);
+            yield { type: "snapshot" as const, session, recentActions };
+
+            while (!ended) {
+              const queuedEvent = queue.shift();
+              if (queuedEvent) {
+                yield queuedEvent;
+                continue;
+              }
+
+              const event = await new Promise<BrowserSessionEvent | null>((resolve) => {
                 resolveNext = resolve;
               });
 

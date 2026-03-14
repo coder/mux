@@ -27,6 +27,7 @@ import type { SigningService } from "@/node/services/signingService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { TaskService } from "@/node/services/taskService";
+import type { BrowserSessionService } from "@/node/services/browserSessionService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { PolicyService } from "@/node/services/policyService";
 import type { CoderService } from "@/node/services/coderService";
@@ -66,6 +67,7 @@ export interface ORPCContext {
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
   devToolsService: DevToolsService;
+  browserSessionService: BrowserSessionService;
   policyService: PolicyService;
   signingService: SigningService;
   coderService: CoderService;

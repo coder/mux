@@ -57,6 +57,42 @@ async function createTestServer(authToken?: string): Promise<TestServerHandle> {
 
   // Build context
   const context: ORPCContext = services.toORPCContext();
+  const context: ORPCContext = {
+    config: services.config,
+    aiService: services.aiService,
+    projectService: services.projectService,
+    workspaceService: services.workspaceService,
+    muxGatewayOauthService: services.muxGatewayOauthService,
+    muxGovernorOauthService: services.muxGovernorOauthService,
+    codexOauthService: services.codexOauthService,
+    copilotOauthService: services.copilotOauthService,
+    taskService: services.taskService,
+    providerService: services.providerService,
+    terminalService: services.terminalService,
+    editorService: services.editorService,
+    windowService: services.windowService,
+    updateService: services.updateService,
+    tokenizerService: services.tokenizerService,
+    serverService: services.serverService,
+    workspaceMcpOverridesService: services.workspaceMcpOverridesService,
+    mcpConfigService: services.mcpConfigService,
+    mcpOauthService: services.mcpOauthService,
+    sessionTimingService: services.sessionTimingService,
+    mcpServerManager: services.mcpServerManager,
+    experimentsService: services.experimentsService,
+    menuEventService: services.menuEventService,
+    voiceService: services.voiceService,
+    devToolsService: services.devToolsService,
+    browserSessionService: services.browserSessionService,
+    policyService: services.policyService,
+    telemetryService: services.telemetryService,
+    sessionUsageService: services.sessionUsageService,
+    signingService: services.signingService,
+    coderService: services.coderService,
+    serverAuthService: services.serverAuthService,
+    sshPromptService: services.sshPromptService,
+    analyticsService: services.analyticsService,
+  };
 
   // Use the actual createOrpcServer function
   const server = await createOrpcServer({
