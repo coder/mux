@@ -1,0 +1,31 @@
+---
+title: Best of N
+description: Improve plans, analysis, and reviews by asking Mux to explore multiple candidate answers in parallel
+---
+
+Best of N is triggered when you explicitly ask for it in your prompt — for example, `best of 3`, `best of 5`, or `best of 10`.
+
+Mux interprets that as a request to launch N sibling sub-agents on the same task. The parent does brief setup, waits for the child runs, then synthesizes the strongest result.
+
+Use it when you care more about answer quality than speed. In practice it often improves:
+
+- plans
+- deep analysis
+- debugging
+- code review
+- anomaly detection in production metrics
+- hard math or proof-style work
+
+It tends to help most when the first plausible answer is often incomplete.
+
+## Good fits
+
+- **Gnarly debugging**: multiple plausible root causes, weak logs, or flaky repro steps
+- **Deep math**: different solution paths may unlock the problem
+- **Code review**: broader coverage of correctness, tests, design, and edge cases
+- **Production metrics**: several competing explanations for an anomaly
+
+<Note>
+  Start with `best of 3` or `best of 5`. Larger batches cost more and take longer, but can pay off
+  on high-stakes or unusually open-ended problems.
+</Note>
