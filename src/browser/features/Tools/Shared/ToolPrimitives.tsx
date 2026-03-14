@@ -1,5 +1,9 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
+import {
+  TranscriptIgnoreContextMenu,
+  TranscriptQuoteRoot,
+} from "@/browser/features/Messages/TranscriptQuoteBoundary";
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowDownUp,
@@ -48,11 +52,16 @@ export const ToolContainer: React.FC<ToolContainerProps> = ({ expanded, classNam
   />
 );
 
+export const ToolChrome: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
+  className,
+  ...props
+}) => <TranscriptIgnoreContextMenu className={className} {...props} />;
+
 export const ToolHeader: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   className,
   ...props
 }) => (
-  <div
+  <ToolChrome
     className={cn(
       "flex items-center gap-2 cursor-pointer select-none text-secondary hover:text-foreground",
       className
@@ -123,11 +132,16 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   </span>
 );
 
-export const ToolDetails: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
-  className,
-  ...props
-}) => (
-  <div className={cn("mt-2 pt-2 border-t border-white/5 text-foreground", className)} {...props} />
+interface ToolDetailsProps extends React.HTMLAttributes<HTMLDivElement> {
+  text?: string | null;
+}
+
+export const ToolDetails: React.FC<ToolDetailsProps> = ({ text, className, ...props }) => (
+  <TranscriptQuoteRoot
+    text={text}
+    className={cn("mt-2 pt-2 border-t border-white/5 text-foreground", className)}
+    {...props}
+  />
 );
 
 export const DetailSection: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
@@ -139,7 +153,7 @@ export const DetailLabel: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   className,
   ...props
 }) => (
-  <div
+  <ToolChrome
     className={cn("text-[10px] text-foreground-secondary mb-1 uppercase tracking-wide", className)}
     {...props}
   />

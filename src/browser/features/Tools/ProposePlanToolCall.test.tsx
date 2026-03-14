@@ -448,6 +448,55 @@ describe("ProposePlanToolCall", () => {
     expect(view.container.querySelector("pre")).toBeNull();
   });
 
+  test("exposes the plan body as an explicit transcript quote root", () => {
+    const planContent = "# My Plan\n\nDo the thing.";
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        result={{
+          success: true,
+          planPath: "~/.mux/plans/demo/ws-123.md",
+          planContent,
+        }}
+        workspaceId="ws-123"
+        isLatest={true}
+      />
+    );
+
+    const quoteRoots = Array.from(
+      view.container.querySelectorAll<HTMLElement>("[data-transcript-quote-root]")
+    );
+    expect(quoteRoots).toHaveLength(1);
+    const quoteRoot = quoteRoots.find(
+      (element) => element.getAttribute("data-transcript-quote-text") === planContent
+    );
+    expect(quoteRoot).toBeDefined();
+  });
+
+  test("keeps the plan transcript quote root in ephemeral previews", () => {
+    const planContent = "# Preview Plan\n\nShip it.";
+    const view = renderToolCall(
+      <ProposePlanToolCall
+        args={{}}
+        status="completed"
+        content={planContent}
+        path="~/.mux/plans/demo/ws-123.md"
+        workspaceId="ws-123"
+        isEphemeralPreview={true}
+      />
+    );
+
+    const quoteRoots = Array.from(
+      view.container.querySelectorAll<HTMLElement>("[data-transcript-quote-root]")
+    );
+    expect(quoteRoots).toHaveLength(1);
+    const quoteRoot = quoteRoots.find(
+      (element) => element.getAttribute("data-transcript-quote-text") === planContent
+    );
+    expect(quoteRoot).toBeDefined();
+  });
+
   test("does not toggle annotate mode with Shift+A in ephemeral previews", () => {
     const planPath = "~/.mux/plans/demo/ws-123.md";
 
