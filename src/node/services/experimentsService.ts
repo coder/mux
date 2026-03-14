@@ -1,5 +1,9 @@
 import assert from "@/common/utils/assert";
-import { EXPERIMENTS, type ExperimentId } from "@/common/constants/experiments";
+import {
+  EXPERIMENTS,
+  isExperimentSupportedOnPlatform,
+  type ExperimentId,
+} from "@/common/constants/experiments";
 import { getMuxHome } from "@/common/constants/paths";
 import type { ExperimentValue } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
@@ -48,6 +52,7 @@ export class ExperimentsService {
   private readonly muxHome: string;
   private readonly cacheFilePath: string;
   private readonly cacheTtlMs: number;
+  private readonly platform: NodeJS.Platform;
 
   private readonly cachedVariants = new Map<ExperimentId, CachedVariant>();
   private readonly overrides = new Map<ExperimentId, boolean>();
@@ -59,11 +64,17 @@ export class ExperimentsService {
     telemetryService: TelemetryService;
     muxHome?: string;
     cacheTtlMs?: number;
+    platform?: NodeJS.Platform;
   }) {
     this.telemetryService = options.telemetryService;
     this.muxHome = options.muxHome ?? getMuxHome();
     this.cacheFilePath = path.join(this.muxHome, CACHE_FILE_NAME);
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.platform = options.platform ?? process.platform;
+  }
+
+  private isExperimentSupported(experimentId: ExperimentId): boolean {
+    return isExperimentSupportedOnPlatform(experimentId, this.platform);
   }
 
   async initialize(): Promise<void> {
@@ -77,12 +88,22 @@ export class ExperimentsService {
     // Populate telemetry properties from cache immediately so variant breakdowns
     // are present even before a background refresh completes.
     for (const [experimentId, cached] of this.cachedVariants) {
+      if (!this.isExperimentSupported(experimentId)) {
+        this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), null);
+        continue;
+      }
+
       this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), cached.value);
     }
 
     // Renderer overrides must win over cached/remote assignments so server-side gates
     // and telemetry reflect the same explicit user choice on fresh launches.
     for (const [experimentId, enabled] of this.overrides) {
+      if (!this.isExperimentSupported(experimentId)) {
+        this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), null);
+        continue;
+      }
+
       this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), enabled);
     }
 
@@ -131,6 +152,13 @@ export class ExperimentsService {
       `Experiment override for ${experimentId} must be boolean | null | undefined`
     );
 
+    if (!this.isExperimentSupported(experimentId)) {
+      this.overrides.delete(experimentId);
+      this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), null);
+      await this.writeCacheToDisk();
+      return;
+    }
+
     if (enabled == null) {
       this.overrides.delete(experimentId);
       const cached = this.cachedVariants.get(experimentId);
@@ -148,6 +176,10 @@ export class ExperimentsService {
 
   getExperimentValue(experimentId: ExperimentId): ExperimentValue {
     assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
+
+    if (!this.isExperimentSupported(experimentId)) {
+      return { value: null, source: "disabled" };
+    }
 
     const override = this.overrides.get(experimentId);
     if (override !== undefined) {
@@ -212,7 +244,7 @@ export class ExperimentsService {
     await this.ensureInitialized();
     assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
 
-    if (!this.isRemoteEvaluationEnabled()) {
+    if (!this.isExperimentSupported(experimentId) || !this.isRemoteEvaluationEnabled()) {
       return;
     }
 
@@ -264,6 +296,10 @@ export class ExperimentsService {
   }
 
   private maybeRefreshInBackground(experimentId: ExperimentId): void {
+    if (!this.isExperimentSupported(experimentId)) {
+      return;
+    }
+
     const cached = this.cachedVariants.get(experimentId);
     if (!cached) {
       void this.refreshExperiment(experimentId);

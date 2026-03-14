@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Info } from "lucide-react";
 import {
   useExperiment,
   useExperimentValue,
@@ -6,7 +7,9 @@ import {
 } from "@/browser/contexts/ExperimentsContext";
 import {
   getExperimentList,
+  getExperimentPlatformRestrictionLabel,
   EXPERIMENT_IDS,
+  isExperimentSupportedOnPlatform,
   type ExperimentId,
 } from "@/common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -22,13 +25,18 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import type { ApiServerStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/Input/Input";
+import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
+
+const PORTABLE_DESKTOP_INSTALL_URL = "https://github.com/coder/portabledesktop";
 
 interface ExperimentRowProps {
   experimentId: ExperimentId;
   name: string;
   description: string;
+  disabled?: boolean;
+  availabilityMessage?: string | null;
   onToggle?: (enabled: boolean) => void;
 }
 
@@ -36,16 +44,20 @@ function ExperimentRow(props: ExperimentRowProps) {
   const [enabled, setEnabled] = useExperiment(props.experimentId);
   const remote = useRemoteExperimentValue(props.experimentId);
   const telemetry = useTelemetry();
-  const { onToggle, experimentId } = props;
+  const { availabilityMessage, disabled = false, onToggle, experimentId } = props;
 
   const handleToggle = useCallback(
     (value: boolean) => {
+      if (disabled) {
+        return;
+      }
+
       setEnabled(value);
       // Track the override for analytics
       telemetry.experimentOverridden(experimentId, remote?.value ?? null, value);
       onToggle?.(value);
     },
-    [setEnabled, telemetry, experimentId, remote?.value, onToggle]
+    [disabled, setEnabled, telemetry, experimentId, remote?.value, onToggle]
   );
 
   return (
@@ -53,12 +65,83 @@ function ExperimentRow(props: ExperimentRowProps) {
       <div className="flex-1 pr-4">
         <div className="text-foreground text-sm font-medium">{props.name}</div>
         <div className="text-muted mt-0.5 text-xs">{props.description}</div>
+        {availabilityMessage && (
+          <div className="text-muted mt-1 flex items-center gap-1 text-xs">
+            <Info aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            <span>{availabilityMessage}</span>
+          </div>
+        )}
       </div>
       <Switch
         checked={enabled}
+        disabled={disabled}
         onCheckedChange={handleToggle}
         aria-label={`Toggle ${props.name}`}
+        title={availabilityMessage ?? undefined}
       />
+    </div>
+  );
+}
+
+function PortableDesktopExperimentWarning() {
+  const enabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
+  const { api } = useAPI();
+  const { selectedWorkspace } = useWorkspaceActions();
+  const [isBinaryMissing, setIsBinaryMissing] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !api || !selectedWorkspace?.workspaceId) {
+      setIsBinaryMissing(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsBinaryMissing(false);
+
+    void api.desktop
+      .getCapability({ workspaceId: selectedWorkspace.workspaceId })
+      .then((capability) => {
+        if (cancelled) {
+          return;
+        }
+
+        setIsBinaryMissing(!capability.available && capability.reason === "binary_not_found");
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+
+        setIsBinaryMissing(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, enabled, selectedWorkspace?.workspaceId]);
+
+  if (!enabled || !isBinaryMissing) {
+    return null;
+  }
+
+  return (
+    <div className="pb-3">
+      <div className="bg-warning/10 border-warning/30 text-warning flex items-start gap-2 rounded-md border px-3 py-2 text-xs">
+        <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          The <code className="font-mono">portabledesktop</code> binary was not found in PATH, so
+          Portable Desktop is currently disabled. Install it from{" "}
+          <a
+            href={PORTABLE_DESKTOP_INSTALL_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:no-underline"
+          >
+            {PORTABLE_DESKTOP_INSTALL_URL}
+          </a>{" "}
+          to enable this feature.
+        </span>
+      </div>
     </div>
   );
 }
@@ -479,21 +562,31 @@ export function ExperimentsSection() {
         Experimental features that are still in development. Enable at your own risk.
       </p>
       <div className="divide-border-light divide-y">
-        {experiments.map((exp) => (
-          <React.Fragment key={exp.id}>
-            <ExperimentRow
-              experimentId={exp.id}
-              name={exp.name}
-              description={exp.description}
-              onToggle={
-                exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL
-                  ? handleConfigurableBindUrlToggle
-                  : undefined
-              }
-            />
-            {exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL && <ConfigurableBindUrlControls />}
-          </React.Fragment>
-        ))}
+        {experiments.map((exp) => {
+          const isSupported = isExperimentSupportedOnPlatform(exp, window.api?.platform);
+          const availabilityMessage = isSupported
+            ? null
+            : getExperimentPlatformRestrictionLabel(exp);
+
+          return (
+            <React.Fragment key={exp.id}>
+              <ExperimentRow
+                experimentId={exp.id}
+                name={exp.name}
+                description={exp.description}
+                disabled={!isSupported}
+                availabilityMessage={availabilityMessage}
+                onToggle={
+                  exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL
+                    ? handleConfigurableBindUrlToggle
+                    : undefined
+                }
+              />
+              {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}
+              {exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL && <ConfigurableBindUrlControls />}
+            </React.Fragment>
+          );
+        })}
       </div>
       {experiments.length === 0 && (
         <p className="text-muted py-4 text-center text-sm">

@@ -12,6 +12,7 @@ import {
   EXPERIMENTS,
   getExperimentKey,
   getExperimentList,
+  isExperimentSupportedOnPlatform,
 } from "@/common/constants/experiments";
 import { getStorageChangeEvent } from "@/common/constants/events";
 import type { ExperimentValue } from "@/common/orpc/types";
@@ -35,6 +36,14 @@ function subscribeToExperiment(experimentId: ExperimentId, callback: () => void)
     window.removeEventListener("storage", handleChange);
     window.removeEventListener(storageChangeEvent, handleChange);
   };
+}
+
+function getCurrentDesktopPlatform(): NodeJS.Platform | undefined {
+  return window.api?.platform;
+}
+
+function isExperimentSupported(experimentId: ExperimentId): boolean {
+  return isExperimentSupportedOnPlatform(experimentId, getCurrentDesktopPlatform());
 }
 
 /**
@@ -65,6 +74,10 @@ function getExperimentOverrideSnapshot(experimentId: ExperimentId): boolean | un
  */
 function getExperimentSnapshot(experimentId: ExperimentId): boolean {
   const experiment = EXPERIMENTS[experimentId];
+  if (!isExperimentSupported(experimentId)) {
+    return false;
+  }
+
   return getExperimentOverrideSnapshot(experimentId) ?? experiment.enabledByDefault;
 }
 
@@ -80,7 +93,7 @@ function getExplicitLocalExperimentOverrides(): Partial<Record<ExperimentId, boo
   const overrides: Partial<Record<ExperimentId, boolean>> = {};
 
   for (const experimentId of Object.keys(EXPERIMENTS) as ExperimentId[]) {
-    if (!EXPERIMENTS[experimentId].userOverridable) {
+    if (!EXPERIMENTS[experimentId].userOverridable || !isExperimentSupported(experimentId)) {
       continue;
     }
 
@@ -132,6 +145,10 @@ function getRemoteExperimentsPollDelayMs(attempt: number): number {
  * Set experiment state to localStorage and dispatch sync event.
  */
 function setExperimentState(experimentId: ExperimentId, enabled: boolean): void {
+  if (!isExperimentSupported(experimentId)) {
+    return;
+  }
+
   const key = getExperimentKey(experimentId);
 
   try {
@@ -204,7 +221,8 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
         apiState.status !== "connected" ||
         !apiState.api ||
         enabled === undefined ||
-        !EXPERIMENTS[experimentId].userOverridable
+        !EXPERIMENTS[experimentId].userOverridable ||
+        !isExperimentSupported(experimentId)
       ) {
         return;
       }
@@ -338,6 +356,7 @@ export function ExperimentsProvider(props: { children: React.ReactNode }) {
  */
 export function useExperimentValue(experimentId: ExperimentId): boolean {
   const experiment = EXPERIMENTS[experimentId];
+  const isSupported = isExperimentSupported(experimentId);
   const subscribe = useCallback(
     (callback: () => void) => subscribeToExperiment(experimentId, callback),
     [experimentId]
@@ -349,6 +368,10 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
 
   const context = useContext(ExperimentsContext);
   const remote = context?.remoteExperiments?.[experimentId];
+
+  if (!isSupported) {
+    return false;
+  }
 
   // User-overridable: local wins if explicitly set
   if (experiment.userOverridable && hasLocalOverride(experimentId)) {
@@ -372,6 +395,7 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
  * the PostHog assignment instead of treating the default value as a user choice.
  */
 export function useExperimentOverrideValue(experimentId: ExperimentId): boolean | undefined {
+  const isSupported = isExperimentSupported(experimentId);
   const subscribe = useCallback(
     (callback: () => void) => subscribeToExperiment(experimentId, callback),
     [experimentId]
@@ -382,7 +406,12 @@ export function useExperimentOverrideValue(experimentId: ExperimentId): boolean 
     [experimentId]
   );
 
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const override = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  if (!isSupported) {
+    return undefined;
+  }
+
+  return override;
 }
 
 /**
@@ -446,6 +475,11 @@ export function useAllExperiments(): Record<ExperimentId, boolean> {
     const result: Partial<Record<ExperimentId, boolean>> = {};
 
     for (const exp of experiments) {
+      if (!isExperimentSupported(exp.id)) {
+        result[exp.id] = false;
+        continue;
+      }
+
       const localValue = getExperimentSnapshot(exp.id);
       const remote = remoteExperiments?.[exp.id];
 

@@ -66,10 +66,11 @@ Body
 
   test("parses ui.requires", () => {
     const content = `---
-name: Requires Plan
+name: Requires Capabilities
 ui:
   requires:
     - plan
+    - desktop
 ---
 Body
 `;
@@ -79,7 +80,7 @@ Body
       byteSize: Buffer.byteLength(content, "utf-8"),
     });
 
-    expect(result.frontmatter.ui?.requires).toEqual(["plan"]);
+    expect(result.frontmatter.ui?.requires).toEqual(["plan", "desktop"]);
   });
 
   test("parses subagent.skip_init_hook", () => {

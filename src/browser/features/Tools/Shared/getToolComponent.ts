@@ -11,6 +11,8 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { AnalyticsQueryToolCall } from "../analyticsQuery/AnalyticsQueryToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { BashToolCall } from "../BashToolCall";
+import { DesktopActionToolCall } from "../DesktopActionToolCall";
+import { DesktopScreenshotToolCall } from "../DesktopScreenshotToolCall";
 import { FileEditToolCall } from "../FileEditToolCall";
 import { AgentSkillReadToolCall } from "../AgentSkillReadToolCall";
 import { AgentSkillReadFileToolCall } from "../AgentSkillReadFileToolCall";
@@ -63,6 +65,32 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
   file_read: { component: FileReadToolCall, schema: TOOL_DEFINITIONS.file_read.schema },
   attach_file: { component: GenericToolCall, schema: TOOL_DEFINITIONS.attach_file.schema },
+  desktop_screenshot: {
+    component: DesktopScreenshotToolCall,
+    schema: TOOL_DEFINITIONS.desktop_screenshot.schema,
+  },
+  desktop_move_mouse: {
+    component: DesktopActionToolCall,
+    schema: TOOL_DEFINITIONS.desktop_move_mouse.schema,
+  },
+  desktop_click: {
+    component: DesktopActionToolCall,
+    schema: TOOL_DEFINITIONS.desktop_click.schema,
+  },
+  desktop_double_click: {
+    component: DesktopActionToolCall,
+    schema: TOOL_DEFINITIONS.desktop_double_click.schema,
+  },
+  desktop_drag: { component: DesktopActionToolCall, schema: TOOL_DEFINITIONS.desktop_drag.schema },
+  desktop_scroll: {
+    component: DesktopActionToolCall,
+    schema: TOOL_DEFINITIONS.desktop_scroll.schema,
+  },
+  desktop_type: { component: DesktopActionToolCall, schema: TOOL_DEFINITIONS.desktop_type.schema },
+  desktop_key_press: {
+    component: DesktopActionToolCall,
+    schema: TOOL_DEFINITIONS.desktop_key_press.schema,
+  },
   agent_skill_read: {
     component: AgentSkillReadToolCall,
     schema: TOOL_DEFINITIONS.agent_skill_read.schema,

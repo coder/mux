@@ -58,6 +58,9 @@ import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
 import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
+import { DesktopBridgeServer } from "@/node/services/desktop/DesktopBridgeServer";
+import { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
+import { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 
@@ -123,6 +126,9 @@ export class ServiceContainer {
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   public readonly serverAuthService: ServerAuthService;
+  public readonly desktopSessionManager: DesktopSessionManager;
+  public readonly desktopTokenManager: DesktopTokenManager;
+  public readonly desktopBridgeServer: DesktopBridgeServer;
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
@@ -184,6 +190,17 @@ export class ServiceContainer {
 
     this.projectService = new ProjectService(config, this.sshPromptService);
     this.projectService.setWorkspaceService(this.workspaceService);
+    this.desktopSessionManager = new DesktopSessionManager({
+      config,
+      experimentsService: this.experimentsService,
+      workspaceService: this.workspaceService,
+    });
+    this.aiService.setDesktopSessionManager(this.desktopSessionManager);
+    this.desktopTokenManager = new DesktopTokenManager();
+    this.desktopBridgeServer = new DesktopBridgeServer({
+      desktopSessionManager: this.desktopSessionManager,
+      desktopTokenManager: this.desktopTokenManager,
+    });
 
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
@@ -523,6 +540,9 @@ export class ServiceContainer {
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
       analyticsService: this.analyticsService,
+      desktopSessionManager: this.desktopSessionManager,
+      desktopTokenManager: this.desktopTokenManager,
+      desktopBridgeServer: this.desktopBridgeServer,
     };
   }
 
@@ -530,6 +550,10 @@ export class ServiceContainer {
    * Shutdown services that need cleanup
    */
   async shutdown(): Promise<void> {
+    // Stop the bridge before closing sessions so desktop clients get a clean disconnect.
+    await this.desktopBridgeServer.stop();
+    this.desktopTokenManager.dispose();
+    await this.desktopSessionManager.closeAll();
     this.idleCompactionService.stop();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
@@ -548,6 +572,10 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    // Stop the bridge before closing sessions so desktop clients get a clean disconnect.
+    await this.desktopBridgeServer.stop();
+    this.desktopTokenManager.dispose();
+    await this.desktopSessionManager.closeAll();
     await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();

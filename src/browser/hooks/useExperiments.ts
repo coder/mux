@@ -1,5 +1,10 @@
 import { readPersistedState } from "./usePersistedState";
-import { type ExperimentId, EXPERIMENTS, getExperimentKey } from "@/common/constants/experiments";
+import {
+  type ExperimentId,
+  EXPERIMENTS,
+  getExperimentKey,
+  isExperimentSupportedOnPlatform,
+} from "@/common/constants/experiments";
 
 // Re-export reactive hooks from context for convenience
 export {
@@ -27,6 +32,10 @@ export {
  */
 export function isExperimentEnabled(experimentId: ExperimentId): boolean | undefined {
   const experiment = EXPERIMENTS[experimentId];
+  if (!isExperimentSupportedOnPlatform(experimentId, window.api?.platform)) {
+    return false;
+  }
+
   const key = getExperimentKey(experimentId);
 
   // For user-overridable experiments: only return a value if user explicitly set one.

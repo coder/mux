@@ -2111,6 +2111,40 @@ export const debug = {
   },
 };
 
+const DesktopCapabilitySchema = z.discriminatedUnion("available", [
+  z.object({
+    available: z.literal(true),
+    width: z.number(),
+    height: z.number(),
+    sessionId: z.string(),
+  }),
+  z.object({
+    available: z.literal(false),
+    reason: z.enum([
+      "disabled",
+      "unsupported_platform",
+      "unsupported_runtime",
+      "startup_failed",
+      "binary_not_found",
+    ]),
+  }),
+]);
+
+export const desktop = {
+  getCapability: {
+    input: z.object({ workspaceId: z.string() }),
+    output: DesktopCapabilitySchema,
+  },
+  getBootstrap: {
+    input: z.object({ workspaceId: z.string() }),
+    output: z.object({
+      capability: DesktopCapabilitySchema,
+      bridgePort: z.number().int().positive().optional(),
+      token: z.string().optional(),
+    }),
+  },
+};
+
 export const ssh = {
   prompt: {
     subscribe: {

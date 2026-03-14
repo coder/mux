@@ -13,6 +13,7 @@ export const EXPERIMENT_IDS = {
   EXEC_SUBAGENT_HARD_RESTART: "exec-subagent-hard-restart",
   MUX_GOVERNOR: "mux-governor",
   MULTI_PROJECT_WORKSPACES: "multi-project-workspaces",
+  PORTABLE_DESKTOP: "portable-desktop",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -28,6 +29,11 @@ export interface ExperimentDefinition {
    * When false (default), remote assignment is authoritative.
    */
   userOverridable?: boolean;
+  /**
+   * When set, the experiment is only toggleable on these platforms. On other platforms it
+   * appears disabled with a message.
+   */
+  platformRestriction?: NodeJS.Platform[];
   /**
    * When false, experiment is hidden from Settings → Experiments.
    * Defaults to true. Use false for invisible A/B tests.
@@ -98,7 +104,65 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     // Keep this visible so users can opt into the still-default-off experiment from Settings.
     showInSettings: true,
   },
+  [EXPERIMENT_IDS.PORTABLE_DESKTOP]: {
+    id: EXPERIMENT_IDS.PORTABLE_DESKTOP,
+    name: "Portable Desktop",
+    description: "Enable virtual desktop sessions for GUI-based agent interactions",
+    enabledByDefault: false,
+    userOverridable: true,
+    platformRestriction: ["linux"],
+    showInSettings: true,
+  },
 };
+
+function getPlatformDisplayName(platform: NodeJS.Platform): string {
+  switch (platform) {
+    case "darwin":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    case "win32":
+      return "Windows";
+    default:
+      return platform;
+  }
+}
+
+export function isExperimentSupportedOnPlatform(
+  experiment: ExperimentDefinition | ExperimentId,
+  platform: NodeJS.Platform | null | undefined
+): boolean {
+  const definition = typeof experiment === "string" ? EXPERIMENTS[experiment] : experiment;
+
+  if (!definition.platformRestriction?.length || platform == null) {
+    return true;
+  }
+
+  return definition.platformRestriction.includes(platform);
+}
+
+export function getExperimentPlatformRestrictionLabel(
+  experiment: ExperimentDefinition | ExperimentId
+): string | null {
+  const definition = typeof experiment === "string" ? EXPERIMENTS[experiment] : experiment;
+  const platforms = definition.platformRestriction;
+
+  if (!platforms?.length) {
+    return null;
+  }
+
+  const platformLabels = platforms.map(getPlatformDisplayName);
+  if (platformLabels.length === 1) {
+    return `Only available on ${platformLabels[0]}`;
+  }
+
+  if (platformLabels.length === 2) {
+    return `Only available on ${platformLabels[0]} and ${platformLabels[1]}`;
+  }
+
+  const lastPlatform = platformLabels[platformLabels.length - 1];
+  return `Only available on ${platformLabels.slice(0, -1).join(", ")}, and ${lastPlatform}`;
+}
 
 /**
  * Get localStorage key for an experiment.

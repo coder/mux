@@ -865,6 +865,103 @@ export const TOOL_DEFINITIONS = {
         .strict()
     ),
   },
+  desktop_screenshot: {
+    description:
+      "Capture a screenshot of the desktop. " +
+      "Optionally accepts scaledWidth and scaledHeight hints for downstream consumers while still capturing at the desktop's actual resolution.",
+    schema: z
+      .object({
+        scaledWidth: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("Optional scaled width hint in pixels for downstream consumers."),
+        scaledHeight: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("Optional scaled height hint in pixels for downstream consumers."),
+      })
+      .strict(),
+  },
+  desktop_move_mouse: {
+    description: "Move the desktop mouse cursor to the provided screen coordinates.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+      })
+      .strict(),
+  },
+  desktop_click: {
+    description:
+      "Click on the desktop at the provided screen coordinates. Defaults to the left mouse button when button is omitted.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+        button: z
+          .enum(["left", "right"])
+          .nullish()
+          .describe("Optional mouse button to click. Defaults to left."),
+      })
+      .strict(),
+  },
+  desktop_double_click: {
+    description:
+      "Double-click on the desktop at the provided screen coordinates. Defaults to the left mouse button when button is omitted.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+        button: z
+          .enum(["left"])
+          .nullish()
+          .describe("Optional mouse button to double-click. Defaults to left."),
+      })
+      .strict(),
+  },
+  desktop_drag: {
+    description: "Drag on the desktop from one screen position to another.",
+    schema: z
+      .object({
+        startX: z.number().int().describe("Starting X coordinate in screen pixels."),
+        startY: z.number().int().describe("Starting Y coordinate in screen pixels."),
+        endX: z.number().int().describe("Ending X coordinate in screen pixels."),
+        endY: z.number().int().describe("Ending Y coordinate in screen pixels."),
+      })
+      .strict(),
+  },
+  desktop_scroll: {
+    description: "Scroll on the desktop at the provided screen coordinates.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+        deltaX: z.number().int().nullish().describe("Optional horizontal scroll delta in pixels."),
+        deltaY: z.number().int().describe("Vertical scroll delta in pixels."),
+      })
+      .strict(),
+  },
+  desktop_type: {
+    description: "Type text into the active desktop input target.",
+    schema: z
+      .object({
+        text: z.string().describe("Text to type into the active desktop target."),
+      })
+      .strict(),
+  },
+  desktop_key_press: {
+    description:
+      'Press a desktop key or key combination such as "ctrl+c", "Return", or "cmd+shift+p".',
+    schema: z
+      .object({
+        key: z.string().describe("Key or key combination to press on the desktop."),
+      })
+      .strict(),
+  },
   mux_agents_read: {
     description:
       "Read the AGENTS.md instructions file. In a project workspace, reads the project's AGENTS.md. " +
@@ -1915,6 +2012,14 @@ export function getAvailableTools(
     "mux_config_write",
     "file_read",
     "attach_file",
+    "desktop_screenshot",
+    "desktop_move_mouse",
+    "desktop_click",
+    "desktop_double_click",
+    "desktop_drag",
+    "desktop_scroll",
+    "desktop_type",
+    "desktop_key_press",
     "agent_skill_read",
     "agent_skill_read_file",
     "file_edit_replace_string",

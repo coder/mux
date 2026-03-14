@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { AgentReportToolCall } from "../AgentReportToolCall";
 import { AgentSkillReadFileToolCall } from "../AgentSkillReadFileToolCall";
 import { AgentSkillReadToolCall } from "../AgentSkillReadToolCall";
+import { DesktopActionToolCall } from "../DesktopActionToolCall";
+import { DesktopScreenshotToolCall } from "../DesktopScreenshotToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { getToolComponent } from "./getToolComponent";
 
@@ -23,6 +25,16 @@ describe("getToolComponent", () => {
       filePath: "references/README.md",
     });
     expect(component).toBe(AgentSkillReadFileToolCall);
+  });
+
+  test("returns DesktopScreenshotToolCall for desktop_screenshot", () => {
+    const component = getToolComponent("desktop_screenshot", { scaledWidth: 640 });
+    expect(component).toBe(DesktopScreenshotToolCall);
+  });
+
+  test("returns DesktopActionToolCall for desktop_click", () => {
+    const component = getToolComponent("desktop_click", { x: 12, y: 34 });
+    expect(component).toBe(DesktopActionToolCall);
   });
 
   test("falls back to GenericToolCall when args validation fails", () => {

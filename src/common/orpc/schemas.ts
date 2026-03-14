@@ -215,6 +215,7 @@ export {
   devtools,
   uiLayouts,
   debug,
+  desktop,
   general,
   menu,
   agentSkills,

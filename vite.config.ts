@@ -5,6 +5,7 @@ import svgr from "vite-plugin-svgr";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import { novncCompatPlugin } from "./src/vite/novncCompatPlugin";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const disableMermaid = process.env.VITE_DISABLE_MERMAID === "1";
@@ -98,6 +99,7 @@ const basePlugins = [
     },
   }),
   tailwindcss(),
+  novncCompatPlugin(),
 ];
 
 export default defineConfig(({ mode }) => {
@@ -110,7 +112,6 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    // This prevents mermaid initialization errors in production while allowing dev to work
     plugins: mode === "development" ? [...basePlugins, topLevelAwait()] : basePlugins,
     resolve: {
       alias: aliasMap,
@@ -224,9 +225,9 @@ export default defineConfig(({ mode }) => {
       allowedHosts: ["localhost", "127.0.0.1"],
     },
     optimizeDeps: {
-      esbuildOptions: {
-        target: "esnext",
-      },
+      // noVNC ships Babel-style CJS plus top-level await in lib/, which breaks esbuild
+      // pre-bundling. Keep it excluded so novncCompatPlugin can rewrite it on demand.
+      exclude: ["@novnc/novnc"],
 
       // Limit dependency pre-bundling scans to the renderer entrypoints.
       // Scanning all of src/ includes backend-only code (src/node, src/cli), which can

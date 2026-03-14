@@ -15,6 +15,7 @@ import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/t
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
+import { createDesktopTools } from "@/node/services/tools/desktopTools";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
@@ -47,6 +48,7 @@ import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer"
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { TaskService } from "@/node/services/taskService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
@@ -117,6 +119,8 @@ export interface ToolConfiguration {
   analyticsService?: {
     executeRawQuery(sql: string): Promise<unknown>;
   };
+  /** Desktop session manager for desktop automation tools */
+  desktopSessionManager?: DesktopSessionManager;
 }
 
 /**
@@ -264,6 +268,27 @@ function wrapToolsWithHooks(
   return wrappedTools;
 }
 
+async function getDesktopTools(config: ToolConfiguration): Promise<Record<string, Tool>> {
+  if (config.desktopSessionManager == null || config.workspaceId == null) {
+    return {};
+  }
+
+  try {
+    const capability = await config.desktopSessionManager.getCapability(config.workspaceId);
+    if (!capability.available) {
+      return {};
+    }
+
+    return createDesktopTools(config, config.desktopSessionManager);
+  } catch (error) {
+    log.warn("[getToolsForModel] failed to resolve desktop tool capability", {
+      error,
+      workspaceId: config.workspaceId,
+    });
+    return {};
+  }
+}
+
 /**
  * Get tools available for a specific model with configuration
  *
@@ -377,10 +402,13 @@ export async function getToolsForModel(
       : {}),
   };
 
+  const desktopTools = await getDesktopTools(config);
+
   // Base tools available for all models
   const baseTools: Record<string, Tool> = {
     ...runtimeTools,
     ...nonRuntimeTools,
+    ...desktopTools,
   };
 
   // Try to add provider-specific web search tools if available

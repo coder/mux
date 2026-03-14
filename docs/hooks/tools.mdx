@@ -364,6 +364,90 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>desktop_click (3)</summary>
+
+| Env var                 | JSON path | Type   | Description                                       |
+| ----------------------- | --------- | ------ | ------------------------------------------------- |
+| `MUX_TOOL_INPUT_BUTTON` | `button`  | enum   | Optional mouse button to click. Defaults to left. |
+| `MUX_TOOL_INPUT_X`      | `x`       | number | Target X coordinate in screen pixels.             |
+| `MUX_TOOL_INPUT_Y`      | `y`       | number | Target Y coordinate in screen pixels.             |
+
+</details>
+
+<details>
+<summary>desktop_double_click (3)</summary>
+
+| Env var                 | JSON path | Type   | Description                                              |
+| ----------------------- | --------- | ------ | -------------------------------------------------------- |
+| `MUX_TOOL_INPUT_BUTTON` | `button`  | enum   | Optional mouse button to double-click. Defaults to left. |
+| `MUX_TOOL_INPUT_X`      | `x`       | number | Target X coordinate in screen pixels.                    |
+| `MUX_TOOL_INPUT_Y`      | `y`       | number | Target Y coordinate in screen pixels.                    |
+
+</details>
+
+<details>
+<summary>desktop_drag (4)</summary>
+
+| Env var                  | JSON path | Type   | Description                             |
+| ------------------------ | --------- | ------ | --------------------------------------- |
+| `MUX_TOOL_INPUT_END_X`   | `endX`    | number | Ending X coordinate in screen pixels.   |
+| `MUX_TOOL_INPUT_END_Y`   | `endY`    | number | Ending Y coordinate in screen pixels.   |
+| `MUX_TOOL_INPUT_START_X` | `startX`  | number | Starting X coordinate in screen pixels. |
+| `MUX_TOOL_INPUT_START_Y` | `startY`  | number | Starting Y coordinate in screen pixels. |
+
+</details>
+
+<details>
+<summary>desktop_key_press (1)</summary>
+
+| Env var              | JSON path | Type   | Description                                     |
+| -------------------- | --------- | ------ | ----------------------------------------------- |
+| `MUX_TOOL_INPUT_KEY` | `key`     | string | Key or key combination to press on the desktop. |
+
+</details>
+
+<details>
+<summary>desktop_move_mouse (2)</summary>
+
+| Env var            | JSON path | Type   | Description                           |
+| ------------------ | --------- | ------ | ------------------------------------- |
+| `MUX_TOOL_INPUT_X` | `x`       | number | Target X coordinate in screen pixels. |
+| `MUX_TOOL_INPUT_Y` | `y`       | number | Target Y coordinate in screen pixels. |
+
+</details>
+
+<details>
+<summary>desktop_screenshot (2)</summary>
+
+| Env var                        | JSON path      | Type   | Description                                                     |
+| ------------------------------ | -------------- | ------ | --------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_SCALED_HEIGHT` | `scaledHeight` | number | Optional scaled height hint in pixels for downstream consumers. |
+| `MUX_TOOL_INPUT_SCALED_WIDTH`  | `scaledWidth`  | number | Optional scaled width hint in pixels for downstream consumers.  |
+
+</details>
+
+<details>
+<summary>desktop_scroll (4)</summary>
+
+| Env var                  | JSON path | Type   | Description                                 |
+| ------------------------ | --------- | ------ | ------------------------------------------- |
+| `MUX_TOOL_INPUT_DELTA_X` | `deltaX`  | number | Optional horizontal scroll delta in pixels. |
+| `MUX_TOOL_INPUT_DELTA_Y` | `deltaY`  | number | Vertical scroll delta in pixels.            |
+| `MUX_TOOL_INPUT_X`       | `x`       | number | Target X coordinate in screen pixels.       |
+| `MUX_TOOL_INPUT_Y`       | `y`       | number | Target Y coordinate in screen pixels.       |
+
+</details>
+
+<details>
+<summary>desktop_type (1)</summary>
+
+| Env var               | JSON path | Type   | Description                                  |
+| --------------------- | --------- | ------ | -------------------------------------------- |
+| `MUX_TOOL_INPUT_TEXT` | `text`    | string | Text to type into the active desktop target. |
+
+</details>
+
+<details>
 <summary>file_edit_insert (4)</summary>
 
 | Env var                        | JSON path       | Type   | Description                                                                             |

@@ -80,6 +80,7 @@ Delegation guide:
   - Good fit: multi-file refactors, cross-module behavior changes, unfamiliar subsystems, or work where sequencing/dependencies need discovery.
   - Plan subtasks automatically hand off to implementation after a successful `propose_plan`; expect the usual task completion output once implementation finishes.
   - For `plan` briefs, prioritize goal + constraints + acceptance criteria over file-by-file diff instructions.
+- Use `desktop` for GUI-heavy desktop automation that requires repeated screenshot → act → verify loops (for example, interacting with application windows, clicking through UI flows, or visual verification). The desktop agent enforces a grounding discipline that keeps visual context local.
 
 Recommended Orchestrator → Exec task brief template:
 

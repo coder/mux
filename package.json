@@ -66,6 +66,7 @@
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.31.0",
     "@lydell/node-pty": "1.1.0",
     "@mozilla/readability": "^0.6.0",
+    "@novnc/novnc": "^1.6.0",
     "@openrouter/ai-sdk-provider": "^2.1.1",
     "@orpc/client": "^1.11.3",
     "@orpc/openapi": "^1.12.2",

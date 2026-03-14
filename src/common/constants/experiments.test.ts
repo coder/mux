@@ -21,4 +21,12 @@ describe("experiments registry", () => {
 
     expect(experiment.showInSettings !== false && experiment.userOverridable === true).toBe(true);
   });
+
+  test("keeps portable desktop visible in Settings while remaining opt-in", () => {
+    const experiment = EXPERIMENTS[EXPERIMENT_IDS.PORTABLE_DESKTOP];
+
+    expect(experiment.enabledByDefault).toBe(false);
+    expect(experiment.userOverridable).toBe(true);
+    expect(experiment.showInSettings).toBe(true);
+  });
 });

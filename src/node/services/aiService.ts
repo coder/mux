@@ -54,6 +54,7 @@ import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
+import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
@@ -242,6 +243,7 @@ export class AIService extends EventEmitter {
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
   private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
+  private desktopSessionManager?: DesktopSessionManager;
 
   constructor(
     config: Config,
@@ -309,6 +311,10 @@ export class AIService extends EventEmitter {
 
   setAnalyticsService(service: { executeRawQuery(sql: string): Promise<unknown> }): void {
     this.analyticsService = service;
+  }
+
+  setDesktopSessionManager(desktopSessionManager: DesktopSessionManager): void {
+    this.desktopSessionManager = desktopSessionManager;
   }
 
   getProvidersConfig(): ProvidersConfigMap | null {
@@ -987,6 +993,18 @@ export class AIService extends EventEmitter {
                 runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
             };
 
+      const desktopSessionManager = this.desktopSessionManager;
+      let desktopCapabilityPromise: ReturnType<DesktopSessionManager["getCapability"]> | undefined;
+      const loadDesktopCapability =
+        desktopSessionManager == null
+          ? undefined
+          : () => {
+              // Reuse the same capability probe for every desktop-gated agent discovered during
+              // this request so discovery cannot trigger one desktop startup attempt per agent.
+              desktopCapabilityPromise ??= desktopSessionManager.getCapability(workspaceId);
+              return desktopCapabilityPromise;
+            };
+
       // Build agent system prompt, system message, and discover agents/skills.
       const streamSystemContext = await buildStreamSystemContext({
         runtime,
@@ -1003,6 +1021,7 @@ export class AIService extends EventEmitter {
         providersConfig: this.providerService.getConfig(),
         mcpServers,
         muxScope,
+        loadDesktopCapability,
       });
       const { agentSystemPrompt, agentDefinitions, availableSkills, ancestorPlanFilePaths } =
         streamSystemContext;
@@ -1124,6 +1143,7 @@ export class AIService extends EventEmitter {
           onConfigChanged: () => this.providerService.notifyConfigChanged(),
           taskService: this.taskService,
           analyticsService: this.analyticsService,
+          desktopSessionManager: this.desktopSessionManager,
           // PTC experiments for inheritance to subagents
           experiments,
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)

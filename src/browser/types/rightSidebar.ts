@@ -3,6 +3,7 @@ export const RIGHT_SIDEBAR_TABS = [
   "review",
   "terminal",
   "explorer",
+  "desktop",
   // "stats" removed — absorbed into "costs" as sub-tabs
   "output",
   "debug",

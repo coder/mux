@@ -11,6 +11,7 @@
  */
 
 import type { TabType } from "@/browser/types/rightSidebar";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { formatDuration } from "@/common/utils/formatDuration";
 import type { ReviewNoteData } from "@/common/types/review";
 
@@ -79,29 +80,36 @@ export interface TabConfig {
 }
 
 /** Static tab configurations (non-terminal tabs) */
-export const TAB_CONFIGS: Record<"costs" | "review" | "explorer" | "output" | "debug", TabConfig> =
-  {
-    costs: {
-      name: "Stats", // Renamed from "Costs" — now hosts Cost/Timing/Models sub-tabs
-      contentClassName: "overflow-y-auto p-[15px]",
-    },
-    review: {
-      name: "Review",
-      contentClassName: "overflow-y-auto p-0",
-    },
-    explorer: {
-      name: "Explorer",
-      contentClassName: "overflow-y-auto p-0",
-    },
-    output: {
-      name: "Output",
-      contentClassName: "overflow-hidden p-0",
-    },
-    debug: {
-      name: "Debug",
-      contentClassName: "overflow-y-auto p-0",
-    },
-  };
+export const TAB_CONFIGS: Record<
+  "costs" | "review" | "explorer" | "desktop" | "output" | "debug",
+  TabConfig
+> = {
+  costs: {
+    name: "Stats", // Renamed from "Costs" — now hosts Cost/Timing/Models sub-tabs
+    contentClassName: "overflow-y-auto p-[15px]",
+  },
+  review: {
+    name: "Review",
+    contentClassName: "overflow-y-auto p-0",
+  },
+  explorer: {
+    name: "Explorer",
+    contentClassName: "overflow-y-auto p-0",
+  },
+  desktop: {
+    name: "Desktop",
+    contentClassName: "overflow-hidden p-0",
+    featureFlag: EXPERIMENT_IDS.PORTABLE_DESKTOP,
+  },
+  output: {
+    name: "Output",
+    contentClassName: "overflow-hidden p-0",
+  },
+  debug: {
+    name: "Debug",
+    contentClassName: "overflow-y-auto p-0",
+  },
+};
 
 /** Terminal tab configuration */
 export const TERMINAL_TAB_CONFIG: TabConfig = {
@@ -123,6 +131,7 @@ export function getTabConfig(tab: TabType): TabConfig {
     tab === "costs" ||
     tab === "review" ||
     tab === "explorer" ||
+    tab === "desktop" ||
     tab === "output" ||
     tab === "debug"
   ) {

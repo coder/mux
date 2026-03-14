@@ -1566,6 +1566,102 @@ describe("createOrpcServer", () => {
     await runCase(true);
   });
 
+  test("agents.list gates desktop-only agents with one capability probe", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mux-agents-list-desktop-"));
+    const projectPath = path.join(tempRoot, "project");
+    const agentsRoot = path.join(projectPath, ".mux", "agents");
+    const config = new Config(tempRoot);
+    const metadata = {
+      id: "workspace-1",
+      name: "desktop-workspace",
+      projectName: "project",
+      projectPath,
+      runtimeConfig: { type: "local" as const },
+    };
+
+    await fs.mkdir(agentsRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(agentsRoot, "desktop-one.md"),
+      `---\nname: Desktop One\nui:\n  requires:\n    - desktop\n---\nBody\n`,
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(agentsRoot, "desktop-two.md"),
+      `---\nname: Desktop Two\nui:\n  requires:\n    - desktop\n---\nBody\n`,
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(agentsRoot, "plain.md"),
+      `---\nname: Plain Agent\n---\nBody\n`,
+      "utf-8"
+    );
+
+    async function runCase(available: boolean): Promise<void> {
+      const waitForInit = mock(() => Promise.resolve(undefined));
+      const getWorkspaceMetadata = mock(() =>
+        Promise.resolve({ success: true as const, data: metadata })
+      );
+      const getCapability = mock(() =>
+        Promise.resolve(
+          available
+            ? {
+                available: true as const,
+                width: 1440,
+                height: 900,
+                sessionId: `desktop:${metadata.id}`,
+              }
+            : {
+                available: false as const,
+                reason: "unsupported_runtime" as const,
+              }
+        )
+      );
+
+      const stubContext: Partial<ORPCContext> = {
+        config,
+        aiService: {
+          waitForInit,
+          getWorkspaceMetadata,
+        } as unknown as ORPCContext["aiService"],
+        desktopSessionManager: {
+          getCapability,
+        } as unknown as ORPCContext["desktopSessionManager"],
+      };
+
+      let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+      try {
+        server = await createOrpcServer({
+          host: "127.0.0.1",
+          port: 0,
+          context: stubContext as ORPCContext,
+          authToken: "test-token",
+        });
+
+        const client = createHttpClient(server.baseUrl, {
+          Authorization: "Bearer test-token",
+        });
+        const agents = await Promise.resolve(client.agents.list({ workspaceId: metadata.id }));
+
+        expect(waitForInit).toHaveBeenCalledTimes(1);
+        expect(getWorkspaceMetadata).toHaveBeenCalledTimes(1);
+        expect(getCapability).toHaveBeenCalledTimes(1);
+        expect(agents.find((agent) => agent.id === "desktop-one")?.uiSelectable).toBe(available);
+        expect(agents.find((agent) => agent.id === "desktop-two")?.uiSelectable).toBe(available);
+        expect(agents.find((agent) => agent.id === "plain")?.uiSelectable).toBe(true);
+      } finally {
+        await server?.close();
+      }
+    }
+
+    try {
+      await runCase(false);
+      await runCase(true);
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("rejects CORS preflight requests from cross-origin callers", async () => {
     const stubContext: Partial<ORPCContext> = {};
 

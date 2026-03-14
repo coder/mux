@@ -157,6 +157,58 @@ describe("ExperimentsService", () => {
     );
   });
 
+  test("platform-restricted experiments stay disabled on unsupported platforms", async () => {
+    const cacheFilePath = path.join(tempDir, "feature_flags.json");
+    await fs.writeFile(
+      cacheFilePath,
+      JSON.stringify(
+        {
+          version: 1,
+          experiments: {
+            [EXPERIMENT_IDS.PORTABLE_DESKTOP]: {
+              value: true,
+              fetchedAtMs: Date.now(),
+            },
+          },
+          overrides: {
+            [EXPERIMENT_IDS.PORTABLE_DESKTOP]: true,
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const setFeatureFlagVariant = mock(() => undefined);
+    const telemetryService = {
+      getPostHogClient: mock(() => null),
+      getDistinctId: mock(() => null),
+      setFeatureFlagVariant,
+    } as unknown as TelemetryService;
+
+    const service = new ExperimentsService({
+      telemetryService,
+      muxHome: tempDir,
+      platform: "darwin",
+    });
+    await service.initialize();
+
+    expect(service.getExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP)).toEqual({
+      value: null,
+      source: "disabled",
+    });
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.PORTABLE_DESKTOP)).toBe(false);
+
+    await service.setOverride(EXPERIMENT_IDS.PORTABLE_DESKTOP, true);
+
+    const disk = JSON.parse(await fs.readFile(cacheFilePath, "utf-8")) as {
+      overrides?: Record<string, unknown>;
+    };
+    expect(disk.overrides).toEqual({});
+    expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.PORTABLE_DESKTOP, null);
+  });
+
   test("returns disabled when telemetry is disabled", async () => {
     const telemetryService = {
       getPostHogClient: mock(() => null),
