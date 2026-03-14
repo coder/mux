@@ -3545,23 +3545,28 @@ export class TaskService {
     }
 
     const matchingGroups = Array.from(groups.values());
+    const startedAfterPartial = (group: { createdAtMs: number[] }): boolean => {
+      if (partialStartedAt == null) {
+        return true;
+      }
+
+      return (
+        group.createdAtMs.length > 0 &&
+        group.createdAtMs.every((createdAtMs) => createdAtMs >= partialStartedAt)
+      );
+    };
     if (matchingGroups.length === 0) {
       return null;
     }
     if (matchingGroups.length === 1) {
-      return matchingGroups[0];
+      return startedAfterPartial(matchingGroups[0]) ? matchingGroups[0] : null;
     }
     if (partialStartedAt == null) {
       return null;
     }
 
-    const startedAfterPartial = matchingGroups.filter((group) => {
-      return (
-        group.createdAtMs.length > 0 &&
-        group.createdAtMs.every((createdAtMs) => createdAtMs >= partialStartedAt)
-      );
-    });
-    return startedAfterPartial.length === 1 ? startedAfterPartial[0] : null;
+    const recentMatchingGroups = matchingGroups.filter((group) => startedAfterPartial(group));
+    return recentMatchingGroups.length === 1 ? recentMatchingGroups[0] : null;
   }
 
   private async deliverDeferredBestOfSiblingReports(params: {

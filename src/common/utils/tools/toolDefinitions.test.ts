@@ -192,9 +192,15 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
-  it("encourages compact task briefs when spawning sub-agents", () => {
+  it("encourages compact task briefs and best-of delegation discipline", () => {
     expect(TOOL_DEFINITIONS.task.description).toContain("compact task brief");
     expect(TOOL_DEFINITIONS.task.description).toContain("plan file");
+    expect(TOOL_DEFINITIONS.task.description).toContain(
+      "Do not also do a full parallel analysis in the parent"
+    );
+    expect(TOOL_DEFINITIONS.task.description).toContain(
+      "the next step should usually be task_await"
+    );
   });
 
   it("accepts ask_user_question headers longer than 12 characters", () => {

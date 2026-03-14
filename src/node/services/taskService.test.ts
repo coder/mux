@@ -6597,6 +6597,138 @@ describe("TaskService", () => {
     }
   });
 
+  test("parent stream-end ignores a stale single best-of group that predates the pending partial", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-best-of-stale-single-group";
+    const childOneId = "child-best-of-stale-single-group-1";
+    const childTwoId = "child-best-of-stale-single-group-2";
+    const partialTimestamp = Date.now();
+    const staleCreatedAt = new Date(partialTimestamp - 60_000).toISOString();
+    const bestOf = { groupId: "best-of-stale-single-group", index: 0, total: 2 } as const;
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child-1"),
+                id: childOneId,
+                name: "agent_explore_child_1",
+                title: "Best of 2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                createdAt: staleCreatedAt,
+                bestOf,
+              },
+              {
+                path: path.join(projectPath, "child-2"),
+                id: childTwoId,
+                name: "agent_explore_child_2",
+                title: "Best of 2",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "reported",
+                createdAt: staleCreatedAt,
+                bestOf: { ...bestOf, index: 1 },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-best-of-stale-single-group",
+      "assistant",
+      "Waiting on best-of subagents…",
+      { timestamp: partialTimestamp },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-best-of-stale-single-group-call",
+          toolName: "task",
+          input: {
+            subagent_type: "explore",
+            prompt: "compare options",
+            title: "Best of 2",
+            n: 2,
+          },
+          state: "input-available",
+        },
+      ]
+    );
+    expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
+
+    const parentSessionDir = config.getSessionDir(parentId);
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: parentSessionDir,
+      childTaskId: childOneId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "Stale report one",
+      title: "Stale option one",
+      nowMs: Date.now(),
+    });
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: parentSessionDir,
+      childTaskId: childTwoId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "Stale report two",
+      title: "Stale option two",
+      nowMs: Date.now(),
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: parentId,
+      messageId: "assistant-parent-stale-single-group",
+      metadata: { model: "test-model" },
+      parts: [],
+    });
+
+    const updatedParentPartial = await partialService.readPartial(parentId);
+    expect(updatedParentPartial).not.toBeNull();
+    if (updatedParentPartial) {
+      const toolPart = updatedParentPartial.parts.find(
+        (part) => isDynamicToolPart(part) && part.toolName === "task"
+      ) as (DynamicToolPart & { state: string; output?: unknown }) | undefined;
+      expect(toolPart?.state).toBe("input-available");
+      expect(toolPart?.output).toBeUndefined();
+    }
+
+    const parentHistory = await collectFullHistory(historyService, parentId);
+    const serializedParentHistory = JSON.stringify(parentHistory);
+    expect(serializedParentHistory).not.toContain("<mux_subagent_report>");
+    expect(serializedParentHistory).not.toContain("Stale report one");
+    expect(serializedParentHistory).not.toContain("Stale report two");
+  });
+
   test("parent stream-end finalizes ready best-of partials before cleanup rechecks", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -6604,6 +6736,8 @@ describe("TaskService", () => {
     const parentId = "parent-best-of-finalize-ready";
     const childOneId = "child-best-of-finalize-ready-1";
     const childTwoId = "child-best-of-finalize-ready-2";
+    const partialTimestamp = Date.now();
+    const currentCreatedAt = new Date(partialTimestamp + 60_000).toISOString();
     const bestOf = { groupId: "best-of-finalize-ready", index: 0, total: 2 } as const;
 
     await config.saveConfig({
@@ -6621,6 +6755,7 @@ describe("TaskService", () => {
                 parentWorkspaceId: parentId,
                 agentType: "explore",
                 taskStatus: "reported",
+                createdAt: currentCreatedAt,
                 bestOf,
               },
               {
@@ -6630,6 +6765,7 @@ describe("TaskService", () => {
                 parentWorkspaceId: parentId,
                 agentType: "explore",
                 taskStatus: "reported",
+                createdAt: currentCreatedAt,
                 bestOf: { ...bestOf, index: 1 },
               },
             ],
@@ -6654,7 +6790,7 @@ describe("TaskService", () => {
       "assistant-parent-best-of-finalize-ready",
       "assistant",
       "Waiting on best-of subagents…",
-      { timestamp: Date.now() },
+      { timestamp: partialTimestamp },
       [
         {
           type: "dynamic-tool",
@@ -7011,6 +7147,8 @@ describe("TaskService", () => {
     const parentId = "parent-best-of-initialize-finalize-ready";
     const childOneId = "child-best-of-initialize-finalize-ready-1";
     const childTwoId = "child-best-of-initialize-finalize-ready-2";
+    const partialTimestamp = Date.now();
+    const currentCreatedAt = new Date(partialTimestamp + 60_000).toISOString();
     const bestOf = { groupId: "best-of-initialize-finalize-ready", index: 0, total: 2 } as const;
 
     await config.saveConfig({
@@ -7028,6 +7166,7 @@ describe("TaskService", () => {
                 parentWorkspaceId: parentId,
                 agentType: "explore",
                 taskStatus: "reported",
+                createdAt: currentCreatedAt,
                 bestOf,
               },
               {
@@ -7037,6 +7176,7 @@ describe("TaskService", () => {
                 parentWorkspaceId: parentId,
                 agentType: "explore",
                 taskStatus: "reported",
+                createdAt: currentCreatedAt,
                 bestOf: { ...bestOf, index: 1 },
               },
             ],
@@ -7061,7 +7201,7 @@ describe("TaskService", () => {
       "assistant-parent-best-of-initialize-finalize-ready",
       "assistant",
       "Waiting on best-of subagents…",
-      { timestamp: Date.now() },
+      { timestamp: partialTimestamp },
       [
         {
           type: "dynamic-tool",

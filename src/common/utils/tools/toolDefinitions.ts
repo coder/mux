@@ -1152,6 +1152,8 @@ export const TOOL_DEFINITIONS = {
       "Commit any changes you want the sub-agent to consider before spawning a task. " +
       "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. " +
       "Leave n unset unless the developer explicitly asks for best-of-n work, and only use it for sub-agents without interfering side effects (for example read-only agents like explore). " +
+      "\n\nWhen the user explicitly asks for best-of-n work, the parent should do only brief setup work (for example clarifying the launch prompt, evaluation criteria, or task split) and then delegate the substantive analysis to the spawned sub-agents. " +
+      "Do not also do a full parallel analysis in the parent. After spawning a best-of batch, the next step should usually be task_await so you can synthesize from the child reports. " +
       "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
       "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
       "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When n > 1, the completed result includes one report per spawned task. " +

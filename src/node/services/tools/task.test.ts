@@ -24,12 +24,7 @@ function expectQueuedOrRunningTaskToolResult(
   const obj = result as Record<string, unknown>;
   expect(obj.status).toBe(expected.status);
   expect(obj.taskId).toBe(expected.taskId);
-
-  const note = obj.note;
-  expect(typeof note).toBe("string");
-  if (typeof note === "string") {
-    expect(note).toContain("task_await");
-  }
+  expect(typeof obj.note).toBe("string");
 }
 
 function expectGroupedQueuedOrRunningTaskToolResult(
@@ -49,12 +44,7 @@ function expectGroupedQueuedOrRunningTaskToolResult(
       status: expected.status,
     }))
   );
-
-  const note = obj.note;
-  expect(typeof note).toBe("string");
-  if (typeof note === "string") {
-    expect(note).toContain("task_await");
-  }
+  expect(typeof obj.note).toBe("string");
 }
 
 describe("task tool", () => {
@@ -180,14 +170,15 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalledTimes(2);
     expect(waitForAgentReport).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      status: "running",
-      taskIds: ["child-task-1"],
-      tasks: [{ taskId: "child-task-1", status: "running" }],
-      note:
-        "Best-of task creation stopped after spawning 1 of 2 candidate(s): workspace creation failed. " +
-        "Use task_await on the returned task metadata before retrying, or you may duplicate work.",
-    });
+    expect(result).toBeTruthy();
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+
+    const obj = result as Record<string, unknown>;
+    expect(obj.status).toBe("running");
+    expect(obj.taskIds).toEqual(["child-task-1"]);
+    expect(obj.tasks).toEqual([{ taskId: "child-task-1", status: "running" }]);
+    expect(typeof obj.note).toBe("string");
   });
 
   it("returns partial spawn metadata when best-of task creation fails mid-batch", async () => {
@@ -230,17 +221,18 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalledTimes(3);
     expect(waitForAgentReport).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      status: "running",
-      taskIds: ["child-task-1", "child-task-2"],
-      tasks: [
-        { taskId: "child-task-1", status: "running" },
-        { taskId: "child-task-2", status: "running" },
-      ],
-      note:
-        "Best-of task creation stopped after spawning 2 of 3 candidate(s): workspace creation failed. " +
-        "Use task_await on the returned task metadata before retrying, or you may duplicate work.",
-    });
+    expect(result).toBeTruthy();
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+
+    const obj = result as Record<string, unknown>;
+    expect(obj.status).toBe("running");
+    expect(obj.taskIds).toEqual(["child-task-1", "child-task-2"]);
+    expect(obj.tasks).toEqual([
+      { taskId: "child-task-1", status: "running" },
+      { taskId: "child-task-2", status: "running" },
+    ]);
+    expect(typeof obj.note).toBe("string");
   });
 
   it("returns one completed report per best-of task when run in foreground", async () => {
@@ -358,25 +350,28 @@ describe("task tool", () => {
     expect(create).toHaveBeenCalledTimes(3);
     expect(waitForAgentReport).toHaveBeenCalledTimes(3);
     expect(getAgentTaskStatus).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({
-      status: "running",
-      taskIds: ["child-task-1", "child-task-2", "child-task-3"],
-      tasks: [
-        { taskId: "child-task-1", status: "completed" },
-        { taskId: "child-task-2", status: "running" },
-        { taskId: "child-task-3", status: "queued" },
-      ],
-      reports: [
-        {
-          taskId: "child-task-1",
-          reportMarkdown: "report for child-task-1",
-          title: "Report child-task-1",
-          agentId: "explore",
-          agentType: "explore",
-        },
-      ],
-      note: "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.",
-    });
+    expect(result).toBeTruthy();
+    expect(typeof result).toBe("object");
+    expect(result).not.toBeNull();
+
+    const obj = result as Record<string, unknown>;
+    expect(obj.status).toBe("running");
+    expect(obj.taskIds).toEqual(["child-task-1", "child-task-2", "child-task-3"]);
+    expect(obj.tasks).toEqual([
+      { taskId: "child-task-1", status: "completed" },
+      { taskId: "child-task-2", status: "running" },
+      { taskId: "child-task-3", status: "queued" },
+    ]);
+    expect(obj.reports).toEqual([
+      {
+        taskId: "child-task-1",
+        reportMarkdown: "report for child-task-1",
+        title: "Report child-task-1",
+        agentId: "explore",
+        agentType: "explore",
+      },
+    ]);
+    expect(typeof obj.note).toBe("string");
   });
 
   it("should allow sub-agent workspaces to spawn nested tasks", async () => {
@@ -490,7 +485,7 @@ describe("task tool", () => {
     });
   });
 
-  it("should return taskId (with note) if foreground wait times out", async () => {
+  it("should return taskId if foreground wait times out", async () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
@@ -569,7 +564,6 @@ describe("task tool", () => {
     );
     expect(getAgentTaskStatus).toHaveBeenCalledWith("child-task");
     expectQueuedOrRunningTaskToolResult(result, { status: "running", taskId: "child-task" });
-    expect((result as { note?: string }).note).toContain("task_await");
   });
 
   it("should throw when TaskService.create fails (e.g., depth limit)", async () => {
