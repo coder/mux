@@ -317,11 +317,14 @@ function buildWorkspaceTitleConversationContext(
 
 /**
  * Generate a unique fork branch name from the parent workspace name.
- * Scans existing workspace names for the `{parentName}-fork-N` pattern
- * and picks N+1, guaranteeing a valid git-safe branch name.
+ * Scans existing workspace names for the parent fork family pattern and picks N+1,
+ * guaranteeing a valid git-safe branch name.
  */
 export function generateForkBranchName(parentName: string, existingNames: string[]): string {
-  const prefix = `${parentName}-fork-`;
+  // Forking an existing fork should stay in the same numbered family.
+  // e.g. `feature-fork-2` -> `feature-fork-3`, not `feature-fork-2-fork-1`.
+  const base = parentName.replace(/-fork-\d+$/, "");
+  const prefix = `${base}-fork-`;
   let max = 0;
   for (const name of existingNames) {
     if (!name.startsWith(prefix)) {
