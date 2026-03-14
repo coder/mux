@@ -34,7 +34,7 @@ import {
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
-import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { validateWorkspaceName, sanitizeWorkspaceNameForPath } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
@@ -92,6 +92,9 @@ import {
   getSrcBaseDir,
   isSSHRuntime,
   isDockerRuntime,
+  isWorktreeRuntime,
+  isDevcontainerRuntime,
+  CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
 import {
   isValidModelFormat,
@@ -313,6 +316,71 @@ function buildWorkspaceTitleConversationContext(
       : formattedTurns,
     latestUserText,
   };
+}
+
+/**
+ * Check if a runtime config maps workspace names to filesystem directories.
+ * Worktree, SSH and devcontainer runtimes derive directories from the name;
+ * Docker and project-dir local runtimes do not.
+ */
+function usesPathBasedDirs(config: RuntimeConfig | undefined): boolean {
+  if (!config) return true; // legacy/undefined defaults to worktree
+  return isWorktreeRuntime(config) || isSSHRuntime(config) || isDevcontainerRuntime(config);
+}
+
+/**
+ * Check if two runtime configs share the same directory namespace.
+ * Returns true when both use path-based dirs AND resolve to the same
+ * srcBaseDir (or both default to undefined / the project-level srcDir).
+ */
+function sharesPathNamespace(
+  a: RuntimeConfig | undefined,
+  b: RuntimeConfig | undefined,
+  defaultSrcDir?: string
+): boolean {
+  if (!usesPathBasedDirs(a) || !usesPathBasedDirs(b)) return false;
+  // Resolve effective srcBaseDir: explicit config value or the project default.
+  // Normalize to handle trailing-slash differences.  For local/worktree runtimes
+  // we also expand tilde so "~/mux/src" matches "/home/user/mux/src".
+  // For SSH runtimes tilde refers to the *remote* home directory, so local
+  // expansion would be incorrect — we only strip trailing slashes / normalize.
+  const aIsSSH = isSSHRuntime(a);
+  const bIsSSH = isSSHRuntime(b);
+  const bothSSH = aIsSSH && bIsSSH;
+  const normalizeSrcDir = (p: string | undefined): string | undefined => {
+    if (p == null) return p;
+    const expanded = bothSSH ? p : expandTilde(p);
+    return stripTrailingSlashes(path.normalize(expanded));
+  };
+  const aSrc = normalizeSrcDir(getSrcBaseDir(a) ?? defaultSrcDir);
+  const bSrc = normalizeSrcDir(getSrcBaseDir(b) ?? defaultSrcDir);
+  if (aSrc !== bSrc) return false;
+  // SSH runtimes on different hosts never share a filesystem even if
+  // srcBaseDir strings match. Treat the Coder placeholder as matching
+  // any Coder peer since it resolves to a real host at finalization time,
+  // but NOT as matching plain SSH runtimes on unrelated hosts.
+  if (aIsSSH !== bIsSSH) return false;
+  if (aIsSSH && bIsSSH) {
+    const aHost = a!.host;
+    const bHost = b!.host;
+    if (aHost !== bHost) {
+      // Only treat the placeholder as a wildcard when *both* runtimes
+      // are Coder-backed (have a `coder` config).  This prevents a
+      // Coder runtime whose host hasn't been finalized yet from being
+      // considered to share a namespace with a plain SSH runtime.
+      const aIsCoder = "coder" in a! && a!.coder != null;
+      const bIsCoder = "coder" in b! && b!.coder != null;
+      const placeholderMatch =
+        aIsCoder &&
+        bIsCoder &&
+        (aHost === CODER_RUNTIME_PLACEHOLDER ||
+          bHost === CODER_RUNTIME_PLACEHOLDER);
+      if (!placeholderMatch) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /**
@@ -1827,6 +1895,32 @@ export class WorkspaceService extends EventEmitter {
       return Err(errorMsg);
     }
 
+    // Slash-to-hyphen collision check (runs after srcBaseDir resolution so
+    // SSH paths like "~/mux" are already expanded to absolute paths).
+    // e.g. "feature/a" and "feature-a" both map to directory "feature-a".
+    // Only relevant for runtimes where workspace names map to filesystem
+    // directories. Also only compare against existing workspaces of the
+    // same kind, since Docker/local workspaces have separate namespaces.
+    if (usesPathBasedDirs(finalRuntimeConfig)) {
+      const sanitizedPath = sanitizeWorkspaceNameForPath(branchName);
+      const existingWorkspaces =
+        this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath))
+          ?.workspaces ?? [];
+      const collision = existingWorkspaces.find(
+        (w) =>
+          w.name !== branchName &&
+          w.name != null &&
+          !path.isAbsolute(w.name) &&
+          sharesPathNamespace(finalRuntimeConfig, w.runtimeConfig, this.config.srcDir) &&
+          sanitizeWorkspaceNameForPath(w.name) === sanitizedPath
+      );
+      if (collision) {
+        return Err(
+          `Workspace name "${branchName}" conflicts with existing workspace "${collision.name}" (both resolve to the same directory)`
+        );
+      }
+    }
+
     const session = this.getOrCreateSession(workspaceId);
     this.initStateManager.startInit(workspaceId, projectPath);
 
@@ -2933,6 +3027,30 @@ export class WorkspaceService extends EventEmitter {
       );
       if (collision) {
         return Err(`Workspace with name "${newName}" already exists`);
+      }
+
+      // Reject renames that would collide on disk after slash sanitization.
+      // Always check, not just for slash-containing names: "feature-a" collides with "feature/a".
+      // Only check within the same project since workspace directories are namespaced by project.
+      // Only compare against workspaces that share path-based directory mapping.
+      if (usesPathBasedDirs(oldMetadata.runtimeConfig)) {
+        const sanitizedPath = sanitizeWorkspaceNameForPath(newName);
+        const sameProjectWorkspaces = allWorkspaces.filter(
+          (ws) => ws.projectPath === oldMetadata.projectPath
+        );
+        const pathCollision = sameProjectWorkspaces.find(
+          (ws) =>
+            ws.id !== workspaceId &&
+            ws.name != null &&
+            !path.isAbsolute(ws.name) &&
+            sharesPathNamespace(oldMetadata.runtimeConfig, ws.runtimeConfig, this.config.srcDir) &&
+            sanitizeWorkspaceNameForPath(ws.name) === sanitizedPath
+        );
+        if (pathCollision) {
+          return Err(
+            `Workspace name "${newName}" conflicts with existing workspace "${pathCollision.name}" (both resolve to the same directory)`
+          );
+        }
       }
 
       const workspace = this.config.findWorkspace(workspaceId);
@@ -4135,6 +4253,10 @@ export class WorkspaceService extends EventEmitter {
       // Fetch all metadata upfront for both branch name and title collision checks.
       const allMetadata = isAutoName ? await this.config.getAllWorkspaceMetadata() : [];
       let resolvedName: string;
+      let existingNamesWithSanitized: string[] = [];
+      // Track the effective parent name used for fork generation (may be
+      // normalized for legacy names with invalid characters).
+      let forkParentName = sourceMetadata.name;
       if (isAutoName) {
         const existingNamesSet = new Set(
           allMetadata.filter((m) => m.projectPath === foundProjectPath).map((m) => m.name)
@@ -4153,7 +4275,15 @@ export class WorkspaceService extends EventEmitter {
         }
 
         const existingNames = [...existingNamesSet];
-        resolvedName = generateForkBranchName(sourceMetadata.name, existingNames);
+        // Also include sanitized variants so auto-generated names avoid
+        // path collisions (e.g. "feature/a" and "feature-a" map to the same dir).
+        for (const name of existingNames) {
+          if (!path.isAbsolute(name)) {
+            existingNamesSet.add(sanitizeWorkspaceNameForPath(name));
+          }
+        }
+        existingNamesWithSanitized = [...existingNamesSet];
+        resolvedName = generateForkBranchName(forkParentName, existingNamesWithSanitized);
 
         if (!validateWorkspaceName(resolvedName).valid) {
           // Legacy workspace names can violate current naming rules (invalid
@@ -4171,7 +4301,7 @@ export class WorkspaceService extends EventEmitter {
 
           let candidateParent = normalizedParent;
           while (candidateParent.length > 1) {
-            resolvedName = generateForkBranchName(candidateParent, existingNames);
+            resolvedName = generateForkBranchName(candidateParent, existingNamesWithSanitized);
             if (validateWorkspaceName(resolvedName).valid) {
               break;
             }
@@ -4179,8 +4309,10 @@ export class WorkspaceService extends EventEmitter {
           }
 
           if (!validateWorkspaceName(resolvedName).valid) {
-            resolvedName = generateForkBranchName(candidateParent, existingNames);
+            resolvedName = generateForkBranchName(candidateParent, existingNamesWithSanitized);
           }
+          // Remember the normalized parent for collision retry loop
+          forkParentName = candidateParent;
         }
       } else {
         resolvedName = newName;
@@ -4189,6 +4321,83 @@ export class WorkspaceService extends EventEmitter {
       const resolvedNameValidation = validateWorkspaceName(resolvedName);
       if (!resolvedNameValidation.valid) {
         return Err(resolvedNameValidation.error ?? "Invalid workspace name");
+      }
+
+      // Reject fork names that would collide on disk after slash sanitization.
+      // For auto-named forks we loop until no collision is found (multiple
+      // existing names can occupy consecutive suffixes).
+      // Skip for Docker/devcontainer runtimes which use hash-based container names.
+      if (usesPathBasedDirs(sourceRuntimeConfig)) {
+        const existingWorkspaces =
+          this.config.loadConfigOrDefault().projects.get(stripTrailingSlashes(foundProjectPath))
+            ?.workspaces ?? [];
+        // Safety bound scales with existing workspace count so auto-forking
+        // always has enough room to skip past sanitized collisions.
+        const maxRetries = existingWorkspaces.length + 10;
+        let lastCollision: typeof existingWorkspaces[number] | undefined;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          const sanitizedPath = sanitizeWorkspaceNameForPath(resolvedName);
+          const collision = existingWorkspaces.find(
+            (w) =>
+              w.name !== resolvedName &&
+              w.name != null &&
+              !path.isAbsolute(w.name) &&
+              sharesPathNamespace(sourceRuntimeConfig, w.runtimeConfig, this.config.srcDir) &&
+              sanitizeWorkspaceNameForPath(w.name) === sanitizedPath
+          );
+          if (!collision) {
+            lastCollision = undefined;
+            break;
+          }
+          lastCollision = collision;
+          if (!isAutoName) {
+            return Err(
+              `Workspace name "${resolvedName}" conflicts with existing workspace "${collision.name}" (both resolve to the same directory)`
+            );
+          }
+          // Auto-named fork: add collision name's sanitized form and retry
+          existingNamesWithSanitized = [
+            ...existingNamesWithSanitized,
+            resolvedName,
+            sanitizedPath,
+          ];
+          resolvedName = generateForkBranchName(forkParentName, existingNamesWithSanitized);
+          const retryValidation = validateWorkspaceName(resolvedName);
+          if (!retryValidation.valid) {
+            // Name too long after suffix bump — shorten the parent and retry
+            let shortened = forkParentName;
+            while (shortened.length > 1) {
+              shortened = shortened.slice(0, -1);
+              resolvedName = generateForkBranchName(shortened, existingNamesWithSanitized);
+              if (validateWorkspaceName(resolvedName).valid) {
+                forkParentName = shortened;
+                break;
+              }
+            }
+            if (!validateWorkspaceName(resolvedName).valid) {
+              return Err("Unable to generate a valid fork name after shortening");
+            }
+          }
+        }
+        // After the loop, do a final collision check on the last-generated name.
+        // The loop generates a new candidate at the end of each iteration, so
+        // the final candidate was never verified inside the loop body.
+        if (lastCollision) {
+          const finalSanitized = sanitizeWorkspaceNameForPath(resolvedName);
+          const finalCollision = existingWorkspaces.find(
+            (w) =>
+              w.name !== resolvedName &&
+              w.name != null &&
+              !path.isAbsolute(w.name) &&
+              sharesPathNamespace(sourceRuntimeConfig, w.runtimeConfig, this.config.srcDir) &&
+              sanitizeWorkspaceNameForPath(w.name) === finalSanitized
+          );
+          if (finalCollision) {
+            return Err(
+              `Workspace name "${resolvedName}" conflicts with existing workspace "${finalCollision.name}" (both resolve to the same directory) after ${maxRetries} retries`
+            );
+          }
+        }
       }
 
       const sourceRuntime = createRuntime(sourceRuntimeConfig, {

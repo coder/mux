@@ -46,6 +46,7 @@ import { ensurePrivateDirSync } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { isProviderAutoRouteEligible } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
+import { sanitizeWorkspaceNameForPath } from "@/common/utils/validation/workspaceValidation";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
@@ -1381,7 +1382,7 @@ export class Config {
       // otherwise fall back to worktree-style path for legacy compatibility
       const projectName = this.getProjectName(projectPath);
       const workspacePath =
-        metadata.namedWorkspacePath ?? path.join(this.srcDir, projectName, metadata.name);
+        metadata.namedWorkspacePath ?? path.join(this.srcDir, projectName, path.isAbsolute(metadata.name) ? metadata.name : sanitizeWorkspaceNameForPath(metadata.name));
       const workspaceEntry: Workspace = {
         path: workspacePath,
         id: metadata.id,

@@ -253,7 +253,8 @@ export function RenameWorkspaceModal({
                   variant="caption"
                   style={{ marginTop: spacing.sm, color: theme.colors.foregroundMuted }}
                 >
-                  Only lowercase letters, digits, underscore, and hyphen (1-64 characters)
+                  Only lowercase letters, digits, underscore, hyphen, and forward slash (1-64
+                  characters, no leading/trailing/consecutive slashes)
                 </ThemedText>
               )}
             </View>
