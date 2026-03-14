@@ -41,35 +41,57 @@ export class BrowserSessionService extends EventEmitter {
       return existing;
     }
 
-    if (existing) {
-      this.cleanupWorkspace(workspaceId);
+    if (existing && existing.status !== "starting" && existing.status !== "live") {
+      await this.cleanupWorkspace(workspaceId);
     }
 
     this.recentActions.set(workspaceId, []);
+
+    let backend: BrowserSessionBackend | null = null;
+    const isCurrentBackend = (wsId: string): boolean => {
+      assert(backend !== null, "BrowserSessionService callback ran before backend initialization");
+      return this.activeBackends.get(wsId) === backend;
+    };
 
     const backendOptions: BrowserSessionBackendOptions = {
       workspaceId,
       ownership: options?.ownership ?? "agent",
       initialUrl: options?.initialUrl ?? "about:blank",
       onSessionUpdate: (session) => {
+        if (!isCurrentBackend(workspaceId)) {
+          return;
+        }
+
         this.activeSessions.set(workspaceId, session);
         this.emitEvent(workspaceId, { type: "session-updated", session });
       },
       onAction: (action) => {
+        if (!isCurrentBackend(workspaceId)) {
+          return;
+        }
+
         this.appendAction(workspaceId, action);
         this.emitEvent(workspaceId, { type: "action", action });
       },
       onEnded: (wsId) => {
+        if (!isCurrentBackend(wsId)) {
+          return;
+        }
+
         this.emitEvent(wsId, { type: "session-ended", workspaceId: wsId });
         this.activeSessions.delete(wsId);
         this.activeBackends.delete(wsId);
       },
       onError: (wsId, error) => {
+        if (!isCurrentBackend(wsId)) {
+          return;
+        }
+
         this.emitEvent(wsId, { type: "error", workspaceId: wsId, error });
       },
     };
 
-    const backend = new BrowserSessionBackend(backendOptions);
+    backend = new BrowserSessionBackend(backendOptions);
     this.activeBackends.set(workspaceId, backend);
     const session = await backend.start();
     this.activeSessions.set(workspaceId, session);
@@ -130,12 +152,12 @@ export class BrowserSessionService extends EventEmitter {
     }
   }
 
-  private cleanupWorkspace(workspaceId: string): void {
+  private async cleanupWorkspace(workspaceId: string): Promise<void> {
     const backend = this.activeBackends.get(workspaceId);
     if (backend) {
-      // Use stop() to send agent-browser close before cleanup, preventing
-      // orphaned browser processes on session replacement/error recovery.
-      void backend.stop();
+      // Await stop() so replacement sessions cannot race with stale backend
+      // callbacks while the previous browser process is still shutting down.
+      await backend.stop();
     }
 
     this.activeBackends.delete(workspaceId);
