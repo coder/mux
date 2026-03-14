@@ -186,28 +186,6 @@ describe("buildSystemMessage", () => {
     mockHomedir?.mockRestore();
   });
 
-  test("includes trusted subagent report guidance in the prelude", async () => {
-    const metadata: WorkspaceMetadata = {
-      id: "test-workspace",
-      name: "test-workspace",
-      projectName: "test-project",
-      projectPath: projectDir,
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    };
-
-    const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
-
-    expect(systemMessage).toContain("<subagent-reports>");
-    expect(systemMessage).toContain(
-      "Trust report findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence."
-    );
-    expect(systemMessage).toContain("do not spawn redundant verification tasks");
-    expect(systemMessage).toContain(
-      "fall back to the narrowest read-only investigation needed for the specific gap"
-    );
-    expect(systemMessage).toContain("Such reports count as having read the referenced files.");
-  });
-
   test("includes general instructions in custom-instructions", async () => {
     await fs.writeFile(
       path.join(projectDir, "AGENTS.md"),

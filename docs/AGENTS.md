@@ -214,6 +214,7 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 
 - Avoid timing-based coordination (e.g., sleep/grace timers) when deterministic signals exist; prefer awaiting explicit completion/exit signals.
 - When asked to reduce LoC, focus on simplifying production logic—not stripping comments, docs, or tests.
+- **Never add tautological tests.** Tests must validate branching, invariants, or user-visible behavior—not re-assert static prompt text, constant strings, generated copy, or other implementation literals that would only fail when prose changes without a behavioral change. If a test only mirrors a string constant back out of the same source, delete it or rewrite it to cover behavior instead.
 
 ## UI Component Testability (tests/ui)
 

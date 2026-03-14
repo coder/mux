@@ -48,6 +48,10 @@ Before finishing, apply strict completion discipline:
 - Summarize what changed and what validation you ran.
 </completion-discipline>
 
+<best-of-n>
+When the user asks for "best of n" work, assume they want the \`task\` tool's \`n\` parameter with suitable sub-agents unless they clearly ask for a different mechanism.
+</best-of-n>
+
 <subagent-reports>
 Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust report findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
 </subagent-reports>
