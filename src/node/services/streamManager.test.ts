@@ -1316,6 +1316,107 @@ describe("StreamManager - Unavailable Tool Handling", () => {
   });
 });
 
+describe("StreamManager - empty stream completions", () => {
+  const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+  test("persists a retryable error when the provider ends without any output", async () => {
+    const streamManager = new StreamManager(historyService);
+    const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
+    const streamEndEvents: unknown[] = [];
+
+    streamManager.on("error", (data) => {
+      errorEvents.push(data as { messageId: string; error: string; errorType?: string });
+    });
+    streamManager.on("stream-end", (data) => {
+      streamEndEvents.push(data);
+    });
+
+    const replaceTokenTrackerResult = Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+    expect(replaceTokenTrackerResult).toBe(true);
+
+    const workspaceId = "empty-output-workspace";
+    const messageId = "empty-output-message";
+    const historySequence = 1;
+
+    const appendResult = await historyService.appendToHistory(workspaceId, {
+      id: messageId,
+      role: "assistant",
+      metadata: {
+        historySequence,
+        partial: true,
+      },
+      parts: [],
+    });
+    expect(appendResult.success).toBe(true);
+    if (!appendResult.success) {
+      throw new Error(appendResult.error);
+    }
+
+    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      historySequence: number
+    ) => Promise<void>;
+    expect(typeof processStreamWithCleanup).toBe("function");
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {
+        fullStream: (async function* () {
+          // No-op stream: this reproduces the silent placeholder case we saw in debug logs.
+        })(),
+        totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
+        usage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      },
+      abortController: new AbortController(),
+      messageId,
+      token: "test-token",
+      startTime: Date.now() - 250,
+      lastPartTimestamp: Date.now() - 250,
+      toolCompletionTimestamps: new Map<string, number>(),
+      model: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      initialMetadata: { agentId: "plan" },
+      request: { model: "ignored-model", messages: [], providerOptions: undefined },
+      stepTracker: {},
+      didRetryPreviousResponseIdAtStep: false,
+      currentStepStartIndex: 0,
+      parts: [],
+      lastPartialWriteTime: 0,
+      partialWriteTimer: undefined,
+      partialWritePromise: undefined,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false as const },
+      runtimeTempDir: "",
+      runtime,
+      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cumulativeProviderMetadata: undefined,
+      lastStepUsage: undefined,
+      lastStepProviderMetadata: undefined,
+    };
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(streamEndEvents).toHaveLength(0);
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0]).toMatchObject({
+      messageId,
+      errorType: "unknown",
+    });
+    expect(errorEvents[0]?.error).toContain("before any assistant output arrived");
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial?.metadata?.errorType).toBe("unknown");
+    expect(partial?.metadata?.error).toContain("before any assistant output arrived");
+    expect(partial?.parts).toEqual([]);
+  });
+});
+
 describe("StreamManager - TTFT metadata persistence", () => {
   const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
