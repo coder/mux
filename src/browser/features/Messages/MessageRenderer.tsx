@@ -14,6 +14,7 @@ import { HistoryHiddenMessage } from "./HistoryHiddenMessage";
 import { InitMessage } from "./InitMessage";
 import { ProposePlanToolCall } from "../Tools/ProposePlanToolCall";
 import { removeEphemeralMessage } from "@/browser/stores/WorkspaceStore";
+import { TranscriptMessageBoundary, TranscriptQuoteRoot } from "./TranscriptQuoteBoundary";
 
 interface MessageRendererProps {
   message: DisplayedMessage;
@@ -34,6 +35,39 @@ interface MessageRendererProps {
   userMessageNavigation?: UserMessageNavigation;
 }
 
+function getMessageHistoryId(message: DisplayedMessage): string | undefined {
+  if (
+    message.type === "history-hidden" ||
+    message.type === "workspace-init" ||
+    message.type === "compaction-boundary"
+  ) {
+    return undefined;
+  }
+
+  return message.historyId;
+}
+
+function getTranscriptQuoteText(message: DisplayedMessage): string | null {
+  switch (message.type) {
+    case "reasoning":
+      return message.content;
+    case "stream-error":
+      return message.error;
+    case "workspace-init":
+      return [
+        message.hookPath,
+        message.truncatedLines
+          ? `... ${message.truncatedLines.toLocaleString()} earlier lines truncated ...`
+          : null,
+        ...message.lines.map((line) => line.line),
+      ]
+        .filter((line) => line != null && line.length > 0)
+        .join("\n");
+    default:
+      return null;
+  }
+}
+
 // Memoized to prevent unnecessary re-renders when parent (AIView) updates
 export const MessageRenderer = React.memo<MessageRendererProps>(
   ({
@@ -48,10 +82,12 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     taskReportLinking,
     userMessageNavigation,
   }) => {
+    let renderedMessage: React.ReactNode;
+
     // Route based on message type
     switch (message.type) {
       case "user":
-        return (
+        renderedMessage = (
           <UserMessage
             message={message}
             className={className}
@@ -60,8 +96,9 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             navigation={userMessageNavigation}
           />
         );
+        break;
       case "assistant":
-        return (
+        renderedMessage = (
           <AssistantMessage
             message={message}
             className={className}
@@ -69,8 +106,9 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             isCompacting={isCompacting}
           />
         );
+        break;
       case "tool":
-        return (
+        renderedMessage = (
           <ToolMessage
             message={message}
             className={className}
@@ -81,20 +119,26 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             taskReportLinking={taskReportLinking}
           />
         );
+        break;
       case "reasoning":
-        return <ReasoningMessage message={message} className={className} />;
+        renderedMessage = <ReasoningMessage message={message} className={className} />;
+        break;
       case "stream-error":
-        return <StreamErrorMessage message={message} className={className} />;
+        renderedMessage = <StreamErrorMessage message={message} className={className} />;
+        break;
       case "compaction-boundary":
-        return <CompactionBoundaryMessage message={message} className={className} />;
+        renderedMessage = <CompactionBoundaryMessage message={message} className={className} />;
+        break;
       case "history-hidden":
-        return (
+        renderedMessage = (
           <HistoryHiddenMessage message={message} className={className} workspaceId={workspaceId} />
         );
+        break;
       case "workspace-init":
-        return <InitMessage message={message} className={className} />;
+        renderedMessage = <InitMessage message={message} className={className} />;
+        break;
       case "plan-display":
-        return (
+        renderedMessage = (
           <ProposePlanToolCall
             args={{}}
             isEphemeralPreview={true}
@@ -109,12 +153,28 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             className={className}
           />
         );
+        break;
       default: {
         const _exhaustive: never = message;
         console.error("don't know how to render message", _exhaustive);
         return null;
       }
     }
+
+    const quoteText = getTranscriptQuoteText(message);
+
+    return (
+      <TranscriptMessageBoundary
+        data-testid="chat-message"
+        data-message-id={getMessageHistoryId(message)}
+      >
+        {quoteText === null ? (
+          renderedMessage
+        ) : (
+          <TranscriptQuoteRoot text={quoteText}>{renderedMessage}</TranscriptQuoteRoot>
+        )}
+      </TranscriptMessageBoundary>
+    );
   }
 );
 

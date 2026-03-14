@@ -9,6 +9,10 @@ function createTranscriptRoot(markup: string): HTMLElement {
   return transcriptRoot;
 }
 
+function createQuoteableTranscriptMessage(markup: string, rootAttributes = ""): string {
+  return `<div data-transcript-message><div data-transcript-quote-root${rootAttributes}>${markup}</div></div>`;
+}
+
 function getFirstTextNode(element: Element | null): Text {
   const firstChild = element?.firstChild;
   if (firstChild?.nodeType !== 3) {
@@ -31,7 +35,7 @@ describe("transcriptContextMenu", () => {
 
   test("prefers selected transcript text over hovered text", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><p id="message">Alpha beta gamma</p></div>`
+      createQuoteableTranscriptMessage(`<p id="message">Alpha beta gamma</p>`)
     );
     const paragraph = transcriptRoot.querySelector("#message");
     expect(paragraph).not.toBeNull();
@@ -57,7 +61,7 @@ describe("transcriptContextMenu", () => {
 
   test("preserves leading and trailing whitespace in selected transcript text", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><p id="message">  keep this whitespace  </p></div>`
+      createQuoteableTranscriptMessage(`<p id="message">  keep this whitespace  </p>`)
     );
     const paragraph = transcriptRoot.querySelector("#message");
     expect(paragraph).not.toBeNull();
@@ -82,7 +86,9 @@ describe("transcriptContextMenu", () => {
 
   test("returns null for interactive targets even when transcript selection exists", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><p id="message">Alpha beta gamma</p><a id="message-link" href="https://example.com">Example</a></div>`
+      createQuoteableTranscriptMessage(
+        `<p id="message">Alpha beta gamma</p><a id="message-link" href="https://example.com">Example</a>`
+      )
     );
     const paragraph = transcriptRoot.querySelector("#message");
     const link = transcriptRoot.querySelector("#message-link");
@@ -109,7 +115,7 @@ describe("transcriptContextMenu", () => {
 
   test("falls back to hovered transcript text when selection is outside transcript", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><p id="message">Hovered transcript text</p></div>`
+      createQuoteableTranscriptMessage(`<p id="message">Hovered transcript text</p>`)
     );
     const paragraph = transcriptRoot.querySelector("#message");
     expect(paragraph).not.toBeNull();
@@ -137,9 +143,9 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("Hovered transcript text");
   });
 
-  test("falls back to hovered text when selection is inside transcript root but outside message content", () => {
+  test("falls back to hovered text when selection is inside transcript root but outside a quote root", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div id="notice">System notice text</div><div data-message-content><p id="message">Hovered transcript text</p></div>`
+      `<div id="notice">System notice text</div>${createQuoteableTranscriptMessage(`<p id="message">Hovered transcript text</p>`)}`
     );
     const paragraph = transcriptRoot.querySelector("#message");
     const notice = transcriptRoot.querySelector("#notice");
@@ -165,9 +171,9 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("Hovered transcript text");
   });
 
-  test("falls back to hovered text when selection spans multiple message-content blocks", () => {
+  test("falls back to hovered text when selection spans multiple quote roots", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><p id="message-a">First message</p></div><div id="notice">System notice text</div><div data-message-content><p id="message-b">Second message</p></div>`
+      `${createQuoteableTranscriptMessage(`<p id="message-a">First message</p>`)}<div id="notice">System notice text</div>${createQuoteableTranscriptMessage(`<p id="message-b">Second message</p>`)}`
     );
     const messageA = transcriptRoot.querySelector("#message-a");
     const messageB = transcriptRoot.querySelector("#message-b");
@@ -196,7 +202,7 @@ describe("transcriptContextMenu", () => {
 
   test("falls back to hovered transcript text when selection crosses transcript boundary", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><p id="message">Hovered transcript text</p></div>`
+      createQuoteableTranscriptMessage(`<p id="message">Hovered transcript text</p>`)
     );
     const paragraph = transcriptRoot.querySelector("#message");
     expect(paragraph).not.toBeNull();
@@ -225,7 +231,7 @@ describe("transcriptContextMenu", () => {
     expect(result).toBe("Hovered transcript text");
   });
 
-  test("returns null when target is outside message content", () => {
+  test("returns null when target is outside a quoteable transcript message", () => {
     const transcriptRoot = createTranscriptRoot(`<p id="outside-message">No message wrapper</p>`);
     const target = transcriptRoot.querySelector("#outside-message");
     expect(target).not.toBeNull();
@@ -241,7 +247,9 @@ describe("transcriptContextMenu", () => {
 
   test("returns null for interactive elements including links", () => {
     const transcriptRoot = createTranscriptRoot(
-      `<div data-message-content><button id="action">Open menu</button><a id="message-link" href="https://example.com">Example</a></div>`
+      createQuoteableTranscriptMessage(
+        `<button id="action">Open menu</button><a id="message-link" href="https://example.com">Example</a>`
+      )
     );
     const button = transcriptRoot.querySelector("#action");
     const link = transcriptRoot.querySelector("#message-link");
@@ -261,6 +269,108 @@ describe("transcriptContextMenu", () => {
 
     expect(buttonResult).toBeNull();
     expect(linkResult).toBeNull();
+  });
+
+  test("falls back to hovered element text for plain div/span transcript content", () => {
+    const transcriptRoot = createTranscriptRoot(
+      createQuoteableTranscriptMessage(`<div id="row"><span id="token">Command prefix</span></div>`)
+    );
+    const token = transcriptRoot.querySelector("#token");
+    expect(token).not.toBeNull();
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: token,
+      selection: null,
+    });
+
+    expect(result).toBe("Command prefix");
+  });
+
+  test("uses explicit quote-block overrides for custom highlighted code blocks", () => {
+    const transcriptRoot = createTranscriptRoot(
+      createQuoteableTranscriptMessage(
+        `<div class="code-block-wrapper" data-transcript-quote-text="echo hi\nls"><div class="code-line"><span id="token">echo</span> hi</div></div>`
+      )
+    );
+    const token = transcriptRoot.querySelector("#token");
+    expect(token).not.toBeNull();
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: token,
+      selection: null,
+    });
+
+    expect(result).toBe("echo hi\nls");
+  });
+
+  test("uses quote-root overrides for custom plan bodies without quote blocks", () => {
+    const transcriptRoot = createTranscriptRoot(
+      createQuoteableTranscriptMessage(
+        `<div id="plan-body"><span id="plan-token">Phase</span> 1</div>`,
+        ` data-transcript-quote-text="Entire plan text"`
+      )
+    );
+    const token = transcriptRoot.querySelector("#plan-token");
+    expect(token).not.toBeNull();
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: token,
+      selection: null,
+    });
+
+    expect(result).toBe("Entire plan text");
+  });
+
+  test("falls back to hovered text when selection crosses ignored transcript chrome", () => {
+    const transcriptRoot = createTranscriptRoot(
+      createQuoteableTranscriptMessage(
+        `<div id="chrome" data-transcript-ignore-context-menu>Plan header</div><p id="body">Plan body</p>`,
+        ` data-transcript-quote-text="Entire plan text"`
+      )
+    );
+    const chrome = transcriptRoot.querySelector("#chrome");
+    const body = transcriptRoot.querySelector("#body");
+    expect(chrome).not.toBeNull();
+    expect(body).not.toBeNull();
+
+    const chromeTextNode = getFirstTextNode(chrome);
+    const bodyTextNode = getFirstTextNode(body);
+    const range = document.createRange();
+    range.setStart(chromeTextNode, 0);
+    range.setEnd(bodyTextNode, "Plan".length);
+
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: body,
+      selection,
+    });
+
+    expect(result).toBe("Plan body");
+  });
+
+  test("returns null for transcript chrome that opts out of quote actions", () => {
+    const transcriptRoot = createTranscriptRoot(
+      createQuoteableTranscriptMessage(
+        `<div id="chrome" data-transcript-ignore-context-menu>Plan header</div><p id="body">Plan body</p>`
+      )
+    );
+    const chrome = transcriptRoot.querySelector("#chrome");
+    expect(chrome).not.toBeNull();
+
+    const result = getTranscriptContextMenuText({
+      transcriptRoot,
+      target: chrome,
+      selection: null,
+    });
+
+    expect(result).toBeNull();
   });
 
   test("formats transcript text as markdown quote", () => {
