@@ -21,6 +21,7 @@ import type {
   ProvidersConfigMap,
   WorkspaceStatsSnapshot,
   ServerAuthSession,
+  FlowPromptState,
 } from "@/common/orpc/types";
 import type { ProjectGitStatusResult as ApiProjectGitStatusResult } from "@/common/orpc/schemas/api";
 import type { MuxMessage } from "@/common/types/message";
@@ -37,6 +38,7 @@ import {
   MUX_HELP_CHAT_WORKSPACE_NAME,
   MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
+import { getFlowPromptRelativePath } from "@/common/constants/flowPrompting";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import {
@@ -410,6 +412,52 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     updatePersistedState(muxHelpLastReadKey, 0);
   }
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
+
+  const flowPromptStates = new Map<string, FlowPromptState>();
+  const flowPromptSubscribers = new Map<string, Set<(state: FlowPromptState) => void>>();
+
+  const buildDefaultFlowPromptState = (workspaceId: string): FlowPromptState => {
+    const workspace = workspaceMap.get(workspaceId);
+    const workspaceName = workspace?.name ?? workspaceId;
+    const workspacePath =
+      workspace?.namedWorkspacePath ?? workspace?.projectPath ?? "/mock/workspace";
+    return {
+      workspaceId,
+      path: `${workspacePath.replace(/\/$/, "")}/${getFlowPromptRelativePath(workspaceName)}`,
+      exists: false,
+      hasNonEmptyContent: false,
+      modifiedAtMs: null,
+      contentFingerprint: null,
+      lastEnqueuedFingerprint: null,
+      isCurrentVersionEnqueued: false,
+      hasPendingUpdate: false,
+      autoSendMode: "off",
+      nextHeadingContent: null,
+      updatePreviewText: null,
+    };
+  };
+
+  const getFlowPromptState = (workspaceId: string): FlowPromptState => {
+    const existing = flowPromptStates.get(workspaceId);
+    if (existing) {
+      return existing;
+    }
+    const state = buildDefaultFlowPromptState(workspaceId);
+    flowPromptStates.set(workspaceId, state);
+    return state;
+  };
+
+  const setFlowPromptState = (
+    workspaceId: string,
+    updater: (state: FlowPromptState) => FlowPromptState
+  ): FlowPromptState => {
+    const nextState = updater(getFlowPromptState(workspaceId));
+    flowPromptStates.set(workspaceId, nextState);
+    for (const push of flowPromptSubscribers.get(workspaceId) ?? []) {
+      push(nextState);
+    }
+    return nextState;
+  };
 
   // Terminal sessions are used by RightSidebar and TerminalView.
   // Stories can seed deterministic sessions (with screenState) to make the embedded terminal look
@@ -1457,6 +1505,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         });
       },
       remove: () => Promise.resolve({ success: true }),
+      updateSelectedAgent: () => Promise.resolve({ success: true, data: undefined }),
       updateAgentAISettings: () => Promise.resolve({ success: true, data: undefined }),
       updateModeAISettings: () => Promise.resolve({ success: true, data: undefined }),
       updateTitle: () => Promise.resolve({ success: true, data: undefined }),
@@ -1556,6 +1605,90 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         subscribe: async function* () {
           yield* [];
           await new Promise<void>(() => undefined);
+        },
+      },
+      flowPrompt: {
+        getState: (input: { workspaceId: string }) =>
+          Promise.resolve(getFlowPromptState(input.workspaceId)),
+        create: (input: { workspaceId: string }) =>
+          Promise.resolve({
+            success: true as const,
+            data: setFlowPromptState(input.workspaceId, (state) => ({
+              ...state,
+              exists: true,
+              modifiedAtMs: Date.now(),
+            })),
+          }),
+        delete: (input: { workspaceId: string }) => {
+          setFlowPromptState(input.workspaceId, (state) => ({
+            ...state,
+            exists: false,
+            hasNonEmptyContent: false,
+            modifiedAtMs: null,
+            contentFingerprint: null,
+            lastEnqueuedFingerprint: null,
+            isCurrentVersionEnqueued: false,
+            hasPendingUpdate: false,
+            nextHeadingContent: null,
+            updatePreviewText: null,
+          }));
+          return Promise.resolve({ success: true as const, data: undefined });
+        },
+        attach: (input: { workspaceId: string }) => {
+          const state = getFlowPromptState(input.workspaceId);
+          return Promise.resolve({
+            success: true as const,
+            data: {
+              text: `Re the live prompt in ${state.path}:\n`,
+              flowPromptAttachment: {
+                path: state.path,
+                fingerprint: state.contentFingerprint ?? "mock-flow-prompt-fingerprint",
+              },
+            },
+          });
+        },
+        updateAutoSendMode: (input: {
+          workspaceId: string;
+          mode: FlowPromptState["autoSendMode"];
+        }) => {
+          setFlowPromptState(input.workspaceId, (state) => ({
+            ...state,
+            autoSendMode: input.mode,
+          }));
+          return Promise.resolve({ success: true as const, data: undefined });
+        },
+        sendNow: () => Promise.resolve({ success: true as const, data: undefined }),
+        subscribe: async function* (
+          input: { workspaceId: string },
+          options?: { signal?: AbortSignal }
+        ) {
+          const { push, iterate, end } = createAsyncMessageQueue<FlowPromptState>();
+          const listener = (state: FlowPromptState) => {
+            push(state);
+          };
+          let listeners = flowPromptSubscribers.get(input.workspaceId);
+          if (!listeners) {
+            listeners = new Set();
+            flowPromptSubscribers.set(input.workspaceId, listeners);
+          }
+          listeners.add(listener);
+          push(getFlowPromptState(input.workspaceId));
+
+          const onAbort = () => {
+            end();
+          };
+          options?.signal?.addEventListener("abort", onAbort, { once: true });
+
+          try {
+            yield* iterate();
+          } finally {
+            options?.signal?.removeEventListener("abort", onAbort);
+            listeners.delete(listener);
+            if (listeners.size === 0) {
+              flowPromptSubscribers.delete(input.workspaceId);
+            }
+            end();
+          }
         },
       },
       backgroundBashes: {

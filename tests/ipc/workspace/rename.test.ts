@@ -26,6 +26,8 @@ import {
 } from "../../runtime/test-fixtures/ssh-fixture";
 import { resolveOrpcClient, getTestRunner } from "../helpers";
 import type { RuntimeConfig } from "../../../src/common/types/runtime";
+import { createRuntimeForWorkspace } from "../../../src/node/runtime/runtimeHelpers";
+import { readFileString, writeFileString } from "../../../src/node/utils/runtime/helpers";
 import { sshConnectionPool } from "../../../src/node/runtime/sshConnectionPool";
 import { ssh2ConnectionPool } from "../../../src/node/runtime/SSH2ConnectionPool";
 
@@ -112,12 +114,34 @@ describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
               type === "ssh"
             );
 
+            const client = resolveOrpcClient(env);
+            const metadataBeforeRename = await client.workspace.getInfo({ workspaceId });
+            expect(metadataBeforeRename).toBeTruthy();
+            if (!metadataBeforeRename) {
+              throw new Error("Missing workspace metadata before rename");
+            }
+
+            const createFlowPromptResult = await client.workspace.flowPrompt.create({
+              workspaceId,
+            });
+            expect(createFlowPromptResult.success).toBe(true);
+            if (!createFlowPromptResult.success) {
+              throw new Error(createFlowPromptResult.error);
+            }
+
+            const flowPromptContent = `Flow prompt for ${branchName}`;
+            const runtimeBeforeRename = createRuntimeForWorkspace(metadataBeforeRename);
+            await writeFileString(
+              runtimeBeforeRename,
+              createFlowPromptResult.data.path,
+              flowPromptContent
+            );
+
             const oldWorkspacePath = workspacePath;
             const oldSessionDir = env.config.getSessionDir(workspaceId);
 
             // Rename the workspace
             const newName = "renamed-branch";
-            const client = resolveOrpcClient(env);
             const renameResult = await client.workspace.rename({ workspaceId, newName });
 
             if (!renameResult.success) {
@@ -138,13 +162,29 @@ describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
             // Verify metadata was updated (name changed, path changed, but ID stays the same)
             const newMetadataResult = await client.workspace.getInfo({ workspaceId });
             expect(newMetadataResult).toBeTruthy();
-            expect(newMetadataResult?.id).toBe(workspaceId); // ID unchanged
-            expect(newMetadataResult?.name).toBe(newName); // Name updated
+            if (!newMetadataResult) {
+              throw new Error("Missing workspace metadata after rename");
+            }
+            expect(newMetadataResult.id).toBe(workspaceId); // ID unchanged
+            expect(newMetadataResult.name).toBe(newName); // Name updated
 
             // Path DOES change (directory is renamed from old name to new name)
-            const newWorkspacePath = newMetadataResult?.namedWorkspacePath ?? "";
+            const newWorkspacePath = newMetadataResult.namedWorkspacePath;
             expect(newWorkspacePath).not.toBe(oldWorkspacePath);
             expect(newWorkspacePath).toContain(newName); // New path includes new name
+
+            const flowPromptStateAfterRename = await client.workspace.flowPrompt.getState({
+              workspaceId,
+            });
+            expect(flowPromptStateAfterRename.exists).toBe(true);
+            expect(flowPromptStateAfterRename.path).toContain(newName);
+
+            const runtimeAfterRename = createRuntimeForWorkspace(newMetadataResult);
+            const flowPromptContentAfterRename = await readFileString(
+              runtimeAfterRename,
+              flowPromptStateAfterRename.path
+            );
+            expect(flowPromptContentAfterRename).toBe(flowPromptContent);
 
             // Verify config was updated with new path
             const config = env.config.loadConfigOrDefault();

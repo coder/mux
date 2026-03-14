@@ -344,6 +344,10 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+E, Win/Linux: Ctrl+Shift+E
   OPEN_IN_EDITOR: { key: "E", ctrl: true, shift: true },
 
+  /** Open flow prompt (enables Flow Prompting first if needed) */
+  // macOS: Cmd+Shift+F, Win/Linux: Ctrl+Shift+F
+  OPEN_FLOW_PROMPT: { key: "F", ctrl: true, shift: true },
+
   /** Share transcript for current workspace */
   // macOS: Cmd+Shift+S, Win/Linux: Ctrl+Shift+S
   // (was Cmd+Shift+L, but Chrome intercepts that in server/browser mode)

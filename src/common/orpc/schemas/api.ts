@@ -84,6 +84,7 @@ import {
 import { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
 import { TaskSettingsSchema } from "../../config/schemas/taskSettings";
 import { ThinkingLevelSchema } from "../../types/thinking";
+import { FLOW_PROMPT_AUTO_SEND_MODES } from "../../constants/flowPrompting";
 
 // Experiments
 export const ExperimentValueSchema = z.object({
@@ -143,6 +144,33 @@ export const BackgroundProcessInfoSchema = z.object({
 });
 
 export type BackgroundProcessInfo = z.infer<typeof BackgroundProcessInfoSchema>;
+
+export const FlowPromptAutoSendModeSchema = z.enum(FLOW_PROMPT_AUTO_SEND_MODES);
+
+export const FlowPromptStateSchema = z.object({
+  workspaceId: z.string(),
+  path: z.string(),
+  exists: z.boolean(),
+  hasNonEmptyContent: z.boolean(),
+  modifiedAtMs: z.number().nullable(),
+  contentFingerprint: z.string().nullable(),
+  lastEnqueuedFingerprint: z.string().nullable(),
+  isCurrentVersionEnqueued: z.boolean(),
+  hasPendingUpdate: z.boolean(),
+  autoSendMode: FlowPromptAutoSendModeSchema,
+  nextHeadingContent: z.string().nullable(),
+  updatePreviewText: z.string().nullable(),
+});
+
+export const FlowPromptAttachmentSchema = z.object({
+  path: z.string(),
+  fingerprint: z.string(),
+});
+
+export const FlowPromptAttachDraftSchema = z.object({
+  text: z.string(),
+  flowPromptAttachment: FlowPromptAttachmentSchema,
+});
 
 // Tokenizer
 export const tokenizer = {
@@ -931,6 +959,13 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.object({ title: z.string() }), z.string()),
   },
+  updateSelectedAgent: {
+    input: z.object({
+      workspaceId: z.string(),
+      agentId: AgentIdSchema,
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   updateAgentAISettings: {
     input: z.object({
       workspaceId: z.string(),
@@ -1252,6 +1287,39 @@ export const workspace = {
       }),
       z.string()
     ),
+  },
+  flowPrompt: {
+    getState: {
+      input: z.object({ workspaceId: z.string() }),
+      output: FlowPromptStateSchema,
+    },
+    create: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(FlowPromptStateSchema, z.string()),
+    },
+    delete: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    attach: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(FlowPromptAttachDraftSchema, z.string()),
+    },
+    updateAutoSendMode: {
+      input: z.object({
+        workspaceId: z.string(),
+        mode: FlowPromptAutoSendModeSchema,
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    sendNow: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    subscribe: {
+      input: z.object({ workspaceId: z.string() }),
+      output: eventIterator(FlowPromptStateSchema),
+    },
   },
   backgroundBashes: {
     /**

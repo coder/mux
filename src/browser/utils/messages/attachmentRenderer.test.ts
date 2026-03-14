@@ -3,8 +3,10 @@ import {
   renderAttachmentToContent,
   renderAttachmentsToContentWithBudget,
 } from "./attachmentRenderer";
+import { getFlowPromptPathMarkerLine } from "@/common/constants/flowPrompting";
 import type {
   TodoListAttachment,
+  FlowPromptReferenceAttachment,
   PlanFileReferenceAttachment,
   EditedFilesReferenceAttachment,
 } from "@/common/types/attachment";
@@ -48,6 +50,47 @@ describe("attachmentRenderer", () => {
     expect(content).toContain("Plan contents");
     expect(content).toContain("...(truncated)");
     expect(content).toContain("<system-update>");
+  });
+
+  it("keeps tight-budget flow prompt references within budget", () => {
+    const flowPromptPath = "/tmp/workspace/.mux/prompts/feature.md";
+    const attachment: FlowPromptReferenceAttachment = {
+      type: "flow_prompt_reference",
+      flowPromptPath,
+      flowPromptContent: "0123456789".repeat(50),
+    };
+    const prefix = `${getFlowPromptPathMarkerLine(flowPromptPath)}\n\nCurrent flow prompt contents:\n\`\`\`md\n`;
+    const suffix = "\n```";
+    const systemUpdateWrapperLength = "<system-update>\n".length + "\n</system-update>".length;
+    const maxChars = prefix.length + suffix.length + systemUpdateWrapperLength + 5;
+
+    const content = renderAttachmentsToContentWithBudget([attachment], { maxChars });
+
+    expect(content.length).toBeLessThanOrEqual(maxChars);
+    expect(content).toContain(getFlowPromptPathMarkerLine(flowPromptPath));
+    expect(content).toContain("01234");
+    expect(content).not.toContain("(post-compaction context omitted due to size)");
+  });
+
+  it("keeps tight-budget plan references within budget", () => {
+    const planFilePath = "~/.mux/plans/cmux/ws.md";
+    const attachment: PlanFileReferenceAttachment = {
+      type: "plan_file_reference",
+      planFilePath,
+      planContent: "abcdefghi".repeat(200),
+    };
+    const prefix = `A plan file exists from plan mode at: ${planFilePath}\n\nPlan contents:\n`;
+    const suffix =
+      "\n\nIf this plan is relevant to the current work and not already complete, continue working on it.";
+    const systemUpdateWrapperLength = "<system-update>\n".length + "\n</system-update>".length;
+    const maxChars = prefix.length + suffix.length + systemUpdateWrapperLength + 5;
+
+    const content = renderAttachmentsToContentWithBudget([attachment], { maxChars });
+
+    expect(content.length).toBeLessThanOrEqual(maxChars);
+    expect(content).toContain(`A plan file exists from plan mode at: ${planFilePath}`);
+    expect(content).toContain("abcde");
+    expect(content).not.toContain("(post-compaction context omitted due to size)");
   });
 
   it("emits an omitted-file-diffs note when edited file diffs do not fit", () => {

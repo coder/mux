@@ -10,6 +10,7 @@ import { useWorkspaceStoreRaw, workspaceStore } from "../../stores/WorkspaceStor
 import { useGitStatusStoreRaw } from "../../stores/GitStatusStore";
 import { useRuntimeStatusStoreRaw } from "../../stores/RuntimeStatusStore";
 import { useBackgroundBashStoreRaw } from "../../stores/BackgroundBashStore";
+import { useFlowPromptStoreRaw } from "../../stores/FlowPromptStore";
 import { getPRStatusStoreInstance } from "../../stores/PRStatusStore";
 import { ProjectProvider, useProjectContext } from "../../contexts/ProjectContext";
 import { PolicyProvider, usePolicy } from "@/browser/contexts/PolicyContext";
@@ -71,6 +72,7 @@ function AppLoaderInner() {
   const gitStatusStore = useGitStatusStoreRaw();
   const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const backgroundBashStore = useBackgroundBashStoreRaw();
+  const flowPromptStore = useFlowPromptStoreRaw();
 
   const prefersReducedMotion = useReducedMotion();
 
@@ -89,6 +91,7 @@ function AppLoaderInner() {
     gitStatusStore.setClient(api ?? null);
     runtimeStatusStore.setClient(api ?? null);
     backgroundBashStore.setClient(api ?? null);
+    flowPromptStore.setClient(api ?? null);
     getPRStatusStoreInstance().setClient(api ?? null);
 
     if (!workspaceContext.loading) {
@@ -113,6 +116,7 @@ function AppLoaderInner() {
     gitStatusStore,
     runtimeStatusStore,
     backgroundBashStore,
+    flowPromptStore,
     api,
   ]);
 

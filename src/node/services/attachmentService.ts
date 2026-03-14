@@ -1,9 +1,11 @@
 import type {
   PostCompactionAttachment,
+  FlowPromptReferenceAttachment,
   PlanFileReferenceAttachment,
   EditedFilesReferenceAttachment,
 } from "@/common/types/attachment";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
+import { getFlowPromptRelativePath } from "@/common/constants/flowPrompting";
 import type { FileEditDiff } from "@/common/utils/messages/extractEditedFiles";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
@@ -26,6 +28,36 @@ function truncatePlanContent(planContent: string): string {
  * These attachments preserve context that would otherwise be lost after compaction.
  */
 export class AttachmentService {
+  /**
+   * Generate a flow prompt reference attachment if the file exists and has content.
+   * Uses the repo-local workspace path so the model can re-read the file directly when needed.
+   */
+  static async generateFlowPromptReference(
+    workspacePath: string,
+    workspaceName: string,
+    runtime: Runtime
+  ): Promise<FlowPromptReferenceAttachment | null> {
+    const flowPromptPath = runtime.normalizePath(
+      getFlowPromptRelativePath(workspaceName),
+      workspacePath
+    );
+
+    try {
+      const flowPromptContent = await readFileString(runtime, flowPromptPath);
+      if (flowPromptContent.trim().length === 0) {
+        return null;
+      }
+
+      return {
+        type: "flow_prompt_reference",
+        flowPromptPath,
+        flowPromptContent,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Generate a plan file reference attachment if the plan file exists.
    * Mode-agnostic: plan context is valuable in both plan and exec modes.
@@ -113,6 +145,7 @@ export class AttachmentService {
    * @param excludedItems - Set of item IDs to exclude ("plan" or "file:<path>")
    */
   static async generatePostCompactionAttachments(
+    workspacePath: string,
     workspaceName: string,
     projectName: string,
     workspaceId: string,
@@ -124,6 +157,19 @@ export class AttachmentService {
     const muxHome = runtime.getMuxHome();
     const planFilePath = getPlanFilePath(workspaceName, projectName, muxHome);
     const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+    const flowPromptPath = runtime.normalizePath(
+      getFlowPromptRelativePath(workspaceName),
+      workspacePath
+    );
+
+    const flowPromptRef = await this.generateFlowPromptReference(
+      workspacePath,
+      workspaceName,
+      runtime
+    );
+    if (flowPromptRef) {
+      attachments.push(flowPromptRef);
+    }
 
     // Plan file reference (skip if excluded)
     let planRef: PlanFileReferenceAttachment | null = null;
@@ -142,9 +188,10 @@ export class AttachmentService {
     // Filter out excluded files
     const filteredDiffs = fileDiffs.filter((f) => !excludedItems.has(`file:${f.path}`));
 
-    // Edited files reference - always filter out both new and legacy plan paths
-    // to prevent plan file from appearing in the file diffs list
+    // Edited files reference - always filter out the flow prompt plus both plan-file paths
+    // to prevent those context files from appearing in the generic file diffs list.
     const editedFilesRef = this.generateEditedFilesAttachment(filteredDiffs, [
+      flowPromptPath,
       planFilePath,
       legacyPlanPath,
     ]);

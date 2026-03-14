@@ -99,7 +99,7 @@ function AgentProviderWithState(props: {
 
   const [scopedAgentId, setAgentIdRaw] = usePersistedState<string | null>(
     getAgentIdKey(scopeId),
-    isProjectScope ? null : WORKSPACE_DEFAULTS.agentId,
+    null,
     {
       listener: true,
     }
@@ -124,13 +124,13 @@ function AgentProviderWithState(props: {
     (value) => {
       setAgentIdRaw((prev) => {
         const previousAgentId = coerceAgentId(
-          isProjectScope ? (prev ?? globalDefaultAgentId) : prev
+          isProjectScope ? (prev ?? globalDefaultAgentId) : (prev ?? currentMeta?.agentId)
         );
         const next = typeof value === "function" ? value(previousAgentId) : value;
         return coerceAgentId(next);
       });
     },
-    [globalDefaultAgentId, isProjectScope, setAgentIdRaw]
+    [currentMeta?.agentId, globalDefaultAgentId, isProjectScope, setAgentIdRaw]
   );
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
@@ -147,6 +147,9 @@ function AgentProviderWithState(props: {
   }, []);
 
   const [refreshing, setRefreshing] = useState(false);
+  const pendingSelectedAgentSyncRef = useRef<string | null>(null);
+
+  const queuedSelectedAgentSyncRef = useRef<{ workspaceId: string; agentId: string } | null>(null);
 
   const fetchParamsRef = useRef({
     projectPath: props.projectPath,
@@ -243,8 +246,82 @@ function AgentProviderWithState(props: {
   const normalizedAgentId =
     isCurrentAgentLocked && currentMeta?.agentId
       ? currentMeta.agentId
-      : coerceAgentId(isProjectScope ? (scopedAgentId ?? globalDefaultAgentId) : scopedAgentId);
+      : coerceAgentId(
+          isProjectScope
+            ? (scopedAgentId ?? globalDefaultAgentId)
+            : (scopedAgentId ?? currentMeta?.agentId)
+        );
   const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
+
+  const flushSelectedAgentSync = useCallback(
+    async (
+      updateSelectedAgent: (input: {
+        workspaceId: string;
+        agentId: string;
+      }) => Promise<{ success: boolean; data?: void; error?: string }>
+    ) => {
+      if (pendingSelectedAgentSyncRef.current != null || !queuedSelectedAgentSyncRef.current) {
+        return;
+      }
+
+      const nextRequest = queuedSelectedAgentSyncRef.current;
+      queuedSelectedAgentSyncRef.current = null;
+      const syncKey = `${nextRequest.workspaceId}:${nextRequest.agentId}`;
+      pendingSelectedAgentSyncRef.current = syncKey;
+
+      try {
+        await updateSelectedAgent(nextRequest);
+      } finally {
+        if (pendingSelectedAgentSyncRef.current === syncKey) {
+          pendingSelectedAgentSyncRef.current = null;
+        }
+
+        if (
+          queuedSelectedAgentSyncRef.current &&
+          pendingSelectedAgentSyncRef.current == null &&
+          isMountedRef.current
+        ) {
+          // Keep draining latest-wins agent sync requests even when the only change happened
+          // while a previous backend write was in flight and no rerender occurs afterward.
+          void flushSelectedAgentSync(updateSelectedAgent);
+        }
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!api || !props.workspaceId || !currentMeta || isCurrentAgentLocked) {
+      return;
+    }
+
+    if (currentMeta.agentId === normalizedAgentId) {
+      queuedSelectedAgentSyncRef.current = null;
+      pendingSelectedAgentSyncRef.current = null;
+      return;
+    }
+
+    const updateSelectedAgent = api.workspace?.updateSelectedAgent;
+    if (typeof updateSelectedAgent !== "function") {
+      return;
+    }
+
+    queuedSelectedAgentSyncRef.current = {
+      workspaceId: props.workspaceId,
+      agentId: normalizedAgentId,
+    };
+
+    // Flow Prompting and other backend-owned follow-up sends read workspace metadata,
+    // so serialize selected-agent writes until the backend catches up with the visible picker.
+    void flushSelectedAgentSync(updateSelectedAgent);
+  }, [
+    api,
+    currentMeta,
+    flushSelectedAgentSync,
+    isCurrentAgentLocked,
+    normalizedAgentId,
+    props.workspaceId,
+  ]);
 
   const selectableAgents = useMemo(
     () => sortAgentsStable(agents.filter((a) => a.uiSelectable)),

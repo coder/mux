@@ -101,6 +101,7 @@ import {
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import type { FlowPromptAutoSendMode } from "@/common/constants/flowPrompting";
 import type { StreamEndEvent, StreamAbortEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
@@ -110,6 +111,11 @@ import type { BackgroundProcessManager } from "@/node/services/backgroundProcess
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
 
+import {
+  WorkspaceFlowPromptService,
+  type FlowPromptState,
+  type FlowPromptUpdateRequest,
+} from "@/node/services/workspaceFlowPromptService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
 import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
@@ -202,6 +208,12 @@ interface ExecuteBashOptions {
   cwdMode?: "default" | "repo-root" | null;
   repoRootProjectPath?: string | null;
   executionTarget?: "runtime" | "host-workspace";
+}
+
+interface PreparedFlowPromptDispatch {
+  session: AgentSession;
+  event: FlowPromptUpdateRequest;
+  options: SendMessageOptions & { fileParts?: FilePart[] };
 }
 
 /**
@@ -1023,6 +1035,13 @@ export interface WorkspaceServiceEvents {
   chat: (event: { workspaceId: string; message: WorkspaceChatMessage }) => void;
   metadata: (event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void;
   activity: (event: { workspaceId: string; activity: WorkspaceActivitySnapshot | null }) => void;
+  chatSubscription: (event: {
+    workspaceId: string;
+    activeCount: number;
+    change: "started" | "ended";
+    atMs: number;
+  }) => void;
+  flowPrompt: (event: { workspaceId: string; state: FlowPromptState }) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
@@ -1070,6 +1089,8 @@ export class WorkspaceService extends EventEmitter {
   // cancel any fire-and-forget init work to avoid orphaned processes (e.g., SSH sync, .mux/init).
   private readonly initAbortControllers = new Map<string, AbortController>();
 
+  private readonly chatSubscriptionCounts = new Map<string, number>();
+
   // ExtensionMetadataService now serializes all mutations globally because every
   // workspace shares the same extensionMetadata.json file.
 
@@ -1097,6 +1118,20 @@ export class WorkspaceService extends EventEmitter {
     this.telemetryService = telemetryService;
     this.experimentsService = experimentsService;
     this.sessionTimingService = sessionTimingService;
+    this.flowPromptService = new WorkspaceFlowPromptService(this.config);
+    this.flowPromptService.attachEventSource(this);
+    this.flowPromptService.on("state", (event) => {
+      this.emit("flowPrompt", event);
+    });
+    this.flowPromptService.on("update", (event) => {
+      void this.handleFlowPromptUpdate(event).catch((error) => {
+        log.error("Failed to handle Flow Prompting update", {
+          workspaceId: event.workspaceId,
+          error: getErrorMessage(error),
+        });
+      });
+    });
+    void this.primeFlowPromptMonitorActivity();
     this.setupMetadataListeners();
     this.setupInitMetadataListeners();
   }
@@ -1110,6 +1145,7 @@ export class WorkspaceService extends EventEmitter {
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private taskService?: TaskService;
+  private readonly flowPromptService: WorkspaceFlowPromptService;
 
   /**
    * Set the MCP server manager for tool access.
@@ -1260,6 +1296,39 @@ export class WorkspaceService extends EventEmitter {
     snapshot: WorkspaceActivitySnapshot | null
   ): void {
     this.emit("activity", { workspaceId, activity: snapshot });
+  }
+
+  private async primeFlowPromptMonitorActivity(): Promise<void> {
+    if (typeof this.extensionMetadata.getAllSnapshots !== "function") {
+      return;
+    }
+
+    try {
+      const snapshots = await this.extensionMetadata.getAllSnapshots();
+      for (const [workspaceId, snapshot] of snapshots) {
+        this.emit("activity", { workspaceId, activity: snapshot });
+      }
+    } catch (error) {
+      log.error("Failed to prime Flow Prompting activity state", { error });
+    }
+  }
+
+  private emitChatSubscriptionEvent(workspaceId: string, change: "started" | "ended"): void {
+    const previousCount = this.chatSubscriptionCounts.get(workspaceId) ?? 0;
+    const activeCount = change === "started" ? previousCount + 1 : Math.max(0, previousCount - 1);
+
+    if (activeCount === 0) {
+      this.chatSubscriptionCounts.delete(workspaceId);
+    } else {
+      this.chatSubscriptionCounts.set(workspaceId, activeCount);
+    }
+
+    this.emit("chatSubscription", {
+      workspaceId,
+      activeCount,
+      change,
+      atMs: Date.now(),
+    });
   }
 
   private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
@@ -1468,6 +1537,61 @@ export class WorkspaceService extends EventEmitter {
   // Clear persisted sidebar status only after the user turn is accepted and emitted.
   // sendMessage can fail before acceptance (for example invalid_model_string), so
   // clearing inside sendMessage would drop status for turns that never entered history.
+  private maybeFinalizeAcceptedFlowPromptUpdate(
+    workspaceId: string,
+    message: WorkspaceChatMessage
+  ): void {
+    if (message.type !== "message" || message.role !== "user") {
+      return;
+    }
+
+    const messageRecord = message as {
+      metadata?: { muxMetadata?: unknown } | undefined;
+    };
+    const muxMetadata = messageRecord.metadata?.muxMetadata;
+    if (typeof muxMetadata !== "object" || muxMetadata === null) {
+      return;
+    }
+
+    const flowPromptAttachment = muxMetadata as {
+      flowPromptAttachment?: { fingerprint?: unknown } | undefined;
+      type?: unknown;
+      fingerprint?: unknown;
+    };
+    const nestedFingerprint = flowPromptAttachment.flowPromptAttachment?.fingerprint;
+    const fingerprint =
+      typeof nestedFingerprint === "string" && nestedFingerprint.length > 0
+        ? nestedFingerprint
+        : flowPromptAttachment.type === "flow-prompt-update" &&
+            typeof flowPromptAttachment.fingerprint === "string" &&
+            flowPromptAttachment.fingerprint.length > 0
+          ? flowPromptAttachment.fingerprint
+          : null;
+    if (fingerprint == null) {
+      return;
+    }
+
+    void this.flowPromptService
+      .markAcceptedUpdateByFingerprint(workspaceId, fingerprint)
+      .catch((error) => {
+        log.error("Failed to persist accepted Flow Prompting update", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
+  private maybeClearInFlightFlowPromptUpdate(
+    workspaceId: string,
+    message: WorkspaceChatMessage
+  ): void {
+    if (message.type !== "stream-error" && message.type !== "stream-abort") {
+      return;
+    }
+
+    this.flowPromptService.clearInFlightUpdate(workspaceId);
+  }
+
   private shouldClearAgentStatusFromChatMessage(message: WorkspaceChatMessage): boolean {
     return (
       message.type === "message" && message.role === "user" && message.metadata?.synthetic !== true
@@ -1502,6 +1626,8 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      this.maybeFinalizeAcceptedFlowPromptUpdate(event.workspaceId, event.message);
+      this.maybeClearInFlightFlowPromptUpdate(event.workspaceId, event.message);
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
       }
@@ -1519,6 +1645,7 @@ export class WorkspaceService extends EventEmitter {
       chat: chatUnsubscribe,
       metadata: metadataUnsubscribe,
     });
+    this.flowPromptService.startMonitoring(trimmed);
 
     return session;
   }
@@ -1538,6 +1665,8 @@ export class WorkspaceService extends EventEmitter {
 
     const chatUnsubscribe = session.onChatEvent((event) => {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      this.maybeFinalizeAcceptedFlowPromptUpdate(event.workspaceId, event.message);
+      this.maybeClearInFlightFlowPromptUpdate(event.workspaceId, event.message);
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
       }
@@ -1554,6 +1683,7 @@ export class WorkspaceService extends EventEmitter {
       chat: chatUnsubscribe,
       metadata: metadataUnsubscribe,
     });
+    this.flowPromptService.startMonitoring(workspaceId);
   }
 
   public disposeSession(workspaceId: string): void {
@@ -1578,6 +1708,7 @@ export class WorkspaceService extends EventEmitter {
 
     session.dispose();
     this.sessions.delete(trimmed);
+    this.flowPromptService.stopMonitoring(trimmed);
   }
 
   private async getPersistedPostCompactionDiffPaths(workspaceId: string): Promise<string[] | null> {
@@ -2897,6 +3028,275 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  markWorkspaceChatSubscriptionStarted(workspaceId: string): void {
+    this.emitChatSubscriptionEvent(workspaceId, "started");
+  }
+
+  markWorkspaceChatSubscriptionEnded(workspaceId: string): void {
+    this.emitChatSubscriptionEvent(workspaceId, "ended");
+  }
+
+  async getFlowPromptState(workspaceId: string): Promise<FlowPromptState> {
+    return this.flowPromptService.getState(workspaceId);
+  }
+
+  async createFlowPrompt(workspaceId: string): Promise<Result<FlowPromptState, string>> {
+    try {
+      const state = await this.flowPromptService.ensurePromptFile(workspaceId);
+      return Ok(state);
+    } catch (error) {
+      return Err(`Failed to enable Flow Prompting: ${getErrorMessage(error)}`);
+    }
+  }
+
+  async deleteFlowPrompt(workspaceId: string): Promise<Result<void, string>> {
+    try {
+      // Disabling Flow Prompting should also drop any queued synthetic follow-up so a later
+      // turn cannot re-apply instructions from a prompt file the user explicitly removed.
+      this.getOrCreateSession(workspaceId).clearFlowPromptUpdate();
+      await this.flowPromptService.deletePromptFile(workspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to disable Flow Prompting: ${getErrorMessage(error)}`);
+    }
+  }
+
+  async attachFlowPrompt(workspaceId: string): Promise<
+    Result<
+      {
+        text: string;
+        flowPromptAttachment: { path: string; fingerprint: string };
+      },
+      string
+    >
+  > {
+    try {
+      // Manual attach should drop any older queued synthetic retry before building a draft from
+      // the latest prompt revision.
+      this.getOrCreateSession(workspaceId).clearFlowPromptUpdate();
+      this.flowPromptService.clearPendingUpdate(workspaceId);
+
+      const attachDraft = await this.flowPromptService.getAttachDraft(workspaceId);
+      if (!attachDraft) {
+        return Err("No flow prompt is available to attach.");
+      }
+
+      return Ok(attachDraft);
+    } catch (error) {
+      return Err(`Failed to attach Flow Prompting update: ${getErrorMessage(error)}`);
+    }
+  }
+
+  async updateFlowPromptAutoSendMode(
+    workspaceId: string,
+    mode: FlowPromptAutoSendMode
+  ): Promise<Result<void, string>> {
+    try {
+      if (mode === "off") {
+        this.getOrCreateSession(workspaceId).clearFlowPromptUpdate();
+        await this.flowPromptService.setAutoSendMode(workspaceId, mode, { clearPending: true });
+      } else {
+        await this.flowPromptService.setAutoSendMode(workspaceId, mode);
+      }
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to update Flow Prompting auto-send: ${getErrorMessage(error)}`);
+    }
+  }
+
+  async sendFlowPromptNow(workspaceId: string): Promise<Result<void, string>> {
+    try {
+      const currentUpdate = await this.flowPromptService.getCurrentUpdate(workspaceId);
+      if (!currentUpdate) {
+        return Err("No flow prompt changes are ready to send.");
+      }
+
+      const prepared = await this.prepareFlowPromptDispatch(currentUpdate);
+      if (!prepared) {
+        return Err("Flow prompt changed before it could be sent. Save again to retry.");
+      }
+
+      const dispatchResult = await this.dispatchPreparedFlowPromptUpdate(prepared, {
+        interruptCurrentTurn: true,
+      });
+      if (!dispatchResult.success) {
+        return Err(dispatchResult.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to send Flow Prompting update: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private async prepareFlowPromptDispatch(
+    event: FlowPromptUpdateRequest
+  ): Promise<PreparedFlowPromptDispatch | null> {
+    const session = this.getOrCreateSession(event.workspaceId);
+    this.flowPromptService.rememberUpdate(
+      event.workspaceId,
+      event.nextFingerprint,
+      event.nextContent
+    );
+
+    const sendOptions = await session.getFlowPromptSendOptions();
+    const isCurrentFlowPromptVersion = await this.flowPromptService.isCurrentFingerprint(
+      event.workspaceId,
+      event.nextFingerprint
+    );
+    if (!isCurrentFlowPromptVersion) {
+      this.flowPromptService.forgetUpdate(event.workspaceId, event.nextFingerprint);
+      return null;
+    }
+
+    return {
+      session,
+      event,
+      options: {
+        ...sendOptions,
+        queueDispatchMode: "turn-end",
+        muxMetadata: {
+          type: "flow-prompt-update",
+          path: event.path,
+          fingerprint: event.nextFingerprint,
+        },
+      },
+    };
+  }
+
+  private queueFlowPromptUpdateForLater(prepared: PreparedFlowPromptDispatch): void {
+    this.flowPromptService.markPendingUpdate(
+      prepared.event.workspaceId,
+      prepared.event.nextContent
+    );
+    prepared.session.queueFlowPromptUpdate({
+      message: prepared.event.text,
+      options: prepared.options,
+      internal: { synthetic: true },
+    });
+  }
+
+  private async dispatchPreparedFlowPromptUpdate(
+    prepared: PreparedFlowPromptDispatch,
+    options?: { interruptCurrentTurn?: boolean }
+  ): Promise<Result<void, string>> {
+    if (prepared.session.isBusy()) {
+      this.queueFlowPromptUpdateForLater(prepared);
+      if (!options?.interruptCurrentTurn) {
+        return Ok(undefined);
+      }
+
+      const interruptResult = await this.interruptStream(prepared.event.workspaceId, {
+        sendQueuedImmediately: true,
+      });
+      if (!interruptResult.success) {
+        return Err(interruptResult.error);
+      }
+      return Ok(undefined);
+    }
+
+    // If a previous queued Flow Prompt send failed, sendQueuedMessages() restores that older
+    // retry into the session queue. Clear the superseded queued/pending revision before directly
+    // dispatching the newer save so stream-end cannot replay stale prompt instructions later.
+    prepared.session.clearFlowPromptUpdate();
+    this.flowPromptService.clearPendingUpdate(prepared.event.workspaceId);
+    this.flowPromptService.markInFlightUpdate(
+      prepared.event.workspaceId,
+      prepared.event.nextFingerprint
+    );
+
+    let result: Awaited<ReturnType<WorkspaceService["sendMessage"]>>;
+    try {
+      result = await this.sendMessage(
+        prepared.event.workspaceId,
+        prepared.event.text,
+        prepared.options,
+        {
+          synthetic: true,
+          requireIdle: true,
+          skipAutoResumeReset: true,
+        }
+      );
+    } catch (error) {
+      this.flowPromptService.clearInFlightUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      this.flowPromptService.markFailedUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      this.flowPromptService.forgetUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      throw error;
+    }
+
+    if (!result.success && prepared.session.isBusy()) {
+      this.flowPromptService.clearInFlightUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      this.queueFlowPromptUpdateForLater(prepared);
+      if (!options?.interruptCurrentTurn) {
+        return Ok(undefined);
+      }
+
+      const interruptResult = await this.interruptStream(prepared.event.workspaceId, {
+        sendQueuedImmediately: true,
+      });
+      if (!interruptResult.success) {
+        return Err(interruptResult.error);
+      }
+      return Ok(undefined);
+    }
+
+    if (!result.success) {
+      this.flowPromptService.clearInFlightUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      this.flowPromptService.markFailedUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      this.flowPromptService.forgetUpdate(
+        prepared.event.workspaceId,
+        prepared.event.nextFingerprint
+      );
+      return Err(getErrorMessage(result.error));
+    }
+
+    return Ok(undefined);
+  }
+
+  private async handleFlowPromptUpdate(event: FlowPromptUpdateRequest): Promise<void> {
+    if (
+      this.removingWorkspaces.has(event.workspaceId) ||
+      this.renamingWorkspaces.has(event.workspaceId)
+    ) {
+      return;
+    }
+
+    if (!this.config.findWorkspace(event.workspaceId)) {
+      return;
+    }
+
+    const prepared = await this.prepareFlowPromptDispatch(event);
+    if (!prepared) {
+      return;
+    }
+
+    const result = await this.dispatchPreparedFlowPromptUpdate(prepared);
+    if (!result.success) {
+      log.error("Failed to enqueue Flow Prompting update", {
+        workspaceId: event.workspaceId,
+        error: result.error,
+      });
+    }
+  }
+
   async rename(workspaceId: string, newName: string): Promise<Result<{ newWorkspaceId: string }>> {
     try {
       if (this.aiService.isStreaming(workspaceId)) {
@@ -3158,6 +3558,17 @@ export class WorkspaceService extends EventEmitter {
       const updatedMetadata = allMetadataUpdated.find((m) => m.id === workspaceId);
       if (!updatedMetadata) {
         return Err("Failed to retrieve updated workspace metadata");
+      }
+
+      try {
+        await this.flowPromptService.renamePromptFile(workspaceId, oldMetadata, updatedMetadata);
+      } catch (error) {
+        log.error("Failed to rename Flow Prompting file after workspace rename", {
+          workspaceId,
+          oldName,
+          newName,
+          error: getErrorMessage(error),
+        });
       }
 
       const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
@@ -4045,6 +4456,58 @@ export class WorkspaceService extends EventEmitter {
     return Ok(true);
   }
 
+  async updateSelectedAgent(workspaceId: string, agentId: string): Promise<Result<void, string>> {
+    try {
+      const normalizedAgentId = agentId.trim().toLowerCase();
+      if (!normalizedAgentId) {
+        return Err("Agent ID is required");
+      }
+
+      const found = this.config.findWorkspace(workspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === workspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      if (workspaceEntry.agentId === normalizedAgentId) {
+        return Ok(undefined);
+      }
+
+      workspaceEntry.agentId = normalizedAgentId;
+      await this.config.saveConfig(config);
+
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((metadata) => metadata.id === workspaceId);
+      if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(enrichedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+        }
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to update selected agent: ${message}`);
+    }
+  }
+
   async updateModeAISettings(
     workspaceId: string,
     mode: UIMode,
@@ -4379,6 +4842,15 @@ export class WorkspaceService extends EventEmitter {
           : {}),
       };
 
+      try {
+        await this.flowPromptService.copyPromptFile(sourceMetadata, metadata);
+      } catch (error) {
+        log.error("Failed to copy Flow Prompting file during workspace fork", {
+          sourceWorkspaceId,
+          targetWorkspaceId: newWorkspaceId,
+          error: getErrorMessage(error),
+        });
+      }
       await this.config.addWorkspace(foundProjectPath, metadata);
 
       const enrichedMetadata = this.enrichFrontendMetadata(metadata);
@@ -4405,6 +4877,7 @@ export class WorkspaceService extends EventEmitter {
       agentInitiated?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
       requireIdle?: boolean;
+      onAccepted?: () => Promise<void> | void;
     }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
@@ -4610,6 +5083,7 @@ export class WorkspaceService extends EventEmitter {
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
         agentInitiated: internal?.agentInitiated,
+        onAccepted: internal?.onAccepted,
         onAcceptedPreStreamFailure: restoreInterruptedTaskAfterAcceptedEditFailure,
       });
       if (!result.success) {

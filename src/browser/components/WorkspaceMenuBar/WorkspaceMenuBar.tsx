@@ -31,6 +31,7 @@ import { useTutorial } from "@/browser/contexts/TutorialContext";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { useFlowPrompt } from "@/browser/hooks/useFlowPrompt";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/useDesktopTitlebar";
@@ -85,6 +86,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
+  const flowPrompt = useFlowPrompt(workspaceId, workspaceName, runtimeConfig);
   const gitStatus = useGitStatus(workspaceId);
   const runtimeStatus = useRuntimeStatus(workspaceId);
   const workspaceEntry = workspaceMetadata.get(workspaceId);
@@ -330,6 +332,26 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // Let users start Flow Prompting directly from the keyboard so the ChatInput
+  // hint row can advertise a concrete shortcut instead of only menu navigation.
+  useEffect(() => {
+    if (isMuxHelpChat) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.OPEN_FLOW_PROMPT)) {
+        e.preventDefault();
+        if (flowPrompt.state?.exists) {
+          void flowPrompt.openFlowPrompt();
+        } else {
+          void flowPrompt.enableFlowPrompt();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [flowPrompt, isMuxHelpChat]);
 
   // Keybind for sharing transcript — lives here (not AgentListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
@@ -642,6 +664,27 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               }
               onEnterImmersiveReview={isTouchMobileScreen ? null : handleEnterImmersiveReview}
               onStopRuntime={isRuntimeRunning ? () => void handleStopRuntime() : null}
+              onEnableFlowPrompt={
+                flowPrompt.state?.exists
+                  ? null
+                  : () => {
+                      void flowPrompt.enableFlowPrompt();
+                    }
+              }
+              onOpenFlowPrompt={
+                flowPrompt.state?.exists
+                  ? () => {
+                      void flowPrompt.openFlowPrompt();
+                    }
+                  : null
+              }
+              onDisableFlowPrompt={
+                flowPrompt.state?.exists
+                  ? () => {
+                      void flowPrompt.disableFlowPrompt();
+                    }
+                  : null
+              }
               onForkChat={(anchorEl) => {
                 void handleForkChat(anchorEl);
               }}

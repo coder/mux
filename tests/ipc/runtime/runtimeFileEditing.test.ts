@@ -474,7 +474,9 @@ describeIntegration("Runtime File Editing Tools", () => {
             await cleanupTempGitRepo(tempGitRepo);
           }
         },
-        type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
+        // This case performs three provider-backed turns (create/edit/read) and has been the
+        // slowest file-tool runtime path on busy Linux runners, so give local CI extra headroom.
+        type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS * 2
       );
     }
   );

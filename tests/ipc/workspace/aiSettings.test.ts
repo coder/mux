@@ -15,6 +15,41 @@ import {
 } from "../helpers";
 import { resolveOrpcClient } from "../helpers";
 
+describe("workspace.updateSelectedAgent", () => {
+  test("persists the selected agent and returns it via workspace.getInfo and workspace.list", async () => {
+    const env: TestEnvironment = await createTestEnvironment();
+    const tempGitRepo = await createTempGitRepo();
+
+    try {
+      const branchName = generateBranchName("selected-agent");
+      const createResult = await createWorkspace(env, tempGitRepo, branchName);
+      if (!createResult.success) {
+        throw new Error(`Workspace creation failed: ${createResult.error}`);
+      }
+
+      const workspaceId = createResult.metadata.id;
+      expect(workspaceId).toBeTruthy();
+
+      const client = resolveOrpcClient(env);
+      const updateResult = await client.workspace.updateSelectedAgent({
+        workspaceId: workspaceId!,
+        agentId: "exec",
+      });
+      expect(updateResult.success).toBe(true);
+
+      const info = await client.workspace.getInfo({ workspaceId: workspaceId! });
+      expect(info?.agentId).toBe("exec");
+
+      const list = await client.workspace.list();
+      const fromList = list.find((metadata) => metadata.id === workspaceId);
+      expect(fromList?.agentId).toBe("exec");
+    } finally {
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(tempGitRepo);
+    }
+  }, 60000);
+});
+
 describe("workspace.updateAgentAISettings", () => {
   test("persists aiSettingsByAgent and returns them via workspace.getInfo and workspace.list", async () => {
     const env: TestEnvironment = await createTestEnvironment();

@@ -518,6 +518,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const autoAvailable = agents.some((entry) => entry.uiSelectable && entry.id === "auto");
   const isAutoAgent = normalizedAgentId === "auto" && autoAvailable;
 
+  const showFlowPromptShortcutHint =
+    variant === "workspace" ? (props.showFlowPromptShortcutHint ?? false) : false;
+
   // Use current agent's uiColor, or neutral border until agents load
   const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
   const {
@@ -2540,6 +2543,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             onOpenProviders={() => open("providers", { expandProvider: "openai" })}
           />
 
+          {variant === "workspace" ? props.topAccessory : null}
+
           {/* File path suggestions (@src/foo.ts) */}
           <CommandSuggestions
             suggestions={atMentionSuggestions}
@@ -2615,7 +2620,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     (showCommandSuggestions && commandSuggestions.length > 0) ||
                     (showAtMentionSuggestions && atMentionSuggestions.length > 0)
                   }
-                  className={variant === "creation" ? "min-h-28" : "min-h-16"}
+                  className={cn(
+                    variant === "creation" ? "min-h-28" : "min-h-16",
+                    variant === "workspace" && props.topAccessory ? "rounded-t-none" : null
+                  )}
                   trailingAction={
                     <div className="flex items-center gap-1">
                       <AttachFileButton
@@ -2655,6 +2663,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           {formatKeybind(KEYBINDS.TOGGLE_AUTO_AGENT)}
                         </span>
                         <span> - enable auto</span>
+                      </span>
+                    )}
+                    {showFlowPromptShortcutHint && (
+                      <span className="shrink-0 [@container(max-width:920px)]:hidden">
+                        <span className="font-mono">
+                          {formatKeybind(KEYBINDS.OPEN_FLOW_PROMPT)}
+                        </span>
+                        <span> - enable flow prompt</span>
                       </span>
                     )}
                   </div>

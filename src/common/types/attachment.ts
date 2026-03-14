@@ -3,6 +3,12 @@
  * These attachments are injected after compaction to preserve context that would otherwise be lost.
  */
 
+export interface FlowPromptReferenceAttachment {
+  type: "flow_prompt_reference";
+  flowPromptPath: string;
+  flowPromptContent: string;
+}
+
 export interface PlanFileReferenceAttachment {
   type: "plan_file_reference";
   planFilePath: string;
@@ -29,6 +35,7 @@ export interface EditedFilesReferenceAttachment {
 }
 
 export type PostCompactionAttachment =
+  | FlowPromptReferenceAttachment
   | PlanFileReferenceAttachment
   | TodoListAttachment
   | EditedFilesReferenceAttachment;

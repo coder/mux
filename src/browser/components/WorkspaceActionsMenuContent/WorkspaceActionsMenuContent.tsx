@@ -1,6 +1,15 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
-import { GitBranch, Link2, Maximize2, Pencil, Server, Square } from "lucide-react";
+import {
+  FileText,
+  GitBranch,
+  Link2,
+  Maximize2,
+  Pencil,
+  Server,
+  Square,
+  Trash2,
+} from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -42,6 +51,9 @@ interface WorkspaceActionsMenuContentProps {
   onOpenTouchFullscreenReview?: (() => void) | null;
   onEnterImmersiveReview?: (() => void) | null;
   onStopRuntime?: (() => void) | null;
+  onEnableFlowPrompt?: (() => void) | null;
+  onOpenFlowPrompt?: (() => void) | null;
+  onDisableFlowPrompt?: (() => void) | null;
   onForkChat?: ((anchorEl: HTMLElement) => void) | null;
   onShareTranscript?: (() => void) | null;
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
@@ -84,6 +96,43 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             props.onConfigureMcp?.();
           }}
           testId={props.configureMcpTestId}
+        />
+      )}
+      {props.onEnableFlowPrompt && !props.isMuxHelpChat && (
+        <WorkspaceActionButton
+          label="Enable Flow Prompting"
+          shortcut={formatKeybind(KEYBINDS.OPEN_FLOW_PROMPT)}
+          shortcutClassName={props.shortcutClassName}
+          icon={<FileText className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onEnableFlowPrompt?.();
+          }}
+        />
+      )}
+      {props.onOpenFlowPrompt && !props.isMuxHelpChat && (
+        <WorkspaceActionButton
+          label="Open flow prompt"
+          shortcut={formatKeybind(KEYBINDS.OPEN_FLOW_PROMPT)}
+          shortcutClassName={props.shortcutClassName}
+          icon={<FileText className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onOpenFlowPrompt?.();
+          }}
+        />
+      )}
+      {props.onDisableFlowPrompt && !props.isMuxHelpChat && (
+        <WorkspaceActionButton
+          label="Disable Flow Prompting"
+          icon={<Trash2 className="h-3 w-3 shrink-0" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onDisableFlowPrompt?.();
+          }}
         />
       )}
       {props.onOpenTouchFullscreenReview && !props.isMuxHelpChat && (

@@ -43,6 +43,7 @@ import {
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { useFlowPrompt } from "@/browser/hooks/useFlowPrompt";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   useWorkspaceAggregator,
@@ -50,6 +51,7 @@ import {
   useWorkspaceStoreRaw,
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { WorkspaceMenuBar } from "../WorkspaceMenuBar/WorkspaceMenuBar";
 import type { DisplayedMessage, QueuedMessage as QueuedMessageData } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -83,6 +85,10 @@ import {
   normalizeQueuedMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
+import {
+  FlowPromptComposerCard,
+  shouldShowFlowPromptComposerCard,
+} from "../FlowPromptComposerCard/FlowPromptComposerCard";
 import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProfileCollector";
 
 // Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
@@ -1019,6 +1025,14 @@ interface ChatInputPaneProps {
 
 const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   const { reviews } = props;
+  const flowPrompt = useFlowPrompt(props.workspaceId, props.workspaceName, props.runtimeConfig);
+  const [isFlowPromptCollapsed, setIsFlowPromptCollapsed] = usePersistedState(
+    `flowPromptComposerCollapsed:${props.workspaceId}`,
+    false,
+    { listener: true }
+  );
+
+  const shouldShowFlowPromptCard = shouldShowFlowPromptComposerCard(flowPrompt.state);
 
   return (
     <div className="flex flex-col gap-2">
@@ -1054,6 +1068,30 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           This agent task is queued and will start automatically when a parallel slot is available.
         </div>
       )}
+      {flowPrompt.state && shouldShowFlowPromptCard ? (
+        <FlowPromptComposerCard
+          state={flowPrompt.state}
+          error={flowPrompt.error}
+          isCollapsed={isFlowPromptCollapsed}
+          isUpdatingAutoSendMode={flowPrompt.isUpdatingAutoSendMode}
+          isSendingNow={flowPrompt.isSendingNow}
+          onOpen={() => {
+            void flowPrompt.openFlowPrompt();
+          }}
+          onDisable={() => {
+            void flowPrompt.disableFlowPrompt();
+          }}
+          onAutoSendModeChange={(mode) => {
+            void flowPrompt.updateAutoSendMode(mode);
+          }}
+          onSendNow={() => {
+            void flowPrompt.sendNow();
+          }}
+          onToggleCollapsed={() => {
+            setIsFlowPromptCollapsed((collapsed) => !collapsed);
+          }}
+        />
+      ) : null}
       <ChatInput
         key={props.workspaceId}
         variant="workspace"
@@ -1075,6 +1113,9 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onEditLastUserMessage={props.onEditLastUserMessage}
         canInterrupt={props.canInterrupt}
         onReady={props.onChatInputReady}
+        showFlowPromptShortcutHint={
+          props.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID && !shouldShowFlowPromptCard
+        }
         attachedReviews={reviews.attachedReviews}
         onDetachReview={reviews.detachReview}
         onDetachAllReviews={reviews.detachAllAttached}
