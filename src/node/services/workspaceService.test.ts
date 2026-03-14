@@ -1050,7 +1050,10 @@ describe("WorkspaceService idle compaction dispatch", () => {
         workspaceId: string,
         streaming: boolean,
         model?: string,
-        agentId?: string
+        agentId?: string,
+        hasTodos?: boolean,
+        expectedGeneration?: number,
+        streamingGeneration?: number
       ) => Promise<void>;
     };
 
@@ -1058,7 +1061,14 @@ describe("WorkspaceService idle compaction dispatch", () => {
 
     await internals.updateStreamingStatus(workspaceId, true);
 
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, undefined, undefined, undefined);
+    expect(setStreaming).toHaveBeenCalledWith(
+      workspaceId,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined
+    );
     expect(emitWorkspaceActivity).toHaveBeenCalledTimes(1);
     expect(emitWorkspaceActivity).toHaveBeenCalledWith(workspaceId, snapshot);
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(true);
@@ -1084,7 +1094,10 @@ describe("WorkspaceService idle compaction dispatch", () => {
         workspaceId: string,
         streaming: boolean,
         model?: string,
-        agentId?: string
+        agentId?: string,
+        hasTodos?: boolean,
+        expectedGeneration?: number,
+        streamingGeneration?: number
       ) => Promise<void>;
     };
 
@@ -1093,7 +1106,14 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await internals.updateStreamingStatus(workspaceId, false);
 
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(false);
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined, false);
+    expect(setStreaming).toHaveBeenCalledWith(
+      workspaceId,
+      false,
+      undefined,
+      undefined,
+      false,
+      undefined
+    );
   });
 });
 
@@ -1188,7 +1208,8 @@ describe("WorkspaceService streaming generation guard", () => {
         model?: string,
         agentId?: string,
         hasTodos?: boolean,
-        expectedGeneration?: number
+        expectedGeneration?: number,
+        streamingGeneration?: number
       ) => Promise<void>;
     };
 
@@ -1213,6 +1234,7 @@ describe("WorkspaceService streaming generation guard", () => {
       workspaceId,
       true,
       "openai:gpt-4o",
+      undefined,
       undefined,
       undefined
     );
@@ -1250,7 +1272,8 @@ describe("WorkspaceService streaming generation guard", () => {
         model?: string,
         agentId?: string,
         hasTodos?: boolean,
-        expectedGeneration?: number
+        expectedGeneration?: number,
+        streamingGeneration?: number
       ) => Promise<void>;
       updateRecencyTimestamp: (workspaceId: string, timestamp?: number) => Promise<void>;
       handleStreamCompletion: (workspaceId: string) => Promise<void>;
@@ -1276,6 +1299,7 @@ describe("WorkspaceService streaming generation guard", () => {
       workspaceId,
       true,
       "openai:gpt-4o-mini",
+      undefined,
       undefined,
       undefined
     );
@@ -2670,7 +2694,7 @@ describe("WorkspaceService metadata listeners", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(setStreaming).toHaveBeenCalledTimes(1);
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined, false);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined, false, 0);
   });
 });
 
