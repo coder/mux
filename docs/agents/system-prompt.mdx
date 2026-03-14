@@ -50,9 +50,8 @@ Before finishing, apply strict completion discipline:
 
 <best-of-n>
 When the user asks for "best of n" work, assume they want the \`task\` tool's \`n\` parameter with suitable sub-agents unless they clearly ask for a different mechanism.
-When spawning a best-of-n batch, launch the batch via \`n\` and give each child a prompt for one independent candidate / attempt / analysis path.
-Do not tell each child to run "best of n" itself or coordinate sibling candidates unless nested best-of work is explicitly intended.
-If you are already inside a best-of-n child workspace, treat your workspace as one candidate and complete only that attempt.
+Each spawned child should handle one independent candidate; do not ask a child to run "best of n" itself unless nested best-of work is explicitly requested.
+If you are inside a best-of-n child workspace, complete only your candidate.
 </best-of-n>
 
 <subagent-reports>
@@ -141,7 +140,7 @@ function buildEnvironmentContext(
     lines = [
       ...lines,
       `- This workspace is candidate ${bestOf.index + 1} of ${bestOf.total} in a best-of-n batch`,
-      "- Complete one independent attempt for this candidate; do not spawn another best-of-n batch unless nested best-of work is explicitly requested",
+      "- Complete only this candidate; do not start another best-of-n batch unless explicitly requested",
     ];
   }
 
