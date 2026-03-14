@@ -4448,6 +4448,114 @@ describe("WorkspaceService fork", () => {
       generateStableIdSpy.mockRestore();
     }
   });
+  test("auto-generated fork names increment existing fork suffixes instead of nesting them", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = path.join(tempDir, "project");
+    const sourceMetadata: FrontendWorkspaceMetadata = {
+      id: sourceWorkspaceId,
+      name: "source-branch-fork-2",
+      title: "Source branch (2)",
+      projectPath: sourceProjectPath,
+      projectName: "project",
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: path.join(sourceProjectPath, "source-branch-fork-2"),
+    };
+    const forkedWorkspacePath = path.join(sourceProjectPath, "source-branch-fork-3");
+
+    await fsPromises.mkdir(sourceProjectPath, { recursive: true });
+    await config.addWorkspace(sourceProjectPath, sourceMetadata);
+    await config.editConfig((current) => {
+      const project = current.projects.get(sourceProjectPath);
+      if (!project) {
+        throw new Error("Expected test project config to exist");
+      }
+      project.trusted = true;
+      return current;
+    });
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(sourceMetadata))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: mock(() => undefined),
+      endInit: mock(() => Promise.resolve()),
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const workspaceService = new WorkspaceService(
+      config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const targetRuntime = {
+      getWorkspacePath: mock(() => forkedWorkspacePath),
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+
+    const generateStableIdSpy = spyOn(config, "generateStableId").mockReturnValue(newWorkspaceId);
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
+      undefined
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockResolvedValue(
+      Ok({
+        workspacePath: forkedWorkspacePath,
+        trunkBranch: "main",
+        forkedRuntimeConfig: { type: "local" },
+        targetRuntime,
+        forkedFromSource: true,
+        sourceRuntimeConfigUpdated: false,
+      })
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId);
+
+      expect(orchestrateForkSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceWorkspaceName: sourceMetadata.name,
+          newWorkspaceName: "source-branch-fork-3",
+        })
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected success result, got error: ${result.error}`);
+      }
+
+      expect(result.data.metadata.name).toBe("source-branch-fork-3");
+      expect(result.data.metadata.title).toBe("Source branch (3)");
+      expect(result.data.metadata.namedWorkspacePath).toBe(forkedWorkspacePath);
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      copyPlanSpy.mockRestore();
+      runBackgroundInitSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+      generateStableIdSpy.mockRestore();
+    }
+  });
 });
 
 describe("WorkspaceService interruptStream", () => {
@@ -4543,6 +4651,10 @@ describe("generateForkBranchName", () => {
         "other-workspace",
       ])
     ).toBe("sidebar-a1b2-fork-4");
+  });
+
+  test("strips an existing fork suffix from the parent before incrementing", () => {
+    expect(generateForkBranchName("ws-fork-2", ["ws-fork-1", "ws-fork-2"])).toBe("ws-fork-3");
   });
 
   test("ignores non-matching workspace names", () => {
