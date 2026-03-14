@@ -16,6 +16,7 @@ export class BrowserSessionService extends EventEmitter {
   private readonly activeSessions = new Map<string, BrowserSession>();
   private readonly activeBackends = new Map<string, BrowserSessionBackend>();
   private readonly recentActions = new Map<string, BrowserAction[]>();
+  private readonly startingWorkspaces = new Set<string>();
   private disposed = false;
 
   getActiveSession(workspaceId: string): BrowserSession | null {
@@ -36,66 +37,84 @@ export class BrowserSessionService extends EventEmitter {
     );
     assert(!this.disposed, "BrowserSessionService is disposed");
 
-    const existing = this.activeSessions.get(workspaceId);
-    if (existing && (existing.status === "starting" || existing.status === "live")) {
-      return existing;
+    // Guard against concurrent startSession calls for the same workspace.
+    // A rapid double-click or two renderer clients could race past the
+    // existing-session check. Return the existing starting session instead.
+    if (this.startingWorkspaces.has(workspaceId)) {
+      const existingStartingSession = this.activeSessions.get(workspaceId);
+      if (existingStartingSession) {
+        return existingStartingSession;
+      }
     }
 
-    if (existing && existing.status !== "starting" && existing.status !== "live") {
-      await this.cleanupWorkspace(workspaceId);
+    this.startingWorkspaces.add(workspaceId);
+    try {
+      const existing = this.activeSessions.get(workspaceId);
+      if (existing && (existing.status === "starting" || existing.status === "live")) {
+        return existing;
+      }
+
+      if (existing && existing.status !== "starting" && existing.status !== "live") {
+        await this.cleanupWorkspace(workspaceId);
+      }
+
+      this.recentActions.set(workspaceId, []);
+
+      let backend: BrowserSessionBackend | null = null;
+      const isCurrentBackend = (wsId: string): boolean => {
+        assert(
+          backend !== null,
+          "BrowserSessionService callback ran before backend initialization"
+        );
+        return this.activeBackends.get(wsId) === backend;
+      };
+
+      const backendOptions: BrowserSessionBackendOptions = {
+        workspaceId,
+        ownership: options?.ownership ?? "agent",
+        initialUrl: options?.initialUrl ?? "about:blank",
+        onSessionUpdate: (session) => {
+          if (!isCurrentBackend(workspaceId)) {
+            return;
+          }
+
+          this.activeSessions.set(workspaceId, session);
+          this.emitEvent(workspaceId, { type: "session-updated", session });
+        },
+        onAction: (action) => {
+          if (!isCurrentBackend(workspaceId)) {
+            return;
+          }
+
+          this.appendAction(workspaceId, action);
+          this.emitEvent(workspaceId, { type: "action", action });
+        },
+        onEnded: (wsId) => {
+          if (!isCurrentBackend(wsId)) {
+            return;
+          }
+
+          this.emitEvent(wsId, { type: "session-ended", workspaceId: wsId });
+          this.activeSessions.delete(wsId);
+          this.activeBackends.delete(wsId);
+        },
+        onError: (wsId, error) => {
+          if (!isCurrentBackend(wsId)) {
+            return;
+          }
+
+          this.emitEvent(wsId, { type: "error", workspaceId: wsId, error });
+        },
+      };
+
+      backend = new BrowserSessionBackend(backendOptions);
+      this.activeBackends.set(workspaceId, backend);
+      const session = await backend.start();
+      this.activeSessions.set(workspaceId, session);
+      return session;
+    } finally {
+      this.startingWorkspaces.delete(workspaceId);
     }
-
-    this.recentActions.set(workspaceId, []);
-
-    let backend: BrowserSessionBackend | null = null;
-    const isCurrentBackend = (wsId: string): boolean => {
-      assert(backend !== null, "BrowserSessionService callback ran before backend initialization");
-      return this.activeBackends.get(wsId) === backend;
-    };
-
-    const backendOptions: BrowserSessionBackendOptions = {
-      workspaceId,
-      ownership: options?.ownership ?? "agent",
-      initialUrl: options?.initialUrl ?? "about:blank",
-      onSessionUpdate: (session) => {
-        if (!isCurrentBackend(workspaceId)) {
-          return;
-        }
-
-        this.activeSessions.set(workspaceId, session);
-        this.emitEvent(workspaceId, { type: "session-updated", session });
-      },
-      onAction: (action) => {
-        if (!isCurrentBackend(workspaceId)) {
-          return;
-        }
-
-        this.appendAction(workspaceId, action);
-        this.emitEvent(workspaceId, { type: "action", action });
-      },
-      onEnded: (wsId) => {
-        if (!isCurrentBackend(wsId)) {
-          return;
-        }
-
-        this.emitEvent(wsId, { type: "session-ended", workspaceId: wsId });
-        this.activeSessions.delete(wsId);
-        this.activeBackends.delete(wsId);
-      },
-      onError: (wsId, error) => {
-        if (!isCurrentBackend(wsId)) {
-          return;
-        }
-
-        this.emitEvent(wsId, { type: "error", workspaceId: wsId, error });
-      },
-    };
-
-    backend = new BrowserSessionBackend(backendOptions);
-    this.activeBackends.set(workspaceId, backend);
-    const session = await backend.start();
-    this.activeSessions.set(workspaceId, session);
-    return session;
   }
 
   async stopSession(workspaceId: string): Promise<void> {
