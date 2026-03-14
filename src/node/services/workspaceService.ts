@@ -4089,7 +4089,8 @@ export class WorkspaceService extends EventEmitter {
 
   async fork(
     sourceWorkspaceId: string,
-    newName?: string
+    newName?: string,
+    sourceMessageId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
       if (sourceWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
@@ -4296,6 +4297,28 @@ export class WorkspaceService extends EventEmitter {
             path.join(sourceSessionDir, fileName),
             path.join(newSessionDir, fileName)
           );
+        }
+
+        if (sourceMessageId) {
+          const truncateResult = await this.historyService.truncateAfterMessage(
+            newWorkspaceId,
+            sourceMessageId,
+            {
+              keepTargetMessage: true,
+            }
+          );
+          if (!truncateResult.success) {
+            throw new Error(truncateResult.error);
+          }
+
+          // Forking from a prior assistant response intentionally discards any later in-flight
+          // state so the new workspace resumes cleanly at the chosen branch point.
+          await fsPromises.rm(path.join(newSessionDir, "partial.json"), { force: true });
+          if (this.sessionTimingService) {
+            await this.sessionTimingService.clearTimingFile(newWorkspaceId);
+          } else {
+            await fsPromises.rm(path.join(newSessionDir, "session-timing.json"), { force: true });
+          }
         }
 
         // Forks inherit chat history, but their cost ledger must start fresh.

@@ -62,6 +62,7 @@ export interface ForkOptions {
   client: RouterClient<AppRouter>;
   sourceWorkspaceId: string;
   newName?: string;
+  sourceMessageId?: string;
   startMessage?: string;
   sendMessageOptions?: SendMessageOptions;
 }
@@ -83,6 +84,7 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   const result = await client.workspace.fork({
     sourceWorkspaceId: options.sourceWorkspaceId,
     newName: options.newName,
+    sourceMessageId: options.sourceMessageId,
   });
 
   if (!result.success) {

@@ -1,11 +1,23 @@
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useStartHere } from "@/browser/hooks/useStartHere";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import type { DisplayedMessage } from "@/common/types/message";
 import { copyToClipboard } from "@/browser/utils/clipboard";
-import { Clipboard, ClipboardCheck, FileText, ListStart, Moon, Package } from "lucide-react";
+import {
+  Clipboard,
+  ClipboardCheck,
+  FileText,
+  GitBranch,
+  ListStart,
+  Moon,
+  Package,
+} from "lucide-react";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
+import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
+import { useAPI } from "@/browser/contexts/API";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Button } from "@/browser/components/Button/Button";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
@@ -31,7 +43,9 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   clipboardWriteText = copyToClipboard,
 }) => {
   const [showRaw, setShowRaw] = useState(false);
+  const { api } = useAPI();
   const workspaceContext = useOptionalWorkspaceContext();
+  const forkError = usePopoverError();
 
   // Get workspace name from context for share filename
   const workspaceName = workspaceId
@@ -65,6 +79,35 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     icon: copied ? <ClipboardCheck /> : <Clipboard />,
   };
 
+  const handleForkFromResponse = async () => {
+    if (!workspaceId) {
+      forkError.showError(message.historyId, "Workspace ID unavailable");
+      return;
+    }
+
+    if (!api) {
+      forkError.showError(message.historyId, "Not connected to server");
+      return;
+    }
+
+    try {
+      // Response-level forks branch from this assistant turn instead of cloning the entire
+      // transcript, so users can explore alternatives without carrying over later replies.
+      const result = await forkWorkspace({
+        client: api,
+        sourceWorkspaceId: workspaceId,
+        sourceMessageId: message.historyId,
+      });
+
+      if (!result.success) {
+        forkError.showError(message.historyId, result.error ?? "Failed to fork chat");
+      }
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Failed to fork chat";
+      forkError.showError(message.historyId, messageText);
+    }
+  };
+
   const buttons: ButtonConfig[] = isStreaming ? [] : [copyButton];
 
   if (!isStreaming) {
@@ -74,6 +117,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       disabled: startHereDisabled,
       tooltip: "Start a new context from this message and preserve earlier chat history",
       icon: <ListStart />,
+    });
+    buttons.push({
+      label: "Fork",
+      onClick: () => void handleForkFromResponse(),
+      disabled: !workspaceId || !api,
+      tooltip: "Fork a new workspace from this response",
+      icon: <GitBranch />,
     });
     buttons.push({
       label: "Share",
@@ -188,6 +238,11 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
         {renderContent()}
       </MessageWindow>
 
+      <PopoverError
+        error={forkError.error}
+        prefix="Failed to fork chat"
+        onDismiss={forkError.clearError}
+      />
       {startHereModal}
     </>
   );
