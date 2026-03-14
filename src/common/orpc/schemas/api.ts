@@ -1918,6 +1918,94 @@ export const devtools = {
   },
 };
 
+const BrowserSessionStatusSchema = z.enum(["starting", "live", "paused", "error", "ended"]);
+const BrowserSessionOwnershipSchema = z.enum(["agent", "user", "shared"]);
+
+const BrowserActionSchema = z.object({
+  id: z.string(),
+  type: z.enum(["navigate", "click", "fill", "screenshot", "custom"]),
+  description: z.string(),
+  timestamp: z.string(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+const BrowserSessionSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  status: BrowserSessionStatusSchema,
+  ownership: BrowserSessionOwnershipSchema,
+  currentUrl: z.string().nullable(),
+  title: z.string().nullable(),
+  lastScreenshotBase64: z.string().nullable(),
+  lastError: z.string().nullable(),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const BrowserSessionEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("snapshot"),
+    session: BrowserSessionSchema.nullable(),
+    recentActions: z.array(BrowserActionSchema),
+  }),
+  z.object({
+    type: z.literal("session-updated"),
+    session: BrowserSessionSchema,
+  }),
+  z.object({
+    type: z.literal("action"),
+    action: BrowserActionSchema,
+  }),
+  z.object({
+    type: z.literal("session-ended"),
+    workspaceId: z.string(),
+  }),
+  z.object({
+    type: z.literal("error"),
+    workspaceId: z.string(),
+    error: z.string(),
+  }),
+]);
+
+export const browserSession = {
+  getActive: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: BrowserSessionSchema.nullable(),
+  },
+  start: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        ownership: BrowserSessionOwnershipSchema.nullish(),
+        initialUrl: z.string().nullish(),
+      })
+      .strict(),
+    output: BrowserSessionSchema,
+  },
+  stop: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: z.object({
+      success: z.boolean(),
+    }),
+  },
+  subscribe: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: eventIterator(BrowserSessionEventSchema),
+  },
+};
+
 // UI Layouts (global settings)
 export const uiLayouts = {
   getAll: {
