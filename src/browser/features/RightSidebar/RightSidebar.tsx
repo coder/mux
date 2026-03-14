@@ -704,8 +704,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const apiState = useAPI();
   const api = apiState.api;
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
+  const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
   const [desktopAvailable, setDesktopAvailable] = React.useState<boolean | null>(null);
+  const [browserAvailable, setBrowserAvailable] = React.useState<boolean | null>(null);
   const debugLogsLocalOverrideRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -856,6 +858,31 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return prev;
     });
   }, [initialActiveTab, layoutRaw, llmDebugLogsEnabled, setLayoutRaw]);
+  React.useEffect(() => {
+    setBrowserAvailable(browserExperimentEnabled);
+  }, [browserExperimentEnabled]);
+
+  React.useEffect(() => {
+    if (browserAvailable == null) {
+      return;
+    }
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasBrowser = collectAllTabs(prev.root).includes("browser");
+
+      if (browserAvailable && !hasBrowser) {
+        return addTabToFocusedTabset(prev, "browser", false);
+      }
+
+      if (!browserAvailable && hasBrowser) {
+        return removeTabEverywhere(prev, "browser");
+      }
+
+      return prev;
+    });
+  }, [browserAvailable, initialActiveTab, setLayoutRaw]);
+
   React.useEffect(() => {
     if (!desktopExperimentEnabled) {
       setDesktopAvailable(false);

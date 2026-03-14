@@ -142,19 +142,19 @@ test("moveTabToTabset removes empty source tabset", () => {
 });
 
 test("reorderTabInTabset reorders tabs within a tabset", () => {
-  // Default layout has ["costs", "review", "explorer", "browser"]; reorder costs from 0 to 1
+  // Default layout has ["costs", "review", "explorer"]; reorder costs from 0 to 1
   const s0 = getDefaultRightSidebarLayoutState("costs");
   const s1 = reorderTabInTabset(s0, "tabset-1", 0, 1);
 
   expect(s1.root.type).toBe("tabset");
   if (s1.root.type !== "tabset") throw new Error("expected tabset");
 
-  expect(s1.root.tabs).toEqual(["review", "costs", "explorer", "browser"]);
+  expect(s1.root.tabs).toEqual(["review", "costs", "explorer"]);
   expect(s1.root.activeTab).toBe("costs");
 });
 
 test("dockTabToEdge splits a tabset and moves the dragged tab into the new pane", () => {
-  // Default layout has ["costs", "review", "explorer", "browser"]; drag review into a bottom split
+  // Default layout has ["costs", "review", "explorer"]; drag review into a bottom split
   const s0 = getDefaultRightSidebarLayoutState("costs");
 
   const s1 = dockTabToEdge(s0, "review", "tabset-1", "tabset-1", "bottom");
@@ -425,7 +425,7 @@ test("parseRightSidebarLayoutState strips legacy 'stats' tabs from persisted lay
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
   // "stats" should be stripped, then always-visible tabs are re-injected.
-  expect(result.root.tabs).toEqual(["costs", "review", "explorer", "browser"]);
+  expect(result.root.tabs).toEqual(["costs", "review", "explorer"]);
   expect(result.root.activeTab).toBe("costs");
 });
 
@@ -447,8 +447,8 @@ test("parseRightSidebarLayoutState falls back activeTab when stats was active", 
   expect(result.root.type).toBe("tabset");
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
-  // "stats" stripped; activeTab should fall back to first remaining tab after browser re-injection.
-  expect(result.root.tabs).toEqual(["costs", "review", "explorer", "browser"]);
+  // "stats" stripped; activeTab should fall back to the first remaining tab.
+  expect(result.root.tabs).toEqual(["costs", "review", "explorer"]);
   expect(result.root.activeTab).toBe("costs");
 });
 test("parseRightSidebarLayoutState maps stats activeTab to costs even when reordered", () => {
@@ -471,7 +471,7 @@ test("parseRightSidebarLayoutState maps stats activeTab to costs even when reord
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
   // "stats" stripped; activeTab should map to "costs" (semantic replacement), not "review".
-  expect(result.root.tabs).toEqual(["review", "costs", "explorer", "browser"]);
+  expect(result.root.tabs).toEqual(["review", "costs", "explorer"]);
   expect(result.root.activeTab).toBe("costs");
 });
 
@@ -516,7 +516,7 @@ test("parseRightSidebarLayoutState handles split layouts with legacy stats", () 
 
   if (left.type !== "tabset" || right.type !== "tabset") throw new Error("expected tabsets");
 
-  expect(left.tabs).toEqual(["costs", "explorer", "browser"]);
+  expect(left.tabs).toEqual(["costs", "explorer"]);
   expect(left.activeTab).toBe("costs");
   expect(right.tabs).toEqual(["review"]);
   expect(right.activeTab).toBe("review");

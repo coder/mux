@@ -69,7 +69,7 @@ export interface RightSidebarLayoutState {
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
   // Default tabs exclude terminal - users add terminals via the "+" button
-  const baseTabs: TabType[] = ["costs", "review", "explorer", "browser"];
+  const baseTabs: TabType[] = ["costs", "review", "explorer"];
   const tabs = baseTabs.includes(activeTab) ? baseTabs : [...baseTabs, activeTab];
 
   return {
@@ -129,9 +129,6 @@ export function parseRightSidebarLayoutState(
     // Migrate: inject new always-visible static tabs into persisted layouts.
     if (!layoutContainsTab(raw.root, "explorer")) {
       injectTabIntoLayout(raw.root, "explorer");
-    }
-    if (!layoutContainsTab(raw.root, "browser")) {
-      injectTabIntoLayout(raw.root, "browser");
     }
     return raw;
   }

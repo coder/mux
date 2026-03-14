@@ -13,6 +13,7 @@ export const EXPERIMENT_IDS = {
   EXEC_SUBAGENT_HARD_RESTART: "exec-subagent-hard-restart",
   MUX_GOVERNOR: "mux-governor",
   MULTI_PROJECT_WORKSPACES: "multi-project-workspaces",
+  AGENT_BROWSER: "agent-browser",
   PORTABLE_DESKTOP: "portable-desktop",
 } as const;
 
@@ -102,6 +103,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     enabledByDefault: false,
     userOverridable: true,
     // Keep this visible so users can opt into the still-default-off experiment from Settings.
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.AGENT_BROWSER]: {
+    id: EXPERIMENT_IDS.AGENT_BROWSER,
+    name: "Agent Browser",
+    description: "Show the Browser tab in the right sidebar for live agent-browser viewing",
+    enabledByDefault: false,
+    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.PORTABLE_DESKTOP]: {

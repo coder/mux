@@ -105,6 +105,7 @@ export const TAB_CONFIGS: Record<
     name: "Browser",
     contentClassName: "overflow-hidden p-0",
     keepAlive: false,
+    featureFlag: EXPERIMENT_IDS.AGENT_BROWSER,
   },
   output: {
     name: "Output",

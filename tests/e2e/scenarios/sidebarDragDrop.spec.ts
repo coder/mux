@@ -205,7 +205,7 @@ test.describe("sidebar drag and drop", () => {
     //
     // Explorer gets auto-injected into the first tabset when loading a persisted
     // layout that doesn't list every built-in tab.
-    await expect(tablists[0].getByRole("tab")).toHaveCount(4); // Stats (costs), Review, Explorer, Browser
+    await expect(tablists[0].getByRole("tab")).toHaveCount(3); // Stats (costs), Review, Explorer
     await expect(tablists[1].getByRole("tab")).toHaveCount(1); // Stats (duplicate costs in split)
   });
 
