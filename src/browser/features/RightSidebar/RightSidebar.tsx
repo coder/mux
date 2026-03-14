@@ -89,8 +89,7 @@ import {
   getTabContentClassName,
   type ReviewStats,
 } from "@/browser/features/RightSidebar/Tabs";
-import { DebugTabLabel, DesktopTabLabel } from "./Tabs/TabLabels";
-import { BrowserTabLabel, DebugTabLabel } from "./Tabs/TabLabels";
+import { BrowserTabLabel, DebugTabLabel, DesktopTabLabel } from "./Tabs/TabLabels";
 import { FileViewerTab } from "@/browser/features/RightSidebar/FileViewer";
 import { ExplorerTab } from "@/browser/features/RightSidebar/ExplorerTab";
 import {
@@ -540,6 +539,10 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           >
             <ErrorBoundary workspaceInfo="Desktop tab">
               <DesktopPanel workspaceId={props.workspaceId} />
+            </ErrorBoundary>
+          </div>
+        )}
+
         {props.node.activeTab === "browser" && (
           <div
             role="tabpanel"

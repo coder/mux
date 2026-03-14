@@ -581,7 +581,6 @@ export class ServiceContainer {
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
-    await this.browserSessionService.dispose();
     this.browserSessionService.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();

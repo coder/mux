@@ -100,6 +100,9 @@ export const DesktopTabLabel: React.FC = () => (
   <span className="inline-flex items-center gap-1">
     <Monitor className="h-3 w-3 shrink-0" />
     Desktop
+  </span>
+);
+
 /** Browser tab label with globe icon */
 export const BrowserTabLabel: React.FC = () => (
   <span className="inline-flex items-center gap-1">
