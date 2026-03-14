@@ -88,6 +88,7 @@ export interface ProjectContext {
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   getSecrets: (projectPath: string) => Promise<Secret[]>;
   updateSecrets: (projectPath: string, secrets: Secret[]) => Promise<void>;
+  updateDisplayName: (projectPath: string, displayName: string | null) => Promise<Result<void>>;
 
   // Section operations
   createSection: (
@@ -459,6 +460,20 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [api]
   );
 
+  const updateDisplayName = useCallback(
+    async (projectPath: string, displayName: string | null): Promise<Result<void>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      try {
+        await api.projects.setDisplayName({ projectPath, displayName });
+        await refreshProjects();
+        return { success: true, data: undefined };
+      } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
+      }
+    },
+    [api, refreshProjects]
+  );
+
   // Section operations
   const createSection = useCallback(
     async (projectPath: string, name: string, color?: string): Promise<Result<SectionConfig>> => {
@@ -553,6 +568,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       getBranchesForProject,
       getSecrets,
       updateSecrets,
+      updateDisplayName,
       createSection,
       updateSection,
       removeSection,
@@ -577,6 +593,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       getBranchesForProject,
       getSecrets,
       updateSecrets,
+      updateDisplayName,
       createSection,
       updateSection,
       removeSection,

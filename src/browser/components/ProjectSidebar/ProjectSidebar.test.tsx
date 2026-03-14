@@ -2,7 +2,7 @@ import "../../../../tests/ui/dom";
 
 import { type PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import * as ReactDndModule from "react-dnd";
 import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
 import * as MuxLogoDarkModule from "@/browser/assets/logos/mux-logo-dark.svg?react";
@@ -38,6 +38,7 @@ import * as WorkspaceDragLayerModule from "../WorkspaceDragLayer/WorkspaceDragLa
 import * as SectionDragLayerModule from "../SectionDragLayer/SectionDragLayer";
 import * as DraggableSectionModule from "../DraggableSection/DraggableSection";
 import * as AgentListItemModule from "../AgentListItem/AgentListItem";
+import * as PositionedMenuModule from "../PositionedMenu/PositionedMenu";
 
 import ProjectSidebar from "./ProjectSidebar";
 
@@ -61,6 +62,52 @@ interface MockAgentListItemProps {
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
 }
+
+let settingsOpenMock = mock(() => undefined);
+
+function createProjectContextValue(
+  overrides: Partial<ProjectContextModule.ProjectContext> = {}
+): ProjectContextModule.ProjectContext {
+  return {
+    userProjects: new Map(),
+    systemProjectPath: null,
+    resolveProjectPath: () => null,
+    getProjectConfig: () => undefined,
+    loading: false,
+    refreshProjects: () => Promise.resolve(),
+    addProject: () => undefined,
+    removeProject: () => Promise.resolve({ success: true }),
+    isProjectCreateModalOpen: false,
+    openProjectCreateModal: () => undefined,
+    closeProjectCreateModal: () => undefined,
+    workspaceModalState: {
+      isOpen: false,
+      projectPath: null,
+      projectName: "",
+      branches: [],
+      defaultTrunkBranch: undefined,
+      loadErrorMessage: null,
+      isLoading: false,
+    },
+    openWorkspaceModal: () => Promise.resolve(),
+    closeWorkspaceModal: () => undefined,
+    getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+    getSecrets: () => Promise.resolve([]),
+    updateSecrets: () => Promise.resolve(),
+    updateDisplayName: () => resolveVoidResult(),
+    createSection: () =>
+      Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
+    updateSection: () => resolveVoidResult(),
+    removeSection: () => resolveVoidResult(),
+    reorderSections: () => resolveVoidResult(),
+    assignWorkspaceToSection: () => resolveVoidResult(),
+    hasAnyProject: false,
+    resolveNewChatProjectPath: () => null,
+    ...overrides,
+  };
+}
+
+let projectContextValue = createProjectContextValue();
 
 function installProjectSidebarTestDoubles() {
   spyOn(MuxLogoDarkModule, "default").mockImplementation((() => (
@@ -109,41 +156,7 @@ function installProjectSidebarTestDoubles() {
   spyOn(ConfirmDialogContextModule, "useConfirmDialog").mockImplementation(() => ({
     confirm: () => Promise.resolve(true),
   }));
-  spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => ({
-    userProjects: new Map(),
-    systemProjectPath: null,
-    resolveProjectPath: () => null,
-    getProjectConfig: () => undefined,
-    loading: false,
-    refreshProjects: () => Promise.resolve(),
-    addProject: () => undefined,
-    removeProject: () => Promise.resolve({ success: true }),
-    isProjectCreateModalOpen: false,
-    openProjectCreateModal: () => undefined,
-    closeProjectCreateModal: () => undefined,
-    workspaceModalState: {
-      isOpen: false,
-      projectPath: null,
-      projectName: "",
-      branches: [],
-      defaultTrunkBranch: undefined,
-      loadErrorMessage: null,
-      isLoading: false,
-    },
-    openWorkspaceModal: () => Promise.resolve(),
-    closeWorkspaceModal: () => undefined,
-    getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
-    getSecrets: () => Promise.resolve([]),
-    updateSecrets: () => Promise.resolve(),
-    createSection: () =>
-      Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
-    updateSection: () => resolveVoidResult(),
-    removeSection: () => resolveVoidResult(),
-    reorderSections: () => resolveVoidResult(),
-    assignWorkspaceToSection: () => resolveVoidResult(),
-    hasAnyProject: false,
-    resolveNewChatProjectPath: () => null,
-  }));
+  spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => projectContextValue);
   spyOn(RouterContextModule, "useRouter").mockImplementation(() => ({
     navigateToWorkspace: () => undefined,
     navigateToProject: () => undefined,
@@ -163,7 +176,7 @@ function installProjectSidebarTestDoubles() {
   spyOn(SettingsContextModule, "useSettings").mockImplementation(() => ({
     isOpen: false,
     activeSection: "general",
-    open: () => undefined,
+    open: settingsOpenMock,
     close: () => undefined,
     setActiveSection: () => undefined,
     registerOnClose: () => () => undefined,
@@ -225,8 +238,15 @@ function installProjectSidebarTestDoubles() {
     (() => null) as unknown as typeof ConfirmationModalModule.ConfirmationModal
   );
   spyOn(ProjectDeleteConfirmationModalModule, "ProjectDeleteConfirmationModal").mockImplementation(
-    (() =>
-      null) as unknown as typeof ProjectDeleteConfirmationModalModule.ProjectDeleteConfirmationModal
+    ((props: {
+      isOpen: boolean;
+      projectName: string;
+      onConfirm: () => void;
+      onCancel: () => void;
+    }) =>
+      props.isOpen ? (
+        <div data-testid="project-delete-confirmation-modal">{props.projectName}</div>
+      ) : null) as unknown as typeof ProjectDeleteConfirmationModalModule.ProjectDeleteConfirmationModal
   );
   spyOn(WorkspaceStatusIndicatorModule, "WorkspaceStatusIndicator").mockImplementation((() => (
     <div data-testid="workspace-status-indicator" />
@@ -284,6 +304,28 @@ function installProjectSidebarTestDoubles() {
       </div>
     );
   }) as unknown as typeof AgentListItemModule.AgentListItem);
+  spyOn(PositionedMenuModule, "PositionedMenu").mockImplementation(((props: {
+    open: boolean;
+    children: React.ReactNode;
+  }) =>
+    props.open ? (
+      <div data-testid="project-actions-menu">{props.children}</div>
+    ) : null) as unknown as typeof PositionedMenuModule.PositionedMenu);
+  spyOn(PositionedMenuModule, "PositionedMenuItem").mockImplementation(((props: {
+    label: string;
+    disabled?: boolean;
+    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  }) => (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={(event) => {
+        props.onClick(event);
+      }}
+    >
+      {props.label}
+    </button>
+  )) as unknown as typeof PositionedMenuModule.PositionedMenuItem);
 }
 
 function createWorkspace(
@@ -323,6 +365,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       EXPANDED_PROJECTS_KEY,
       JSON.stringify([MULTI_PROJECT_SIDEBAR_SECTION_ID])
     );
+    settingsOpenMock = mock(() => undefined);
+    projectContextValue = createProjectContextValue();
     installProjectSidebarTestDoubles();
   });
 
@@ -718,5 +762,147 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.getByTestId(agentItemTestId("child-1"))).toBeTruthy();
     expect(view.getByTestId(agentItemTestId("child-2"))).toBeTruthy();
     expect(view.queryByTestId(agentItemTestId("grandchild-1"))).toBeNull();
+  });
+});
+
+describe("ProjectSidebar project actions menu", () => {
+  const demoProjectPath = "/projects/demo-project";
+
+  beforeEach(() => {
+    cleanupDom = installDom();
+    window.localStorage.clear();
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([demoProjectPath]));
+
+    settingsOpenMock = mock(() => undefined);
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([[demoProjectPath, { workspaces: [] }]]),
+    });
+
+    installProjectSidebarTestDoubles();
+  });
+
+  afterEach(() => {
+    cleanup();
+    cleanupDom?.();
+    cleanupDom = null;
+    mock.restore();
+  });
+
+  function renderSidebar() {
+    return render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map()}
+        workspaceRecency={{}}
+      />
+    );
+  }
+
+  test("renders always-visible new-chat and kebab buttons, and opens menu from kebab", () => {
+    const view = renderSidebar();
+
+    expect(view.getByRole("button", { name: "New chat in demo-project" })).toBeTruthy();
+    const projectOptionsButton = view.getByRole("button", {
+      name: "Project options for demo-project",
+    });
+
+    fireEvent.click(projectOptionsButton);
+
+    const menu = view.getByTestId("project-actions-menu");
+    const menuButtons = within(menu).getAllByRole("button");
+    expect(menuButtons.map((button) => button.textContent)).toEqual([
+      "Edit name",
+      "Manage secrets",
+      "Delete...",
+    ]);
+  });
+
+  test("opens the same project actions menu on right-click", () => {
+    const view = renderSidebar();
+
+    fireEvent.contextMenu(view.getByText("demo-project"));
+
+    expect(view.getByTestId("project-actions-menu")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Edit name" })).toBeTruthy();
+  });
+
+  test("menu actions route to settings and delete confirmation", () => {
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [demoProjectPath, { workspaces: [{ path: `${demoProjectPath}/ws-1` }] }],
+      ]),
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Manage secrets" }));
+
+    expect(settingsOpenMock).toHaveBeenCalledWith("secrets", {
+      secretsProjectPath: demoProjectPath,
+    });
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Delete..." }));
+
+    expect(view.getByTestId("project-delete-confirmation-modal").textContent).toBe("demo-project");
+  });
+
+  test("supports inline project name editing with Enter, Escape, and empty-to-null commit", async () => {
+    const updateDisplayName = mock(() => resolveVoidResult());
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([[demoProjectPath, { workspaces: [], displayName: "Custom Name" }]]),
+      updateDisplayName,
+    });
+
+    const view = renderSidebar();
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Edit name" }));
+
+    const input = view.getByRole("textbox", { name: "Edit project name for demo-project" });
+    expect((input as HTMLInputElement).value).toBe("Custom Name");
+
+    fireEvent.change(input, { target: { value: "  Renamed Project  " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(updateDisplayName).toHaveBeenCalledWith(demoProjectPath, "Renamed Project");
+    });
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Edit name" }));
+
+    const escapeInput = view.getByRole("textbox", { name: "Edit project name for demo-project" });
+    fireEvent.change(escapeInput, { target: { value: "Do not save" } });
+    fireEvent.keyDown(escapeInput, { key: "Escape" });
+
+    expect(updateDisplayName.mock.calls.length).toBe(1);
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Edit name" }));
+
+    const emptyInput = view.getByRole("textbox", { name: "Edit project name for demo-project" });
+    fireEvent.change(emptyInput, { target: { value: "   " } });
+    fireEvent.blur(emptyInput);
+
+    await waitFor(() => {
+      expect(updateDisplayName).toHaveBeenCalledWith(demoProjectPath, null);
+    });
+  });
+
+  test("renders displayName when set and falls back to basename when unset", () => {
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        ["/projects/custom-name-project", { workspaces: [], displayName: "Custom Label" }],
+        ["/projects/fallback-project", { workspaces: [] }],
+      ]),
+    });
+
+    const view = renderSidebar();
+
+    expect(view.getByText("Custom Label")).toBeTruthy();
+    expect(view.getByText("fallback-project")).toBeTruthy();
   });
 });

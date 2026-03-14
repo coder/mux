@@ -67,7 +67,13 @@ import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceS
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import {
+  PositionedMenu,
+  PositionedMenuItem,
+} from "@/browser/components/PositionedMenu/PositionedMenu";
+import { ChevronRight, CircleHelp, EllipsisVertical, KeyRound, Pencil, Trash2 } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -136,6 +142,24 @@ const MuxChatHelpButton: React.FC<{
 const PROJECT_ITEM_BASE_CLASS =
   "sticky top-0 z-10 py-2 pl-2 pr-3 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
 
+function getProjectFallbackLabel(projectPath: string): string {
+  const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
+  const { basename } = PlatformPaths.splitAbbreviated(abbreviatedPath);
+  return basename;
+}
+
+function getProjectNameFromPath(path: string): string {
+  if (!path || typeof path !== "string") {
+    return "Unknown";
+  }
+  return PlatformPaths.getProjectName(path);
+}
+
+function normalizeDisplayNameInput(value: string): string | null {
+  const trimmedValue = value.trim();
+  return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
 function getProjectItemClassName(opts: {
   isDragging: boolean;
   isOver: boolean;
@@ -154,6 +178,10 @@ type DraggableProjectItemProps = React.PropsWithChildren<{
   onReorder: (draggedPath: string, targetPath: string) => void;
   selected?: boolean;
   onClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  onTouchStart?: (e: React.TouchEvent) => void;
+  onTouchEnd?: (e: React.TouchEvent) => void;
+  onTouchMove?: (e: React.TouchEvent) => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
   role?: string;
   tabIndex?: number;
@@ -471,6 +499,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     userProjects,
     openProjectCreateModal: onAddProject,
     removeProject: onRemoveProject,
+    updateDisplayName,
     createSection,
     updateSection,
     removeSection,
@@ -685,12 +714,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const projectRemoveError = usePopoverError();
   const sectionRemoveError = usePopoverError();
 
-  const getProjectName = (path: string) => {
-    if (!path || typeof path !== "string") {
-      return "Unknown";
-    }
-    return PlatformPaths.getProjectName(path);
-  };
+  const projectContextMenu = useContextMenuPosition({ longPress: true });
+  const [projectMenuTargetPath, setProjectMenuTargetPath] = useState<string | null>(null);
+  const [editingProjectPath, setEditingProjectPath] = useState<string | null>(null);
+  const [editingProjectDisplayName, setEditingProjectDisplayName] = useState("");
+  const skipNextProjectNameBlurCommitRef = useRef(false);
 
   // Use functional update to avoid stale closure issues when clicking rapidly
   const toggleProject = useCallback(
@@ -1004,16 +1032,132 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
   };
 
-  const handleOpenSecrets = (projectPath: string) => {
-    // Collapse the off-canvas sidebar on mobile before navigating so the
-    // settings page is immediately accessible without a backdrop blocking it.
-    if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
-      persistMobileSidebarScrollTop(mobileScrollTopRef.current);
-      onToggleCollapsed();
+  const handleOpenSecrets = useCallback(
+    (projectPath: string) => {
+      // Collapse the off-canvas sidebar on mobile before navigating so the
+      // settings page is immediately accessible without a backdrop blocking it.
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+        onToggleCollapsed();
+      }
+      // Navigate to Settings → Secrets with the project pre-selected.
+      settings.open("secrets", { secretsProjectPath: projectPath });
+    },
+    [MOBILE_BREAKPOINT, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop, settings]
+  );
+
+  const closeProjectContextMenu = useCallback(() => {
+    projectContextMenu.close();
+    setProjectMenuTargetPath(null);
+  }, [projectContextMenu]);
+
+  const handleProjectMenuOpenChange = useCallback(
+    (open: boolean) => {
+      projectContextMenu.onOpenChange(open);
+      if (!open) {
+        setProjectMenuTargetPath(null);
+      }
+    },
+    [projectContextMenu]
+  );
+
+  const handleOpenProjectMenu = useCallback(
+    (event: React.MouseEvent, projectPath: string) => {
+      setProjectMenuTargetPath(projectPath);
+      projectContextMenu.onContextMenu(event);
+    },
+    [projectContextMenu]
+  );
+
+  const handleProjectContextMenuTouchStart = useCallback(
+    (event: React.TouchEvent, projectPath: string) => {
+      setProjectMenuTargetPath(projectPath);
+      projectContextMenu.touchHandlers.onTouchStart(event);
+    },
+    [projectContextMenu]
+  );
+
+  const handleRequestProjectRemoval = useCallback(
+    (projectPath: string, buttonElement?: HTMLElement) => {
+      const projectConfig = userProjects.get(projectPath);
+      if (!projectConfig) {
+        return;
+      }
+
+      const projectName = getProjectNameFromPath(projectPath);
+      const counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      const total = counts.activeCount + counts.archivedCount;
+      if (total > 0) {
+        setDeleteConfirmation({
+          projectPath,
+          projectName,
+          activeCount: counts.activeCount,
+          archivedCount: counts.archivedCount,
+        });
+        return;
+      }
+
+      void removeProjectWithFeedback(projectPath, undefined, buttonElement);
+    },
+    [removeProjectWithFeedback, userProjects]
+  );
+
+  const cancelProjectDisplayNameEditing = useCallback(() => {
+    setEditingProjectPath(null);
+    setEditingProjectDisplayName("");
+  }, []);
+
+  const commitProjectDisplayNameEdit = useCallback(
+    async (projectPath: string) => {
+      const normalizedDisplayName = normalizeDisplayNameInput(editingProjectDisplayName);
+      const result = await updateDisplayName(projectPath, normalizedDisplayName);
+      if (!result.success) {
+        console.error("Failed to update project display name:", result.error);
+      }
+      setEditingProjectPath((currentPath) => (currentPath === projectPath ? null : currentPath));
+      setEditingProjectDisplayName("");
+    },
+    [editingProjectDisplayName, updateDisplayName]
+  );
+
+  const handleProjectMenuEditName = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
     }
-    // Navigate to Settings → Secrets with the project pre-selected.
-    settings.open("secrets", { secretsProjectPath: projectPath });
-  };
+
+    const projectConfig = userProjects.get(projectMenuTargetPath);
+    if (!projectConfig) {
+      closeProjectContextMenu();
+      return;
+    }
+
+    const currentDisplayName =
+      projectConfig.displayName ?? getProjectFallbackLabel(projectMenuTargetPath);
+    setEditingProjectPath(projectMenuTargetPath);
+    setEditingProjectDisplayName(currentDisplayName);
+    closeProjectContextMenu();
+  }, [closeProjectContextMenu, projectMenuTargetPath, userProjects]);
+
+  const handleProjectMenuManageSecrets = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+
+    handleOpenSecrets(projectMenuTargetPath);
+    closeProjectContextMenu();
+  }, [closeProjectContextMenu, handleOpenSecrets, projectMenuTargetPath]);
+
+  const handleProjectMenuDelete = useCallback(
+    (buttonElement?: HTMLElement) => {
+      if (!projectMenuTargetPath) {
+        return;
+      }
+
+      handleRequestProjectRemoval(projectMenuTargetPath, buttonElement);
+      closeProjectContextMenu();
+    },
+    [closeProjectContextMenu, handleRequestProjectRemoval, projectMenuTargetPath]
+  );
 
   // UI preference: project order persists in localStorage
   const [projectOrder, setProjectOrder] = usePersistedState<string[]>("mux:projectOrder", []);
@@ -1095,6 +1239,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     },
     [projectOrder, userProjects, setProjectOrder]
   );
+
+  const hasProjectMenuTarget = projectMenuTargetPath !== null;
 
   // Handle keyboard shortcuts
   useEffect(() => {
@@ -1258,13 +1404,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   sortedProjectPaths.map((projectPath) => {
                     const config = userProjects.get(projectPath);
                     if (!config) return null;
-                    const projectName = getProjectName(projectPath);
+                    const projectName = getProjectNameFromPath(projectPath);
                     const sanitizedProjectId =
                       projectPath.replace(/[^a-zA-Z0-9_-]/g, "-") || "root";
                     const workspaceListId = `workspace-list-${sanitizedProjectId}`;
                     const isExpanded = expandedProjectsList.includes(projectPath);
-                    const counts = getProjectWorkspaceCounts(config.workspaces);
-                    const removeTooltip = "Remove project";
+                    const displayProjectName =
+                      config.displayName ?? getProjectFallbackLabel(projectPath);
+                    const isEditingProjectDisplayName = editingProjectPath === projectPath;
 
                     return (
                       <div key={projectPath} className="border-hover border-b">
@@ -1272,7 +1419,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           projectPath={projectPath}
                           onReorder={handleReorder}
                           selected={false}
-                          onClick={() => handleAddWorkspace(projectPath)}
+                          onClick={() => {
+                            if (projectContextMenu.suppressClickIfLongPress()) {
+                              return;
+                            }
+                            if (isEditingProjectDisplayName) {
+                              return;
+                            }
+                            handleAddWorkspace(projectPath);
+                          }}
+                          onContextMenu={(event) => handleOpenProjectMenu(event, projectPath)}
+                          onTouchStart={(event) =>
+                            handleProjectContextMenuTouchStart(event, projectPath)
+                          }
+                          onTouchEnd={projectContextMenu.touchHandlers.onTouchEnd}
+                          onTouchMove={projectContextMenu.touchHandlers.onTouchMove}
                           onKeyDown={(e: React.KeyboardEvent) => {
                             // Ignore key events from child buttons
                             if (e.target instanceof HTMLElement && e.target !== e.currentTarget) {
@@ -1305,20 +1466,54 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
                             />
                           </button>
-                          <div className="flex min-w-0 flex-1 items-center pr-2">
+                          <div
+                            className="flex min-w-0 flex-1 items-center pr-2"
+                            onContextMenu={(event) => handleOpenProjectMenu(event, projectPath)}
+                          >
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <div className="text-muted-dark flex gap-2 truncate text-sm">
-                                  {(() => {
-                                    const abbrevPath = PlatformPaths.abbreviate(projectPath);
-                                    const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
-                                    return (
-                                      <span className="text-foreground truncate font-medium">
-                                        {basename}
-                                      </span>
-                                    );
-                                  })()}
-                                </div>
+                                {isEditingProjectDisplayName ? (
+                                  <input
+                                    value={editingProjectDisplayName}
+                                    autoFocus
+                                    aria-label={`Edit project name for ${projectName}`}
+                                    className="bg-background text-foreground border-border-light h-6 w-full rounded border px-2 text-sm"
+                                    onClick={(event) => event.stopPropagation()}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onContextMenu={(event) => event.stopPropagation()}
+                                    onChange={(event) => {
+                                      setEditingProjectDisplayName(event.target.value);
+                                    }}
+                                    onKeyDown={(event) => {
+                                      stopKeyboardPropagation(event);
+                                      if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        skipNextProjectNameBlurCommitRef.current = true;
+                                        cancelProjectDisplayNameEditing();
+                                        return;
+                                      }
+
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        event.currentTarget.blur();
+                                      }
+                                    }}
+                                    onBlur={(event) => {
+                                      event.stopPropagation();
+                                      if (skipNextProjectNameBlurCommitRef.current) {
+                                        skipNextProjectNameBlurCommitRef.current = false;
+                                        return;
+                                      }
+                                      void commitProjectDisplayNameEdit(projectPath);
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="text-muted-dark flex gap-2 truncate text-sm">
+                                    <span className="text-foreground truncate font-medium">
+                                      {displayProjectName}
+                                    </span>
+                                  </div>
+                                )}
                               </TooltipTrigger>
                               <TooltipContent align="start">{projectPath}</TooltipContent>
                             </Tooltip>
@@ -1328,64 +1523,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  handleOpenSecrets(projectPath);
-                                }}
-                                aria-label={`Manage secrets for ${projectName}`}
-                                data-project-path={projectPath}
-                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500 [@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:hidden [@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100"
-                              >
-                                <KeyRound size={12} />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent align="end">Manage secrets</TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  const buttonElement = event.currentTarget;
-                                  const total = counts.activeCount + counts.archivedCount;
-                                  if (total > 0) {
-                                    setDeleteConfirmation({
-                                      projectPath,
-                                      projectName,
-                                      activeCount: counts.activeCount,
-                                      archivedCount: counts.archivedCount,
-                                    });
-                                    return;
-                                  }
-
-                                  void removeProjectWithFeedback(
-                                    projectPath,
-                                    undefined,
-                                    buttonElement
-                                  );
-                                }}
-                                aria-label={`Remove project ${projectName}`}
-                                data-project-path={projectPath}
-                                className={cn(
-                                  "text-muted-dark mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] border-none bg-transparent text-base opacity-0 transition-all duration-200",
-                                  "[@media(max-width:768px)_and_(hover:none)_and_(pointer:coarse)]:hidden",
-                                  "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100",
-                                  "cursor-pointer hover:bg-danger-light/10 hover:text-danger-light"
-                                )}
-                              >
-                                ×
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent align="end">{removeTooltip}</TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                onClick={(event) => {
-                                  event.stopPropagation();
                                   handleAddWorkspace(projectPath);
                                 }}
                                 aria-label={`New chat in ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                                className="text-secondary hover:bg-hover hover:border-border-light mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
                               >
                                 +
                               </button>
@@ -1393,6 +1535,22 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             <TooltipContent>
                               New chat ({formatKeybind(KEYBINDS.NEW_WORKSPACE)})
                             </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleOpenProjectMenu(event, projectPath);
+                                }}
+                                aria-label={`Project options for ${projectName}`}
+                                data-project-path={projectPath}
+                                className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200"
+                              >
+                                <EllipsisVertical size={12} />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent align="end">Project options</TooltipContent>
                           </Tooltip>
                         </DraggableProjectItem>
 
@@ -2240,6 +2398,37 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             side="left"
             shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
           />
+          <PositionedMenu
+            open={projectContextMenu.isOpen}
+            onOpenChange={handleProjectMenuOpenChange}
+            position={projectContextMenu.position}
+          >
+            <PositionedMenuItem
+              icon={<Pencil />}
+              label="Edit name"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuEditName();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<KeyRound />}
+              label="Manage secrets"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuManageSecrets();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<Trash2 />}
+              label="Delete..."
+              disabled={!hasProjectMenuTarget}
+              onClick={(event) => {
+                handleProjectMenuDelete(event.currentTarget);
+              }}
+            />
+          </PositionedMenu>
+
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}
             title={

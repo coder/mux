@@ -288,6 +288,66 @@ describe("ProjectContext", () => {
     });
   });
 
+  test("updateDisplayName calls projects.setDisplayName and refreshes projects", async () => {
+    const projectsApi = createMockAPI({
+      list: () => Promise.resolve([["/alpha", { workspaces: [] }]]),
+      remove: () => Promise.resolve({ success: true as const, data: undefined }),
+      setDisplayName: () => Promise.resolve(),
+      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      secrets: {
+        get: () => Promise.resolve([]),
+        update: () => Promise.resolve({ success: true as const, data: undefined }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => {
+      expect(projectsApi.list).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      const result = await ctx().updateDisplayName("/alpha", "Renamed Project");
+      expect(result.success).toBe(true);
+    });
+
+    expect(projectsApi.setDisplayName).toHaveBeenCalledWith({
+      projectPath: "/alpha",
+      displayName: "Renamed Project",
+    });
+
+    await waitFor(() => {
+      expect(projectsApi.list.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  test("updateDisplayName returns API errors without refreshing projects", async () => {
+    const projectsApi = createMockAPI({
+      list: () => Promise.resolve([["/alpha", { workspaces: [] }]]),
+      remove: () => Promise.resolve({ success: true as const, data: undefined }),
+      setDisplayName: () => Promise.reject(new Error("nope")),
+      listBranches: () => Promise.resolve({ branches: ["main"], recommendedTrunk: "main" }),
+      secrets: {
+        get: () => Promise.resolve([]),
+        update: () => Promise.resolve({ success: true as const, data: undefined }),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => {
+      expect(projectsApi.list).toHaveBeenCalledTimes(1);
+    });
+
+    const result = await ctx().updateDisplayName("/alpha", null);
+    expect(result).toEqual({ success: false, error: "nope" });
+    expect(projectsApi.setDisplayName).toHaveBeenCalledWith({
+      projectPath: "/alpha",
+      displayName: null,
+    });
+    expect(projectsApi.list).toHaveBeenCalledTimes(1);
+  });
+
   test("refreshProjects sets empty map on API error", async () => {
     createMockAPI({
       list: () => Promise.reject(new Error("network failure")),
@@ -637,6 +697,7 @@ function createMockAPI(overrides: RecursivePartial<APIClient["projects"]>) {
             data: undefined,
           }))
     ),
+    setDisplayName: mock(overrides.setDisplayName ?? (() => Promise.resolve())),
     pickDirectory: mock(overrides.pickDirectory ?? (() => Promise.resolve(null))),
     secrets: {
       get: mock(overrides.secrets?.get ?? (() => Promise.resolve([]))),

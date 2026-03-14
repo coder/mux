@@ -189,6 +189,7 @@ void mock.module("@/browser/contexts/ProjectContext", () => ({
     getBranchesForProject: mock(() => Promise.resolve({ branches: [], recommendedTrunk: null })),
     getSecrets: mock(() => Promise.resolve([])),
     updateSecrets: mock(() => Promise.resolve()),
+    updateDisplayName: mock(() => Promise.resolve({ success: true })),
     createSection: mock(() => Promise.resolve({ success: true })),
     updateSection: mock(() => Promise.resolve({ success: true })),
     removeSection: mock(() => Promise.resolve({ success: true })),

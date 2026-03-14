@@ -77,6 +77,7 @@ function registerProjectPageMocks() {
       getBranchesForProject: () => Promise.resolve({ branches: [], trunkBranch: null }),
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
+      updateDisplayName: () => Promise.resolve({ success: true }),
       createSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
       updateSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
       removeSection: () => Promise.resolve({ ok: false, error: "not implemented in test" }),
