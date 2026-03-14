@@ -60,10 +60,10 @@ export function useBrowserSessionSubscription(workspaceId: string) {
             setError(null);
             break;
           case "session-updated": {
-            const previousSessionId = sessionIdRef.current;
+            const sessionIdChanged = sessionIdRef.current !== event.session.id;
             sessionIdRef.current = event.session.id;
             setSession(event.session);
-            if (previousSessionId !== null && previousSessionId !== event.session.id) {
+            if (sessionIdChanged) {
               setRecentActions([]);
             }
             setError(null);
