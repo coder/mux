@@ -1,4 +1,10 @@
-import { getAvailableTools, TaskToolArgsSchema, TOOL_DEFINITIONS } from "./toolDefinitions";
+import { RUNTIME_MODE } from "@/common/types/runtime";
+import {
+  buildTaskToolDescription,
+  getAvailableTools,
+  TaskToolArgsSchema,
+  TOOL_DEFINITIONS,
+} from "./toolDefinitions";
 
 describe("TOOL_DEFINITIONS", () => {
   it("accepts custom subagent_type IDs (deprecated alias)", () => {
@@ -201,6 +207,23 @@ describe("TOOL_DEFINITIONS", () => {
     expect(TOOL_DEFINITIONS.task.description).toContain(
       "the next step should usually be task_await"
     );
+  });
+
+  it("keeps static task guidance runtime-agnostic", () => {
+    expect(TOOL_DEFINITIONS.task.description).toContain(
+      "Whether a sub-agent can see uncommitted changes depends on the runtime"
+    );
+    expect(TOOL_DEFINITIONS.task.description).not.toContain("Subagents only see committed state");
+  });
+
+  it("builds runtime-specific task guidance for local and worktree runtimes", () => {
+    const localDescription = buildTaskToolDescription(RUNTIME_MODE.LOCAL);
+    expect(localDescription).toContain("share the same working directory as the parent");
+    expect(localDescription).toContain("can see uncommitted changes");
+
+    const worktreeDescription = buildTaskToolDescription(RUNTIME_MODE.WORKTREE);
+    expect(worktreeDescription).toContain("forked workspace based on committed state");
+    expect(worktreeDescription).toContain("Uncommitted changes from the parent are not available");
   });
 
   it("accepts ask_user_question headers longer than 12 characters", () => {

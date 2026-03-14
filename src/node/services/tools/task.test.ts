@@ -48,6 +48,28 @@ function expectGroupedQueuedOrRunningTaskToolResult(
 }
 
 describe("task tool", () => {
+  it("uses runtime-aware description for local runtimes", () => {
+    using tempDir = new TestTempDir("test-task-tool-local-description");
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path),
+      muxEnv: { MUX_RUNTIME: "local" },
+    });
+
+    expect(tool.description).toContain("share the same working directory as the parent");
+    expect(tool.description).toContain("can see uncommitted changes");
+  });
+
+  it("uses runtime-aware description for worktree runtimes", () => {
+    using tempDir = new TestTempDir("test-task-tool-worktree-description");
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path),
+      muxEnv: { MUX_RUNTIME: "worktree" },
+    });
+
+    expect(tool.description).toContain("forked workspace based on committed state");
+    expect(tool.description).toContain("Uncommitted changes from the parent are not available");
+  });
+
   it("should return immediately when run_in_background is true", async () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

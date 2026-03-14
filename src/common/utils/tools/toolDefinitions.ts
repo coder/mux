@@ -28,6 +28,7 @@
 
 import { z } from "zod";
 import { AgentIdSchema, AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import {
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
@@ -165,6 +166,59 @@ const TaskToolBestOfCountSchema = z.preprocess(
   (value) => value ?? undefined,
   z.number().int().min(1).max(20).default(1)
 );
+
+function getTaskRuntimeVisibilityGuidance(runtimeMode: RuntimeMode | undefined): string {
+  switch (runtimeMode) {
+    case RUNTIME_MODE.LOCAL:
+      return (
+        "In local runtime, sub-agents share the same working directory as the parent, so they can see uncommitted changes. " +
+        "Be careful: they can also modify the same files concurrently."
+      );
+    case RUNTIME_MODE.WORKTREE:
+      return (
+        "In worktree runtime, sub-agents start from a forked workspace based on committed state. " +
+        "Uncommitted changes from the parent are not available. Commit any changes you want the sub-agent to consider before spawning a task."
+      );
+    case RUNTIME_MODE.DOCKER:
+      return (
+        "In Docker runtime, sub-agents start from a new workspace created from the repository's committed state. " +
+        "Uncommitted changes from the parent are not available. Commit any changes you want the sub-agent to consider before spawning a task."
+      );
+    case RUNTIME_MODE.DEVCONTAINER:
+      return (
+        "In devcontainer runtime, sub-agents start from a forked workspace based on committed state. " +
+        "Uncommitted changes from the parent are not available. Commit any changes you want the sub-agent to consider before spawning a task."
+      );
+    case RUNTIME_MODE.SSH:
+      return (
+        "In SSH runtime, sub-agents usually start from committed state. Some fallback fork paths may copy the working tree, but do not rely on that ambiguity. " +
+        "If the child must see your latest changes, commit them before spawning the task."
+      );
+    default:
+      return "Sub-agent visibility depends on runtime. If the child must see your latest work, commit it before spawning the task unless your runtime explicitly shares the working copy.";
+  }
+}
+
+export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): string {
+  return (
+    "Spawn a sub-agent task (child workspace). " +
+    "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
+    `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
+    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. " +
+    "Leave n unset unless the developer explicitly asks for best-of-n work, and only use it for sub-agents without interfering side effects (for example read-only agents like explore). " +
+    "\n\nWhen the user explicitly asks for best-of-n work, the parent should do only brief setup work (for example clarifying the launch prompt, evaluation criteria, or task split) and then delegate the substantive analysis to the spawned sub-agents. " +
+    "Do not also do a full parallel analysis in the parent. After spawning a best-of batch, the next step should usually be task_await so you can synthesize from the child reports. " +
+    "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
+    "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
+    "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When n > 1, the completed result includes one report per spawned task. " +
+    "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
+    "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+    "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
+    "Use run_in_background: true when launching multiple tasks in parallel so you can await them as a batch. " +
+    "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
+    "Use the bash tool to run shell commands."
+  );
+}
 
 const TaskToolAgentArgsSchema = z
   .object({
@@ -1243,23 +1297,7 @@ export const TOOL_DEFINITIONS = {
     schema: z.object({}),
   },
   task: {
-    description:
-      "Spawn a sub-agent task (child workspace). " +
-      "\n\nIMPORTANT: Subagents only see committed state. Uncommitted changes are not available. " +
-      "Commit any changes you want the sub-agent to consider before spawning a task. " +
-      "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. " +
-      "Leave n unset unless the developer explicitly asks for best-of-n work, and only use it for sub-agents without interfering side effects (for example read-only agents like explore). " +
-      "\n\nWhen the user explicitly asks for best-of-n work, the parent should do only brief setup work (for example clarifying the launch prompt, evaluation criteria, or task split) and then delegate the substantive analysis to the spawned sub-agents. " +
-      "Do not also do a full parallel analysis in the parent. After spawning a best-of batch, the next step should usually be task_await so you can synthesize from the child reports. " +
-      "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
-      "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
-      "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When n > 1, the completed result includes one report per spawned task. " +
-      "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
-      "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
-      "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
-      "Use run_in_background: true when launching multiple tasks in parallel so you can await them as a batch. " +
-      "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
-      "Use the bash tool to run shell commands.",
+    description: buildTaskToolDescription(undefined),
     schema: TaskToolArgsSchema,
   },
   task_apply_git_patch: {

@@ -5,7 +5,12 @@ import type { z } from "zod";
 
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import { TaskToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import {
+  TaskToolResultSchema,
+  TOOL_DEFINITIONS,
+  buildTaskToolDescription,
+} from "@/common/utils/tools/toolDefinitions";
+import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
@@ -14,12 +19,16 @@ import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolU
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**
- * Build dynamic task tool description with available sub-agents.
- * Injects the list of available sub-agents directly into the tool description
- * so the model sees them adjacent to the tool call schema.
+ * Build dynamic task tool description with runtime-specific workspace visibility
+ * guidance and the currently available sub-agents.
  */
 function buildTaskDescription(config: ToolConfiguration): string {
-  const baseDescription = TOOL_DEFINITIONS.task.description;
+  const runtimeValue = config.muxEnv?.MUX_RUNTIME;
+  const runtimeMode =
+    runtimeValue != null && Object.values(RUNTIME_MODE).includes(runtimeValue as RuntimeMode)
+      ? (runtimeValue as RuntimeMode)
+      : undefined;
+  const baseDescription = buildTaskToolDescription(runtimeMode);
   const subagents = config.availableSubagents?.filter((a) => a.subagentRunnable) ?? [];
 
   if (subagents.length === 0) {
