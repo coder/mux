@@ -214,7 +214,12 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 
 - Avoid timing-based coordination (e.g., sleep/grace timers) when deterministic signals exist; prefer awaiting explicit completion/exit signals.
 - When asked to reduce LoC, focus on simplifying production logic—not stripping comments, docs, or tests.
-- **Never add tautological tests.** Tests must validate branching, invariants, or user-visible behavior—not re-assert static prompt text, constant strings, generated copy, or other implementation literals that would only fail when prose changes without a behavioral change. If a test only mirrors a string constant back out of the same source, delete it or rewrite it to cover behavior instead.
+- **Never add tautological tests.** Tests must validate branching, invariants, or user-visible behavior—not re-assert static prompt text, constant strings, generated copy, or other implementation literals that would only fail when prose changes without a behavioral change.
+- **No test is better than a tautological test.** If the only realistic assertion is that the new words appear, do not add the test.
+- **Pre-flight tautology check:** if you rewrote the prose or renamed a constant without changing behavior, would the test fail? If yes, the test is probably tautological and should be deleted, rewritten around behavior, or skipped.
+- Examples:
+  - Bad: asserting an exact prompt sentence or other newly-added copy from the same diff.
+  - Good: asserting precedence, gating, fallback behavior, matching logic, or another behavioral branch that would still matter if the wording changed.
 
 ## UI Component Testability (tests/ui)
 

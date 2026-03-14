@@ -76,6 +76,9 @@ Before finishing, apply strict completion discipline:
 
 <best-of-n>
 When the user asks for "best of n" work, assume they want the \`task\` tool's \`n\` parameter with suitable sub-agents unless they clearly ask for a different mechanism.
+When spawning a best-of-n batch, launch the batch via \`n\` and give each child a prompt for one independent candidate / attempt / analysis path.
+Do not tell each child to run "best of n" itself or coordinate sibling candidates unless nested best-of work is explicitly intended.
+If you are already inside a best-of-n child workspace, treat your workspace as one candidate and complete only that attempt.
 </best-of-n>
 
 <subagent-reports>
@@ -89,7 +92,11 @@ Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mu
  * @param workspacePath - Workspace directory path
  * @param runtimeType - Runtime type (local, worktree, ssh, docker)
  */
-function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode): string {
+function buildEnvironmentContext(
+  workspacePath: string,
+  runtimeType: RuntimeMode,
+  bestOf: WorkspaceMetadata["bestOf"] | undefined
+): string {
   // Common lines shared across git-based runtimes
   const gitCommonLines = [
     "- This IS a git repository - run git commands directly (no cd needed)",
@@ -151,6 +158,16 @@ function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode
     lines = [
       ...lines,
       "- $MUX_PROJECT_PATH refers to the user's local machine, not this environment",
+    ];
+  }
+
+  if (bestOf && bestOf.total > 1) {
+    // Best-of child workspaces need explicit grounding so they produce one candidate attempt
+    // instead of recursively asking their own child to run another best-of batch.
+    lines = [
+      ...lines,
+      `- This workspace is candidate ${bestOf.index + 1} of ${bestOf.total} in a best-of-n batch`,
+      "- Complete one independent attempt for this candidate; do not spawn another best-of-n batch unless nested best-of work is explicitly requested",
     ];
   }
 
@@ -385,7 +402,11 @@ export async function buildSystemMessage(
   const runtimeType = metadata.runtimeConfig?.type ?? "local";
 
   // Build system message
-  let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(workspacePath, runtimeType)}`;
+  let systemMessage = `${PRELUDE.trim()}\n\n${buildEnvironmentContext(
+    workspacePath,
+    runtimeType,
+    metadata.bestOf
+  )}`;
 
   // Add MCP context if servers are configured
   if (mcpServers && Object.keys(mcpServers).length > 0) {
