@@ -265,6 +265,14 @@ export class BrowserSessionBackend {
         return;
       }
 
+      // Detect external browser closure: the daemon falls back to about:blank after the
+      // controlled window disappears, so only treat it as valid when we were already blank.
+      const previousUrl = this.session.currentUrl;
+      if (previousUrl !== null && previousUrl !== "about:blank" && nextUrl === "about:blank") {
+        this.transitionToError("Browser session was closed externally");
+        return;
+      }
+
       let nextScreenshotBase64 = this.session.lastScreenshotBase64;
       let lastError: string | null = null;
 

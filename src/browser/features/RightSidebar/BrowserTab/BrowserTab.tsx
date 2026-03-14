@@ -9,6 +9,7 @@ import {
   Play,
   RefreshCw,
   Sparkles,
+  Square,
   TriangleAlert,
 } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
@@ -70,6 +71,7 @@ export function BrowserTab(props: BrowserTabProps) {
   const { api } = useAPI();
   const { session, recentActions, error } = useBrowserSessionSubscription(props.workspaceId);
   const [startingSession, setStartingSession] = useState(false);
+  const [stoppingSession, setStoppingSession] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
   const isStarting = startingSession || session?.status === "starting";
@@ -77,8 +79,12 @@ export function BrowserTab(props: BrowserTabProps) {
     ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
     : null;
   const visibleError = startError ?? error ?? session?.lastError ?? null;
+  const sessionIsActive =
+    session?.status === "live" || session?.status === "starting" || session?.status === "paused";
+  const showStopButton = stoppingSession || sessionIsActive;
   const showStartButton =
-    session == null || session.status === "ended" || session.status === "error";
+    !showStopButton &&
+    (session == null || session.status === "ended" || session.status === "error");
   const headerTitle = session?.title ?? session?.currentUrl ?? "Browser session";
   const headerSubtitle = session
     ? [
@@ -117,9 +123,29 @@ export function BrowserTab(props: BrowserTabProps) {
       });
   };
 
+  const handleStopSession = () => {
+    if (!api || stoppingSession) {
+      return;
+    }
+
+    setStoppingSession(true);
+    setStartError(null);
+
+    api.browserSession
+      .stop({ workspaceId: props.workspaceId })
+      .catch((sessionError: unknown) => {
+        setStartError(
+          sessionError instanceof Error ? sessionError.message : "Failed to stop session"
+        );
+      })
+      .finally(() => {
+        setStoppingSession(false);
+      });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-border-light flex items-center justify-between gap-3 border-b px-3 py-2">
+      <div className="border-border-light flex items-start justify-between gap-3 border-b px-3 py-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-foreground truncate text-xs font-semibold">{headerTitle}</h3>
@@ -134,7 +160,7 @@ export function BrowserTab(props: BrowserTabProps) {
               </span>
             )}
           </div>
-          <p className="text-muted truncate text-[10px]" title={headerSubtitle}>
+          <p className="text-muted text-[10px] leading-relaxed break-words" title={headerSubtitle}>
             {headerSubtitle}
           </p>
         </div>
@@ -143,7 +169,7 @@ export function BrowserTab(props: BrowserTabProps) {
             type="button"
             onClick={handleStartSession}
             disabled={!api || startingSession}
-            className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex max-w-full items-center gap-1.5 self-start rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             {startingSession ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -152,9 +178,22 @@ export function BrowserTab(props: BrowserTabProps) {
             ) : (
               <Play className="h-3.5 w-3.5" />
             )}
-            {session?.status === "ended" || session?.status === "error"
-              ? "Restart Session"
-              : "Start Session"}
+            {session?.status === "ended" || session?.status === "error" ? "Restart" : "Start"}
+          </button>
+        )}
+        {showStopButton && (
+          <button
+            type="button"
+            onClick={handleStopSession}
+            disabled={!api || stoppingSession}
+            className="bg-destructive/10 hover:bg-destructive/20 text-destructive border-destructive/20 inline-flex max-w-full items-center gap-1.5 self-start rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {stoppingSession ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Square className="h-3.5 w-3.5" />
+            )}
+            {stoppingSession ? "Stopping..." : "Stop"}
           </button>
         )}
       </div>
