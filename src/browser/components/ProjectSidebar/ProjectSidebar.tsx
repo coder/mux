@@ -240,13 +240,7 @@ const DraggableProjectItemBase: React.FC<DraggableProjectItemProps> = ({
   );
 };
 
-const DraggableProjectItem = React.memo(
-  DraggableProjectItemBase,
-  (prev, next) =>
-    prev.projectPath === next.projectPath &&
-    prev.onReorder === next.onReorder &&
-    (prev["aria-expanded"] ?? false) === (next["aria-expanded"] ?? false)
-);
+const DraggableProjectItem = DraggableProjectItemBase;
 /**
  * Wrapper that fetches draft data from localStorage and renders via unified AgentListItem.
  * Keeps data-fetching logic colocated with sidebar while delegating rendering to shared component.
@@ -1108,8 +1102,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, []);
 
   const commitProjectDisplayNameEdit = useCallback(
-    async (projectPath: string) => {
-      const normalizedDisplayName = normalizeDisplayNameInput(editingProjectDisplayName);
+    async (projectPath: string, nextDisplayName: string) => {
+      const normalizedDisplayName = normalizeDisplayNameInput(nextDisplayName);
       const result = await updateDisplayName(projectPath, normalizedDisplayName);
       if (!result.success) {
         console.error("Failed to update project display name:", result.error);
@@ -1117,7 +1111,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       setEditingProjectPath((currentPath) => (currentPath === projectPath ? null : currentPath));
       setEditingProjectDisplayName("");
     },
-    [editingProjectDisplayName, updateDisplayName]
+    [updateDisplayName]
   );
 
   const handleProjectMenuEditName = useCallback(() => {
@@ -1131,6 +1125,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       return;
     }
 
+    // Escape can leave the skip-blur flag set when the input unmounts before a blur event fires.
+    // Clear it when a fresh edit session starts so the next blur commits as expected.
+    skipNextProjectNameBlurCommitRef.current = false;
     const currentDisplayName =
       projectConfig.displayName ?? getProjectFallbackLabel(projectMenuTargetPath);
     setEditingProjectPath(projectMenuTargetPath);
@@ -1504,7 +1501,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         skipNextProjectNameBlurCommitRef.current = false;
                                         return;
                                       }
-                                      void commitProjectDisplayNameEdit(projectPath);
+                                      void commitProjectDisplayNameEdit(
+                                        projectPath,
+                                        event.currentTarget.value
+                                      );
                                     }}
                                   />
                                 ) : (
