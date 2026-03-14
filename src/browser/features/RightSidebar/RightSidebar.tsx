@@ -24,6 +24,7 @@ import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
 import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 
 import { DevToolsTab } from "./DevToolsTab";
+import { BrowserTab } from "./BrowserTab";
 import {
   matchesKeybind,
   KEYBINDS,
@@ -89,6 +90,7 @@ import {
   type ReviewStats,
 } from "@/browser/features/RightSidebar/Tabs";
 import { DebugTabLabel, DesktopTabLabel } from "./Tabs/TabLabels";
+import { BrowserTabLabel, DebugTabLabel } from "./Tabs/TabLabels";
 import { FileViewerTab } from "@/browser/features/RightSidebar/FileViewer";
 import { ExplorerTab } from "@/browser/features/RightSidebar/ExplorerTab";
 import {
@@ -393,6 +395,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <ExplorerTabLabel />;
     } else if (tab === "desktop") {
       label = <DesktopTabLabel />;
+    } else if (tab === "browser") {
+      label = <BrowserTabLabel />;
     } else if (tab === "output") {
       label = <OutputTabLabel />;
     } else if (tab === "debug") {
@@ -437,6 +441,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const desktopPanelId = `${tabsetBaseId}-panel-desktop`;
+  const browserPanelId = `${tabsetBaseId}-panel-browser`;
   const outputPanelId = `${tabsetBaseId}-panel-output`;
   const debugPanelId = `${tabsetBaseId}-panel-debug`;
 
@@ -444,6 +449,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const desktopTabId = `${tabsetBaseId}-tab-desktop`;
+  const browserTabId = `${tabsetBaseId}-tab-browser`;
   const outputTabId = `${tabsetBaseId}-tab-output`;
   const debugTabId = `${tabsetBaseId}-tab-debug`;
 
@@ -534,6 +540,15 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           >
             <ErrorBoundary workspaceInfo="Desktop tab">
               <DesktopPanel workspaceId={props.workspaceId} />
+        {props.node.activeTab === "browser" && (
+          <div
+            role="tabpanel"
+            id={browserPanelId}
+            aria-labelledby={browserTabId}
+            className="h-full"
+          >
+            <ErrorBoundary workspaceInfo="Browser tab">
+              <BrowserTab workspaceId={props.workspaceId} />
             </ErrorBoundary>
           </div>
         )}

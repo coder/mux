@@ -13,6 +13,7 @@ import {
   ExternalLink,
   FolderTree,
   Monitor,
+  Globe,
   Terminal as TerminalIcon,
   X,
 } from "lucide-react";
@@ -99,6 +100,11 @@ export const DesktopTabLabel: React.FC = () => (
   <span className="inline-flex items-center gap-1">
     <Monitor className="h-3 w-3 shrink-0" />
     Desktop
+/** Browser tab label with globe icon */
+export const BrowserTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <Globe className="h-3 w-3 shrink-0" />
+    Browser
   </span>
 );
 

@@ -82,6 +82,7 @@ export interface TabConfig {
 /** Static tab configurations (non-terminal tabs) */
 export const TAB_CONFIGS: Record<
   "costs" | "review" | "explorer" | "desktop" | "output" | "debug",
+  "costs" | "review" | "explorer" | "browser" | "output" | "debug",
   TabConfig
 > = {
   costs: {
@@ -100,6 +101,10 @@ export const TAB_CONFIGS: Record<
     name: "Desktop",
     contentClassName: "overflow-hidden p-0",
     featureFlag: EXPERIMENT_IDS.PORTABLE_DESKTOP,
+  browser: {
+    name: "Browser",
+    contentClassName: "overflow-hidden p-0",
+    keepAlive: false,
   },
   output: {
     name: "Output",
@@ -132,6 +137,7 @@ export function getTabConfig(tab: TabType): TabConfig {
     tab === "review" ||
     tab === "explorer" ||
     tab === "desktop" ||
+    tab === "browser" ||
     tab === "output" ||
     tab === "debug"
   ) {
