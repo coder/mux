@@ -5156,6 +5156,15 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  hasPendingQueuedOrPreparingTurn(workspaceId: string): boolean {
+    const session = this.sessions.get(workspaceId.trim());
+    if (!session) {
+      return false;
+    }
+
+    return session.hasQueuedMessages() || session.isPreparingTurn();
+  }
+
   /**
    * Best-effort delete of plan files (new + legacy paths) for a workspace.
    *

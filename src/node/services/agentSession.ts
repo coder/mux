@@ -4105,6 +4105,10 @@ export class AgentSession {
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
   }
 
+  hasQueuedMessages(): boolean {
+    return !this.messageQueue.isEmpty();
+  }
+
   /**
    * Restore queued messages to input box.
    * Called by IPC handler on user-initiated interrupt.
