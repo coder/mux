@@ -71,14 +71,12 @@ describe("IdleCompactionService", () => {
 
     // Create mock extension metadata service
     mockExtensionMetadata = {
-      getMetadata: mock(() =>
+      getSnapshot: mock(() =>
         Promise.resolve({
-          workspaceId: testWorkspaceId,
           recency: now - 25 * oneHourMs, // 25 hours ago
           streaming: false,
           lastModel: null,
           lastThinkingLevel: null,
-          updatedAt: now - 25 * oneHourMs,
         })
       ),
     } as unknown as ExtensionMetadataService;
@@ -111,13 +109,11 @@ describe("IdleCompactionService", () => {
     test("returns ineligible when workspace is currently streaming", async () => {
       // Idle messages already seeded in beforeEach; workspace is streaming
       const idleTimestamp = now - 25 * oneHourMs;
-      (mockExtensionMetadata.getMetadata as ReturnType<typeof mock>).mockResolvedValueOnce({
-        workspaceId: testWorkspaceId,
+      (mockExtensionMetadata.getSnapshot as ReturnType<typeof mock>).mockResolvedValueOnce({
         recency: idleTimestamp,
         streaming: true, // Currently streaming
         lastModel: null,
         lastThinkingLevel: null,
-        updatedAt: idleTimestamp,
       });
 
       const result = await service.checkEligibility(testWorkspaceId, threshold24h, now);

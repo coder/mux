@@ -12,6 +12,17 @@ export type ResponseCompleteMetadata =
       isIdle?: boolean;
     };
 
+export interface ResponseCompleteEvent {
+  workspaceId: string;
+  isFinal: boolean;
+  finalText?: string;
+  messageId?: string;
+  completion?: ResponseCompleteMetadata;
+  completedAt?: number | null;
+}
+
+export type ResponseCompleteHandler = (event: ResponseCompleteEvent) => void;
+
 export interface ResponseCompletionState {
   isCompacting: boolean;
   hasCompactionContinue: boolean;
@@ -32,20 +43,24 @@ export function buildResponseCompleteMetadata(
   };
 }
 
-export function markCompletionHasAutoFollowUp(
-  completion: ResponseCompleteMetadata | undefined
-): ResponseCompleteMetadata {
-  if (completion) {
-    return {
-      ...completion,
-      hasAutoFollowUp: true,
-    };
+export function buildAggregateResponseCompleteMetadata(
+  states: Iterable<ResponseCompletionState>
+): ResponseCompleteMetadata | undefined {
+  let isCompacting = false;
+  let hasCompactionContinue = false;
+  let hasQueuedFollowUp = false;
+
+  for (const state of states) {
+    isCompacting ||= state.isCompacting;
+    hasCompactionContinue ||= state.hasCompactionContinue;
+    hasQueuedFollowUp ||= state.hasQueuedFollowUp;
   }
 
-  return {
-    kind: "response",
-    hasAutoFollowUp: true,
-  };
+  return buildResponseCompleteMetadata({
+    isCompacting,
+    hasCompactionContinue,
+    hasQueuedFollowUp,
+  });
 }
 
 export function createIdleCompactionCompletion(hasAutoFollowUp: boolean): ResponseCompleteMetadata {
@@ -54,4 +69,29 @@ export function createIdleCompactionCompletion(hasAutoFollowUp: boolean): Respon
     hasAutoFollowUp,
     isIdle: true,
   };
+}
+
+export function shouldNotifyOnResponseComplete(
+  completion: ResponseCompleteMetadata | undefined
+): boolean {
+  if (completion?.kind === "compaction" && completion.isIdle) {
+    return false;
+  }
+
+  return completion?.hasAutoFollowUp !== true;
+}
+
+export function getResponseCompleteNotificationBody(
+  finalText: string | undefined,
+  completion: ResponseCompleteMetadata | undefined
+): string {
+  if (completion?.kind === "compaction") {
+    return "Compaction complete";
+  }
+
+  if (!finalText) {
+    return "Response complete";
+  }
+
+  return finalText.length > 200 ? `${finalText.slice(0, 197)}…` : finalText;
 }

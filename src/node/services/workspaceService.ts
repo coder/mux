@@ -16,7 +16,11 @@ import { AgentSession } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
-import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import type {
+  ExtensionMetadataService,
+  ExtensionMetadataStreamingUpdate,
+} from "@/node/services/ExtensionMetadataService";
+import { coerceAgentStatus } from "@/node/utils/extensionMetadata";
 import { readTodosForSessionDir } from "@/node/services/todos/todoStorage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
@@ -101,7 +105,12 @@ import {
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import type { StreamEndEvent, StreamAbortEvent, ToolCallEndEvent } from "@/common/types/stream";
+import type {
+  StreamStartEvent,
+  StreamEndEvent,
+  StreamAbortEvent,
+  ToolCallEndEvent,
+} from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
@@ -1150,10 +1159,8 @@ export class WorkspaceService extends EventEmitter {
     const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
     const isWorkspaceEvent = (v: unknown): v is { workspaceId: string } =>
       isObj(v) && "workspaceId" in v && typeof v.workspaceId === "string";
-    const isStreamStartEvent = (
-      v: unknown
-    ): v is { workspaceId: string; model: string; agentId?: string } =>
-      isWorkspaceEvent(v) && "model" in v && typeof v.model === "string";
+    const isStreamStartEvent = (v: unknown): v is StreamStartEvent =>
+      isWorkspaceEvent(v) && "model" in v && typeof (v as { model: unknown }).model === "string";
     const isStreamEndEvent = (v: unknown): v is StreamEndEvent =>
       isWorkspaceEvent(v) &&
       (!("metadata" in (v as Record<string, unknown>)) || isObj((v as StreamEndEvent).metadata));
@@ -1165,43 +1172,18 @@ export class WorkspaceService extends EventEmitter {
       "toolName" in v &&
       typeof (v as { toolName: unknown }).toolName === "string" &&
       "result" in v;
-    const extractStatusSetResult = (result: unknown): WorkspaceAgentStatus | null => {
-      if (!isObj(result)) {
-        return null;
-      }
-
-      if (
-        result.success !== true ||
-        typeof result.emoji !== "string" ||
-        typeof result.message !== "string"
-      ) {
-        return null;
-      }
-
-      if (result.url !== undefined && typeof result.url !== "string") {
-        return null;
-      }
-
-      return {
-        emoji: result.emoji,
-        message: result.message,
-        ...(typeof result.url === "string" ? { url: result.url } : {}),
-      };
-    };
+    const extractStatusSetResult = (result: unknown): WorkspaceAgentStatus | null =>
+      isObj(result) && result.success === true ? coerceAgentStatus(result) : null;
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
         const generation = (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1;
         this.streamingGenerations.set(data.workspaceId, generation);
-        void this.updateStreamingStatus(
-          data.workspaceId,
-          true,
-          data.model,
-          data.agentId,
-          undefined,
-          undefined,
-          generation
-        );
+        void this.updateStreamingStatus(data.workspaceId, true, {
+          model: data.model,
+          thinkingLevel: data.thinkingLevel,
+          generation,
+        });
       }
     });
 
@@ -1259,58 +1241,40 @@ export class WorkspaceService extends EventEmitter {
     this.emit("activity", { workspaceId, activity: snapshot });
   }
 
-  private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
+  private async emitWorkspaceActivityUpdate(
+    workspaceId: string,
+    description: string,
+    update: () => Promise<WorkspaceActivitySnapshot>
+  ): Promise<void> {
     try {
-      const snapshot = await this.extensionMetadata.updateRecency(
-        workspaceId,
-        timestamp ?? Date.now()
-      );
-      this.emitWorkspaceActivity(workspaceId, snapshot);
+      this.emitWorkspaceActivity(workspaceId, await update());
     } catch (error) {
-      log.error("Failed to update workspace recency", { workspaceId, error });
+      log.error(`Failed to ${description}`, { workspaceId, error });
     }
+  }
+
+  private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
+    await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace recency", () =>
+      this.extensionMetadata.updateRecency(workspaceId, timestamp ?? Date.now())
+    );
   }
 
   public async updateAgentStatus(
     workspaceId: string,
     agentStatus: WorkspaceAgentStatus | null
   ): Promise<void> {
-    try {
-      const snapshot = await this.extensionMetadata.setAgentStatus(workspaceId, agentStatus);
-      this.emitWorkspaceActivity(workspaceId, snapshot);
-    } catch (error) {
-      log.error("Failed to update workspace agent status", { workspaceId, error });
-    }
+    await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace agent status", () =>
+      this.extensionMetadata.setAgentStatus(workspaceId, agentStatus)
+    );
   }
 
   private async updateStreamingStatus(
     workspaceId: string,
     streaming: boolean,
-    model?: string,
-    agentId?: string,
-    hasTodos?: boolean,
-    expectedGeneration?: number,
-    streamingGeneration?: number
+    update: ExtensionMetadataStreamingUpdate = {}
   ): Promise<void> {
     try {
-      let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
-      if (model) {
-        const found = this.config.findWorkspace(workspaceId);
-        if (found) {
-          const config = this.config.loadConfigOrDefault();
-          const project = config.projects.get(found.projectPath);
-          const workspace =
-            project?.workspaces.find((w) => w.id === workspaceId) ??
-            project?.workspaces.find((w) => w.path === found.workspacePath);
-          const normalizedAgentId =
-            typeof agentId === "string" && agentId.trim().length > 0
-              ? agentId.trim().toLowerCase()
-              : WORKSPACE_DEFAULTS.agentId;
-          const aiSettings =
-            workspace?.aiSettingsByAgent?.[normalizedAgentId] ?? workspace?.aiSettings;
-          thinkingLevel = aiSettings?.thinkingLevel;
-        }
-      }
+      let { hasTodos } = update;
       if (!streaming && hasTodos === undefined) {
         // Stop snapshots need an authoritative todo bit even for background workspaces,
         // and centralizing the read here preserves the fire-and-forget abort/error handlers.
@@ -1320,21 +1284,18 @@ export class WorkspaceService extends EventEmitter {
       }
       if (
         !streaming &&
-        expectedGeneration !== undefined &&
-        expectedGeneration !== (this.streamingGenerations.get(workspaceId) ?? 0)
+        update.generation !== undefined &&
+        update.generation !== (this.streamingGenerations.get(workspaceId) ?? 0)
       ) {
         // A newer stream has started since this stop was initiated, so dropping the stale
         // streaming=false write preserves the active stream's metadata snapshot.
         return;
       }
-      const snapshot = await this.extensionMetadata.setStreaming(
-        workspaceId,
-        streaming,
-        model,
-        thinkingLevel,
-        hasTodos,
-        streamingGeneration
-      );
+
+      const snapshot = await this.extensionMetadata.setStreaming(workspaceId, streaming, {
+        ...update,
+        ...(hasTodos !== undefined ? { hasTodos } : {}),
+      });
       // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
       // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
       const shouldTagIdleCompaction = !streaming && this.idleCompactingWorkspaces.has(workspaceId);
@@ -1361,15 +1322,7 @@ export class WorkspaceService extends EventEmitter {
    */
   private stopStreamingStatus(workspaceId: string, capturedGeneration?: number): Promise<void> {
     const generation = capturedGeneration ?? this.streamingGenerations.get(workspaceId) ?? 0;
-    return this.updateStreamingStatus(
-      workspaceId,
-      false,
-      undefined,
-      undefined,
-      undefined,
-      generation,
-      generation
-    );
+    return this.updateStreamingStatus(workspaceId, false, { generation });
   }
 
   private async handleStreamCompletion(workspaceId: string): Promise<void> {
@@ -1474,6 +1427,27 @@ export class WorkspaceService extends EventEmitter {
     );
   }
 
+  private attachSessionSubscriptions(workspaceId: string, session: AgentSession): void {
+    const chatUnsubscribe = session.onChatEvent((event) => {
+      this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
+        void this.updateAgentStatus(event.workspaceId, null);
+      }
+    });
+
+    const metadataUnsubscribe = session.onMetadataEvent((event) => {
+      this.emit("metadata", {
+        workspaceId: event.workspaceId,
+        metadata: event.metadata!,
+      });
+    });
+
+    this.sessionSubscriptions.set(workspaceId, {
+      chat: chatUnsubscribe,
+      metadata: metadataUnsubscribe,
+    });
+  }
+
   public getOrCreateSession(workspaceId: string): AgentSession {
     assert(typeof workspaceId === "string", "workspaceId must be a string");
     const trimmed = workspaceId.trim();
@@ -1500,25 +1474,8 @@ export class WorkspaceService extends EventEmitter {
       },
     });
 
-    const chatUnsubscribe = session.onChatEvent((event) => {
-      this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
-      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
-        void this.updateAgentStatus(event.workspaceId, null);
-      }
-    });
-
-    const metadataUnsubscribe = session.onMetadataEvent((event) => {
-      this.emit("metadata", {
-        workspaceId: event.workspaceId,
-        metadata: event.metadata!,
-      });
-    });
-
     this.sessions.set(trimmed, session);
-    this.sessionSubscriptions.set(trimmed, {
-      chat: chatUnsubscribe,
-      metadata: metadataUnsubscribe,
-    });
+    this.attachSessionSubscriptions(trimmed, session);
 
     return session;
   }
@@ -1535,25 +1492,7 @@ export class WorkspaceService extends EventEmitter {
     assert(!this.sessions.has(workspaceId), `session already registered for ${workspaceId}`);
 
     this.sessions.set(workspaceId, session);
-
-    const chatUnsubscribe = session.onChatEvent((event) => {
-      this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
-      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
-        void this.updateAgentStatus(event.workspaceId, null);
-      }
-    });
-
-    const metadataUnsubscribe = session.onMetadataEvent((event) => {
-      this.emit("metadata", {
-        workspaceId: event.workspaceId,
-        metadata: event.metadata!,
-      });
-    });
-
-    this.sessionSubscriptions.set(workspaceId, {
-      chat: chatUnsubscribe,
-      metadata: metadataUnsubscribe,
-    });
+    this.attachSessionSubscriptions(workspaceId, session);
   }
 
   public disposeSession(workspaceId: string): void {
@@ -6149,7 +6088,7 @@ export class WorkspaceService extends EventEmitter {
         })()
       : undefined;
 
-    const activity = await this.extensionMetadata.getMetadata(workspaceId);
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
 
     const compactAgentSettings = workspaceEntry?.aiSettingsByAgent?.compact;
     const execAgentSettings =

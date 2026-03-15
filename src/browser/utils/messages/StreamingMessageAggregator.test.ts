@@ -1287,8 +1287,8 @@ describe("StreamingMessageAggregator", () => {
         TEST_CREATED_AT,
         "test-workspace-recency-final"
       );
-      aggregator.onResponseComplete = (_wid, _mid, _isFinal, _text, _compaction, completedAt) => {
-        callbackCompletedAt = completedAt;
+      aggregator.onResponseComplete = (event) => {
+        callbackCompletedAt = event.completedAt;
       };
       const initialRecency = aggregator.getRecencyTimestamp();
       expect(initialRecency).not.toBeNull();
@@ -1334,8 +1334,8 @@ describe("StreamingMessageAggregator", () => {
       );
 
       let callbackCompletedAt: number | null | undefined;
-      aggregator.onResponseComplete = (_wid, _mid, _isFinal, _text, _compaction, completedAt) => {
-        callbackCompletedAt = completedAt;
+      aggregator.onResponseComplete = (event) => {
+        callbackCompletedAt = event.completedAt;
       };
 
       const initialRecency = aggregator.getRecencyTimestamp();

@@ -241,7 +241,7 @@ export class IdleCompactionService {
     }
 
     // 3. Currently streaming?
-    const activity = await this.extensionMetadata.getMetadata(workspaceId);
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
     if (activity?.streaming) {
       return { eligible: false, reason: "currently_streaming" };
     }

@@ -1,4 +1,4 @@
-import type { CompletedMessagePart } from "@/common/types/stream";
+import type { CompletedMessagePart, StreamStartEvent } from "@/common/types/stream";
 import type { StreamErrorType } from "@/common/types/errors";
 
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -23,6 +23,7 @@ export interface MockStreamStartEvent extends MockAssistantEventBase {
   messageId: string;
   model: string;
   mode?: "plan" | "exec" | "compact";
+  thinkingLevel?: StreamStartEvent["thinkingLevel"];
 }
 
 export interface MockStreamDeltaEvent extends MockAssistantEventBase {

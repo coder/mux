@@ -1,5 +1,5 @@
 import type { CompletedMessagePart } from "@/common/types/stream";
-import type { MockAssistantEvent } from "./mockAiEventTypes";
+import type { MockAssistantEvent, MockStreamStartEvent } from "./mockAiEventTypes";
 import type { MockAiRouterReply } from "./mockAiRouter";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
@@ -45,6 +45,7 @@ export interface BuildMockStreamEventsOptions {
   messageId: string;
   model?: string;
   mode?: "plan" | "exec" | "compact";
+  thinkingLevel?: MockStreamStartEvent["thinkingLevel"];
 
   /** Chunk size for stream-delta events. */
   chunkChars?: number;
@@ -76,6 +77,7 @@ export function buildMockStreamEventsFromReply(
     messageId: options.messageId,
     model,
     ...(mode && { mode }),
+    ...(options.thinkingLevel && { thinkingLevel: options.thinkingLevel }),
   });
 
   let nextDelay = 5;

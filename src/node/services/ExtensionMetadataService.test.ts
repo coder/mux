@@ -98,7 +98,10 @@ describe("ExtensionMetadataService", () => {
     try {
       await Promise.all([
         service.updateRecency("ws-A", 100),
-        service.setStreaming("ws-B", true, "anthropic/sonnet", "medium"),
+        service.setStreaming("ws-B", true, {
+          model: "anthropic/sonnet",
+          thinkingLevel: "medium",
+        }),
       ]);
     } finally {
       restoreLoad();
@@ -124,13 +127,16 @@ describe("ExtensionMetadataService", () => {
     try {
       await Promise.all([
         service.updateRecency("ws-1", 101),
-        service.setStreaming("ws-2", true, "anthropic/sonnet"),
+        service.setStreaming("ws-2", true, { model: "anthropic/sonnet" }),
         service.setAgentStatus("ws-3", { emoji: "⚙️", message: "Working" }),
         service.updateRecency("ws-4", 404),
         service.setStreaming("ws-5", false),
         service.setAgentStatus("ws-6", null),
         service.updateRecency("ws-7", 707),
-        service.setStreaming("ws-8", true, "openai/gpt-5", "high"),
+        service.setStreaming("ws-8", true, {
+          model: "openai/gpt-5",
+          thinkingLevel: "high",
+        }),
       ]);
     } finally {
       restoreLoad();
@@ -171,23 +177,40 @@ describe("ExtensionMetadataService", () => {
     expect(snapshots.get("workspace-bad-todos")?.hasTodos).toBeUndefined();
   });
 
-  test("setStreaming round-trips hasTodos when provided", async () => {
-    const withoutTodos = await service.setStreaming(
-      "workspace-has-todos",
-      false,
-      undefined,
-      undefined,
-      false
+  test("updateRecency self-heals malformed workspace entries", async () => {
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          "workspace-bad-entry": false,
+        },
+      }),
+      "utf-8"
     );
+
+    const snapshot = await service.updateRecency("workspace-bad-entry", 321);
+    expect(snapshot).toEqual({
+      recency: 321,
+      streaming: false,
+      lastModel: null,
+      lastThinkingLevel: null,
+      agentStatus: null,
+    });
+
+    const snapshots = await service.getAllSnapshots();
+    expect(snapshots.get("workspace-bad-entry")).toEqual(snapshot);
+  });
+
+  test("setStreaming round-trips hasTodos when provided", async () => {
+    const withoutTodos = await service.setStreaming("workspace-has-todos", false, {
+      hasTodos: false,
+    });
     expect(withoutTodos.hasTodos).toBe(false);
 
-    const withTodos = await service.setStreaming(
-      "workspace-has-todos",
-      false,
-      undefined,
-      undefined,
-      true
-    );
+    const withTodos = await service.setStreaming("workspace-has-todos", false, {
+      hasTodos: true,
+    });
     expect(withTodos.hasTodos).toBe(true);
 
     const snapshots = await service.getAllSnapshots();
@@ -196,7 +219,10 @@ describe("ExtensionMetadataService", () => {
 
   test("setStreaming toggles status and remembers last model", async () => {
     await service.updateRecency("workspace-2", 200);
-    const streaming = await service.setStreaming("workspace-2", true, "anthropic/sonnet", "high");
+    const streaming = await service.setStreaming("workspace-2", true, {
+      model: "anthropic/sonnet",
+      thinkingLevel: "high",
+    });
     expect(streaming.streaming).toBe(true);
     expect(streaming.lastModel).toBe("anthropic/sonnet");
     expect(streaming.lastThinkingLevel).toBe("high");

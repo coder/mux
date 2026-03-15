@@ -18,10 +18,9 @@ import {
   type SkillLoadError,
 } from "@/browser/utils/messages/StreamingMessageAggregator";
 import {
-  buildResponseCompleteMetadata,
   createIdleCompactionCompletion,
-  markCompletionHasAutoFollowUp,
-  type ResponseCompleteMetadata,
+  type ResponseCompleteEvent,
+  type ResponseCompleteHandler,
 } from "@/browser/utils/messages/responseCompletionMetadata";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
@@ -534,21 +533,8 @@ export class WorkspaceStore {
   // Global callback for navigating to a workspace (set by App, used for notification clicks)
   private navigateToWorkspaceCallback: ((workspaceId: string) => void) | null = null;
 
-  // Global callback when a response completes (for "notify on response" feature)
-  // isFinal is true when no more active streams remain (assistant done with all work)
-  // finalText is the text content after any tool calls (for notification body)
-  // completion carries notification-policy metadata (compaction vs normal response,
-  // and whether another queued/auto follow-up will immediately take over).
-  private responseCompleteCallback:
-    | ((
-        workspaceId: string,
-        messageId: string,
-        isFinal: boolean,
-        finalText: string,
-        completion?: ResponseCompleteMetadata,
-        completedAt?: number | null
-      ) => void)
-    | null = null;
+  // Global callback when a response completes (for "notify on response" feature).
+  private responseCompleteCallback: ResponseCompleteHandler | null = null;
 
   // Tracks when a file-modifying tool (file_edit_*, bash) last completed per workspace.
   // ReviewPanel subscribes to trigger diff refresh. Two structures:
@@ -1236,94 +1222,18 @@ export class WorkspaceStore {
 
   /**
    * Set the callback for when a response completes (used for "notify on response" feature).
-   * isFinal is true when no more active streams remain (assistant done with all work).
-   * finalText is the text content after any tool calls (for notification body).
-   * completion carries notification-policy metadata (compaction vs normal response,
-   * and whether another queued/auto follow-up will immediately take over).
    */
-  setOnResponseComplete(
-    callback: (
-      workspaceId: string,
-      messageId: string,
-      isFinal: boolean,
-      finalText: string,
-      completion?: ResponseCompleteMetadata,
-      completedAt?: number | null
-    ) => void
-  ): void {
+  setOnResponseComplete(callback: ResponseCompleteHandler): void {
     this.responseCompleteCallback = callback;
-    // Update existing aggregators with the callback
-    for (const aggregator of this.aggregators.values()) {
-      this.bindAggregatorResponseCompleteCallback(aggregator);
-    }
   }
 
-  private maybeMarkQueuedFollowUpOnCompletion(
-    workspaceId: string,
-    completion: ResponseCompleteMetadata | undefined,
-    includeQueuedFollowUpSignal: boolean
-  ): ResponseCompleteMetadata | undefined {
-    if (!includeQueuedFollowUpSignal) {
-      return completion;
-    }
-
-    const queuedMessage = this.chatTransientState.get(workspaceId)?.queuedMessage;
-    if (!queuedMessage) {
-      return completion;
-    }
-
-    // A queued message will be auto-sent after this stream boundary. Treat queued
-    // interrupts, compaction continues, and similar handoffs as one notification-worthy
-    // turn so suppression stays centralized instead of growing case-by-case checks.
-    return markCompletionHasAutoFollowUp(completion);
+  private emitResponseComplete(event: ResponseCompleteEvent): void {
+    this.responseCompleteCallback?.(event);
   }
 
-  private emitResponseComplete(
-    workspaceId: string,
-    messageId: string,
-    isFinal: boolean,
-    finalText: string,
-    completion?: ResponseCompleteMetadata,
-    completedAt?: number | null,
-    includeQueuedFollowUpSignal = true
-  ): void {
-    if (!this.responseCompleteCallback) {
-      return;
-    }
-
-    this.responseCompleteCallback(
-      workspaceId,
-      messageId,
-      isFinal,
-      finalText,
-      this.maybeMarkQueuedFollowUpOnCompletion(
-        workspaceId,
-        completion,
-        includeQueuedFollowUpSignal
-      ),
-      completedAt
-    );
-  }
-
-  private bindAggregatorResponseCompleteCallback(aggregator: StreamingMessageAggregator): void {
-    aggregator.onResponseComplete = (
-      workspaceId: string,
-      messageId: string,
-      isFinal: boolean,
-      finalText: string,
-      completion?: ResponseCompleteMetadata,
-      completedAt?: number | null
-    ) => {
-      this.emitResponseComplete(
-        workspaceId,
-        messageId,
-        isFinal,
-        finalText,
-        completion,
-        completedAt
-      );
-    };
-  }
+  private readonly forwardResponseComplete = (event: ResponseCompleteEvent): void => {
+    this.emitResponseComplete(event);
+  };
 
   /**
    * Schedule a state bump during browser idle time.
@@ -2344,26 +2254,6 @@ export class WorkspaceStore {
     return this.workspaceMetadata.has(workspaceId);
   }
 
-  private getBackgroundCompletionMetadata(
-    workspaceId: string
-  ): ResponseCompleteMetadata | undefined {
-    const aggregator = this.aggregators.get(workspaceId);
-    if (!aggregator) {
-      return undefined;
-    }
-
-    const activeStreams = aggregator.getActiveStreams();
-    if (activeStreams.length === 0) {
-      return undefined;
-    }
-
-    return buildResponseCompleteMetadata({
-      isCompacting: activeStreams.some((stream) => stream.isCompacting === true),
-      hasCompactionContinue: activeStreams.some((stream) => stream.hasCompactionContinue === true),
-      hasQueuedFollowUp: activeStreams.some((stream) => stream.hasQueuedFollowUp === true),
-    });
-  }
-
   private applyWorkspaceActivitySnapshot(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
@@ -2428,7 +2318,7 @@ export class WorkspaceStore {
       streamStartRecency !== undefined &&
       stoppedStreamingSnapshot.recency > streamStartRecency;
     const backgroundCompletion = isBackgroundStreamingStop
-      ? this.getBackgroundCompletionMetadata(workspaceId)
+      ? this.aggregators.get(workspaceId)?.getActiveResponseCompleteMetadata()
       : undefined;
     // The backend tags the streaming=false (stop) snapshot with isIdleCompaction.
     // The idle marker is added after sendMessage returns (to avoid races with
@@ -2445,17 +2335,14 @@ export class WorkspaceStore {
       // Activity snapshots don't include message/content metadata. Reuse any
       // still-active stream context captured before this workspace was backgrounded
       // so queued follow-up handoffs remain suppressible in App notifications.
-      this.emitResponseComplete(
+      this.emitResponseComplete({
         workspaceId,
-        "",
-        true,
-        "",
-        wasIdleCompaction
+        isFinal: true,
+        completion: wasIdleCompaction
           ? createIdleCompactionCompletion(backgroundCompletion?.hasAutoFollowUp ?? false)
           : backgroundCompletion,
-        stoppedStreamingSnapshot.recency,
-        false
-      );
+        completedAt: stoppedStreamingSnapshot.recency,
+      });
     }
 
     if (isBackgroundStreamingStop) {
@@ -3483,10 +3370,8 @@ export class WorkspaceStore {
       if (this.navigateToWorkspaceCallback) {
         aggregator.onNavigateToWorkspace = this.navigateToWorkspaceCallback;
       }
-      // Wire up response complete callback for "notify on response" feature
-      if (this.responseCompleteCallback) {
-        this.bindAggregatorResponseCompleteCallback(aggregator);
-      }
+      // Wire up response-complete forwarding for the "notify on response" feature.
+      aggregator.onResponseComplete = this.forwardResponseComplete;
       this.aggregators.set(workspaceId, aggregator);
       this.workspaceCreatedAt.set(workspaceId, createdAt);
     } else if (unarchivedAt) {

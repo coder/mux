@@ -239,6 +239,7 @@ export class MockAiStreamPlayer {
     workspaceId: string,
     options?: {
       model?: string;
+      thinkingLevel?: StreamStartEvent["thinkingLevel"];
       abortSignal?: AbortSignal;
     }
   ): Promise<Result<void, SendMessageError>> {
@@ -278,6 +279,7 @@ export class MockAiStreamPlayer {
     const events = buildMockStreamEventsFromReply(reply, {
       messageId,
       model: options?.model,
+      thinkingLevel: options?.thinkingLevel,
     });
 
     const streamStart = events.find(
@@ -443,6 +445,7 @@ export class MockAiStreamPlayer {
           historySequence,
           startTime: Date.now(),
           ...(event.mode && { mode: event.mode }),
+          ...(event.thinkingLevel && { thinkingLevel: event.thinkingLevel }),
         };
         this.deps.aiService.emit("stream-start", payload);
         break;

@@ -16,7 +16,10 @@ import type { SessionTimingService } from "./sessionTimingService";
 import { SessionUsageService } from "./sessionUsageService";
 import type { AIService } from "./aiService";
 import type { InitStateManager, InitStatus } from "./initStateManager";
-import type { ExtensionMetadataService } from "./ExtensionMetadataService";
+import type {
+  ExtensionMetadataService,
+  ExtensionMetadataStreamingUpdate,
+} from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -1007,7 +1010,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }));
 
     svc.extensionMetadata = {
-      getMetadata: mock(() => Promise.resolve({ lastThinkingLevel: "off" })),
+      getSnapshot: mock(() => Promise.resolve({ lastThinkingLevel: "off" })),
     } as unknown as ExtensionMetadataService;
 
     const options = await svc.buildIdleCompactionSendOptions("ws");
@@ -1049,11 +1052,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
       updateStreamingStatus: (
         workspaceId: string,
         streaming: boolean,
-        model?: string,
-        agentId?: string,
-        hasTodos?: boolean,
-        expectedGeneration?: number,
-        streamingGeneration?: number
+        options?: ExtensionMetadataStreamingUpdate
       ) => Promise<void>;
     };
 
@@ -1061,17 +1060,59 @@ describe("WorkspaceService idle compaction dispatch", () => {
 
     await internals.updateStreamingStatus(workspaceId, true);
 
-    expect(setStreaming).toHaveBeenCalledWith(
-      workspaceId,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      undefined
-    );
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, {});
     expect(emitWorkspaceActivity).toHaveBeenCalledTimes(1);
     expect(emitWorkspaceActivity).toHaveBeenCalledWith(workspaceId, snapshot);
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(true);
+  });
+
+  test("passes through stream-start thinkingLevel without re-deriving it from config", async () => {
+    const workspaceId = "streaming-thinking-level";
+    const snapshot = {
+      recency: Date.now(),
+      streaming: true,
+      lastModel: "claude-sonnet-4",
+      lastThinkingLevel: "high" as const,
+    };
+
+    const setStreaming = mock(() => Promise.resolve(snapshot));
+    const emitWorkspaceActivity = mock(
+      (_workspaceId: string, _snapshot: typeof snapshot) => undefined
+    );
+
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+        emitWorkspaceActivity: typeof emitWorkspaceActivity;
+      }
+    ).extensionMetadata = {
+      setStreaming,
+    } as unknown as ExtensionMetadataService;
+    (
+      workspaceService as unknown as {
+        extensionMetadata: ExtensionMetadataService;
+        emitWorkspaceActivity: typeof emitWorkspaceActivity;
+      }
+    ).emitWorkspaceActivity = emitWorkspaceActivity;
+
+    const internals = workspaceService as unknown as {
+      updateStreamingStatus: (
+        workspaceId: string,
+        streaming: boolean,
+        options?: ExtensionMetadataStreamingUpdate
+      ) => Promise<void>;
+    };
+
+    await internals.updateStreamingStatus(workspaceId, true, {
+      model: "claude-sonnet-4",
+      thinkingLevel: "high",
+    });
+
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, {
+      model: "claude-sonnet-4",
+      thinkingLevel: "high",
+    });
+    expect(emitWorkspaceActivity).toHaveBeenCalledWith(workspaceId, snapshot);
   });
 
   test("clears idle marker when streaming=false metadata update fails", async () => {
@@ -1093,11 +1134,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
       updateStreamingStatus: (
         workspaceId: string,
         streaming: boolean,
-        model?: string,
-        agentId?: string,
-        hasTodos?: boolean,
-        expectedGeneration?: number,
-        streamingGeneration?: number
+        options?: ExtensionMetadataStreamingUpdate
       ) => Promise<void>;
     };
 
@@ -1106,14 +1143,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
     await internals.updateStreamingStatus(workspaceId, false);
 
     expect(internals.idleCompactingWorkspaces.has(workspaceId)).toBe(false);
-    expect(setStreaming).toHaveBeenCalledWith(
-      workspaceId,
-      false,
-      undefined,
-      undefined,
-      false,
-      undefined
-    );
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, { hasTodos: false });
   });
 });
 
@@ -1167,19 +1197,13 @@ describe("WorkspaceService streaming generation guard", () => {
       createDeferred<Awaited<ReturnType<typeof todoStorageModule.readTodosForSessionDir>>>();
     let todoReadCalls = 0;
     const setStreaming = mock(
-      (
-        _workspaceId: string,
-        streaming: boolean,
-        model?: string,
-        _thinkingLevel?: string | null,
-        hasTodos?: boolean
-      ) =>
+      (_workspaceId: string, streaming: boolean, update: ExtensionMetadataStreamingUpdate = {}) =>
         Promise.resolve({
           recency: Date.now(),
           streaming,
-          lastModel: model ?? null,
-          lastThinkingLevel: null,
-          hasTodos,
+          lastModel: update.model ?? null,
+          lastThinkingLevel: update.thinkingLevel ?? null,
+          hasTodos: update.hasTodos,
           agentStatus: null,
         })
     );
@@ -1205,58 +1229,36 @@ describe("WorkspaceService streaming generation guard", () => {
       updateStreamingStatus: (
         workspaceId: string,
         streaming: boolean,
-        model?: string,
-        agentId?: string,
-        hasTodos?: boolean,
-        expectedGeneration?: number,
-        streamingGeneration?: number
+        options?: ExtensionMetadataStreamingUpdate
       ) => Promise<void>;
     };
 
     internals.streamingGenerations.set(workspaceId, 1);
-    const staleStopPromise = internals.updateStreamingStatus(
-      workspaceId,
-      false,
-      undefined,
-      undefined,
-      undefined,
-      1
-    );
+    const staleStopPromise = internals.updateStreamingStatus(workspaceId, false, {
+      generation: 1,
+    });
 
     internals.streamingGenerations.set(workspaceId, 2);
-    await internals.updateStreamingStatus(workspaceId, true, "openai:gpt-4o");
+    await internals.updateStreamingStatus(workspaceId, true, { model: "openai:gpt-4o" });
 
     todoReadDeferred.resolve([]);
     await staleStopPromise;
 
     expect(setStreaming).toHaveBeenCalledTimes(1);
-    expect(setStreaming).toHaveBeenCalledWith(
-      workspaceId,
-      true,
-      "openai:gpt-4o",
-      undefined,
-      undefined,
-      undefined
-    );
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, { model: "openai:gpt-4o" });
   });
 
   test("handleStreamCompletion captures generation before awaiting recency updates", async () => {
     const workspaceId = "ws-stream-completion-generation";
     const recencyDeferred = createDeferred<void>();
     const setStreaming = mock(
-      (
-        _workspaceId: string,
-        streaming: boolean,
-        model?: string,
-        _thinkingLevel?: string | null,
-        hasTodos?: boolean
-      ) =>
+      (_workspaceId: string, streaming: boolean, update: ExtensionMetadataStreamingUpdate = {}) =>
         Promise.resolve({
           recency: Date.now(),
           streaming,
-          lastModel: model ?? null,
-          lastThinkingLevel: null,
-          hasTodos,
+          lastModel: update.model ?? null,
+          lastThinkingLevel: update.thinkingLevel ?? null,
+          hasTodos: update.hasTodos,
           agentStatus: null,
         })
     );
@@ -1269,11 +1271,7 @@ describe("WorkspaceService streaming generation guard", () => {
       updateStreamingStatus: (
         workspaceId: string,
         streaming: boolean,
-        model?: string,
-        agentId?: string,
-        hasTodos?: boolean,
-        expectedGeneration?: number,
-        streamingGeneration?: number
+        options?: ExtensionMetadataStreamingUpdate
       ) => Promise<void>;
       updateRecencyTimestamp: (workspaceId: string, timestamp?: number) => Promise<void>;
       handleStreamCompletion: (workspaceId: string) => Promise<void>;
@@ -1288,21 +1286,14 @@ describe("WorkspaceService streaming generation guard", () => {
     const completionPromise = internals.handleStreamCompletion(workspaceId);
 
     internals.streamingGenerations.set(workspaceId, 2);
-    await internals.updateStreamingStatus(workspaceId, true, "openai:gpt-4o-mini");
+    await internals.updateStreamingStatus(workspaceId, true, { model: "openai:gpt-4o-mini" });
 
     recencyDeferred.resolve();
     await completionPromise;
 
     expect(internals.updateRecencyTimestamp).toHaveBeenCalledTimes(1);
     expect(setStreaming).toHaveBeenCalledTimes(1);
-    expect(setStreaming).toHaveBeenCalledWith(
-      workspaceId,
-      true,
-      "openai:gpt-4o-mini",
-      undefined,
-      undefined,
-      undefined
-    );
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, { model: "openai:gpt-4o-mini" });
   });
 });
 
@@ -2694,7 +2685,10 @@ describe("WorkspaceService metadata listeners", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(setStreaming).toHaveBeenCalledTimes(1);
-    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, undefined, undefined, false, 0);
+    expect(setStreaming).toHaveBeenCalledWith(workspaceId, false, {
+      hasTodos: false,
+      generation: 0,
+    });
   });
 });
 

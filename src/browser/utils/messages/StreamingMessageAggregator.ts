@@ -38,9 +38,11 @@ import type {
 } from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
 import {
+  buildAggregateResponseCompleteMetadata,
   buildResponseCompleteMetadata,
-  type ResponseCompleteMetadata,
+  type ResponseCompleteHandler,
 } from "./responseCompletionMetadata";
+import { showBrowserNotification } from "@/browser/utils/ui/showBrowserNotification";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -486,21 +488,10 @@ export class StreamingMessageAggregator {
   // Used for notification click handling in browser mode
   onNavigateToWorkspace?: (workspaceId: string) => void;
 
-  // Optional callback when an assistant response completes (used for "notify on response" feature)
-  // isFinal is true when no more active streams remain (assistant done with all work)
-  // finalText is the text content after any tool calls (the final response to show in notification)
-  // completion carries notification-policy metadata (compaction vs normal response,
-  // and whether another queued/auto follow-up will immediately take over).
-  // completedAt: non-null for all final streams. Drives read-marking in App.tsx.
+  // Optional callback when an assistant response completes (used for "notify on response" feature).
+  // completedAt is non-null for all final streams and drives read-marking in App.tsx.
   // Only non-compaction completions also bump lastResponseCompletedAt (recency).
-  onResponseComplete?: (
-    workspaceId: string,
-    messageId: string,
-    isFinal: boolean,
-    finalText: string,
-    completion?: ResponseCompleteMetadata,
-    completedAt?: number | null
-  ) => void;
+  onResponseComplete?: ResponseCompleteHandler;
 
   constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
     this.createdAt = createdAt;
@@ -1475,6 +1466,10 @@ export class StreamingMessageAggregator {
     return Array.from(this.activeStreams.values());
   }
 
+  getActiveResponseCompleteMetadata() {
+    return buildAggregateResponseCompleteMetadata(this.activeStreams.values());
+  }
+
   setActiveQueuedFollowUp(hasQueuedFollowUp: boolean): void {
     for (const context of this.activeStreams.values()) {
       context.hasQueuedFollowUp = hasQueuedFollowUp;
@@ -1810,15 +1805,14 @@ export class StreamingMessageAggregator {
       // Notify on normal stream completion (skip replay-only reconstruction)
       // isFinal = true when this was the last active stream (assistant done with all work)
       if (this.workspaceId && this.onResponseComplete) {
-        const finalText = this.extractFinalResponseText(message);
-        this.onResponseComplete(
-          this.workspaceId,
-          data.messageId,
+        this.onResponseComplete({
+          workspaceId: this.workspaceId,
+          messageId: data.messageId,
           isFinal,
-          finalText,
+          finalText: this.extractFinalResponseText(message),
           completion,
-          completedAt
-        );
+          completedAt,
+        });
       }
     } else {
       // Reconnection case: user reconnected after stream completed
@@ -2193,28 +2187,16 @@ export class StreamingMessageAggregator {
    * Clicking the notification navigates to the workspace.
    */
   private sendBrowserNotification(title: string, body?: string, workspaceId?: string): void {
-    if (!("Notification" in window)) return;
-
-    const showNotification = () => {
-      const notification = new Notification(title, { body });
-      if (workspaceId) {
-        notification.onclick = () => {
-          // Focus the window and navigate to the workspace
-          window.focus();
-          this.onNavigateToWorkspace?.(workspaceId);
-        };
-      }
-    };
-
-    if (Notification.permission === "granted") {
-      showNotification();
-    } else if (Notification.permission !== "denied") {
-      void Notification.requestPermission().then((perm) => {
-        if (perm === "granted") {
-          showNotification();
-        }
-      });
-    }
+    showBrowserNotification(title, {
+      body,
+      onClick: workspaceId
+        ? () => {
+            // Focus the window and navigate to the workspace.
+            window.focus();
+            this.onNavigateToWorkspace?.(workspaceId);
+          }
+        : undefined,
+    });
   }
 
   handleToolCallEnd(data: ToolCallEndEvent): void {
