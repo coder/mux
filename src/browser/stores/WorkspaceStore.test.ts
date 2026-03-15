@@ -11,6 +11,7 @@ import {
 } from "@/common/constants/storage";
 import type { TodoItem } from "@/common/types/tools";
 import { WorkspaceStore } from "./WorkspaceStore";
+import type { ResponseCompleteMetadata } from "@/browser/utils/messages/responseCompletionMetadata";
 
 interface LoadMoreResponse {
   messages: WorkspaceChatMessage[];
@@ -1657,7 +1658,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+          _completion?: ResponseCompleteMetadata,
           _completedAt?: number | null
         ) => undefined
       );
@@ -1686,7 +1687,249 @@ describe("WorkspaceStore", () => {
       );
     });
 
-    it("preserves compaction continue metadata for background completion callbacks", async () => {
+    it("preserves queued auto-follow-up metadata for background completion callbacks", async () => {
+      const activeWorkspaceId = "active-workspace-queued-follow-up-background";
+      const backgroundWorkspaceId = "background-workspace-queued-follow-up-background";
+      const initialRecency = new Date("2024-01-07T00:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== backgroundWorkspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield { type: "caught-up", hasOlderHistory: false };
+
+        yield {
+          type: "stream-start",
+          workspaceId: backgroundWorkspaceId,
+          messageId: "response-stream",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: Date.now(),
+        };
+
+        yield {
+          type: "queued-message-changed",
+          workspaceId: backgroundWorkspaceId,
+          queuedMessages: ["follow-up after response"],
+          displayText: "follow-up after response",
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _completion?: ResponseCompleteMetadata,
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, backgroundWorkspaceId);
+
+      const sawQueuedFollowUp = await waitUntil(() => {
+        const state = store.getWorkspaceState(backgroundWorkspaceId);
+        return state.canInterrupt && state.queuedMessage?.content === "follow-up after response";
+      });
+      expect(sawQueuedFollowUp).toBe(true);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+
+      releaseBackgroundCompletion();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        backgroundWorkspaceId,
+        "",
+        true,
+        "",
+        { kind: "response", hasAutoFollowUp: true },
+        initialRecency + 1
+      );
+    });
+
+    it("does not let stale queued auto-follow-up state suppress the final background completion", async () => {
+      const activeWorkspaceId = "active-workspace-after-handoff";
+      const backgroundWorkspaceId = "background-workspace-after-handoff";
+      const initialRecency = new Date("2024-01-07T12:00:00.000Z").getTime();
+
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: initialRecency,
+        streaming: true,
+        streamingGeneration: 1,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseBackgroundCompletion!: () => void;
+      const backgroundCompletionReady = new Promise<void>((resolve) => {
+        releaseBackgroundCompletion = resolve;
+      });
+
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await backgroundCompletionReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            streamingGeneration: 2,
+          },
+        };
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            streamingGeneration: 2,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== backgroundWorkspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield { type: "caught-up", hasOlderHistory: false };
+
+        yield {
+          type: "stream-start",
+          workspaceId: backgroundWorkspaceId,
+          messageId: "response-stream-a",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: Date.now(),
+        };
+
+        yield {
+          type: "queued-message-changed",
+          workspaceId: backgroundWorkspaceId,
+          queuedMessages: ["follow-up after response"],
+          displayText: "follow-up after response",
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _completion?: ResponseCompleteMetadata,
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, backgroundWorkspaceId);
+
+      const sawQueuedFollowUp = await waitUntil(() => {
+        const state = store.getWorkspaceState(backgroundWorkspaceId);
+        return state.canInterrupt && state.queuedMessage?.content === "follow-up after response";
+      });
+      expect(sawQueuedFollowUp).toBe(true);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+
+      // Simulate the stale-context case Codex flagged: stream B starts while the workspace is
+      // backgrounded, so the activity subscription sees generation 2 but the renderer never
+      // receives live onChat events for that second stream.
+      releaseBackgroundCompletion();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        backgroundWorkspaceId,
+        "",
+        true,
+        "",
+        undefined,
+        initialRecency + 1
+      );
+    });
+
+    it("preserves compaction auto-follow-up metadata for background completion callbacks", async () => {
       const activeWorkspaceId = "active-workspace-continue";
       const backgroundWorkspaceId = "background-workspace-continue";
       const initialRecency = new Date("2024-01-08T00:00:00.000Z").getTime();
@@ -1782,7 +2025,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+          _completion?: ResponseCompleteMetadata,
           _completedAt?: number | null
         ) => undefined
       );
@@ -1795,17 +2038,6 @@ describe("WorkspaceStore", () => {
       store.setClient(mockClient as any);
 
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       const sawCompactingStream = await waitUntil(
         () => store.getWorkspaceState(backgroundWorkspaceId).isCompacting
@@ -1824,12 +2056,88 @@ describe("WorkspaceStore", () => {
         "",
         true,
         "",
-        { hasContinueMessage: true },
+        { kind: "compaction", hasAutoFollowUp: true },
         initialRecency + 1
       );
     });
 
-    it("marks compaction completions with queued follow-up as continue for active callbacks", async () => {
+    it("marks normal completions with queued follow-up for active callbacks", async () => {
+      const workspaceId = "active-workspace-normal-queued-follow-up";
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield { type: "caught-up", hasOlderHistory: false };
+
+        yield {
+          type: "stream-start",
+          workspaceId,
+          messageId: "response-stream",
+          historySequence: 1,
+          model: "claude-sonnet-4",
+          startTime: Date.now(),
+        };
+
+        yield {
+          type: "queued-message-changed",
+          workspaceId,
+          queuedMessages: ["follow-up after response"],
+          displayText: "follow-up after response",
+        };
+
+        yield {
+          type: "stream-end",
+          workspaceId,
+          messageId: "response-stream",
+          metadata: {
+            model: "claude-sonnet-4",
+          },
+          parts: [],
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+
+      const onResponseComplete = mock(
+        (
+          _workspaceId: string,
+          _messageId: string,
+          _isFinal: boolean,
+          _finalText: string,
+          _completion?: ResponseCompleteMetadata,
+          _completedAt?: number | null
+        ) => undefined
+      );
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      store.setOnResponseComplete(onResponseComplete);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const sawResponseComplete = await waitUntil(() => onResponseComplete.mock.calls.length > 0);
+      expect(sawResponseComplete).toBe(true);
+
+      expect(onResponseComplete).toHaveBeenCalledTimes(1);
+      expect(onResponseComplete).toHaveBeenCalledWith(
+        workspaceId,
+        "response-stream",
+        true,
+        "",
+        { kind: "response", hasAutoFollowUp: true },
+        expect.any(Number)
+      );
+    });
+
+    it("marks compaction completions with queued follow-up as auto-follow-up for active callbacks", async () => {
       const workspaceId = "active-workspace-queued-follow-up";
 
       mockOnChat.mockImplementation(async function* (
@@ -1900,7 +2208,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+          _completion?: ResponseCompleteMetadata,
           _completedAt?: number | null
         ) => undefined
       );
@@ -1913,17 +2221,6 @@ describe("WorkspaceStore", () => {
 
       createAndAddWorkspace(store, workspaceId);
 
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
-
       const sawResponseComplete = await waitUntil(() => onResponseComplete.mock.calls.length > 0);
       expect(sawResponseComplete).toBe(true);
 
@@ -1933,12 +2230,12 @@ describe("WorkspaceStore", () => {
         "compaction-stream",
         true,
         "",
-        { hasContinueMessage: true },
+        { kind: "compaction", hasAutoFollowUp: true },
         expect.any(Number)
       );
     });
 
-    it("preserves queued follow-up metadata for background compaction completions", async () => {
+    it("preserves queued auto-follow-up metadata for background compaction completions", async () => {
       const activeWorkspaceId = "active-workspace-background-queued-follow-up";
       const backgroundWorkspaceId = "background-workspace-background-queued-follow-up";
       const initialRecency = new Date("2024-01-09T00:00:00.000Z").getTime();
@@ -2038,7 +2335,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+          _completion?: ResponseCompleteMetadata,
           _completedAt?: number | null
         ) => undefined
       );
@@ -2070,7 +2367,7 @@ describe("WorkspaceStore", () => {
         "",
         true,
         "",
-        { hasContinueMessage: true },
+        { kind: "compaction", hasAutoFollowUp: true },
         initialRecency + 1
       );
     });
@@ -2125,7 +2422,7 @@ describe("WorkspaceStore", () => {
           _messageId: string,
           _isFinal: boolean,
           _finalText: string,
-          _compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+          _completion?: ResponseCompleteMetadata,
           _completedAt?: number | null
         ) => undefined
       );
@@ -2187,17 +2484,6 @@ describe("WorkspaceStore", () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
       store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
 
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
-
       const sawBothCalls = await waitUntil(() => callOrder.length >= 2);
       expect(sawBothCalls).toBe(true);
       expect(callOrder.slice(0, 2)).toEqual(["subscribe", "list"]);
@@ -2234,17 +2520,6 @@ describe("WorkspaceStore", () => {
         yield { type: "heartbeat" as const };
         await waitForAbortSignal(options?.signal);
       });
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
       store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
@@ -2409,17 +2684,6 @@ describe("WorkspaceStore", () => {
       ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
         await waitForAbortSignal(options?.signal);
       });
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
       store.setClient({ workspace: mockClient.workspace, terminal: mockClient.terminal } as any);
@@ -3358,17 +3622,6 @@ describe("WorkspaceStore", () => {
         releaseFirstSubscription = resolve;
       });
 
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
-
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
         void,
@@ -3430,17 +3683,6 @@ describe("WorkspaceStore", () => {
       const holdFirstSubscription = new Promise<void>((resolve) => {
         releaseFirstSubscription = resolve;
       });
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
@@ -3514,17 +3756,6 @@ describe("WorkspaceStore", () => {
       const holdFirstSubscription = new Promise<void>((resolve) => {
         releaseFirstSubscription = resolve;
       });
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
@@ -3622,17 +3853,6 @@ describe("WorkspaceStore", () => {
       const holdFirstSubscription = new Promise<void>((resolve) => {
         releaseFirstSubscription = resolve;
       });
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
@@ -3735,17 +3955,6 @@ describe("WorkspaceStore", () => {
         releaseFirstSubscription = resolve;
       });
 
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
-
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
         void,
@@ -3806,17 +4015,6 @@ describe("WorkspaceStore", () => {
       const holdFirstSubscription = new Promise<void>((resolve) => {
         releaseFirstSubscription = resolve;
       });
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
@@ -3900,17 +4098,6 @@ describe("WorkspaceStore", () => {
         releaseSecondCaughtUp = resolve;
       });
 
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
-
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
         void,
@@ -3983,17 +4170,6 @@ describe("WorkspaceStore", () => {
       const holdFirstSubscription = new Promise<void>((resolve) => {
         releaseFirstSubscription = resolve;
       });
-
-      const waitUntil = async (condition: () => boolean, timeoutMs = 2000): Promise<boolean> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-          if (condition()) {
-            return true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        }
-        return false;
-      };
 
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,

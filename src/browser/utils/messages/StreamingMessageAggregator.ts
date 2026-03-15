@@ -37,6 +37,10 @@ import type {
   OnChatCursor,
 } from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
+import {
+  buildResponseCompleteMetadata,
+  type ResponseCompleteMetadata,
+} from "./responseCompletionMetadata";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -116,10 +120,10 @@ interface StreamingContext {
   isComplete: boolean;
   isCompacting: boolean;
   hasCompactionContinue: boolean;
-  // Track the last known queued-follow-up state on the compaction stream itself so
-  // background activity completion can still suppress the intermediate notification
+  // Track the last known queued-follow-up state on the active stream itself so
+  // background activity completion can still suppress intermediate notifications
   // after the workspace loses its live queued-message subscription.
-  hasQueuedCompactionFollowUp: boolean;
+  hasQueuedFollowUp: boolean;
   isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
@@ -485,7 +489,8 @@ export class StreamingMessageAggregator {
   // Optional callback when an assistant response completes (used for "notify on response" feature)
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (the final response to show in notification)
-  // compaction is provided when this was a compaction stream (includes continue metadata)
+  // completion carries notification-policy metadata (compaction vs normal response,
+  // and whether another queued/auto follow-up will immediately take over).
   // completedAt: non-null for all final streams. Drives read-marking in App.tsx.
   // Only non-compaction completions also bump lastResponseCompletedAt (recency).
   onResponseComplete?: (
@@ -493,7 +498,7 @@ export class StreamingMessageAggregator {
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+    completion?: ResponseCompleteMetadata,
     completedAt?: number | null
   ) => void;
 
@@ -1470,12 +1475,9 @@ export class StreamingMessageAggregator {
     return Array.from(this.activeStreams.values());
   }
 
-  setActiveCompactionQueuedFollowUp(hasQueuedFollowUp: boolean): void {
+  setActiveQueuedFollowUp(hasQueuedFollowUp: boolean): void {
     for (const context of this.activeStreams.values()) {
-      if (!context.isCompacting) {
-        continue;
-      }
-      context.hasQueuedCompactionFollowUp = hasQueuedFollowUp;
+      context.hasQueuedFollowUp = hasQueuedFollowUp;
     }
   }
 
@@ -1626,6 +1628,11 @@ export class StreamingMessageAggregator {
     // They are cleared when a new user message arrives (see handleMessage),
     // ensuring consistent behavior whether loading from history or processing live events.
 
+    for (const activeStream of this.activeStreams.values()) {
+      // A queued follow-up belongs to the handoff into the next stream. Once that next
+      // stream starts, older contexts must not keep suppressing later completions.
+      activeStream.hasQueuedFollowUp = false;
+    }
     const routeProvider = resolveRouteProvider(data.routeProvider, data.routedThroughGateway);
 
     const now = Date.now();
@@ -1636,7 +1643,7 @@ export class StreamingMessageAggregator {
       isComplete: false,
       isCompacting,
       hasCompactionContinue,
-      hasQueuedCompactionFollowUp: false,
+      hasQueuedFollowUp: false,
       isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
@@ -1781,13 +1788,9 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Capture compaction info before cleanup (cleanup removes the stream context)
-      const compaction = activeStream.isCompacting
-        ? {
-            hasContinueMessage:
-              activeStream.hasCompactionContinue || activeStream.hasQueuedCompactionFollowUp,
-          }
-        : undefined;
+      // Capture completion metadata before cleanup (cleanup removes the stream context).
+      // If another turn is already queued, this stream end is only an intermediate handoff.
+      const completion = buildResponseCompleteMetadata(activeStream);
 
       // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
@@ -1813,7 +1816,7 @@ export class StreamingMessageAggregator {
           data.messageId,
           isFinal,
           finalText,
-          compaction,
+          completion,
           completedAt
         );
       }

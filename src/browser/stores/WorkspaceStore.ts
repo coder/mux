@@ -17,6 +17,12 @@ import {
   type LoadedSkill,
   type SkillLoadError,
 } from "@/browser/utils/messages/StreamingMessageAggregator";
+import {
+  buildResponseCompleteMetadata,
+  createIdleCompactionCompletion,
+  markCompletionHasAutoFollowUp,
+  type ResponseCompleteMetadata,
+} from "@/browser/utils/messages/responseCompletionMetadata";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -531,14 +537,15 @@ export class WorkspaceStore {
   // Global callback when a response completes (for "notify on response" feature)
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (for notification body)
-  // compaction is provided when this was a compaction stream (includes continue metadata)
+  // completion carries notification-policy metadata (compaction vs normal response,
+  // and whether another queued/auto follow-up will immediately take over).
   private responseCompleteCallback:
     | ((
         workspaceId: string,
         messageId: string,
         isFinal: boolean,
         finalText: string,
-        compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+        completion?: ResponseCompleteMetadata,
         completedAt?: number | null
       ) => void)
     | null = null;
@@ -820,10 +827,9 @@ export class WorkspaceStore {
           }
         : null;
 
-      // Mirror the queue signal onto the active compaction stream so background
-      // activity-stop notifications can still suppress the intermediate
-      // "Compaction complete" notice after we unsubscribe from onChat.
-      aggregator.setActiveCompactionQueuedFollowUp(queuedMessage !== null);
+      // Mirror the queue signal onto active streams so response notifications follow
+      // user-visible terminal turns instead of every intermediate handoff.
+      aggregator.setActiveQueuedFollowUp(queuedMessage !== null);
       this.assertChatTransientState(workspaceId).queuedMessage = queuedMessage;
       this.states.bump(workspaceId);
     },
@@ -1232,7 +1238,8 @@ export class WorkspaceStore {
    * Set the callback for when a response completes (used for "notify on response" feature).
    * isFinal is true when no more active streams remain (assistant done with all work).
    * finalText is the text content after any tool calls (for notification body).
-   * compaction is provided when this was a compaction stream (includes continue metadata).
+   * completion carries notification-policy metadata (compaction vs normal response,
+   * and whether another queued/auto follow-up will immediately take over).
    */
   setOnResponseComplete(
     callback: (
@@ -1240,7 +1247,7 @@ export class WorkspaceStore {
       messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+      completion?: ResponseCompleteMetadata,
       completedAt?: number | null
     ) => void
   ): void {
@@ -1251,26 +1258,24 @@ export class WorkspaceStore {
     }
   }
 
-  private maybeMarkCompactionContinueFromQueuedFollowUp(
+  private maybeMarkQueuedFollowUpOnCompletion(
     workspaceId: string,
-    compaction: { hasContinueMessage: boolean; isIdle?: boolean } | undefined,
+    completion: ResponseCompleteMetadata | undefined,
     includeQueuedFollowUpSignal: boolean
-  ): { hasContinueMessage: boolean; isIdle?: boolean } | undefined {
-    if (!compaction || compaction.hasContinueMessage || !includeQueuedFollowUpSignal) {
-      return compaction;
+  ): ResponseCompleteMetadata | undefined {
+    if (!includeQueuedFollowUpSignal) {
+      return completion;
     }
 
     const queuedMessage = this.chatTransientState.get(workspaceId)?.queuedMessage;
     if (!queuedMessage) {
-      return compaction;
+      return completion;
     }
 
-    // A queued message will be auto-sent after stream-end. Suppress the intermediate
-    // "Compaction complete" notification and only notify for the follow-up response.
-    return {
-      ...compaction,
-      hasContinueMessage: true,
-    };
+    // A queued message will be auto-sent after this stream boundary. Treat queued
+    // interrupts, compaction continues, and similar handoffs as one notification-worthy
+    // turn so suppression stays centralized instead of growing case-by-case checks.
+    return markCompletionHasAutoFollowUp(completion);
   }
 
   private emitResponseComplete(
@@ -1278,7 +1283,7 @@ export class WorkspaceStore {
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+    completion?: ResponseCompleteMetadata,
     completedAt?: number | null,
     includeQueuedFollowUpSignal = true
   ): void {
@@ -1291,9 +1296,9 @@ export class WorkspaceStore {
       messageId,
       isFinal,
       finalText,
-      this.maybeMarkCompactionContinueFromQueuedFollowUp(
+      this.maybeMarkQueuedFollowUpOnCompletion(
         workspaceId,
-        compaction,
+        completion,
         includeQueuedFollowUpSignal
       ),
       completedAt
@@ -1306,7 +1311,7 @@ export class WorkspaceStore {
       messageId: string,
       isFinal: boolean,
       finalText: string,
-      compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+      completion?: ResponseCompleteMetadata,
       completedAt?: number | null
     ) => {
       this.emitResponseComplete(
@@ -1314,7 +1319,7 @@ export class WorkspaceStore {
         messageId,
         isFinal,
         finalText,
-        compaction,
+        completion,
         completedAt
       );
     };
@@ -2339,28 +2344,24 @@ export class WorkspaceStore {
     return this.workspaceMetadata.has(workspaceId);
   }
 
-  private getBackgroundCompletionCompaction(
+  private getBackgroundCompletionMetadata(
     workspaceId: string
-  ): { hasContinueMessage: boolean } | undefined {
+  ): ResponseCompleteMetadata | undefined {
     const aggregator = this.aggregators.get(workspaceId);
     if (!aggregator) {
       return undefined;
     }
 
-    const compactingStreams = aggregator
-      .getActiveStreams()
-      .filter((stream) => stream.isCompacting === true);
-
-    if (compactingStreams.length === 0) {
+    const activeStreams = aggregator.getActiveStreams();
+    if (activeStreams.length === 0) {
       return undefined;
     }
 
-    return {
-      hasContinueMessage: compactingStreams.some(
-        (stream) =>
-          stream.hasCompactionContinue === true || stream.hasQueuedCompactionFollowUp === true
-      ),
-    };
+    return buildResponseCompleteMetadata({
+      isCompacting: activeStreams.some((stream) => stream.isCompacting === true),
+      hasCompactionContinue: activeStreams.some((stream) => stream.hasCompactionContinue === true),
+      hasQueuedFollowUp: activeStreams.some((stream) => stream.hasQueuedFollowUp === true),
+    });
   }
 
   private applyWorkspaceActivitySnapshot(
@@ -2377,6 +2378,7 @@ export class WorkspaceStore {
 
     const changed =
       previous?.streaming !== snapshot?.streaming ||
+      previous?.streamingGeneration !== snapshot?.streamingGeneration ||
       previous?.lastModel !== snapshot?.lastModel ||
       previous?.lastThinkingLevel !== snapshot?.lastThinkingLevel ||
       previous?.recency !== snapshot?.recency ||
@@ -2396,6 +2398,20 @@ export class WorkspaceStore {
       this.activityStreamingStartRecency.set(workspaceId, startedStreamingSnapshot.recency);
     }
 
+    const didBackgroundStreamingGenerationAdvance =
+      workspaceId !== this.activeWorkspaceId &&
+      previous?.streaming === true &&
+      snapshot?.streaming === true &&
+      previous.streamingGeneration !== undefined &&
+      snapshot.streamingGeneration !== undefined &&
+      previous.streamingGeneration !== snapshot.streamingGeneration;
+    if (didBackgroundStreamingGenerationAdvance) {
+      // Background activity snapshots continue across handoffs even after onChat unsubscribes.
+      // Once a newer stream generation appears, any cached live stream contexts are stale and
+      // must not suppress the terminal notification for the new background turn.
+      this.aggregators.get(workspaceId)?.clearActiveStreams();
+    }
+
     const stoppedStreamingSnapshot =
       previous?.streaming === true && snapshot?.streaming === false ? snapshot : null;
     // Activity snapshots only collapse for background workspaces — active workspaces
@@ -2411,8 +2427,8 @@ export class WorkspaceStore {
       stoppedStreamingSnapshot !== null &&
       streamStartRecency !== undefined &&
       stoppedStreamingSnapshot.recency > streamStartRecency;
-    const backgroundCompaction = isBackgroundStreamingStop
-      ? this.getBackgroundCompletionCompaction(workspaceId)
+    const backgroundCompletion = isBackgroundStreamingStop
+      ? this.getBackgroundCompletionMetadata(workspaceId)
       : undefined;
     // The backend tags the streaming=false (stop) snapshot with isIdleCompaction.
     // The idle marker is added after sendMessage returns (to avoid races with
@@ -2428,18 +2444,15 @@ export class WorkspaceStore {
     if (stoppedStreamingSnapshot && recencyAdvancedSinceStreamStart && isBackgroundStreamingStop) {
       // Activity snapshots don't include message/content metadata. Reuse any
       // still-active stream context captured before this workspace was backgrounded
-      // so compaction continue turns remain suppressible in App notifications.
+      // so queued follow-up handoffs remain suppressible in App notifications.
       this.emitResponseComplete(
         workspaceId,
         "",
         true,
         "",
         wasIdleCompaction
-          ? {
-              hasContinueMessage: backgroundCompaction?.hasContinueMessage ?? false,
-              isIdle: true,
-            }
-          : backgroundCompaction,
+          ? createIdleCompactionCompletion(backgroundCompletion?.hasAutoFollowUp ?? false)
+          : backgroundCompletion,
         stoppedStreamingSnapshot.recency,
         false
       );

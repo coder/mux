@@ -1191,11 +1191,17 @@ export class WorkspaceService extends EventEmitter {
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
-        this.streamingGenerations.set(
+        const generation = (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1;
+        this.streamingGenerations.set(data.workspaceId, generation);
+        void this.updateStreamingStatus(
           data.workspaceId,
-          (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1
+          true,
+          data.model,
+          data.agentId,
+          undefined,
+          undefined,
+          generation
         );
-        void this.updateStreamingStatus(data.workspaceId, true, data.model, data.agentId);
       }
     });
 
@@ -1283,7 +1289,8 @@ export class WorkspaceService extends EventEmitter {
     model?: string,
     agentId?: string,
     hasTodos?: boolean,
-    expectedGeneration?: number
+    expectedGeneration?: number,
+    streamingGeneration?: number
   ): Promise<void> {
     try {
       let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
@@ -1325,7 +1332,8 @@ export class WorkspaceService extends EventEmitter {
         streaming,
         model,
         thinkingLevel,
-        hasTodos
+        hasTodos,
+        streamingGeneration
       );
       // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
       // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
@@ -1359,6 +1367,7 @@ export class WorkspaceService extends EventEmitter {
       undefined,
       undefined,
       undefined,
+      generation,
       generation
     );
   }

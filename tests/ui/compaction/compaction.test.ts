@@ -16,6 +16,7 @@ import { BackgroundProcessManager } from "@/node/services/backgroundProcessManag
 import { fireEvent } from "@testing-library/react";
 import { createAppHarness } from "../harness";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
@@ -348,7 +349,7 @@ describe("Compaction UI (mock AI router)", () => {
   }, 120_000);
 });
 
-describe("Compaction notification behavior (mock AI router)", () => {
+describe("Auto-follow-up and compaction notification behavior (mock AI router)", () => {
   const notifications: Array<{ title: string; body?: string }> = [];
   let originalWindowNotification: unknown;
 
@@ -440,6 +441,35 @@ describe("Compaction notification behavior (mock AI router)", () => {
       last: notifications[notifications.length - 1],
     };
   }
+
+  test("queued auto-follow-up should fire only ONE notification (for the follow-up response)", async () => {
+    const { app, countAfterSeed, cleanup } = await setupNotificationTest(
+      "Seed for queued follow-up notification test"
+    );
+    const streamingMessage = `[mock:wait-start] queued follow-up notification${" keep-streaming".repeat(600)}`;
+    const followUpText = "Queued follow-up after streaming";
+
+    try {
+      await app.chat.send(streamingMessage);
+      app.env.services.aiService.releaseMockStreamStartGate(app.workspaceId);
+      await waitFor(
+        () => {
+          expect(workspaceStore.getWorkspaceSidebarState(app.workspaceId).canInterrupt).toBe(true);
+        },
+        { timeout: 30_000 }
+      );
+
+      await app.chat.send(followUpText);
+      await app.chat.expectTranscriptContains(`Mock response: ${followUpText}`);
+      await app.chat.expectStreamComplete();
+
+      const { newCount, last } = await waitForNewNotifications(countAfterSeed);
+      expect(newCount).toBe(1);
+      expect(last.body).toContain(`Mock response: ${followUpText}`);
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
 
   test("compaction with continue message should fire only ONE notification (for continue response)", async () => {
     const { app, countAfterSeed, cleanup } = await setupNotificationTest(

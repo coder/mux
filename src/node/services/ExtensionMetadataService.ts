@@ -17,6 +17,7 @@ import { log } from "@/node/services/log";
  * This service tracks:
  * - recency: Unix timestamp (ms) of last user interaction
  * - streaming: Boolean indicating if workspace has an active stream
+ * - streamingGeneration: Monotonic stream counter used to detect newer background turns
  * - lastModel: Last model used in this workspace
  * - lastThinkingLevel: Last thinking/reasoning level used in this workspace
  * - agentStatus: Most recent status_set payload (for sidebar progress in background workspaces)
@@ -81,6 +82,9 @@ export class ExtensionMetadataService {
     return {
       recency: entry.recency,
       streaming: entry.streaming,
+      ...(typeof entry.streamingGeneration === "number"
+        ? { streamingGeneration: entry.streamingGeneration }
+        : {}),
       lastModel: entry.lastModel ?? null,
       lastThinkingLevel: entry.lastThinkingLevel ?? null,
       agentStatus: this.coerceAgentStatus(entry.agentStatus),
@@ -186,7 +190,8 @@ export class ExtensionMetadataService {
     streaming: boolean,
     model?: string,
     thinkingLevel?: ExtensionMetadata["lastThinkingLevel"],
-    hasTodos?: boolean
+    hasTodos?: boolean,
+    generation?: number
   ): Promise<WorkspaceActivitySnapshot> {
     return this.withSerializedMutation(async () => {
       const data = await this.load();
@@ -196,6 +201,7 @@ export class ExtensionMetadataService {
         data.workspaces[workspaceId] = {
           recency: now,
           streaming,
+          ...(generation !== undefined ? { streamingGeneration: generation } : {}),
           lastModel: model ?? null,
           lastThinkingLevel: thinkingLevel ?? null,
           agentStatus: null,
@@ -204,6 +210,9 @@ export class ExtensionMetadataService {
         };
       } else {
         data.workspaces[workspaceId].streaming = streaming;
+        if (generation !== undefined) {
+          data.workspaces[workspaceId].streamingGeneration = generation;
+        }
         if (model) {
           data.workspaces[workspaceId].lastModel = model;
         }
