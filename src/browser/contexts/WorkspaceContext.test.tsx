@@ -46,6 +46,38 @@ const createWorkspaceMetadata = (
   ...overrides,
 });
 
+interface WorkspaceMetadataEvent {
+  workspaceId: string;
+  metadata: FrontendWorkspaceMetadata | null;
+}
+
+type WorkspaceMetadataSubscription = Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>;
+
+function createSingleMetadataEventStream() {
+  let resolveEvent: ((event: WorkspaceMetadataEvent) => void) | null = null;
+
+  const onMetadata = () =>
+    Promise.resolve(
+      (async function* () {
+        const event = await new Promise<WorkspaceMetadataEvent>((resolve) => {
+          resolveEvent = resolve;
+        });
+        yield event;
+      })() as unknown as WorkspaceMetadataSubscription
+    );
+
+  return {
+    onMetadata,
+    isReady: () => resolveEvent !== null,
+    emit: (event: WorkspaceMetadataEvent) => {
+      if (!resolveEvent) {
+        throw new Error("emit called before metadata subscription started");
+      }
+      resolveEvent(event);
+    },
+  };
+}
+
 describe("WorkspaceContext", () => {
   afterEach(() => {
     cleanup();
@@ -99,11 +131,7 @@ describe("WorkspaceContext", () => {
   });
 
   test("subscribes to new workspace immediately when metadata event fires", async () => {
-    const { workspace: workspaceApi } = createMockAPI({
-      workspace: {
-        list: () => Promise.resolve([]),
-      },
-    });
+    const { workspace: workspaceApi } = createMockAPI();
 
     await setup();
 
@@ -133,28 +161,12 @@ describe("WorkspaceContext", () => {
       }),
     ];
 
-    let emitDelete:
-      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
-      | null = null;
+    const metadataStream = createSingleMetadataEventStream();
 
     const { workspace: workspaceApi } = createMockAPI({
       workspace: {
         list: () => Promise.resolve(workspaces),
-        onMetadata: () =>
-          Promise.resolve(
-            (async function* () {
-              const event = await new Promise<{
-                workspaceId: string;
-                metadata: FrontendWorkspaceMetadata | null;
-              }>((resolve) => {
-                emitDelete = resolve;
-              });
-              yield event;
-            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
-          ),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
+        onMetadata: metadataStream.onMetadata,
       },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
@@ -167,10 +179,10 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(childId));
     await waitFor(() => expect(workspaceApi.onMetadata).toHaveBeenCalled());
-    await waitFor(() => expect(emitDelete).toBeTruthy());
+    await waitFor(() => expect(metadataStream.isReady()).toBe(true));
 
     act(() => {
-      emitDelete?.({ workspaceId: childId, metadata: null });
+      metadataStream.emit({ workspaceId: childId, metadata: null });
     });
 
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
@@ -190,28 +202,12 @@ describe("WorkspaceContext", () => {
       }),
     ];
 
-    let emitArchive:
-      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
-      | null = null;
+    const metadataStream = createSingleMetadataEventStream();
 
     createMockAPI({
       workspace: {
         list: () => Promise.resolve(workspaces),
-        onMetadata: () =>
-          Promise.resolve(
-            (async function* () {
-              const event = await new Promise<{
-                workspaceId: string;
-                metadata: FrontendWorkspaceMetadata | null;
-              }>((resolve) => {
-                emitArchive = resolve;
-              });
-              yield event;
-            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
-          ),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
+        onMetadata: metadataStream.onMetadata,
       },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
@@ -222,10 +218,10 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(workspaceId));
-    await waitFor(() => expect(emitArchive).toBeTruthy());
+    await waitFor(() => expect(metadataStream.isReady()).toBe(true));
 
     act(() => {
-      emitArchive?.({
+      metadataStream.emit({
         workspaceId,
         metadata: createWorkspaceMetadata({
           id: workspaceId,
@@ -265,28 +261,12 @@ describe("WorkspaceContext", () => {
       }),
     ];
 
-    let emitArchive:
-      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
-      | null = null;
+    const metadataStream = createSingleMetadataEventStream();
 
     createMockAPI({
       workspace: {
         list: () => Promise.resolve(workspaces),
-        onMetadata: () =>
-          Promise.resolve(
-            (async function* () {
-              const event = await new Promise<{
-                workspaceId: string;
-                metadata: FrontendWorkspaceMetadata | null;
-              }>((resolve) => {
-                emitArchive = resolve;
-              });
-              yield event;
-            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
-          ),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
+        onMetadata: metadataStream.onMetadata,
       },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
@@ -297,7 +277,7 @@ describe("WorkspaceContext", () => {
     const ctx = await setup();
 
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(archivedId));
-    await waitFor(() => expect(emitArchive).toBeTruthy());
+    await waitFor(() => expect(metadataStream.isReady()).toBe(true));
 
     const nextSelection = {
       workspaceId: nextId,
@@ -310,7 +290,7 @@ describe("WorkspaceContext", () => {
     // The metadata handler must not navigate to the project page after this intent.
     act(() => {
       ctx().setSelectedWorkspace(nextSelection);
-      emitArchive?.({
+      metadataStream.emit({
         workspaceId: archivedId,
         metadata: createWorkspaceMetadata({
           id: archivedId,
@@ -353,28 +333,12 @@ describe("WorkspaceContext", () => {
       }),
     ];
 
-    let emitDelete:
-      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
-      | null = null;
+    const metadataStream = createSingleMetadataEventStream();
 
     createMockAPI({
       workspace: {
         list: () => Promise.resolve(workspaces),
-        onMetadata: () =>
-          Promise.resolve(
-            (async function* () {
-              const event = await new Promise<{
-                workspaceId: string;
-                metadata: FrontendWorkspaceMetadata | null;
-              }>((resolve) => {
-                emitDelete = resolve;
-              });
-              yield event;
-            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
-          ),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
+        onMetadata: metadataStream.onMetadata,
       },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
@@ -387,11 +351,11 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(2));
     await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(parentId));
-    await waitFor(() => expect(emitDelete).toBeTruthy());
+    await waitFor(() => expect(metadataStream.isReady()).toBe(true));
 
     // Delete the non-selected child workspace
     act(() => {
-      emitDelete?.({ workspaceId: childId, metadata: null });
+      metadataStream.emit({ workspaceId: childId, metadata: null });
     });
 
     // Child should be removed from metadata map (this was the bug - it stayed)
@@ -888,9 +852,6 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
-      projects: {
-        list: () => Promise.resolve([]),
-      },
       server: {
         getLaunchProject: () => Promise.resolve("/launch-project"),
       },
@@ -1054,9 +1015,6 @@ describe("WorkspaceContext", () => {
             }),
           ]),
       },
-      projects: {
-        list: () => Promise.resolve([]),
-      },
       localStorage: {
         [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
       },
@@ -1135,9 +1093,6 @@ describe("WorkspaceContext", () => {
     const projectsListMock = mock(() => Promise.resolve([]));
 
     createMockAPI({
-      workspace: {
-        list: () => Promise.resolve([]),
-      },
       projects: {
         list: projectsListMock,
       },
@@ -1165,9 +1120,6 @@ describe("WorkspaceContext", () => {
     createMockAPI({
       workspace: {
         list: () => Promise.resolve([workspaceWithoutTimestamp]),
-      },
-      projects: {
-        list: () => Promise.resolve([]),
       },
     });
 
