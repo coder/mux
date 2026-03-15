@@ -79,7 +79,7 @@ describe("PortableDesktopExperimentWarning", () => {
     experimentEnabled = true;
     mockApi = {
       desktop: {
-        getPrereqStatus: mock(() => Promise.resolve({ available: true })),
+        getPrereqStatus: mock(() => Promise.resolve({ available: true as const })),
       },
     };
   });
