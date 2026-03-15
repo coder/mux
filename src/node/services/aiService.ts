@@ -1171,6 +1171,7 @@ export class AIService extends EventEmitter {
               modelString,
               thinkingLevel: thinkingLevel ?? "off",
               costsUsd: sessionCostsUsd,
+              workspaceId,
             }
           ),
           runtimeTempDir,

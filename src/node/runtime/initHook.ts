@@ -13,6 +13,7 @@ import {
 
 import { log } from "@/node/services/log";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
 
 /**
  * Check whether the init hook should be skipped and log the reason.
@@ -79,6 +80,7 @@ export function getMuxEnv(
     thinkingLevel?: ThinkingLevel;
     /** Cumulative session costs in USD (if available) */
     costsUsd?: number;
+    workspaceId?: string;
   }
 ): Record<string, string> {
   if (!projectPath) {
@@ -93,6 +95,11 @@ export function getMuxEnv(
     MUX_RUNTIME: runtime,
     MUX_WORKSPACE_NAME: workspaceName,
   };
+
+  if (options?.workspaceId != null) {
+    env.MUX_WORKSPACE_ID = options.workspaceId;
+    env.MUX_BROWSER_SESSION = getMuxBrowserSessionId(options.workspaceId);
+  }
 
   if (options?.modelString) {
     env.MUX_MODEL_STRING = options.modelString;

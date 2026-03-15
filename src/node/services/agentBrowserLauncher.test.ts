@@ -114,9 +114,14 @@ describe("generateAgentBrowserWrapper", () => {
 
     expect(wrapper.dir).toBe(getVendoredBinDir());
     expect(wrapper.posixContent.startsWith("#!/bin/sh\n")).toBe(true);
-    expect(wrapper.posixContent).toContain("exec");
+    expect(wrapper.posixContent).toContain("mux_has_session_arg=0");
+    expect(wrapper.posixContent).toContain("MUX_BROWSER_SESSION");
+    expect(wrapper.posixContent).toContain('--session "$MUX_BROWSER_SESSION"');
     expect(wrapper.posixContent).toContain(resolvedBinaryPath);
     expect(wrapper.posixContent).toContain('"$@"');
+    expect(wrapper.windowsContent).toContain("EnableDelayedExpansion");
+    expect(wrapper.windowsContent).toContain("MUX_BROWSER_SESSION");
+    expect(wrapper.windowsContent).toContain('--session "%MUX_BROWSER_SESSION%"');
     expect(wrapper.windowsContent).toContain(resolvedBinaryPath);
     expect(wrapper.windowsContent).toContain("%*");
     expect(path.isAbsolute(resolvedBinaryPath)).toBe(true);

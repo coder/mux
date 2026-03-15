@@ -8,6 +8,8 @@ import type {
   BrowserSession,
   BrowserSessionOwnership,
 } from "@/common/types/browserSession";
+import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
+import { isDaemonRunning } from "agent-browser/dist/daemon.js";
 import {
   AgentBrowserBinaryNotFoundError,
   AgentBrowserUnsupportedPlatformError,
@@ -136,19 +138,21 @@ export class BrowserSessionBackend {
     this.session = this.createSession("starting");
     this.emitSessionUpdate();
 
-    const openResult = await this.runCliCommand(["open", this.options.initialUrl]);
-    if (!openResult.ok) {
-      // If stop/dispose interrupts the CLI command, the session already transitioned
-      // to a terminal state elsewhere; keep that state instead of overwriting it.
+    if (!this.hasExistingSession()) {
+      const openResult = await this.runCliCommand(["open", this.options.initialUrl]);
+      if (!openResult.ok) {
+        // If stop/dispose interrupts the CLI command, the session already transitioned
+        // to a terminal state elsewhere; keep that state instead of overwriting it.
+        if (this.disposed) {
+          return this.getSession();
+        }
+        this.transitionToError(openResult.error);
+        return this.getSession();
+      }
+
       if (this.disposed) {
         return this.getSession();
       }
-      this.transitionToError(openResult.error);
-      return this.getSession();
-    }
-
-    if (this.disposed) {
-      return this.getSession();
     }
 
     await this.refreshMetadata();
@@ -218,7 +222,17 @@ export class BrowserSessionBackend {
   }
 
   private createSessionId(): string {
-    return `browser-${this.options.workspaceId}-${randomUUID().slice(0, 8)}`;
+    return getMuxBrowserSessionId(this.options.workspaceId);
+  }
+
+  private hasExistingSession(): boolean {
+    try {
+      // agent-browser lazily auto-launches blank browsers for metadata commands, so checking
+      // the daemon PID is the least destructive way to detect whether we can attach instead.
+      return isDaemonRunning(this.sessionId);
+    } catch {
+      return false;
+    }
   }
 
   private emitSessionUpdate(): void {
@@ -384,10 +398,14 @@ export class BrowserSessionBackend {
       throw error;
     }
 
-    const childProcess = spawn(agentBrowserBinary, ["--json", "--session", this.sessionId, ...args], {
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const childProcess = spawn(
+      agentBrowserBinary,
+      ["--json", "--session", this.sessionId, ...args],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      }
+    );
     const disposableProcess = new DisposableProcess(childProcess);
     this.inFlightProcesses.add(childProcess);
 

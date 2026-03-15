@@ -152,7 +152,38 @@ export function generateAgentBrowserWrapper(): {
 
   return {
     dir: getVendoredBinDir(),
-    posixContent: `#!/bin/sh\nexec ${shellQuotePosix(binaryPath)} "$@"\n`,
-    windowsContent: `@echo off\r\n"${binaryPath.replaceAll('"', '""')}" %*\r\n`,
+    posixContent:
+      `#!/bin/sh\n` +
+      `mux_has_session_arg=0\n` +
+      `for mux_arg in "$@"; do\n` +
+      `  case "$mux_arg" in\n` +
+      `    --session|--session=*)\n` +
+      `      mux_has_session_arg=1\n` +
+      `      break\n` +
+      `      ;;\n` +
+      `  esac\n` +
+      `done\n` +
+      `if [ "$mux_has_session_arg" -eq 0 ] && [ -n "\${MUX_BROWSER_SESSION:-}" ]; then\n` +
+      `  exec ${shellQuotePosix(binaryPath)} --session "$MUX_BROWSER_SESSION" "$@"\n` +
+      `fi\n` +
+      `exec ${shellQuotePosix(binaryPath)} "$@"\n`,
+    windowsContent:
+      `@echo off\r\n` +
+      `setlocal EnableDelayedExpansion\r\n` +
+      `set "MUX_HAS_SESSION_ARG=0"\r\n` +
+      `:mux_scan_args\r\n` +
+      `if "%~1"=="" goto mux_after_scan\r\n` +
+      `set "MUX_CURRENT_ARG=%~1"\r\n` +
+      `if /I "!MUX_CURRENT_ARG!"=="--session" set "MUX_HAS_SESSION_ARG=1"\r\n` +
+      `echo(!MUX_CURRENT_ARG!| findstr /B /I /C:"--session=" >nul && set "MUX_HAS_SESSION_ARG=1"\r\n` +
+      `shift\r\n` +
+      `goto mux_scan_args\r\n` +
+      `:mux_after_scan\r\n` +
+      `if not "%MUX_BROWSER_SESSION%"=="" if "!MUX_HAS_SESSION_ARG!"=="0" (\r\n` +
+      `  "${binaryPath.replaceAll('"', '""')}" --session "%MUX_BROWSER_SESSION%" %*\r\n` +
+      `) else (\r\n` +
+      `  "${binaryPath.replaceAll('"', '""')}" %*\r\n` +
+      `)\r\n` +
+      `endlocal\r\n`,
   };
 }
