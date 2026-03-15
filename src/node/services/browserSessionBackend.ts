@@ -9,12 +9,19 @@ import type {
   BrowserSessionOwnership,
 } from "@/common/types/browserSession";
 import { DisposableProcess } from "@/node/utils/disposableExec";
+import { findAvailableCommand } from "../utils/commandDiscovery";
 
 const CLI_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 2_000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
 const MISSING_BROWSER_BINARY_ERROR =
-  "agent-browser binary not found. Install it with: bun install -g @anthropic-ai/agent-browser";
+  "agent-browser binary not found. Install it with: bun install -g agent-browser (or ensure bunx, pnpx, or npx is available)";
+const AGENT_BROWSER_LAUNCHERS = [
+  { command: "agent-browser", prefixArgs: [] as string[] },
+  { command: "bunx", prefixArgs: ["agent-browser"] },
+  { command: "pnpx", prefixArgs: ["agent-browser"] },
+  { command: "npx", prefixArgs: ["-y", "agent-browser"] },
+] as const;
 
 type CliResult = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -350,10 +357,33 @@ export class BrowserSessionBackend {
   }
 
   private async runCliCommand(args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliResult> {
-    const childProcess = spawn("agent-browser", ["--json", "--session", this.sessionId, ...args], {
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const launcherCommand = await findAvailableCommand(
+      AGENT_BROWSER_LAUNCHERS.map((launcher) => launcher.command)
+    );
+    let launcher: (typeof AGENT_BROWSER_LAUNCHERS)[number] = AGENT_BROWSER_LAUNCHERS[0];
+    if (launcherCommand === null) {
+      // Preserve the previous direct spawn behavior when command discovery cannot
+      // probe the PATH (for example, when `which` is unavailable on Windows).
+      launcher = AGENT_BROWSER_LAUNCHERS[0];
+    } else {
+      const discoveredLauncher = AGENT_BROWSER_LAUNCHERS.find(
+        (candidate) => candidate.command === launcherCommand
+      );
+      assert(
+        discoveredLauncher,
+        `Missing agent-browser launcher definition for ${launcherCommand}`
+      );
+      launcher = discoveredLauncher;
+    }
+
+    const childProcess = spawn(
+      launcher.command,
+      [...launcher.prefixArgs, "--json", "--session", this.sessionId, ...args],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      }
+    );
     const disposableProcess = new DisposableProcess(childProcess);
     this.inFlightProcesses.add(childProcess);
 
