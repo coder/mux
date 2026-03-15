@@ -139,6 +139,18 @@ if ! mux_use_nix_devshell_path; then
 	echo "warning: mux_use_nix_devshell_path failed unexpectedly; continuing with inherited PATH" >&2
 fi
 
+# Restore vendored tools after nix devshell PATH rewriting replaces PATH entirely.
+# Prepend project-local bins first so vendored shims can be added last and remain highest priority.
+if [[ -n "${MUX_PROJECT_PATH:-}" && -d "${MUX_PROJECT_PATH}/node_modules/.bin" ]]; then
+	export PATH="${MUX_PROJECT_PATH}/node_modules/.bin:${PATH}"
+fi
+
+if [[ -n "${MUX_VENDORED_BIN_DIR:-}" ]]; then
+	export PATH="${MUX_VENDORED_BIN_DIR}:${PATH}"
+elif [[ -d "${HOME}/.mux/bin" ]]; then
+	export PATH="${HOME}/.mux/bin:${PATH}"
+fi
+
 run_and_report() {
 	local step_name="${1:-}"
 	if [[ -z "${step_name}" ]]; then
