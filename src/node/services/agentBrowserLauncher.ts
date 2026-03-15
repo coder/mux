@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { accessSync, chmodSync, constants, existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { getMuxHome } from "@/common/constants/paths";
-
-const requireForAgentBrowser = createRequire(import.meta.url);
 
 const SUPPORTED_PLATFORMS = new Set(["darwin", "linux", "win32"]);
 const ARCH_ALIASES = {
@@ -129,8 +126,7 @@ export function resolveAgentBrowserBinary(options: ResolveAgentBrowserBinaryOpti
 export function resolveAgentBrowserBinary(options?: ResolveAgentBrowserBinaryOptions): string {
   const runtimePlatform = options?.platform ?? process.platform;
   const runtimeArch = options?.arch ?? process.arch;
-  const resolvePackageJsonPath =
-    options?.resolvePackageJsonPath ?? requireForAgentBrowser.resolve.bind(requireForAgentBrowser);
+  const resolvePackageJsonPath = options?.resolvePackageJsonPath ?? require.resolve;
 
   const packageRoot = resolveAgentBrowserPackageRoot(resolvePackageJsonPath);
   const binaryName = getAgentBrowserBinaryName(runtimePlatform, runtimeArch);
