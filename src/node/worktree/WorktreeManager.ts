@@ -122,6 +122,10 @@ export class WorktreeManager {
         await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, noHooksEnv);
       }
 
+      // Initialize/update submodules after any fast-forward because FF can
+      // update submodule gitlinks without checking out the new submodule commits.
+      await this.initializeSubmodules(workspacePath, initLogger, noHooksEnv);
+
       return { success: true, workspacePath };
     } catch (error) {
       return {
@@ -223,6 +227,32 @@ export class WorktreeManager {
       // Fast-forward not possible (diverged branches) - just warn
       const errorMsg = getErrorMessage(mergeError);
       initLogger.logStderr(`Note: Fast-forward failed (${errorMsg}), using local branch state`);
+    }
+  }
+
+  /**
+   * Initialize submodules for newly created workspaces.
+   * Best-effort: workspace creation should still succeed when submodule auth or
+   * network setup is unavailable.
+   */
+  private async initializeSubmodules(
+    workspacePath: string,
+    initLogger: InitLogger,
+    noHooksEnv?: { env: Record<string, string> }
+  ): Promise<void> {
+    try {
+      initLogger.logStep("Initializing git submodules...");
+      using submoduleProc = execFileAsync(
+        "git",
+        ["-C", workspacePath, "submodule", "update", "--init", "--recursive"],
+        noHooksEnv
+      );
+      await submoduleProc.result;
+      initLogger.logStep("Git submodules initialized");
+    } catch (error) {
+      initLogger.logStderr(
+        `Note: Failed to initialize git submodules (${getErrorMessage(error)}), continuing`
+      );
     }
   }
 
