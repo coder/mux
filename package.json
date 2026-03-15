@@ -89,6 +89,7 @@
     "@radix-ui/react-visually-hidden": "^1.2.4",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
+    "agent-browser": "^0.17.1",
     "ai": "^6.0.72",
     "ai-tokenizer": "^1.0.6",
     "chalk": "^5.6.2",
@@ -180,7 +181,6 @@
     "@typescript-eslint/parser": "^8.44.1",
     "@typescript/native-preview": "^7.0.0-dev.20251014.1",
     "@vitejs/plugin-react": "^4.0.0",
-    "agent-browser": "^0.17.1",
     "autoprefixer": "^10.4.21",
     "babel-jest": "^30.2.0",
     "babel-plugin-react-compiler": "^1.0.0",
@@ -279,6 +279,7 @@
     "asarUnpack": [
       "dist/**/*.wasm",
       "dist/**/*.map",
+      "**/node_modules/agent-browser/bin/agent-browser*",
       "**/node_modules/node-pty/build/**/*",
       "**/node_modules/@duckdb/**/*.node"
     ],
