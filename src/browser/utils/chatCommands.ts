@@ -721,9 +721,6 @@ export async function createNewWorkspace(
 // Compaction
 // ============================================================================
 
-// Re-export buildContinueMessage from common/types for backward compatibility
-export { buildContinueMessage } from "@/common/types/message";
-
 export interface CompactionOptions {
   api?: RouterClient<AppRouter>;
   workspaceId: string;
