@@ -12,7 +12,6 @@
 
 import type { TabType } from "@/browser/types/rightSidebar";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { formatDuration } from "@/common/utils/formatDuration";
 import type { ReviewNoteData } from "@/common/types/review";
 
 /** Stats reported by ReviewPanel for tab display */
@@ -160,12 +159,4 @@ export function getTabName(tab: TabType): string {
 /** Get content container class name for a tab type */
 export function getTabContentClassName(tab: TabType): string {
   return getTabConfig(tab).contentClassName;
-}
-
-/** Format duration for tab display (compact format) */
-export function formatTabDuration(ms: number): string {
-  if (ms < 60_000) return formatDuration(ms);
-  const mins = Math.floor(ms / 60_000);
-  const secs = Math.round((ms % 60_000) / 1000);
-  return secs > 0 ? `${mins}m${secs}s` : `${mins}m`;
 }
