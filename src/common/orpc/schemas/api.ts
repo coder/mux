@@ -2203,6 +2203,16 @@ export const debug = {
   },
 };
 
+const DesktopPrereqStatusSchema = z.discriminatedUnion("available", [
+  z.object({
+    available: z.literal(true),
+  }),
+  z.object({
+    available: z.literal(false),
+    reason: z.enum(["unsupported_platform", "startup_failed", "binary_not_found"]),
+  }),
+]);
+
 const DesktopCapabilitySchema = z.discriminatedUnion("available", [
   z.object({
     available: z.literal(true),
@@ -2223,6 +2233,10 @@ const DesktopCapabilitySchema = z.discriminatedUnion("available", [
 ]);
 
 export const desktop = {
+  getPrereqStatus: {
+    input: z.void(),
+    output: DesktopPrereqStatusSchema,
+  },
   getCapability: {
     input: z.object({ workspaceId: z.string() }),
     output: DesktopCapabilitySchema,

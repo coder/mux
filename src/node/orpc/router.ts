@@ -4424,6 +4424,12 @@ export const router = (authToken?: string) => {
       },
     },
     desktop: {
+      getPrereqStatus: t
+        .input(schemas.desktop.getPrereqStatus.input)
+        .output(schemas.desktop.getPrereqStatus.output)
+        .handler(({ context }) => {
+          return context.desktopSessionManager.getPrereqStatus();
+        }),
       getCapability: t
         .input(schemas.desktop.getCapability.input)
         .output(schemas.desktop.getCapability.output)

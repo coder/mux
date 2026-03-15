@@ -25,7 +25,6 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import type { ApiServerStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/Input/Input";
-import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
@@ -83,14 +82,13 @@ function ExperimentRow(props: ExperimentRowProps) {
   );
 }
 
-function PortableDesktopExperimentWarning() {
+export function PortableDesktopExperimentWarning() {
   const enabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const { api } = useAPI();
-  const { selectedWorkspace } = useWorkspaceActions();
   const [isBinaryMissing, setIsBinaryMissing] = useState(false);
 
   useEffect(() => {
-    if (!enabled || !api || !selectedWorkspace?.workspaceId) {
+    if (!enabled || !api) {
       setIsBinaryMissing(false);
       return;
     }
@@ -98,14 +96,17 @@ function PortableDesktopExperimentWarning() {
     let cancelled = false;
     setIsBinaryMissing(false);
 
+    // This warning lives on /settings/experiments, where selectedWorkspace is intentionally
+    // URL-derived and null. Probe the machine-level desktop prerequisite instead of a
+    // workspace-scoped capability so the warning still renders on settings routes.
     void api.desktop
-      .getCapability({ workspaceId: selectedWorkspace.workspaceId })
-      .then((capability) => {
+      .getPrereqStatus()
+      .then((prereqStatus) => {
         if (cancelled) {
           return;
         }
 
-        setIsBinaryMissing(!capability.available && capability.reason === "binary_not_found");
+        setIsBinaryMissing(!prereqStatus.available && prereqStatus.reason === "binary_not_found");
       })
       .catch(() => {
         if (cancelled) {
@@ -118,7 +119,7 @@ function PortableDesktopExperimentWarning() {
     return () => {
       cancelled = true;
     };
-  }, [api, enabled, selectedWorkspace?.workspaceId]);
+  }, [api, enabled]);
 
   if (!enabled || !isBinaryMissing) {
     return null;
