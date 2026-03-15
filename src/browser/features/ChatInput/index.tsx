@@ -32,14 +32,10 @@ import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
-import {
-  clearPendingWorkspaceAiSettings,
-  markPendingWorkspaceAiSettings,
-} from "@/browser/utils/workspaceAiSettingsSync";
+import { normalizeAgentId, setWorkspaceAiSettings } from "@/browser/services/workspaceAiSettings";
 import {
   getModelKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByAgentKey,
   getInputKey,
   getInputAttachmentsKey,
   AGENT_AI_DEFAULTS_KEY,
@@ -511,10 +507,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { agentId, currentAgent, agents } = useAgent();
 
   // Keep auto-mode checks aligned with AgentModePicker behavior.
-  const normalizedAgentId =
-    typeof agentId === "string" && agentId.trim().length > 0
-      ? agentId.trim().toLowerCase()
-      : WORKSPACE_DEFAULTS.agentId;
+  const normalizedAgentId = normalizeAgentId(agentId);
   const autoAvailable = agents.some((entry) => entry.uiSelectable && entry.id === "auto");
   const isAutoAgent = normalizedAgentId === "auto" && autoAvailable;
 
@@ -631,10 +624,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const setPreferredModel = useCallback(
     (model: string) => {
-      type WorkspaceAISettingsByAgentCache = Partial<
-        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
-      >;
-
       const selectedModel = normalizeSelectedModel(model);
       ensureModelInSettings(selectedModel); // Ensure model exists in Settings
 
@@ -654,55 +643,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      const normalizedAgentId =
-        typeof agentId === "string" && agentId.trim().length > 0
-          ? agentId.trim().toLowerCase()
-          : "exec";
-
-      updatePersistedState<WorkspaceAISettingsByAgentCache>(
-        getWorkspaceAISettingsByAgentKey(workspaceId),
-        (prev) => {
-          const record: WorkspaceAISettingsByAgentCache =
-            prev && typeof prev === "object" ? prev : {};
-          return {
-            ...record,
-            [normalizedAgentId]: { model: selectedModel, thinkingLevel },
-          };
-        },
-        {}
+      setWorkspaceAiSettings(
+        workspaceId,
+        normalizedAgentId,
+        { model: selectedModel, thinkingLevel },
+        api ?? undefined
       );
-
-      // Workspace variant: persist to backend for cross-device consistency.
-      if (!api) {
-        return;
-      }
-
-      markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
-        model: selectedModel,
-        thinkingLevel,
-      });
-
-      api.workspace
-        .updateAgentAISettings({
-          workspaceId,
-          agentId: normalizedAgentId,
-          aiSettings: { model: selectedModel, thinkingLevel },
-        })
-        .then((result) => {
-          if (!result.success) {
-            clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-          }
-        })
-        .catch(() => {
-          clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-          // Best-effort only. If offline or backend is old, sendMessage will persist.
-        });
     },
     [
       api,
-      agentId,
       creationProjectPath,
       ensureModelInSettings,
+      normalizedAgentId,
       onModelChange,
       thinkingLevel,
       variant,
@@ -1025,10 +977,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     const fallbackModel = defaultModel;
 
-    const normalizedAgentId =
-      typeof agentId === "string" && agentId.trim().length > 0
-        ? agentId.trim().toLowerCase()
-        : "exec";
+    const normalizedAgentId = normalizeAgentId(agentId);
 
     const isExplicitAgentSwitch =
       prevCreationAgentIdRef.current !== null &&

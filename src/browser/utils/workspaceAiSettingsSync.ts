@@ -22,11 +22,29 @@ export function markPendingWorkspaceAiSettings(
   pendingAiSettingsByWorkspace.set(getPendingKey(workspaceId, agentId), settings);
 }
 
-export function clearPendingWorkspaceAiSettings(workspaceId: string, agentId: string): void {
+export function clearPendingWorkspaceAiSettings(
+  workspaceId: string,
+  agentId: string,
+  expectedSettings?: WorkspaceAiSettingsSnapshot
+): void {
   if (!workspaceId || !agentId) {
     return;
   }
-  pendingAiSettingsByWorkspace.delete(getPendingKey(workspaceId, agentId));
+
+  const key = getPendingKey(workspaceId, agentId);
+  if (expectedSettings) {
+    const current = pendingAiSettingsByWorkspace.get(key);
+    // A newer write has superseded this one — keep the guard active for the newer value.
+    if (
+      current &&
+      (current.model !== expectedSettings.model ||
+        current.thinkingLevel !== expectedSettings.thinkingLevel)
+    ) {
+      return;
+    }
+  }
+
+  pendingAiSettingsByWorkspace.delete(key);
 }
 
 export function shouldApplyWorkspaceAiSettingsFromBackend(

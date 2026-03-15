@@ -1,18 +1,22 @@
 import { GlobalWindow } from "happy-dom";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import React from "react";
 import { ThinkingProvider } from "./ThinkingContext";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import {
+  AGENT_AI_DEFAULTS_KEY,
+  getAgentIdKey,
   getModelKey,
   getProjectScopeId,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 let currentClientMock: RecursivePartial<APIClient> = {};
 
@@ -40,6 +44,16 @@ const TestComponent: React.FC<TestProps> = (props) => {
     <div data-testid="thinking">
       {thinkingLevel}:{props.workspaceId}
     </div>
+  );
+};
+
+const ThinkingControls: React.FC = () => {
+  const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
+  return (
+    <>
+      <div data-testid="thinking-controls">{thinkingLevel}</div>
+      <button onClick={() => setThinkingLevel("medium")}>Set medium</button>
+    </>
   );
 };
 
@@ -73,8 +87,11 @@ describe("ThinkingContext", () => {
   test("switching models does not remount children", async () => {
     const workspaceId = "ws-1";
 
+    updatePersistedState(getAgentIdKey(workspaceId), "exec");
     updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
-    updatePersistedState(getThinkingLevelKey(workspaceId), "high");
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      exec: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+    });
 
     let unmounts = 0;
 
@@ -103,18 +120,66 @@ describe("ThinkingContext", () => {
       updatePersistedState(getModelKey(workspaceId), "anthropic:claude-3.5");
     });
 
-    // Thinking is workspace-scoped (not per-model), so switching models should not change it.
     await waitFor(() => {
       expect(view.getByTestId("child").textContent).toBe("high");
     });
 
     expect(unmounts).toBe(0);
   });
-  test("migrates legacy per-model thinking to the workspace-scoped key", async () => {
-    const workspaceId = "ws-1";
 
-    updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
-    updatePersistedState(getThinkingLevelByModelKey("openai:gpt-5.2"), "low");
+  test("falls back to legacy per-model thinking in creation flow and migrates the project scope key", async () => {
+    const projectPath = "/Users/dev/legacy-project";
+    const projectScopeId = getProjectScopeId(projectPath);
+    const model = "openai:gpt-5.2";
+
+    updatePersistedState(getModelKey(projectScopeId), model);
+    updatePersistedState(getThinkingLevelByModelKey(model), "high");
+
+    const ProjectChild: React.FC = () => {
+      const [thinkingLevel] = useThinkingLevel();
+      return <div data-testid="thinking-project-legacy">{thinkingLevel}</div>;
+    };
+
+    const view = renderWithAPI(
+      <ThinkingProvider projectPath={projectPath}>
+        <ProjectChild />
+      </ThinkingProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking-project-legacy").textContent).toBe("high");
+    });
+    expect(
+      readPersistedState<string | undefined>(getThinkingLevelKey(projectScopeId), undefined)
+    ).toBe("high");
+  });
+
+  test("uses the persisted project-scoped thinking key in creation flow", async () => {
+    const projectPath = "/Users/dev/migration-project";
+    const projectScopeId = getProjectScopeId(projectPath);
+
+    updatePersistedState(getThinkingLevelKey(projectScopeId), "low");
+
+    const ProjectChild: React.FC = () => {
+      const [thinkingLevel] = useThinkingLevel();
+      return <div data-testid="thinking-project-persisted">{thinkingLevel}</div>;
+    };
+
+    const view = renderWithAPI(
+      <ThinkingProvider projectPath={projectPath}>
+        <ProjectChild />
+      </ThinkingProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking-project-persisted").textContent).toBe("low");
+    });
+  });
+
+  test("existing workspace with legacy thinkingLevel key but empty workspaceByAgent shows legacy level", async () => {
+    const workspaceId = "ws-legacy-thinking";
+
+    updatePersistedState(getThinkingLevelKey(workspaceId), "high");
 
     const view = renderWithAPI(
       <ThinkingProvider workspaceId={workspaceId}>
@@ -123,21 +188,107 @@ describe("ThinkingContext", () => {
     );
 
     await waitFor(() => {
-      expect(view.getByTestId("thinking").textContent).toBe("low:ws-1");
+      expect(view.getByTestId("thinking").textContent).toBe("high:ws-legacy-thinking");
+    });
+    expect(readPersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {})).toEqual({
+      auto: { model: getDefaultModel(), thinkingLevel: "high" },
+    });
+  });
+
+  test("manual workspace thinking updates the per-agent cache without bounce-back", async () => {
+    const workspaceId = "ws-manual";
+
+    updatePersistedState(getAgentIdKey(workspaceId), "exec");
+    updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      exec: { model: "openai:gpt-5.2", thinkingLevel: "off" },
     });
 
-    // Migration should have populated the new workspace-scoped key.
-    const persisted = window.localStorage.getItem(getThinkingLevelKey(workspaceId));
-    expect(persisted).toBeTruthy();
-    expect(JSON.parse(persisted!)).toBe("low");
+    const view = renderWithAPI(
+      <ThinkingProvider workspaceId={workspaceId}>
+        <ThinkingControls />
+      </ThinkingProvider>
+    );
 
-    // Switching models should not change the workspace-scoped value.
+    await waitFor(() => {
+      expect(view.getByTestId("thinking-controls").textContent).toBe("off");
+    });
+
+    fireEvent.click(view.getByRole("button", { name: "Set medium" }));
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking-controls").textContent).toBe("medium");
+    });
+
+    expect(readPersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {})).toEqual({
+      exec: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+    });
+  });
+
+  test("reacts to agent default updates for existing workspaces", async () => {
+    const workspaceId = "ws-defaults";
+
+    updatePersistedState(getAgentIdKey(workspaceId), "exec");
+    updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+      exec: { thinkingLevel: "low" },
+    });
+
+    const view = renderWithAPI(
+      <ThinkingProvider workspaceId={workspaceId}>
+        <TestComponent workspaceId={workspaceId} />
+      </ThinkingProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking").textContent).toBe("low:ws-defaults");
+    });
+
     act(() => {
-      updatePersistedState(getModelKey(workspaceId), "anthropic:claude-3.5");
+      updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+        exec: { thinkingLevel: "xhigh" },
+      });
     });
 
     await waitFor(() => {
-      expect(view.getByTestId("thinking").textContent).toBe("low:ws-1");
+      expect(view.getByTestId("thinking").textContent).toBe("xhigh:ws-defaults");
+    });
+  });
+
+  test("restores the active agent's cached workspace thinking on agent switch", async () => {
+    const workspaceId = "ws-switch";
+
+    updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      exec: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+      plan: { model: "anthropic:claude-sonnet-4-5", thinkingLevel: "high" },
+    });
+    updatePersistedState(getAgentIdKey(workspaceId), "exec");
+
+    const view = renderWithAPI(
+      <ThinkingProvider workspaceId={workspaceId}>
+        <TestComponent workspaceId={workspaceId} />
+      </ThinkingProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking").textContent).toBe("medium:ws-switch");
+    });
+
+    act(() => {
+      updatePersistedState(getAgentIdKey(workspaceId), "plan");
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking").textContent).toBe("high:ws-switch");
+    });
+
+    act(() => {
+      updatePersistedState(getAgentIdKey(workspaceId), "exec");
+    });
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking").textContent).toBe("medium:ws-switch");
     });
   });
 

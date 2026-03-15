@@ -10,10 +10,12 @@ import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/W
 import {
   LAUNCH_BEHAVIOR_KEY,
   SELECTED_WORKSPACE_KEY,
+  getAgentIdKey,
   getModelKey,
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
@@ -454,11 +456,11 @@ describe("WorkspaceContext", () => {
     });
   });
 
-  test("seeds model + thinking localStorage from backend metadata", async () => {
+  test("seeds auto entry in workspaceAISettingsByAgent from exec/plan when active agent is auto", async () => {
     const initialWorkspaces: FrontendWorkspaceMetadata[] = [
       createWorkspaceMetadata({
         id: "ws-ai",
-        aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
+        aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
       }),
     ];
 
@@ -467,7 +469,8 @@ describe("WorkspaceContext", () => {
         list: () => Promise.resolve(initialWorkspaces),
       },
       localStorage: {
-        // Seed with different values; backend should win.
+        [getAgentIdKey("ws-ai")]: JSON.stringify("auto"),
+        // Seed with different values; backend should win for model + per-agent cache.
         [getModelKey("ws-ai")]: JSON.stringify("anthropic:claude-3.5"),
         [getThinkingLevelKey("ws-ai")]: JSON.stringify("low"),
       },
@@ -480,8 +483,45 @@ describe("WorkspaceContext", () => {
     expect(JSON.parse(globalThis.localStorage.getItem(getModelKey("ws-ai"))!)).toBe(
       "openai:gpt-5.2"
     );
-    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe(
-      "xhigh"
+    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe("low");
+    expect(readPersistedState(getWorkspaceAISettingsByAgentKey("ws-ai"), {})).toEqual({
+      auto: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+      exec: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+      plan: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+    });
+  });
+
+  test("does not overwrite existing auto entry", async () => {
+    const initialWorkspaces: FrontendWorkspaceMetadata[] = [
+      createWorkspaceMetadata({
+        id: "ws-ai-existing-auto",
+        aiSettingsByAgent: {
+          auto: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+          exec: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+          plan: { model: "anthropic:claude-3.5", thinkingLevel: "low" },
+        },
+      }),
+    ];
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve(initialWorkspaces),
+      },
+      localStorage: {
+        [getAgentIdKey("ws-ai-existing-auto")]: JSON.stringify("auto"),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
+
+    expect(readPersistedState(getWorkspaceAISettingsByAgentKey("ws-ai-existing-auto"), {})).toEqual(
+      {
+        auto: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        exec: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+        plan: { model: "anthropic:claude-3.5", thinkingLevel: "low" },
+      }
     );
   });
   test("loads workspace metadata on mount", async () => {

@@ -27,7 +27,6 @@ import {
   getPendingScopeId,
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getWorkspaceNameStateKey,
   migrateWorkspaceStorage,
@@ -218,15 +217,27 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     };
   }
 
-  if (JSON.stringify(existingByAgent) !== JSON.stringify(nextByAgent)) {
-    updatePersistedState(byAgentKey, nextByAgent);
-  }
-
-  // Seed the active agent into the existing keys to avoid UI flash.
   const activeAgentId = readPersistedState<string>(
     getAgentIdKey(workspaceId),
     WORKSPACE_DEFAULTS.agentId
   );
+
+  // Legacy metadata expands to plan/exec only, but the default active agent is often "auto".
+  // Backfill so derived-thinking readers find an entry for the active agent.
+  if (nextByAgent[activeAgentId] == null) {
+    const inherited = nextByAgent.exec ?? nextByAgent.plan;
+    if (inherited) {
+      nextByAgent[activeAgentId] = { ...inherited };
+    }
+  }
+
+  if (JSON.stringify(existingByAgent) !== JSON.stringify(nextByAgent)) {
+    updatePersistedState(byAgentKey, nextByAgent);
+  }
+
+  // Seed the active agent's model into the legacy model key to avoid UI flash.
+  // Thinking is now derived from the per-agent cache above, so the flat thinking key
+  // is left untouched for existing workspaces.
   const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
   if (!active) {
     return;
@@ -236,12 +247,6 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   const existingModel = readPersistedState<string | undefined>(modelKey, undefined);
   if (existingModel !== active.model) {
     setWorkspaceModelWithOrigin(workspaceId, active.model, "sync");
-  }
-
-  const thinkingKey = getThinkingLevelKey(workspaceId);
-  const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
-  if (existingThinking !== active.thinkingLevel) {
-    updatePersistedState(thinkingKey, active.thinkingLevel);
   }
 }
 

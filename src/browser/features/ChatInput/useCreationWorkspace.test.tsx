@@ -3,6 +3,7 @@ import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSe
 import * as PersistedStateModule from "@/browser/hooks/usePersistedState";
 import type { ProjectConfig } from "@/common/types/project";
 import {
+  DEFAULT_MODEL_KEY,
   GLOBAL_SCOPE_ID,
   getAgentIdKey,
   getInputKey,
@@ -12,13 +13,16 @@ import {
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
   getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
+import { isThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import {
   CODER_RUNTIME_PLACEHOLDER,
   type CoderWorkspaceConfig,
   type ParsedRuntime,
 } from "@/common/types/runtime";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import type {
   FrontendWorkspaceMetadata,
@@ -51,16 +55,23 @@ const readPersistedStateMock = mock((key: string, defaultValue: unknown) => {
 });
 
 const updatePersistedStateCalls: Array<[string, unknown]> = [];
-const updatePersistedStateMock = mock((key: string, value: unknown) => {
+const updatePersistedStateMock = mock((key: string, value: unknown, defaultValue?: unknown) => {
   updatePersistedStateCalls.push([key, value]);
   if (typeof window === "undefined" || !window.localStorage) {
     return;
   }
-  if (value === undefined || value === null) {
+
+  const resolvedValue =
+    typeof value === "function"
+      ? (value as (prev: unknown) => unknown)(readPersistedStateMock(key, defaultValue))
+      : value;
+
+  if (resolvedValue === undefined || resolvedValue === null) {
     window.localStorage.removeItem(key);
     return;
   }
-  window.localStorage.setItem(key, JSON.stringify(value));
+
+  window.localStorage.setItem(key, JSON.stringify(resolvedValue));
 });
 
 const readPersistedStringMock = mock((key: string) => {
@@ -122,7 +133,7 @@ const useDraftWorkspaceSettingsMock = mock(
     if (!draftSettingsState) {
       throw new Error("Draft settings state not initialized");
     }
-    return draftSettingsState.snapshot();
+    return draftSettingsState.snapshot(projectPath);
   }
 );
 
@@ -787,6 +798,145 @@ describe("useCreationWorkspace", () => {
     expect(sendRequest?.options?.agentId).toBe("ask");
   });
 
+  test("seeds per-agent thinking into workspace cache when project model is unset", async () => {
+    const listBranchesMock = mock(
+      (): Promise<BranchListResult> =>
+        Promise.resolve({
+          branches: ["main"],
+          recommendedTrunk: "main",
+        })
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({
+          success: true as const,
+          data: {},
+        })
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    setupWindow({
+      listBranches: listBranchesMock,
+      sendMessage: sendMessageMock,
+      create: createMock,
+      nameGeneration: nameGenerationMock,
+    });
+
+    persistedPreferences[getAgentIdKey(GLOBAL_SCOPE_ID)] = "ask";
+    persistedPreferences[DEFAULT_MODEL_KEY] = "openai:global-default";
+    persistedPreferences[getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "medium";
+
+    draftSettingsState = createDraftSettingsHarness({
+      selectedRuntime: { mode: "ssh", host: "example.com" },
+      runtimeString: "ssh example.com",
+      trunkBranch: "dev",
+      agentId: "ask",
+    });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "launch workspace",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+    await waitFor(() => expect(nameGenerationMock.mock.calls.length).toBe(1));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("launch workspace");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(
+      JSON.parse(window.localStorage.getItem(getWorkspaceAISettingsByAgentKey(TEST_WORKSPACE_ID))!)
+    ).toEqual({
+      ask: { model: "openai:global-default", thinkingLevel: "medium" },
+    });
+  });
+
+  test("seeds per-agent cache with user's chosen default model, not WORKSPACE_DEFAULTS.model", async () => {
+    const listBranchesMock = mock(
+      (): Promise<BranchListResult> =>
+        Promise.resolve({
+          branches: ["main"],
+          recommendedTrunk: "main",
+        })
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({
+          success: true as const,
+          data: {},
+        })
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    setupWindow({
+      listBranches: listBranchesMock,
+      sendMessage: sendMessageMock,
+      create: createMock,
+      nameGeneration: nameGenerationMock,
+    });
+
+    persistedPreferences[getAgentIdKey(GLOBAL_SCOPE_ID)] = "ask";
+    persistedPreferences[DEFAULT_MODEL_KEY] = "anthropic:claude-sonnet-4";
+    persistedPreferences[getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "high";
+
+    draftSettingsState = createDraftSettingsHarness({
+      selectedRuntime: { mode: "ssh", host: "example.com" },
+      runtimeString: "ssh example.com",
+      trunkBranch: "dev",
+    });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "launch workspace",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+    await waitFor(() => expect(nameGenerationMock.mock.calls.length).toBe(1));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("launch workspace");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(
+      JSON.parse(window.localStorage.getItem(getWorkspaceAISettingsByAgentKey(TEST_WORKSPACE_ID))!)
+    ).toEqual({
+      ask: { model: "anthropic:claude-sonnet-4", thinkingLevel: "high" },
+    });
+  });
+
   test("handleSend returns failure when sendMessage fails and clears draft", async () => {
     const listBranchesMock = mock(
       (): Promise<BranchListResult> =>
@@ -964,6 +1114,58 @@ describe("useCreationWorkspace", () => {
 
 type DraftSettingsHarness = ReturnType<typeof createDraftSettingsHarness>;
 
+function normalizeDraftAgentId(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : WORKSPACE_DEFAULTS.agentId;
+}
+
+function resolveDraftAgentId(projectPath: string, agentIdOverride?: string): string {
+  if (agentIdOverride !== undefined) {
+    return normalizeDraftAgentId(agentIdOverride);
+  }
+
+  const projectScopeId = getProjectScopeId(projectPath);
+  const projectAgentId = readPersistedStateMock(getAgentIdKey(projectScopeId), null);
+  const globalAgentId = readPersistedStateMock(
+    getAgentIdKey(GLOBAL_SCOPE_ID),
+    WORKSPACE_DEFAULTS.agentId
+  );
+  return normalizeDraftAgentId(projectAgentId ?? globalAgentId);
+}
+
+function resolveDraftModel(projectPath: string, modelOverride?: string): string {
+  if (typeof modelOverride === "string" && modelOverride.trim().length > 0) {
+    return modelOverride;
+  }
+
+  const projectScopeId = getProjectScopeId(projectPath);
+  const projectModel = readPersistedStateMock(getModelKey(projectScopeId), null);
+  if (typeof projectModel === "string" && projectModel.trim().length > 0) {
+    return projectModel;
+  }
+
+  const defaultModel = readPersistedStateMock(DEFAULT_MODEL_KEY, WORKSPACE_DEFAULTS.model);
+  return typeof defaultModel === "string" && defaultModel.trim().length > 0
+    ? defaultModel
+    : WORKSPACE_DEFAULTS.model;
+}
+
+function resolveDraftThinkingLevel(
+  projectPath: string,
+  thinkingLevelOverride?: ThinkingLevel
+): ThinkingLevel {
+  if (thinkingLevelOverride !== undefined) {
+    return thinkingLevelOverride;
+  }
+
+  const projectThinkingLevel = readPersistedStateMock(
+    getThinkingLevelKey(getProjectScopeId(projectPath)),
+    "off"
+  );
+  return isThinkingLevel(projectThinkingLevel) ? projectThinkingLevel : "off";
+}
+
 function createDraftSettingsHarness(
   initial?: Partial<{
     selectedRuntime: ParsedRuntime;
@@ -971,6 +1173,8 @@ function createDraftSettingsHarness(
     runtimeString?: string | undefined;
     defaultRuntimeMode?: RuntimeChoice;
     agentId?: string;
+    model?: string;
+    thinkingLevel?: ThinkingLevel;
     coderConfigFallback?: CoderWorkspaceConfig;
     sshHostFallback?: string;
   }>
@@ -978,7 +1182,9 @@ function createDraftSettingsHarness(
   const state = {
     selectedRuntime: initial?.selectedRuntime ?? { mode: "local" as const },
     defaultRuntimeMode: initial?.defaultRuntimeMode ?? "worktree",
-    agentId: initial?.agentId ?? "exec",
+    agentIdOverride: initial?.agentId,
+    modelOverride: initial?.model,
+    thinkingLevelOverride: initial?.thinkingLevel,
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,
     coderConfigFallback: initial?.coderConfigFallback ?? { existingWorkspace: false },
@@ -986,7 +1192,9 @@ function createDraftSettingsHarness(
   } satisfies {
     selectedRuntime: ParsedRuntime;
     defaultRuntimeMode: RuntimeChoice;
-    agentId: string;
+    agentIdOverride: string | undefined;
+    modelOverride: string | undefined;
+    thinkingLevelOverride: ThinkingLevel | undefined;
     trunkBranch: string;
     runtimeString: string | undefined;
     coderConfigFallback: CoderWorkspaceConfig;
@@ -1045,7 +1253,7 @@ function createDraftSettingsHarness(
     setDefaultRuntimeChoice,
     setTrunkBranch,
     getRuntimeString,
-    snapshot(): {
+    snapshot(projectPath: string): {
       settings: DraftWorkspaceSettings;
       coderConfigFallback: CoderWorkspaceConfig;
       sshHostFallback: string;
@@ -1055,9 +1263,9 @@ function createDraftSettingsHarness(
       getRuntimeString: typeof getRuntimeString;
     } {
       const settings: DraftWorkspaceSettings = {
-        model: "gpt-4",
-        thinkingLevel: "medium",
-        agentId: state.agentId,
+        model: resolveDraftModel(projectPath, state.modelOverride),
+        thinkingLevel: resolveDraftThinkingLevel(projectPath, state.thinkingLevelOverride),
+        agentId: resolveDraftAgentId(projectPath, state.agentIdOverride),
         selectedRuntime: state.selectedRuntime,
         defaultRuntimeMode: state.defaultRuntimeMode,
         trunkBranch: state.trunkBranch,

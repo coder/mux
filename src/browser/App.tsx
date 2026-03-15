@@ -38,27 +38,21 @@ import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   getAgentIdKey,
   getAgentsInitNudgeKey,
-  getModelKey,
   getNotifyOnResponseKey,
-  getThinkingLevelByModelKey,
-  getThinkingLevelKey,
-  getWorkspaceAISettingsByAgentKey,
   getWorkspaceLastReadKey,
   EXPANDED_PROJECTS_KEY,
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
-import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import {
-  clearPendingWorkspaceAiSettings,
-  markPendingWorkspaceAiSettings,
-} from "@/browser/utils/workspaceAiSettingsSync";
+  getWorkspaceAiSettings,
+  setWorkspaceAiSettings,
+} from "@/browser/services/workspaceAiSettings";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal/AuthTokenModal";
 
 import { ProjectPage } from "@/browser/components/ProjectPage/ProjectPage";
@@ -84,11 +78,11 @@ import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
 import { createProjectRefs } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { LandingPage } from "@/browser/features/LandingPage/LandingPage";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
 
@@ -362,55 +356,13 @@ function AppInner() {
     close: closeCommandPalette,
   } = useCommandRegistry();
 
-  /**
-   * Get the selected model for a workspace, preserving explicit gateway prefixes.
-   */
-  const getModelForWorkspace = useCallback((workspaceId: string): string => {
-    const defaultModel = getDefaultModel();
-    const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
-    return normalizeSelectedModel(rawModel || defaultModel);
-  }, []);
-
-  const getThinkingLevelForWorkspace = useCallback(
-    (workspaceId: string): ThinkingLevel => {
-      if (!workspaceId) {
-        return "off";
-      }
-
-      const scopedKey = getThinkingLevelKey(workspaceId);
-      const scoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
-      if (scoped !== undefined) {
-        return THINKING_LEVELS.includes(scoped) ? scoped : "off";
-      }
-
-      // Migration: fall back to legacy per-model thinking and seed the workspace-scoped key.
-      const model = getModelForWorkspace(workspaceId);
-      const legacy = readPersistedState<ThinkingLevel | undefined>(
-        getThinkingLevelByModelKey(model),
-        undefined
-      );
-      if (legacy !== undefined && THINKING_LEVELS.includes(legacy)) {
-        updatePersistedState(scopedKey, legacy);
-        return legacy;
-      }
-
-      // Fallback: check canonical key for legacy entries stored before gateway-aware normalization.
-      const canonicalModel = normalizeToCanonical(model);
-      if (canonicalModel !== model) {
-        const canonicalLegacy = readPersistedState<ThinkingLevel | undefined>(
-          getThinkingLevelByModelKey(canonicalModel),
-          undefined
-        );
-        if (canonicalLegacy !== undefined && THINKING_LEVELS.includes(canonicalLegacy)) {
-          updatePersistedState(scopedKey, canonicalLegacy);
-          return canonicalLegacy;
-        }
-      }
-
+  const getThinkingLevelForWorkspace = useCallback((workspaceId: string): ThinkingLevel => {
+    if (!workspaceId) {
       return "off";
-    },
-    [getModelForWorkspace]
-  );
+    }
+
+    return getWorkspaceAiSettings(workspaceId).thinkingLevel;
+  }, []);
 
   const setThinkingLevelFromPalette = useCallback(
     (workspaceId: string, level: ThinkingLevel) => {
@@ -419,58 +371,12 @@ function AppInner() {
       }
 
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
-      const model = getModelForWorkspace(workspaceId);
-      const key = getThinkingLevelKey(workspaceId);
-
-      // Use the utility function which handles localStorage and event dispatch
-      // ThinkingProvider will pick this up via its listener
-      updatePersistedState(key, normalized);
-
-      type WorkspaceAISettingsByAgentCache = Partial<
-        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
-      >;
-
-      const normalizedAgentId =
-        readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.agentId)
-          .trim()
-          .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
-
-      updatePersistedState<WorkspaceAISettingsByAgentCache>(
-        getWorkspaceAISettingsByAgentKey(workspaceId),
-        (prev) => {
-          const record: WorkspaceAISettingsByAgentCache =
-            prev && typeof prev === "object" ? prev : {};
-          return {
-            ...record,
-            [normalizedAgentId]: { model, thinkingLevel: normalized },
-          };
-        },
-        {}
+      const agentId = readPersistedState<string>(
+        getAgentIdKey(workspaceId),
+        WORKSPACE_DEFAULTS.agentId
       );
 
-      // Persist to backend so the palette change follows the workspace across devices.
-      if (api) {
-        markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
-          model,
-          thinkingLevel: normalized,
-        });
-
-        api.workspace
-          .updateAgentAISettings({
-            workspaceId,
-            agentId: normalizedAgentId,
-            aiSettings: { model, thinkingLevel: normalized },
-          })
-          .then((result) => {
-            if (!result.success) {
-              clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-            }
-          })
-          .catch(() => {
-            clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-            // Best-effort only.
-          });
-      }
+      setWorkspaceAiSettings(workspaceId, agentId, { thinkingLevel: normalized }, api ?? undefined);
 
       // Dispatch toast notification event for UI feedback
       if (typeof window !== "undefined") {
@@ -481,7 +387,7 @@ function AppInner() {
         );
       }
     },
-    [api, getModelForWorkspace]
+    [api]
   );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
