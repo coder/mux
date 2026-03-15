@@ -8,13 +8,36 @@ import type {
   BrowserSession,
   BrowserSessionOwnership,
 } from "@/common/types/browserSession";
+import {
+  AgentBrowserBinaryNotFoundError,
+  AgentBrowserUnsupportedPlatformError,
+  AgentBrowserVendoredPackageNotFoundError,
+  resolveAgentBrowserBinary,
+} from "@/node/services/agentBrowserLauncher";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 
 const CLI_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 2_000;
 const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+const VENDORED_BROWSER_RECOVERY_HINT =
+  "Reinstall Mux, or run bun install in the repo if you're developing locally.";
 const MISSING_BROWSER_BINARY_ERROR =
-  "agent-browser binary not found. Install it with: bun install -g @anthropic-ai/agent-browser";
+  "Vendored agent-browser binary disappeared before launch. Reinstall Mux, or run bun install in the repo if you're developing locally.";
+
+function getAgentBrowserLauncherError(error: unknown): string | null {
+  if (error instanceof AgentBrowserUnsupportedPlatformError) {
+    return `${error.message} ${VENDORED_BROWSER_RECOVERY_HINT}`;
+  }
+
+  if (
+    error instanceof AgentBrowserBinaryNotFoundError ||
+    error instanceof AgentBrowserVendoredPackageNotFoundError
+  ) {
+    return `${error.message} ${VENDORED_BROWSER_RECOVERY_HINT}`;
+  }
+
+  return null;
+}
 
 type CliResult = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -350,7 +373,18 @@ export class BrowserSessionBackend {
   }
 
   private async runCliCommand(args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliResult> {
-    const childProcess = spawn("agent-browser", ["--json", "--session", this.sessionId, ...args], {
+    let agentBrowserBinary: string;
+    try {
+      agentBrowserBinary = resolveAgentBrowserBinary();
+    } catch (error) {
+      const launcherError = getAgentBrowserLauncherError(error);
+      if (launcherError !== null) {
+        return { ok: false, error: launcherError };
+      }
+      throw error;
+    }
+
+    const childProcess = spawn(agentBrowserBinary, ["--json", "--session", this.sessionId, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
