@@ -3,6 +3,14 @@
  * Used by backend services and (future) oRPC routes.
  */
 
+/** Machine-level prerequisite check result for PortableDesktop support. */
+export type DesktopPrereqStatus =
+  | { available: true }
+  | {
+      available: false;
+      reason: "unsupported_platform" | "startup_failed" | "binary_not_found";
+    };
+
 /** Capability check result for a workspace's desktop support. */
 export type DesktopCapability =
   | { available: true; width: number; height: number; sessionId: string }

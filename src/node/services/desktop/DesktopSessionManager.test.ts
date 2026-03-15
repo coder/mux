@@ -294,6 +294,61 @@ function assertPortableDesktopRecordedCommands(
 }
 
 describe("DesktopSessionManager", () => {
+  test("reports machine-level prereqs without consulting workspace metadata when the binary is missing", async () => {
+    await withDesktopManagerHarness(async ({ config }) => {
+      process.env.PATH = "";
+
+      let workspaceInfoCalls = 0;
+      const manager = new DesktopSessionManager({
+        config,
+        experimentsService: createExperimentsService(false),
+        workspaceService: createWorkspaceService((_workspaceId) => {
+          workspaceInfoCalls += 1;
+          return Promise.resolve(createWorkspaceMetadata({ type: "local" }));
+        }),
+      });
+
+      expect(manager.getPrereqStatus()).toEqual({
+        available: false,
+        reason: "binary_not_found",
+      });
+      expect(workspaceInfoCalls).toBe(0);
+      await manager.closeAll();
+    });
+  });
+
+  test("reports machine-level prereqs as available when the binary exists", async () => {
+    await withDesktopManagerHarness(async ({ tempDir, config }) => {
+      if (process.platform === "win32") {
+        return;
+      }
+
+      await installPortableDesktopShim({
+        rootDir: tempDir,
+        config: {
+          startupInfo: createStartupInfo({
+            display: 9,
+            vncPort: 5899,
+            geometry: "1024x768",
+            sessionId: "manager-prereq",
+          }),
+        },
+      });
+      process.env.PATH = "";
+
+      const manager = new DesktopSessionManager({
+        config,
+        experimentsService: createExperimentsService(false),
+        workspaceService: createWorkspaceService(() =>
+          Promise.resolve(createWorkspaceMetadata({ type: "local" }))
+        ),
+      });
+
+      expect(manager.getPrereqStatus()).toEqual({ available: true });
+      await manager.closeAll();
+    });
+  });
+
   test("returns disabled capability when the experiment is off", async () => {
     await withDesktopManagerHarness(async ({ config }) => {
       let workspaceInfoCalls = 0;

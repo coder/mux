@@ -4,6 +4,7 @@ import type {
   DesktopActionResult,
   DesktopActionType,
   DesktopCapability,
+  DesktopPrereqStatus,
   DesktopScreenshotResult,
 } from "@/common/types/desktop";
 import { parseRuntimeModeAndHost } from "@/common/types/runtime";
@@ -11,6 +12,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { log } from "@/node/services/log";
+import assert from "node:assert/strict";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import {
   PortableDesktopBinaryNotFoundError,
@@ -50,13 +52,36 @@ export class DesktopSessionManager {
     }
   }
 
-  async getCapability(workspaceId: string): Promise<DesktopCapability> {
-    if (!this.deps.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.PORTABLE_DESKTOP)) {
-      return { available: false, reason: "disabled" };
-    }
+  getPrereqStatus(): DesktopPrereqStatus {
+    assert(
+      this.deps.config.rootDir.length > 0,
+      "DesktopSessionManager requires a non-empty rootDir"
+    );
 
     if (!["linux", "darwin", "win32"].includes(process.platform)) {
       return { available: false, reason: "unsupported_platform" };
+    }
+
+    try {
+      if (!PortableDesktopSession.checkAvailability(this.deps.config.rootDir)) {
+        return { available: false, reason: "binary_not_found" };
+      }
+
+      return { available: true };
+    } catch (error) {
+      log.error("PortableDesktop prerequisite check failed during availability check", {
+        error,
+      });
+      if (error instanceof PortableDesktopBinaryNotFoundError) {
+        return { available: false, reason: "binary_not_found" };
+      }
+      return { available: false, reason: "startup_failed" };
+    }
+  }
+
+  async getCapability(workspaceId: string): Promise<DesktopCapability> {
+    if (!this.deps.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.PORTABLE_DESKTOP)) {
+      return { available: false, reason: "disabled" };
     }
 
     const workspaceInfo = await this.deps.workspaceService.getInfo(workspaceId);
@@ -76,29 +101,19 @@ export class DesktopSessionManager {
       return { available: false, reason: "unsupported_runtime" };
     }
 
-    try {
-      if (!PortableDesktopSession.checkAvailability(this.deps.config.rootDir)) {
-        return { available: false, reason: "binary_not_found" };
-      }
-
-      // Capability checks are used for agent listing and tool gating, so they must not
-      // start a long-lived desktop session just to report whether PortableDesktop exists.
-      return {
-        available: true,
-        width: DESKTOP_DEFAULTS.WIDTH,
-        height: DESKTOP_DEFAULTS.HEIGHT,
-        sessionId: `desktop:${workspaceId}`,
-      };
-    } catch (error) {
-      log.error("PortableDesktop capability check failed during availability check", {
-        workspaceId,
-        error,
-      });
-      if (error instanceof PortableDesktopBinaryNotFoundError) {
-        return { available: false, reason: "binary_not_found" };
-      }
-      return { available: false, reason: "startup_failed" };
+    const prereqStatus = this.getPrereqStatus();
+    if (!prereqStatus.available) {
+      return prereqStatus;
     }
+
+    // Capability checks are used for agent listing and tool gating, so they must not
+    // start a long-lived desktop session just to report whether PortableDesktop exists.
+    return {
+      available: true,
+      width: DESKTOP_DEFAULTS.WIDTH,
+      height: DESKTOP_DEFAULTS.HEIGHT,
+      sessionId: `desktop:${workspaceId}`,
+    };
   }
 
   async ensureStarted(workspaceId: string): Promise<PortableDesktopSession> {
