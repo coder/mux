@@ -496,10 +496,10 @@ dist-mac-arm64: build ## Build macOS arm64 distributable only
 	@bun x electron-builder --mac --arm64 --publish never
 
 install-mac-arm64: dist-mac-arm64 ## Build and install macOS arm64 app to /Applications
-	@echo "Installing mux.app to /Applications..."
-	@rm -rf /Applications/mux.app
-	@cp -R release/mac-arm64/mux.app /Applications/
-	@echo "Installed mux.app to /Applications"
+	@echo "Installing Mux.app to /Applications..."
+	@rm -rf /Applications/Mux.app
+	@cp -R release/mac-arm64/Mux.app /Applications/
+	@echo "Installed Mux.app to /Applications"
 
 dist-win: build ## Build Windows distributable
 	@bun x electron-builder --win --publish never
