@@ -1,5 +1,5 @@
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { LoadingAnimation } from "../LoadingAnimation/LoadingAnimation";
 import { RIGHT_SIDEBAR_WIDTH_KEY, getReviewImmersiveKey } from "@/common/constants/storage";
@@ -38,6 +38,8 @@ interface WorkspaceShellProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   className?: string;
+  /** Called when initial workspace hydration finishes after navigation. */
+  onWorkspaceHydrated?: (workspaceId: string) => void;
   /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
   isInitializing?: boolean;
 }
@@ -68,6 +70,9 @@ const WorkspacePlaceholder: React.FC<{
 );
 
 export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
+  const workspaceId = props.workspaceId;
+  const onWorkspaceHydrated = props.onWorkspaceHydrated;
+
   const shellRef = useRef<HTMLDivElement>(null);
   const shellSize = useResizeObserver(shellRef);
 
@@ -113,15 +118,15 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
       // On mobile touch devices, always use popout since the right sidebar is hidden
       const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
       if (isMobileTouch) {
-        void openTerminalPopout(props.workspaceId, props.runtimeConfig, options);
+        void openTerminalPopout(workspaceId, props.runtimeConfig, options);
       } else {
         addTerminalRef.current?.(options);
       }
     },
-    [openTerminalPopout, props.workspaceId, props.runtimeConfig]
+    [openTerminalPopout, props.runtimeConfig, workspaceId]
   );
 
-  const reviews = useReviews(props.workspaceId);
+  const reviews = useReviews(workspaceId);
   const { addReview } = reviews;
   const handleReviewNote = useCallback(
     (data: ReviewNoteData) => {
@@ -130,11 +135,17 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     [addReview]
   );
 
-  const workspaceState = useWorkspaceState(props.workspaceId);
-  const [isReviewImmersive] = usePersistedState(getReviewImmersiveKey(props.workspaceId), false, {
+  const workspaceState = useWorkspaceState(workspaceId);
+  const [isReviewImmersive] = usePersistedState(getReviewImmersiveKey(workspaceId), false, {
     listener: true,
   });
   const backgroundBashError = useBackgroundBashError();
+
+  useEffect(() => {
+    if (!workspaceState.loading) {
+      onWorkspaceHydrated?.(workspaceId);
+    }
+  }, [onWorkspaceHydrated, workspaceId, workspaceState.loading]);
 
   if (!workspaceState || workspaceState.loading) {
     return (

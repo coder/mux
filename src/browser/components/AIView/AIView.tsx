@@ -20,6 +20,8 @@ interface AIViewProps {
   className?: string;
   /** If set, workspace is incompatible (from newer mux version) and this error should be displayed */
   incompatibleRuntime?: string;
+  /** Called once the workspace shell has hydrated initial state after navigation. */
+  onWorkspaceHydrated?: (workspaceId: string) => void;
   /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
   isInitializing?: boolean;
 }
