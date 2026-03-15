@@ -1,10 +1,34 @@
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { APIProvider, type APIClient } from "@/browser/contexts/API";
-import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
-import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
-import type { RecursivePartial } from "@/browser/testUtils";
+
+type PrereqStatus =
+  | { available: true }
+  | { available: false; reason: "binary_not_found" | "unsupported_platform" | "unknown" };
+
+interface MockApiClient {
+  desktop: {
+    getPrereqStatus: () => Promise<PrereqStatus>;
+  };
+}
+
+let mockApi: MockApiClient;
+let experimentEnabled = false;
+
+void mock.module("@/browser/contexts/API", () => ({
+  useAPI: () => ({
+    api: mockApi,
+    status: "connected" as const,
+    error: null,
+    authenticate: () => undefined,
+    retry: () => undefined,
+  }),
+}));
+
+void mock.module("@/browser/contexts/ExperimentsContext", () => ({
+  useExperimentValue: () => experimentEnabled,
+}));
+
 import { PortableDesktopExperimentWarning } from "./ExperimentsSection";
 
 let originalWindow: typeof globalThis.window;
@@ -18,14 +42,8 @@ let originalClearTimeout: typeof globalThis.clearTimeout;
 let originalSetInterval: typeof globalThis.setInterval;
 let originalClearInterval: typeof globalThis.clearInterval;
 
-function renderWarning(client: RecursivePartial<APIClient>) {
-  return render(
-    <APIProvider client={client as APIClient}>
-      <ExperimentsProvider>
-        <PortableDesktopExperimentWarning />
-      </ExperimentsProvider>
-    </APIProvider>
-  );
+function renderWarning() {
+  return render(<PortableDesktopExperimentWarning />);
 }
 
 describe("PortableDesktopExperimentWarning", () => {
@@ -58,10 +76,12 @@ describe("PortableDesktopExperimentWarning", () => {
     ) as unknown as typeof globalThis.clearInterval;
 
     globalThis.window.api = { platform: "linux", versions: {} };
-    globalThis.localStorage.setItem(
-      getExperimentKey(EXPERIMENT_IDS.PORTABLE_DESKTOP),
-      JSON.stringify(true)
-    );
+    experimentEnabled = true;
+    mockApi = {
+      desktop: {
+        getPrereqStatus: mock(() => Promise.resolve({ available: true })),
+      },
+    };
   });
 
   afterEach(() => {
@@ -83,17 +103,14 @@ describe("PortableDesktopExperimentWarning", () => {
     const getPrereqStatus = mock(() =>
       Promise.resolve({ available: false as const, reason: "binary_not_found" as const })
     );
-
-    const view = renderWarning({
+    experimentEnabled = true;
+    mockApi = {
       desktop: {
         getPrereqStatus,
       },
-      experiments: {
-        getAll: mock(() => Promise.resolve({})),
-        reload: mock(() => Promise.resolve()),
-        setOverride: mock(() => Promise.resolve()),
-      },
-    });
+    };
+
+    const view = renderWarning();
 
     await waitFor(() => {
       expect(getPrereqStatus).toHaveBeenCalledTimes(1);
@@ -105,17 +122,14 @@ describe("PortableDesktopExperimentWarning", () => {
 
   test("keeps the warning hidden when Portable Desktop prerequisites are available", async () => {
     const getPrereqStatus = mock(() => Promise.resolve({ available: true as const }));
-
-    const view = renderWarning({
+    experimentEnabled = true;
+    mockApi = {
       desktop: {
         getPrereqStatus,
       },
-      experiments: {
-        getAll: mock(() => Promise.resolve({})),
-        reload: mock(() => Promise.resolve()),
-        setOverride: mock(() => Promise.resolve()),
-      },
-    });
+    };
+
+    const view = renderWarning();
 
     await waitFor(() => {
       expect(getPrereqStatus).toHaveBeenCalledTimes(1);
