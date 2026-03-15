@@ -1887,6 +1887,12 @@ export const router = (authToken?: string) => {
             input.editorConfig
           );
         }),
+      installVsCodeExtension: t
+        .input(schemas.general.installVsCodeExtension.input)
+        .output(schemas.general.installVsCodeExtension.output)
+        .handler(async ({ context, input }) => {
+          return context.editorService.installVsCodeExtension(input.editor);
+        }),
     },
     secrets: {
       get: t

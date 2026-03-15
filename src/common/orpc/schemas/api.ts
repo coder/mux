@@ -2122,6 +2122,16 @@ export const general = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  installVsCodeExtension: {
+    input: z.object({
+      editor: z.enum(["vscode", "cursor"]),
+    }),
+    output: z.object({
+      installed: z.boolean(),
+      alreadyInstalled: z.boolean(),
+      error: z.string().nullish(),
+    }),
+  },
   getLogPath: {
     input: z.void(),
     output: z.object({ path: z.string() }),
