@@ -7,6 +7,14 @@ import "source-map-support/register";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+interface AgentBrowserLauncherModule {
+  generateAgentBrowserWrapper: () => {
+    dir: string;
+    posixContent: string;
+    windowsContent: string;
+  };
+}
+
 // Fix PATH on macOS when launched from Finder (not terminal).
 // GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.
 // Must run before any child process spawns. Failures are silently ignored.
@@ -22,14 +30,17 @@ if (process.platform === "darwin") {
 
 function materializeVendoredBinWrappers(): void {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { generateAgentBrowserWrapper } = require("@/node/services/agentBrowserLauncher") as typeof import("@/node/services/agentBrowserLauncher");
+    const { generateAgentBrowserWrapper } =
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require("@/node/services/agentBrowserLauncher") as AgentBrowserLauncherModule;
     const { dir, posixContent, windowsContent } = generateAgentBrowserWrapper();
 
     fs.mkdirSync(dir, { recursive: true });
 
     const wrapperPath =
-      process.platform === "win32" ? path.join(dir, "agent-browser.cmd") : path.join(dir, "agent-browser");
+      process.platform === "win32"
+        ? path.join(dir, "agent-browser.cmd")
+        : path.join(dir, "agent-browser");
     fs.writeFileSync(wrapperPath, process.platform === "win32" ? windowsContent : posixContent);
 
     if (process.platform !== "win32") {
