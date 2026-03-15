@@ -10,6 +10,7 @@ import type {
   DesktopScreenshotResult,
 } from "@/common/types/desktop";
 import { assert } from "@/common/utils/assert";
+import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { execFileAsync } from "@/node/utils/disposableExec";
 
@@ -23,10 +24,6 @@ interface PortableDesktopStartupInfo {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function withTimeout<T>(
