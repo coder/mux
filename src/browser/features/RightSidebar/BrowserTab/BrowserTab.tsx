@@ -12,6 +12,7 @@ import {
   Square,
   TriangleAlert,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { useAPI } from "@/browser/contexts/API";
 import { formatRelativeTime, formatTimestamp } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";
@@ -160,9 +161,19 @@ export function BrowserTab(props: BrowserTabProps) {
               </span>
             )}
           </div>
-          <p className="text-muted text-[10px] leading-relaxed break-words" title={headerSubtitle}>
-            {headerSubtitle}
-          </p>
+          {/* Use a portal-backed tooltip to avoid clipping inside overflow-hidden sidebar panels. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <p className="text-muted text-[10px] leading-relaxed break-words">{headerSubtitle}</p>
+            </TooltipTrigger>
+            <TooltipContent
+              side="top"
+              align="start"
+              className="max-w-sm break-words whitespace-normal"
+            >
+              {headerSubtitle}
+            </TooltipContent>
+          </Tooltip>
         </div>
         {showStartButton && (
           <button
