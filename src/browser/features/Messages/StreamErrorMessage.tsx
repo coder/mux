@@ -4,6 +4,7 @@ import { Button } from "@/browser/components/Button/Button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { useCompactAndRetry } from "@/browser/hooks/useCompactAndRetry";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
 import { cn } from "@/common/lib/utils";
 import { getModelProvider } from "@/common/utils/ai/models";
 import type { DisplayedMessage } from "@/common/types/message";
@@ -79,11 +80,33 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
     provider === "anthropic" &&
     message.errorType === "server_error" &&
     /\bHTTP\s*529\b|overloaded/i.test(message.error);
+  // Gateway quota failures need explicit attribution so users know mux gateway credits,
+  // not a provider quota, are blocking the request.
+  const isMuxGatewayQuotaError =
+    message.errorType === "quota" && message.routedThroughGateway === true;
 
-  const title = isAnthropicOverloaded ? "Service overloaded" : "Stream Error";
+  const title = isMuxGatewayQuotaError
+    ? "Mux Gateway credits depleted"
+    : isAnthropicOverloaded
+      ? "Service overloaded"
+      : "Stream Error";
   const pill = isAnthropicOverloaded ? "overloaded" : message.errorType;
+  const body = isMuxGatewayQuotaError
+    ? "Your Mux Gateway credits have been depleted. Add credits or configure another provider to continue."
+    : message.error;
 
-  const statusAction = isAnthropicOverloaded ? (
+  const ctaAction = isMuxGatewayQuotaError ? (
+    <Button
+      asChild
+      variant="ghost"
+      size="sm"
+      className="text-error/80 hover:text-error h-6 px-2 text-[10px]"
+    >
+      <a href={MUX_GATEWAY_ORIGIN} target="_blank" rel="noopener noreferrer">
+        Add credits <ExternalLink className="ml-1 h-3 w-3" />
+      </a>
+    </Button>
+  ) : isAnthropicOverloaded ? (
     <Button
       asChild
       variant="ghost"
@@ -112,12 +135,12 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
               ×{message.errorCount}
             </span>
           )}
-          {statusAction}
+          {ctaAction}
           {debugAction}
         </div>
       </div>
       <div className="text-foreground font-mono text-[13px] leading-relaxed break-words whitespace-pre-wrap">
-        {message.error}
+        {body}
       </div>
       {compactionDetails}
       {compactRetryAction ? (
