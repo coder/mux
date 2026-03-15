@@ -12,6 +12,16 @@ describe("getModelStats", () => {
       expect(stats?.input_cost_per_token).toBeGreaterThan(0);
     });
 
+    test("should expose native 1M context for Claude Opus 4.6 and Claude Sonnet 4.6", () => {
+      const opusStats = getModelStats(KNOWN_MODELS.OPUS.id);
+      const sonnetStats = getModelStats(KNOWN_MODELS.SONNET.id);
+
+      expect(opusStats?.max_input_tokens).toBe(1_000_000);
+      expect(sonnetStats?.max_input_tokens).toBe(1_000_000);
+      expect(opusStats?.max_output_tokens).toBe(128_000);
+      expect(sonnetStats?.max_output_tokens).toBe(64_000);
+    });
+
     test("should find openai models by direct name", () => {
       const stats = getModelStats(KNOWN_MODELS.GPT.id);
       expect(stats).not.toBeNull();

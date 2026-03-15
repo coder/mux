@@ -101,6 +101,7 @@ import {
   getExplicitGatewayPrefix,
   normalizeToCanonical,
   isValidModelFormat,
+  supports1MContext,
 } from "@/common/utils/ai/models";
 import {
   isAnthropic1MEffectivelyEnabled,
@@ -3082,15 +3083,7 @@ export class AgentSession {
   }
 
   private supports1MContextRetry(modelString: string): boolean {
-    const normalized = normalizeToCanonical(modelString);
-    const [provider, modelName] = normalized.split(":", 2);
-    const lower = modelName?.toLowerCase() ?? "";
-    return (
-      provider === "anthropic" &&
-      (lower.startsWith("claude-sonnet-4-5") ||
-        lower.startsWith("claude-sonnet-4-6") ||
-        lower.startsWith("claude-opus-4-6"))
-    );
+    return supports1MContext(modelString);
   }
 
   private withAnthropic1MContext(

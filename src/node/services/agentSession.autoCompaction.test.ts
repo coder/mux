@@ -310,7 +310,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       workspaceId,
       createMuxMessage("assistant-1m-routing-usage", "assistant", "existing context", {
         timestamp: Date.now() - 1_000,
-        model: "anthropic:claude-sonnet-4-6",
+        model: "anthropic:claude-sonnet-4-5",
         contextUsage: {
           inputTokens: 150_000,
           outputTokens: 0,
@@ -393,7 +393,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
-  test("does trigger compaction at the default Anthropic threshold when beta features disable 1M", async () => {
+  test("does trigger compaction at the default beta Anthropic threshold when beta features disable 1M", async () => {
     const workspaceId = "ws-auto-compaction-disabled-beta-1m";
 
     const { historyService, cleanup } = await createTestHistoryService();
@@ -403,7 +403,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       workspaceId,
       createMuxMessage("assistant-disabled-beta-usage", "assistant", "existing context", {
         timestamp: Date.now() - 1_000,
-        model: "anthropic:claude-sonnet-4-6",
+        model: "anthropic:claude-sonnet-4-5",
         contextUsage: {
           inputTokens: 150_000,
           outputTokens: 0,
@@ -451,7 +451,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     });
 
     const result = await session.sendMessage("hello", {
-      model: "anthropic:claude-sonnet-4-6",
+      model: "anthropic:claude-sonnet-4-5",
       agentId: "exec",
       providerOptions: {
         anthropic: {

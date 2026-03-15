@@ -4,6 +4,8 @@ import {
   normalizeSelectedModel,
   normalizeToCanonical,
   getModelName,
+  getAnthropic1MContextMode,
+  hasNative1MContext,
   supports1MContext,
   isValidModelFormat,
 } from "./models";
@@ -109,48 +111,37 @@ describe("getModelName", () => {
   });
 });
 
-describe("supports1MContext", () => {
-  it("should return true for Anthropic Sonnet 4 models", () => {
-    expect(supports1MContext("anthropic:claude-sonnet-4-5")).toBe(true);
-    expect(supports1MContext("anthropic:claude-sonnet-4-5-20250514")).toBe(true);
+describe("Anthropic 1M context classification", () => {
+  it("treats Sonnet 4 / 4.5 as beta-only 1M models", () => {
+    expect(getAnthropic1MContextMode("anthropic:claude-sonnet-4-20250514")).toBe("beta");
+    expect(getAnthropic1MContextMode("anthropic:claude-sonnet-4-5")).toBe("beta");
+    expect(getAnthropic1MContextMode("anthropic:claude-sonnet-4-5-20250514")).toBe("beta");
+    expect(getAnthropic1MContextMode("mux-gateway:anthropic/claude-sonnet-4-5")).toBe("beta");
     expect(supports1MContext("anthropic:claude-sonnet-4-20250514")).toBe(true);
+    expect(supports1MContext("anthropic:claude-sonnet-4-5")).toBe(true);
+    expect(hasNative1MContext("anthropic:claude-sonnet-4-5")).toBe(false);
   });
 
-  it("should return true for mux-gateway Sonnet 4 models", () => {
-    expect(supports1MContext("mux-gateway:anthropic/claude-sonnet-4-5")).toBe(true);
-    expect(supports1MContext("mux-gateway:anthropic/claude-sonnet-4-5-20250514")).toBe(true);
+  it("treats Opus 4.6 and Sonnet 4.6 as native 1M models", () => {
+    expect(getAnthropic1MContextMode("anthropic:claude-opus-4-6")).toBe("native");
+    expect(getAnthropic1MContextMode("anthropic:claude-opus-4-6-20260201")).toBe("native");
+    expect(getAnthropic1MContextMode("anthropic:claude-sonnet-4-6")).toBe("native");
+    expect(getAnthropic1MContextMode("anthropic:claude-sonnet-4-6-20251022")).toBe("native");
+    expect(getAnthropic1MContextMode("mux-gateway:anthropic/claude-sonnet-4-6")).toBe("native");
+    expect(supports1MContext("anthropic:claude-opus-4-6")).toBe(false);
+    expect(supports1MContext("anthropic:claude-sonnet-4-6")).toBe(false);
+    expect(hasNative1MContext("anthropic:claude-opus-4-6")).toBe(true);
+    expect(hasNative1MContext("anthropic:claude-sonnet-4-6")).toBe(true);
   });
 
-  it("should return false for OpenAI GPT models with native large context", () => {
+  it("returns none for models without Anthropic 1M support", () => {
+    expect(getAnthropic1MContextMode("anthropic:claude-opus-4-5")).toBe("none");
+    expect(getAnthropic1MContextMode("anthropic:claude-haiku-4-5")).toBe("none");
+    expect(getAnthropic1MContextMode("openai:gpt-5.4")).toBe("none");
+    expect(getAnthropic1MContextMode("openai:gpt-5.2")).toBe("none");
     expect(supports1MContext("openai:gpt-5.4")).toBe(false);
-    expect(supports1MContext("openai:gpt-5.4-2026-03-05")).toBe(false);
-    expect(supports1MContext("openai:gpt-5.4-pro")).toBe(false);
-    expect(supports1MContext("openai:gpt-5.4-pro-2026-03-05")).toBe(false);
-    expect(supports1MContext("mux-gateway:openai/gpt-5.4")).toBe(false);
-    expect(supports1MContext("mux-gateway:openai/gpt-5.4-pro")).toBe(false);
-  });
-
-  it("should return false for other OpenAI models", () => {
-    expect(supports1MContext("openai:gpt-5.2")).toBe(false);
-    expect(supports1MContext("openai:gpt-4o")).toBe(false);
-    expect(supports1MContext("mux-gateway:openai/gpt-4o")).toBe(false);
-  });
-
-  it("should return true for Opus 4.6 models", () => {
-    expect(supports1MContext("anthropic:claude-opus-4-6")).toBe(true);
-    expect(supports1MContext("mux-gateway:anthropic/claude-opus-4-6")).toBe(true);
-  });
-
-  it("should return false for Anthropic non-Sonnet-4 / non-Opus-4.6 models", () => {
-    expect(supports1MContext("anthropic:claude-opus-4-5")).toBe(false);
     expect(supports1MContext("anthropic:claude-haiku-4-5")).toBe(false);
-    expect(supports1MContext("mux-gateway:anthropic/claude-opus-4-5")).toBe(false);
-  });
-
-  it("should return true for Opus 4.6 models", () => {
-    expect(supports1MContext("anthropic:claude-opus-4-6")).toBe(true);
-    expect(supports1MContext("anthropic:claude-opus-4-6-20260201")).toBe(true);
-    expect(supports1MContext("mux-gateway:anthropic/claude-opus-4-6")).toBe(true);
+    expect(hasNative1MContext("openai:gpt-5.4")).toBe(false);
   });
 });
 

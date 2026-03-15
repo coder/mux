@@ -305,26 +305,24 @@ describe("AgentSession switch_agent target validation", () => {
       }
     }
 
-    test("preserves 1M context when source has use1MContextModels and target model supports 1M", async () => {
-      // Regression coverage: Auto may hand off from Opus to Sonnet, so preserving 1M intent
-      // must depend on the target model's capability instead of the source model list alone.
+    test("preserves beta 1M context when source has use1MContextModels and target model supports the beta", async () => {
       const followUpOptions = await dispatchSwitchAndCaptureOptions(
         {
           agentId: "exec",
-          model: "anthropic:claude-opus-4-6",
+          model: "anthropic:claude-sonnet-4-5",
           providerOptions: {
             anthropic: {
-              use1MContextModels: ["anthropic:claude-opus-4-6"],
+              use1MContextModels: ["anthropic:claude-sonnet-4-5"],
             },
           },
         },
-        "anthropic:claude-sonnet-4-6"
+        "anthropic:claude-sonnet-4-20250514"
       );
 
       expect(followUpOptions.providerOptions?.anthropic?.use1MContext).toBe(true);
     });
 
-    test("preserves 1M intent when source model is an alias resolved via providersConfig", async () => {
+    test("preserves beta 1M intent when source model is an alias resolved via providersConfig", async () => {
       const providersConfig: ProvidersConfigMap = {
         anthropic: {
           apiKeySet: false,
@@ -333,7 +331,7 @@ describe("AgentSession switch_agent target validation", () => {
           models: [
             {
               id: "claude/sonnet",
-              mappedToModel: "anthropic:claude-sonnet-4-6-20251022",
+              mappedToModel: "anthropic:claude-sonnet-4-5-20250929",
             },
           ],
         },
@@ -349,25 +347,25 @@ describe("AgentSession switch_agent target validation", () => {
             },
           },
         },
-        "anthropic:claude-sonnet-4-6",
+        "anthropic:claude-sonnet-4-5",
         providersConfig
       );
 
       expect(followUpOptions.providerOptions?.anthropic?.use1MContext).toBe(true);
     });
 
-    test("preserves 1M context when source has use1MContext boolean", async () => {
+    test("preserves beta 1M context when source has use1MContext boolean", async () => {
       const followUpOptions = await dispatchSwitchAndCaptureOptions(
         {
           agentId: "exec",
-          model: "anthropic:claude-opus-4-6",
+          model: "anthropic:claude-sonnet-4-5",
           providerOptions: {
             anthropic: {
               use1MContext: true,
             },
           },
         },
-        "anthropic:claude-sonnet-4-6"
+        "anthropic:claude-sonnet-4-20250514"
       );
 
       expect(followUpOptions.providerOptions?.anthropic?.use1MContext).toBe(true);
@@ -377,15 +375,15 @@ describe("AgentSession switch_agent target validation", () => {
       const followUpOptions = await dispatchSwitchAndCaptureOptions(
         {
           agentId: "exec",
-          model: "anthropic:claude-opus-4-6",
+          model: "anthropic:claude-sonnet-4-5",
           providerOptions: {
             anthropic: {
-              use1MContextModels: ["anthropic:claude-opus-4-6"],
+              use1MContextModels: ["anthropic:claude-sonnet-4-5"],
               disableBetaFeatures: true,
             },
           },
         },
-        "anthropic:claude-sonnet-4-6"
+        "anthropic:claude-sonnet-4-20250514"
       );
 
       expect(followUpOptions.providerOptions?.anthropic?.use1MContext).not.toBe(true);
@@ -395,10 +393,10 @@ describe("AgentSession switch_agent target validation", () => {
       const followUpOptions = await dispatchSwitchAndCaptureOptions(
         {
           agentId: "exec",
-          model: "anthropic:claude-opus-4-6",
+          model: "anthropic:claude-sonnet-4-5",
           providerOptions: {
             anthropic: {
-              use1MContextModels: ["anthropic:claude-opus-4-6"],
+              use1MContextModels: ["anthropic:claude-sonnet-4-5"],
             },
           },
         },
@@ -412,14 +410,14 @@ describe("AgentSession switch_agent target validation", () => {
       const followUpOptions = await dispatchSwitchAndCaptureOptions(
         {
           agentId: "exec",
-          model: "anthropic:claude-opus-4-6",
+          model: "anthropic:claude-sonnet-4-5",
           providerOptions: {
             anthropic: {
               use1MContextModels: [],
             },
           },
         },
-        "anthropic:claude-sonnet-4-6"
+        "anthropic:claude-sonnet-4-20250514"
       );
 
       expect(followUpOptions.providerOptions?.anthropic?.use1MContext).not.toBe(true);

@@ -33,11 +33,10 @@ interface ModelData {
 
 export const modelsExtra: Record<string, ModelData> = {
   // Claude Opus 4.6 - Released February 2026
-  // Standard: $5/M input, $25/M output (≤200k context)
-  // Premium (1M context): $10/M input, $37.50/M output
-  // 128K max output tokens
+  // Native 1M context at standard pricing: $5/M input, $25/M output.
+  // 128K max output tokens.
   "claude-opus-4-6": {
-    max_input_tokens: 200000,
+    max_input_tokens: 1000000,
     max_output_tokens: 128000,
     input_cost_per_token: 0.000005, // $5 per million input tokens
     output_cost_per_token: 0.000025, // $25 per million output tokens
@@ -54,10 +53,10 @@ export const modelsExtra: Record<string, ModelData> = {
   },
 
   // Claude Sonnet 4.6 - Released February 2026
-  // $3/M input, $15/M output (same as Sonnet 4.5)
-  // 64K max output tokens, supports adaptive thinking + effort parameter
+  // Native 1M context at standard pricing: $3/M input, $15/M output.
+  // 64K max output tokens, supports adaptive thinking + effort parameter.
   "claude-sonnet-4-6": {
-    max_input_tokens: 200000,
+    max_input_tokens: 1000000,
     max_output_tokens: 64000,
     input_cost_per_token: 0.000003, // $3 per million input tokens
     output_cost_per_token: 0.000015, // $15 per million output tokens

@@ -18,8 +18,12 @@ const ProviderOptionsContext = createContext<ProviderOptionsContextType | undefi
 
 /**
  * Migrate legacy `use1MContext: true` (global toggle) to `use1MContextModels` (per-model set).
- * When the old global boolean is true and no per-model list exists, populate with all supported models.
- * Returns the migrated options (or original if no migration needed).
+ * When the old global boolean is true and no per-model list exists, populate with built-in
+ * models that still require Anthropic's 1M beta header.
+ *
+ * Newer Anthropic releases can make every built-in model native-1M, which would leave no valid
+ * migration targets. In that case, keep the legacy boolean untouched so we don't silently erase
+ * a user's old beta preference for custom Sonnet 4 / 4.5 entries.
  */
 function migrateGlobalToPerModel(
   options: MuxProviderOptions["anthropic"]
@@ -30,10 +34,14 @@ function migrateGlobalToPerModel(
   ) {
     return options;
   }
-  // Populate with all known models that support 1M context
+
   const supported = Object.values(KNOWN_MODELS)
     .filter((m) => supports1MContext(m.id))
     .map((m) => m.id);
+  if (supported.length === 0) {
+    return options;
+  }
+
   return {
     ...options,
     use1MContext: false,
@@ -63,7 +71,13 @@ export function ProviderOptionsProvider({ children }: { children: React.ReactNod
 
   const models1M = anthropicOptions?.use1MContextModels ?? [];
 
-  const has1MContext = (modelId: string): boolean => models1M.includes(modelId);
+  const has1MContext = (modelId: string): boolean => {
+    if (models1M.includes(modelId)) {
+      return true;
+    }
+
+    return supports1MContext(modelId) && anthropicOptions?.use1MContext === true;
+  };
 
   const toggle1MContext = (modelId: string): void => {
     const next = has1MContext(modelId)
@@ -71,6 +85,9 @@ export function ProviderOptionsProvider({ children }: { children: React.ReactNod
       : [...models1M, modelId];
     setAnthropicOptions({
       ...anthropicOptions,
+      // Once a user interacts with a per-model toggle, prefer the explicit list over the
+      // deprecated global boolean so native-1M models never inherit stale beta state.
+      use1MContext: false,
       use1MContextModels: next,
     });
   };

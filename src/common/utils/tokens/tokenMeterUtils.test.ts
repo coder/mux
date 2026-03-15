@@ -38,14 +38,14 @@ describe("calculateTokenMeterData", () => {
       apiKeySet: false,
       isEnabled: true,
       isConfigured: true,
-      models: [{ id: "claude-sonnet-4-0", contextWindowTokens: 100_000 }],
+      models: [{ id: "claude-sonnet-4-20250514", contextWindowTokens: 100_000 }],
     },
   };
 
-  test("uses custom context override for unknown models", () => {
+  test("uses custom context override for beta Sonnet models", () => {
     const result = calculateTokenMeterData(
       SAMPLE_USAGE,
-      "anthropic:claude-sonnet-4-0",
+      "anthropic:claude-sonnet-4-20250514",
       false,
       false,
       providerConfigWithOverride
@@ -63,14 +63,21 @@ describe("calculateTokenMeterData", () => {
     expect(result.totalTokens).toBe(11_000);
   });
 
-  test("1M toggle overrides custom context limit for supported Anthropic models", () => {
+  test("1M toggle overrides custom context limit for beta-only Anthropic models", () => {
     const result = calculateTokenMeterData(
       SAMPLE_USAGE,
-      "anthropic:claude-sonnet-4-0",
+      "anthropic:claude-sonnet-4-20250514",
       true,
       false,
       providerConfigWithOverride
     );
+
+    expect(result.maxTokens).toBe(1_000_000);
+    expect(result.totalPercentage).toBeCloseTo(1.1);
+  });
+
+  test("uses Claude Sonnet 4.6's native 1M context even when the beta toggle is off", () => {
+    const result = calculateTokenMeterData(SAMPLE_USAGE, "anthropic:claude-sonnet-4-6", false);
 
     expect(result.maxTokens).toBe(1_000_000);
     expect(result.totalPercentage).toBeCloseTo(1.1);

@@ -462,10 +462,10 @@ export const ModelsConfigured: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        // Pre-set 1M context enabled for Opus 4.6 so the story shows the toggle active
+        // Pre-set 1M context enabled for Sonnet 4 so the story shows the beta toggle active.
         window.localStorage.setItem(
           "provider_options_anthropic",
-          JSON.stringify({ use1MContextModels: ["anthropic:claude-opus-4-6"] })
+          JSON.stringify({ use1MContextModels: ["anthropic:claude-sonnet-4-20250514"] })
         );
         return setupSettingsStory({
           providersConfig: {

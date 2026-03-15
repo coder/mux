@@ -1818,9 +1818,10 @@ export function ProvidersSection() {
                                     <div className="max-w-[260px]">
                                       <div className="font-semibold">Anthropic beta features</div>
                                       <div className="mt-1">
-                                        Controls 1M context window and prompt caching. Disable for
-                                        zero data retention (ZDR) environments where beta features
-                                        are not eligible.
+                                        Controls Anthropic beta features such as the older Sonnet 1M
+                                        context beta and prompt caching. Disable for zero data
+                                        retention (ZDR) environments where beta features are not
+                                        eligible.
                                       </div>
                                     </div>
                                   </TooltipContent>

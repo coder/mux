@@ -1,6 +1,5 @@
 import React from "react";
 import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/WorkspaceStore";
-import { getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import {
   sumUsageHistory,
   formatCostWithDollar,
@@ -13,7 +12,6 @@ import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { supports1MContext } from "@/common/utils/ai/models";
 import {
   TOKEN_COMPONENT_COLORS,
   calculateTokenMeterData,
@@ -30,21 +28,6 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/To
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-
-/**
- * Calculate cost with elevated pricing for 1M context (200k-1M tokens)
- * For tokens above 200k, use elevated pricing rates
- */
-const calculateElevatedCost = (tokens: number, standardRate: number, isInput: boolean): number => {
-  if (tokens <= 200_000) {
-    return tokens * standardRate;
-  }
-  const baseCost = 200_000 * standardRate;
-  const elevatedTokens = tokens - 200_000;
-  const elevatedMultiplier = isInput ? 2.0 : 1.5;
-  const elevatedCost = elevatedTokens * standardRate * elevatedMultiplier;
-  return baseCost + elevatedCost;
-};
 
 type ViewMode = "last-request" | "session";
 
@@ -192,60 +175,34 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
         <div data-testid="cost-section" className="mb-6">
           <div className="flex flex-col gap-3">
             {(() => {
-              // Cost and Details use viewMode-dependent data
-              // Get model from the displayUsage (which could be last request or session sum)
-              const model = displayUsage?.model ?? lastRequestUsage?.model ?? "unknown";
-              const modelStats = getModelStatsResolved(model, providersConfig);
-              // 1M pricing is provider-level (Anthropic/Gemini), gated on runtime model.
-              const is1MActive = has1MContext(model) && supports1MContext(model);
-
               // Helper to calculate cost percentage
               const getCostPercentage = (cost: number | undefined, total: number | undefined) =>
                 total !== undefined && total > 0 && cost !== undefined ? (cost / total) * 100 : 0;
 
-              // Recalculate costs with elevated pricing if 1M context is active
-              let adjustedInputCost = displayUsage?.input.cost_usd;
-              let adjustedOutputCost = displayUsage?.output.cost_usd;
-              let adjustedReasoningCost = displayUsage?.reasoning.cost_usd;
-
-              if (is1MActive && displayUsage && modelStats) {
-                // Recalculate input cost with elevated pricing
-                adjustedInputCost = calculateElevatedCost(
-                  displayUsage.input.tokens,
-                  modelStats.input_cost_per_token,
-                  true // isInput
-                );
-                // Recalculate output cost with elevated pricing
-                adjustedOutputCost = calculateElevatedCost(
-                  displayUsage.output.tokens,
-                  modelStats.output_cost_per_token,
-                  false // isOutput
-                );
-                // Recalculate reasoning cost with elevated pricing
-                adjustedReasoningCost = calculateElevatedCost(
-                  displayUsage.reasoning.tokens,
-                  modelStats.output_cost_per_token,
-                  false // isOutput
-                );
-              }
+              // Costs are already computed from shared model metadata when usage is recorded.
+              // Repricing again here drifts from tiered per-request accounting, especially for
+              // native 1M models and session aggregates that span multiple requests.
+              const inputCost = displayUsage?.input.cost_usd;
+              const outputCost = displayUsage?.output.cost_usd;
+              const reasoningCost = displayUsage?.reasoning.cost_usd;
 
               // Calculate total cost (undefined if any cost is unknown)
               const totalCost: number | undefined = displayUsage
-                ? adjustedInputCost !== undefined &&
+                ? inputCost !== undefined &&
                   displayUsage.cached.cost_usd !== undefined &&
                   displayUsage.cacheCreate.cost_usd !== undefined &&
-                  adjustedOutputCost !== undefined &&
-                  adjustedReasoningCost !== undefined
-                  ? adjustedInputCost +
+                  outputCost !== undefined &&
+                  reasoningCost !== undefined
+                  ? inputCost +
                     displayUsage.cached.cost_usd +
                     displayUsage.cacheCreate.cost_usd +
-                    adjustedOutputCost +
-                    adjustedReasoningCost
+                    outputCost +
+                    reasoningCost
                   : undefined
                 : undefined;
 
-              // Calculate cost percentages (using adjusted costs for 1M context)
-              const inputCostPercentage = getCostPercentage(adjustedInputCost, totalCost);
+              // Calculate cost percentages from the shared metadata-driven costs.
+              const inputCostPercentage = getCostPercentage(inputCost, totalCost);
               const cachedCostPercentage = getCostPercentage(
                 displayUsage?.cached.cost_usd,
                 totalCost
@@ -254,10 +211,9 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                 displayUsage?.cacheCreate.cost_usd,
                 totalCost
               );
-              const outputCostPercentage = getCostPercentage(adjustedOutputCost, totalCost);
-              const reasoningCostPercentage = getCostPercentage(adjustedReasoningCost, totalCost);
+              const outputCostPercentage = getCostPercentage(outputCost, totalCost);
+              const reasoningCostPercentage = getCostPercentage(reasoningCost, totalCost);
 
-              // Build component data for table (using adjusted costs for 1M context)
               const components = displayUsage
                 ? [
                     {
@@ -277,21 +233,21 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                     {
                       name: "Input",
                       tokens: displayUsage.input.tokens,
-                      cost: adjustedInputCost,
+                      cost: inputCost,
                       color: TOKEN_COMPONENT_COLORS.input,
                       show: true,
                     },
                     {
                       name: "Output",
                       tokens: displayUsage.output.tokens,
-                      cost: adjustedOutputCost,
+                      cost: outputCost,
                       color: TOKEN_COMPONENT_COLORS.output,
                       show: true,
                     },
                     {
                       name: "Thinking",
                       tokens: displayUsage.reasoning.tokens,
-                      cost: adjustedReasoningCost,
+                      cost: reasoningCost,
                       color: TOKEN_COMPONENT_COLORS.thinking,
                       show: displayUsage.reasoning.tokens > 0,
                     },

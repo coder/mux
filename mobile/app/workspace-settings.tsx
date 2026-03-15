@@ -1,5 +1,4 @@
 import type { JSX } from "react";
-import { useEffect } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 import { Stack } from "expo-router";
 import Slider from "@react-native-community/slider";
@@ -41,14 +40,7 @@ export default function WorkspaceSettings(): JSX.Element {
     isLoading: defaultsLoading,
   } = useWorkspaceDefaults();
 
-  const modelSupports1M = supports1MContext(defaultModel);
-
-  // Auto-disable 1M context if model doesn't support it
-  useEffect(() => {
-    if (!modelSupports1M && use1MContext) {
-      void setUse1MContext(false);
-    }
-  }, [modelSupports1M, use1MContext, setUse1MContext]);
+  const modelSupports1MBeta = supports1MContext(defaultModel);
 
   return (
     <>
@@ -114,7 +106,7 @@ export default function WorkspaceSettings(): JSX.Element {
           </View>
 
           {/* 1M Context Toggle */}
-          {modelSupports1M && (
+          {modelSupports1MBeta && (
             <View style={{ marginTop: spacing.md }}>
               <Pressable
                 onPress={() => void setUse1MContext(!use1MContext)}
@@ -126,12 +118,12 @@ export default function WorkspaceSettings(): JSX.Element {
                 }}
               >
                 <View style={{ flex: 1 }}>
-                  <ThemedText variant="label">Use 1M Context</ThemedText>
+                  <ThemedText variant="label">Use 1M Context (Beta)</ThemedText>
                   <ThemedText
                     variant="caption"
                     style={{ marginTop: spacing.xs, color: theme.colors.foregroundMuted }}
                   >
-                    Enable extended context window (only for Sonnet 4+)
+                    Enable Anthropic's beta 1M context window for supported Sonnet 4 / 4.5 models.
                   </ThemedText>
                 </View>
                 <View

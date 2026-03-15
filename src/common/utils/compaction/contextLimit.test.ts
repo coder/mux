@@ -22,7 +22,7 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
-  test("does not inherit 1M toggle from mapped model (provider-level capability)", () => {
+  test("does not inherit the Anthropic beta toggle from a mapped model", () => {
     const config: ProvidersConfigMap = {
       ollama: {
         apiKeySet: false,
@@ -32,9 +32,9 @@ describe("getEffectiveContextLimit", () => {
       },
     };
 
-    // 1M context is an Anthropic runtime capability, not inherited through
-    // model mapping. ollama:custom should use the mapped model's base context
-    // limit, not 1M.
+    // Optional Anthropic beta 1M remains a runtime capability, not something a custom
+    // runtime inherits just because its metadata maps to a Claude family. Native 1M models
+    // still contribute their published context window through metadata.
     const mappedStats = getModelStats(KNOWN_MODELS.SONNET.id);
     const limit = getEffectiveContextLimit("ollama:custom", true, config);
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
@@ -46,6 +46,14 @@ describe("getEffectiveContextLimit", () => {
 
     expect(baseLimit).toBe(1_050_000);
     expect(toggledLimit).toBe(1_050_000);
+  });
+
+  test("uses Claude Sonnet 4.6's native 1M context without the beta toggle", () => {
+    const baseLimit = getEffectiveContextLimit(KNOWN_MODELS.SONNET.id, false, null);
+    const toggledLimit = getEffectiveContextLimit(KNOWN_MODELS.SONNET.id, true, null);
+
+    expect(baseLimit).toBe(1_000_000);
+    expect(toggledLimit).toBe(1_000_000);
   });
 
   test("prefers custom context overrides over mapped model stats", () => {

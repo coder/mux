@@ -32,10 +32,9 @@ export function getEffectiveContextLimit(
   const baseLimit = customOverride ?? stats?.max_input_tokens ?? null;
   if (!baseLimit) return null;
 
-  // 1M context is a runtime model capability for Anthropic's beta header, so it
-  // must be gated on the runtime model, not the mapped metadata model.
-  // A custom model mapped to Sonnet should NOT inherit 1M context unless
-  // the runtime model itself supports it.
+  // Anthropic's optional 1M beta is a runtime capability, so it must be gated on the
+  // runtime model, not the mapped metadata model. Native 1M models already expose their
+  // larger window through model stats above.
   if (supports1MContext(model) && use1M) return 1_000_000;
   return baseLimit;
 }

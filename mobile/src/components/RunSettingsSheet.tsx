@@ -27,7 +27,7 @@ interface RunSettingsSheetProps {
   onSelectThinkingLevel: (level: ThinkingLevel) => void;
   use1MContext: boolean;
   onToggle1MContext: (enabled: boolean) => void;
-  supportsExtendedContext: boolean;
+  supportsBeta1MContext: boolean;
 }
 
 export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
@@ -202,7 +202,7 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                 ))
               )}
             </View>
-            {props.supportsExtendedContext ? (
+            {props.supportsBeta1MContext ? (
               <View
                 style={{
                   marginTop: 20,
@@ -224,16 +224,16 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
                   />
                 </View>
                 <ThemedText variant="caption" style={{ color: theme.colors.foregroundMuted }}>
-                  Use the 1M-token Anthropic context window when supported.
+                  Use Anthropic's beta 1M context window for supported Sonnet 4 / 4.5 models.
                 </ThemedText>
                 <View style={styles.toggleRow}>
-                  <ThemedText weight="semibold">1M token context</ThemedText>
+                  <ThemedText weight="semibold">1M token context (beta)</ThemedText>
                   <Switch
                     trackColor={{ false: theme.colors.inputBorder, true: theme.colors.accent }}
                     thumbColor={props.use1MContext ? theme.colors.accent : theme.colors.surface}
                     value={props.use1MContext}
                     onValueChange={props.onToggle1MContext}
-                    disabled={!props.selectedModel?.startsWith("anthropic")}
+                    disabled={!props.supportsBeta1MContext}
                   />
                 </View>
               </View>

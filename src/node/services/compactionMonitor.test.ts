@@ -1,14 +1,12 @@
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { describe, expect, test } from "bun:test";
-import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
 
-function createUsageDisplay(
-  contextTokens: number,
-  model = KNOWN_MODELS.SONNET.id
-): ChatUsageDisplay {
+const BETA_SONNET_MODEL = "anthropic:claude-sonnet-4-5";
+
+function createUsageDisplay(contextTokens: number, model = BETA_SONNET_MODEL): ChatUsageDisplay {
   const inputTokens = Math.floor(contextTokens * 0.9);
   const cachedTokens = contextTokens - inputTokens;
 
@@ -45,7 +43,7 @@ describe("CompactionMonitor", () => {
     const { monitor } = createMonitor();
 
     const lowResult = monitor.checkBeforeSend({
-      model: KNOWN_MODELS.SONNET.id,
+      model: BETA_SONNET_MODEL,
       usage: { lastContextUsage: createUsageDisplay(120_000) },
       use1MContext: false,
       providersConfig: null,
@@ -54,7 +52,7 @@ describe("CompactionMonitor", () => {
     expect(lowResult.usagePercentage).toBe(60);
 
     const forceResult = monitor.checkBeforeSend({
-      model: KNOWN_MODELS.SONNET.id,
+      model: BETA_SONNET_MODEL,
       usage: { lastContextUsage: createUsageDisplay(150_000) },
       use1MContext: false,
       providersConfig: null,
@@ -64,7 +62,7 @@ describe("CompactionMonitor", () => {
 
     monitor.setThreshold(0.8);
     const customThresholdResult = monitor.checkBeforeSend({
-      model: KNOWN_MODELS.SONNET.id,
+      model: BETA_SONNET_MODEL,
       usage: { lastContextUsage: createUsageDisplay(150_000) },
       use1MContext: false,
       providersConfig: null,
@@ -78,7 +76,7 @@ describe("CompactionMonitor", () => {
 
     expect(
       monitor.checkMidStream({
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
         usage: createMidStreamUsage(140_000),
         use1MContext: false,
         providersConfig: null,
@@ -88,7 +86,7 @@ describe("CompactionMonitor", () => {
 
     expect(
       monitor.checkMidStream({
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
         usage: createMidStreamUsage(150_000),
         use1MContext: false,
         providersConfig: null,
@@ -104,7 +102,7 @@ describe("CompactionMonitor", () => {
 
     expect(
       monitor.checkMidStream({
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
         usage: createMidStreamUsage(160_000),
         use1MContext: false,
         providersConfig: null,
@@ -119,7 +117,7 @@ describe("CompactionMonitor", () => {
 
     expect(
       monitor.checkMidStream({
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
         usage: createMidStreamUsage(210_000),
         use1MContext: false,
         providersConfig: null,
@@ -156,7 +154,7 @@ describe("CompactionMonitor", () => {
     // cachedInputTokens is present.
     expect(
       monitor.checkMidStream({
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
         usage: createMidStreamUsage(145_000, 10_000),
         use1MContext: false,
         providersConfig: null,
@@ -170,7 +168,7 @@ describe("CompactionMonitor", () => {
 
     expect(
       monitor.checkMidStream({
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
         usage: createMidStreamUsage(150_000),
         use1MContext: false,
         providersConfig: null,
@@ -182,7 +180,7 @@ describe("CompactionMonitor", () => {
 
     expect(
       monitor.checkMidStream({
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
         usage: createMidStreamUsage(160_000),
         use1MContext: false,
         providersConfig: null,

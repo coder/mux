@@ -43,6 +43,7 @@ import { executeSlashCommand } from "../utils/slashCommandRunner";
 import { createCompactedMessage } from "../utils/messageHelpers";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { supports1MContext } from "@/common/utils/ai/models";
 import { isThinkingLevel } from "@/common/types/thinking";
 import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@/common/types/runtime";
 import { loadRuntimePreference, saveRuntimePreference } from "../utils/workspacePreferences";
@@ -203,7 +204,7 @@ function WorkspaceScreenInner({
     () => enforceThinkingPolicy(model, thinkingLevel),
     [model, thinkingLevel]
   );
-  const supportsExtendedContext = selectedModelEntry.provider === "anthropic";
+  const supportsBeta1MContext = supports1MContext(model);
   const modelPickerRecents = useMemo(
     () => sanitizeModelSequence([model, ...recentModels]),
     [model, recentModels]
@@ -823,11 +824,11 @@ function WorkspaceScreenInner({
   );
 
   const handleToggle1MContext = useCallback(() => {
-    if (!supportsExtendedContext) {
+    if (!supportsBeta1MContext) {
       return;
     }
     void setUse1MContext(!use1MContext);
-  }, [supportsExtendedContext, use1MContext, setUse1MContext]);
+  }, [supportsBeta1MContext, use1MContext, setUse1MContext]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessage(undefined);
@@ -1624,7 +1625,7 @@ function WorkspaceScreenInner({
         onSelectThinkingLevel={handleSelectThinkingLevel}
         use1MContext={use1MContext}
         onToggle1MContext={handleToggle1MContext}
-        supportsExtendedContext={supportsExtendedContext}
+        supportsBeta1MContext={supportsBeta1MContext}
       />
       <FullscreenComposerModal
         visible={isFullscreenComposerOpen}

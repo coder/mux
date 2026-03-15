@@ -116,30 +116,59 @@ export function getModelProvider(modelString: string): string {
   return normalized.substring(0, colonIndex);
 }
 
+export type Anthropic1MContextMode = "none" | "beta" | "native";
+
+const OPTIONAL_VERSION_SUFFIX = String.raw`(?:-(?:\d{8}|\d{4}-\d{2}-\d{2}))?`;
+const ANTHROPIC_NATIVE_1M_PATTERNS = [
+  new RegExp(`^claude-opus-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-sonnet-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+];
+const ANTHROPIC_BETA_1M_PATTERNS = [
+  new RegExp(`^claude-sonnet-4-5${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-sonnet-4-20250514${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+];
+
+function matchesAnthropicPattern(modelName: string, patterns: readonly RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(modelName));
+}
+
 /**
- * Check if a model supports the optional 1M context mode used by Mux's context toggle.
+ * Classify Anthropic models by how they reach a 1M context window.
  *
- * Supported model families:
- * - Anthropic Claude Sonnet 4/4.5/4.6 and Opus 4.6
- *
- * GPT-5.4's 1.05M window is exposed as the model's native context limit, so it
- * should not appear behind this Anthropic-style opt-in toggle.
- *
- * @param modelString - Full model string in format "provider:model-name"
- * @returns True if the model supports 1M context window mode
+ * - `native`: published 1M context is part of the model's standard metadata/pricing.
+ * - `beta`: 1M requires Anthropic's opt-in beta header.
+ * - `none`: model does not offer 1M context.
  */
-export function supports1MContext(modelString: string): boolean {
+export function getAnthropic1MContextMode(modelString: string): Anthropic1MContextMode {
   const normalized = normalizeToCanonical(modelString);
   const [provider, modelName] = normalized.split(":", 2);
-  const lowerModelName = modelName?.toLowerCase() ?? "";
+  const normalizedModelName = modelName?.toLowerCase() ?? "";
 
-  if (provider !== "anthropic") {
-    return false;
+  if (provider !== "anthropic" || normalizedModelName.length === 0) {
+    return "none";
   }
 
-  // Sonnet 4, Sonnet 4.5, Sonnet 4.6, and Opus 4.6 support 1M context (beta)
-  return (
-    (lowerModelName.includes("claude-sonnet-4") && !lowerModelName.includes("claude-sonnet-3")) ||
-    lowerModelName.includes("claude-opus-4-6")
-  );
+  if (matchesAnthropicPattern(normalizedModelName, ANTHROPIC_NATIVE_1M_PATTERNS)) {
+    return "native";
+  }
+
+  if (matchesAnthropicPattern(normalizedModelName, ANTHROPIC_BETA_1M_PATTERNS)) {
+    return "beta";
+  }
+
+  return "none";
+}
+
+/**
+ * Check if a model supports Anthropic's optional 1M beta mode used by Mux's context toggle.
+ *
+ * Native long-context models like Claude Opus 4.6, Claude Sonnet 4.6, and GPT-5.4 expose
+ * their larger window directly through model metadata and should not appear behind this toggle.
+ */
+export function supports1MContext(modelString: string): boolean {
+  return getAnthropic1MContextMode(modelString) === "beta";
+}
+
+export function hasNative1MContext(modelString: string): boolean {
+  return getAnthropic1MContextMode(modelString) === "native";
 }

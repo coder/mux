@@ -3,12 +3,14 @@ import { checkAutoCompaction, type AutoCompactionUsageState } from "./autoCompac
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
+const BETA_SONNET_MODEL = "anthropic:claude-sonnet-4-5";
+
 // Helper to create a mock usage entry
 // The tokens parameter represents CONTEXT tokens (input + cached + cacheCreate).
 // Output and reasoning are set separately since they don't count toward context.
 const createUsageEntry = (
   contextTokens: number,
-  model: string = KNOWN_MODELS.SONNET.id
+  model: string = BETA_SONNET_MODEL
 ): ChatUsageDisplay => {
   // Distribute context tokens (only these count toward compaction threshold)
   const inputTokens = Math.floor(contextTokens * 0.9); // 90% input
@@ -28,7 +30,7 @@ const createUsageEntry = (
 const createMockUsage = (
   lastEntryTokens: number,
   _historicalTokens?: number, // Kept for backward compat but unused (session-usage.json handles historical)
-  model: string = KNOWN_MODELS.SONNET.id,
+  model: string = BETA_SONNET_MODEL,
   liveUsage?: ChatUsageDisplay
 ): AutoCompactionUsageState => {
   // Create lastContextUsage representing the most recent context window state
@@ -44,7 +46,7 @@ describe("checkAutoCompaction", () => {
 
   describe("Basic Functionality", () => {
     test("returns false when no usage data (first message)", () => {
-      const result = checkAutoCompaction(undefined, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(undefined, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(false);
       expect(result.usagePercentage).toBe(0);
@@ -53,7 +55,7 @@ describe("checkAutoCompaction", () => {
 
     test("returns false when no context usage data", () => {
       const usage: AutoCompactionUsageState = { totalTokens: 0 };
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(false);
       expect(result.usagePercentage).toBe(0);
@@ -88,7 +90,7 @@ describe("checkAutoCompaction", () => {
 
     test("returns false when usage is low (10%)", () => {
       const usage = createMockUsage(20_000); // 10% of 200k
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(false);
       expect(result.usagePercentage).toBe(10);
@@ -97,7 +99,7 @@ describe("checkAutoCompaction", () => {
 
     test("returns true at warning threshold (60% with default 10% advance)", () => {
       const usage = createMockUsage(SONNET_60_PERCENT);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true);
       expect(result.usagePercentage).toBe(60);
@@ -106,7 +108,7 @@ describe("checkAutoCompaction", () => {
 
     test("returns true at compaction threshold (70%)", () => {
       const usage = createMockUsage(SONNET_70_PERCENT);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true);
       expect(result.usagePercentage).toBe(70);
@@ -115,7 +117,7 @@ describe("checkAutoCompaction", () => {
 
     test("returns true above threshold (80%)", () => {
       const usage = createMockUsage(160_000); // 80% of 200k
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true);
       expect(result.usagePercentage).toBe(80);
@@ -126,7 +128,7 @@ describe("checkAutoCompaction", () => {
   describe("Usage Calculation (Critical for infinite loop fix)", () => {
     test("uses last usage entry tokens, not cumulative sum", () => {
       const usage = createMockUsage(10_000); // Only 5% of context
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       // Should be 5%, not counting historical
       expect(result.usagePercentage).toBe(5);
@@ -137,7 +139,7 @@ describe("checkAutoCompaction", () => {
       // Scenario: After compaction, historical = 70K, recent = 5K
       // Should calculate based on 5K (2.5%), not 75K (37.5%)
       const usage = createMockUsage(5_000, 70_000);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.usagePercentage).toBe(2.5);
       expect(result.shouldShowWarning).toBe(false);
@@ -152,14 +154,14 @@ describe("checkAutoCompaction", () => {
         cacheCreate: { tokens: 2_000 },
         output: { tokens: 3_000 },
         reasoning: { tokens: 1_000 },
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
       };
       const usage: AutoCompactionUsageState = {
         lastContextUsage: usageEntry,
         totalTokens: 0,
       };
 
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       // Context = input + cached + cacheCreate = 10k + 5k + 2k = 17k tokens = 8.5%
       // Output and reasoning are excluded (they're response tokens, not context)
@@ -175,14 +177,14 @@ describe("checkAutoCompaction", () => {
         cacheCreate: { tokens: 0 },
         output: { tokens: 5_000 },
         reasoning: { tokens: 50_000 }, // High reasoning from Extended Thinking
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
       };
       const usage: AutoCompactionUsageState = {
         lastContextUsage: usageEntry,
         totalTokens: 0,
       };
 
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       // Only input tokens count: 20k = 10% of 200k context
       // NOT 75k (37.5%) which would incorrectly trigger compaction
@@ -195,7 +197,7 @@ describe("checkAutoCompaction", () => {
   describe("1M Context Mode", () => {
     test("uses 1M tokens when use1M=true and model supports it (Sonnet 4)", () => {
       const usage = createMockUsage(600_000); // 60% of 1M
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, true);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, true);
 
       expect(result.usagePercentage).toBe(60);
       expect(result.shouldShowWarning).toBe(true);
@@ -203,7 +205,7 @@ describe("checkAutoCompaction", () => {
 
     test("uses 1M tokens for Sonnet with use1M=true (model is claude-sonnet-4-5)", () => {
       const usage = createMockUsage(700_000); // 70% of 1M
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, true);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, true);
 
       expect(result.usagePercentage).toBe(70);
       expect(result.shouldShowWarning).toBe(true);
@@ -211,9 +213,17 @@ describe("checkAutoCompaction", () => {
 
     test("uses standard max_input_tokens when use1M=false", () => {
       const usage = createMockUsage(140_000); // 70% of 200k
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.usagePercentage).toBe(70);
+      expect(result.shouldShowWarning).toBe(true);
+    });
+
+    test("uses Claude Sonnet 4.6's native 1M limit without relying on the beta toggle", () => {
+      const usage = createMockUsage(600_000, undefined, KNOWN_MODELS.SONNET.id);
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+
+      expect(result.usagePercentage).toBe(60);
       expect(result.shouldShowWarning).toBe(true);
     });
 
@@ -239,7 +249,7 @@ describe("checkAutoCompaction", () => {
   describe("Edge Cases", () => {
     test("missing context usage returns safe defaults", () => {
       const usage: AutoCompactionUsageState = { totalTokens: 0 };
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(false);
       expect(result.usagePercentage).toBe(0);
@@ -248,7 +258,7 @@ describe("checkAutoCompaction", () => {
 
     test("single context usage entry works correctly", () => {
       const usage = createMockUsage(140_000);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true);
       expect(result.usagePercentage).toBe(70);
@@ -256,7 +266,7 @@ describe("checkAutoCompaction", () => {
 
     test("custom threshold parameter (80%)", () => {
       const usage = createMockUsage(140_000); // 70% of context
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, 0.8); // 80% threshold
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false, 0.8); // 80% threshold
 
       // At 70%, should NOT show warning for 80% threshold (needs 70% advance = 10%)
       expect(result.shouldShowWarning).toBe(true); // 70% >= (80% - 10% = 70%)
@@ -266,7 +276,7 @@ describe("checkAutoCompaction", () => {
 
     test("custom warning advance (5% instead of 10%)", () => {
       const usage = createMockUsage(130_000); // 65% of context
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, 0.7, 5);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false, 0.7, 5);
 
       // At 65%, should show warning with 5% advance (70% - 5% = 65%)
       expect(result.shouldShowWarning).toBe(true);
@@ -281,14 +291,14 @@ describe("checkAutoCompaction", () => {
         cacheCreate: { tokens: 0 },
         output: { tokens: 0 },
         reasoning: { tokens: 0 },
-        model: KNOWN_MODELS.SONNET.id,
+        model: BETA_SONNET_MODEL,
       };
       const usage: AutoCompactionUsageState = {
         lastContextUsage: zeroEntry,
         totalTokens: 0,
       };
 
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(false);
       expect(result.usagePercentage).toBe(0);
@@ -296,7 +306,7 @@ describe("checkAutoCompaction", () => {
 
     test("handles usage at exactly 100% of context", () => {
       const usage = createMockUsage(SONNET_MAX_TOKENS);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true);
       expect(result.usagePercentage).toBe(100);
@@ -305,7 +315,7 @@ describe("checkAutoCompaction", () => {
 
     test("handles usage beyond 100% of context", () => {
       const usage = createMockUsage(SONNET_MAX_TOKENS + 50_000);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true);
       expect(result.usagePercentage).toBe(125);
@@ -328,14 +338,14 @@ describe("checkAutoCompaction", () => {
 
       for (const { tokens, expectedPercent } of testCases) {
         const usage = createMockUsage(tokens);
-        const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+        const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
         expect(result.usagePercentage).toBe(expectedPercent);
       }
     });
 
     test("handles fractional percentages correctly", () => {
       const usage = createMockUsage(123_456); // 61.728%
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.usagePercentage).toBeCloseTo(61.728, 2);
       expect(result.shouldShowWarning).toBe(true); // Above 60%
@@ -349,7 +359,7 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact is false when usage just below force threshold", () => {
       // 74% usage, threshold 70%, force at 75% - should NOT trigger
       const usage = createMockUsage(148_000); // 74%
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldForceCompact).toBe(false);
     });
@@ -357,7 +367,7 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact is true when usage at force threshold", () => {
       // 75% usage, threshold 70%, force at 75% - should trigger
       const usage = createMockUsage(150_000); // 75%
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldForceCompact).toBe(true);
     });
@@ -365,7 +375,7 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact is true when usage above force threshold", () => {
       // 80% usage, threshold 70%, force at 75% - should trigger
       const usage = createMockUsage(160_000); // 80%
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldForceCompact).toBe(true);
     });
@@ -373,8 +383,8 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact uses liveUsage when available", () => {
       // lastUsage at 50%, liveUsage at 75% - should trigger based on live
       const liveUsage = createUsageEntry(150_000); // 75%
-      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const usage = createMockUsage(100_000, undefined, BETA_SONNET_MODEL, liveUsage);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldForceCompact).toBe(true);
       expect(result.usagePercentage).toBe(75); // usagePercentage reflects live when streaming
@@ -383,7 +393,7 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact respects custom threshold", () => {
       // 55% usage with 50% threshold - force at 55%, should trigger
       const usage = createMockUsage(110_000); // 55%
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, 0.5);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false, 0.5);
 
       expect(result.shouldForceCompact).toBe(true);
     });
@@ -391,8 +401,8 @@ describe("checkAutoCompaction", () => {
     test("shouldForceCompact respects 1M context mode", () => {
       // 75% of 1M = 750k tokens
       const liveUsage = createUsageEntry(750_000);
-      const usage = createMockUsage(50_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, true);
+      const usage = createMockUsage(50_000, undefined, BETA_SONNET_MODEL, liveUsage);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, true);
 
       expect(result.shouldForceCompact).toBe(true);
     });
@@ -403,7 +413,7 @@ describe("checkAutoCompaction", () => {
         totalTokens: 0,
         liveUsage,
       };
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldForceCompact).toBe(true);
       expect(result.usagePercentage).toBe(75); // usagePercentage reflects live
@@ -416,7 +426,7 @@ describe("checkAutoCompaction", () => {
         totalTokens: 0,
         liveUsage,
       };
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true);
       expect(result.shouldForceCompact).toBe(false); // 65% < 75%
@@ -425,8 +435,8 @@ describe("checkAutoCompaction", () => {
     test("shouldShowWarning uses max of last and live usage", () => {
       // lastUsage at 50% (below warning), liveUsage at 72% (above warning)
       const liveUsage = createUsageEntry(144_000); // 72%
-      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.SONNET.id, liveUsage);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false);
+      const usage = createMockUsage(100_000, undefined, BETA_SONNET_MODEL, liveUsage);
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false);
 
       expect(result.shouldShowWarning).toBe(true); // 72% >= 60%
       expect(result.shouldForceCompact).toBe(false); // 72% < 75%
@@ -434,7 +444,7 @@ describe("checkAutoCompaction", () => {
 
     test("shouldForceCompact is false when auto-compaction disabled", () => {
       const usage = createMockUsage(190_000); // 95% - would trigger if enabled
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.SONNET.id, false, 1.0); // disabled
+      const result = checkAutoCompaction(usage, BETA_SONNET_MODEL, false, 1.0); // disabled
 
       expect(result.shouldForceCompact).toBe(false);
     });

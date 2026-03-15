@@ -237,6 +237,34 @@ describe("createDisplayUsage", () => {
       expect(result!.output.cost_usd).toBeCloseTo(0.018);
     });
 
+    test("keeps Claude Sonnet 4.6 on standard pricing across the native 1M context window", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 250000,
+        outputTokens: 1000,
+        totalTokens: 251000,
+      };
+
+      const result = createDisplayUsage(usage, "anthropic:claude-sonnet-4-6");
+
+      expect(result).toBeDefined();
+      expect(result!.input.cost_usd).toBeCloseTo(0.75);
+      expect(result!.output.cost_usd).toBeCloseTo(0.015);
+    });
+
+    test("switches Claude Sonnet 4.5 to premium long-context pricing above 200K", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 250000,
+        outputTokens: 1000,
+        totalTokens: 251000,
+      };
+
+      const result = createDisplayUsage(usage, "anthropic:claude-sonnet-4-5");
+
+      expect(result).toBeDefined();
+      expect(result!.input.cost_usd).toBeCloseTo(1.5);
+      expect(result!.output.cost_usd).toBeCloseTo(0.0225);
+    });
+
     test("preserves aggregate GPT-5.4 totals during repricing and flags them as approximate", () => {
       const aggregate = {
         input: { tokens: 200000, cost_usd: 0.5 },

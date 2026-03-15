@@ -8,11 +8,12 @@ export const MuxProviderOptionsSchema = z.object({
       // Deprecated: prefer use1MContextModels for per-model control.
       // Kept for backward compat with agentSession auto-retry which sets it directly.
       use1MContext: z.boolean().optional().meta({
-        description: "Enable 1M context window globally (deprecated: use use1MContextModels)",
+        description:
+          "Enable Anthropic's beta 1M context window globally (deprecated: use use1MContextModels)",
       }),
       use1MContextModels: z.array(z.string()).optional().meta({
         description:
-          "Model IDs with 1M context enabled (e.g. ['anthropic:claude-sonnet-4-20250514'])",
+          "Model IDs with Anthropic beta 1M enabled (e.g. ['anthropic:claude-sonnet-4-20250514'])",
       }),
       // Anthropic prompt cache TTL. "5m" is the default (free refresh on hit).
       // "1h" costs 2× base input for cache writes but keeps the cache alive longer —
@@ -24,7 +25,7 @@ export const MuxProviderOptionsSchema = z.object({
       }),
       disableBetaFeatures: z.boolean().optional().meta({
         description:
-          "Disable Anthropic beta features (1M context, prompt caching). Required for ZDR.",
+          "Disable Anthropic beta features (beta 1M context for older Sonnet models, prompt caching). Required for ZDR.",
       }),
     })
     .optional(),

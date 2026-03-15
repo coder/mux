@@ -122,10 +122,10 @@ function hasAnthropic1MIntentForModel(
 }
 
 /**
- * Shared Anthropic 1M eligibility check used by request headers, retries, and compaction.
+ * Shared Anthropic 1M beta eligibility check used by request headers, retries, and compaction.
  *
- * 1M is effectively enabled only when the model supports it, the request expressed
- * Anthropic 1M intent, and beta features have not been disabled.
+ * Native 1M models expose their larger context through model metadata, so this helper only
+ * covers the older Anthropic models that still need explicit beta intent plus the beta header.
  */
 export function isAnthropic1MEffectivelyEnabled(
   modelString: string,
@@ -146,8 +146,8 @@ export function isAnthropic1MEffectivelyEnabled(
 }
 
 /**
- * Preserve Anthropic 1M intent across routed follow-ups only when the source request
- * had effective 1M enabled and the target model is also eligible.
+ * Preserve Anthropic 1M beta intent across routed follow-ups only when the source request
+ * had effective beta 1M enabled and the target model is also beta-eligible.
  */
 export function preserveAnthropic1MContextForFollowUp(
   sourceModelString: string,
