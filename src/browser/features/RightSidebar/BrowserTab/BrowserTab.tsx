@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   Camera,
@@ -64,6 +64,73 @@ const ACTION_ICONS: Record<BrowserAction["type"], LucideIcon> = {
   custom: Sparkles,
 };
 
+interface AutoStartGateState {
+  attempted: boolean;
+  manuallyStopped: boolean;
+}
+
+// BrowserTab unmounts when users switch sidebar tabs, so the auto-start and manual-stop
+// gates must outlive a single component instance to avoid surprise restarts on remount.
+const autoStartStateByWorkspace = new Map<string, AutoStartGateState>();
+
+function getAutoStartState(workspaceId: string): AutoStartGateState {
+  const existingState = autoStartStateByWorkspace.get(workspaceId);
+  if (existingState != null) {
+    return existingState;
+  }
+
+  const initialState: AutoStartGateState = {
+    attempted: false,
+    manuallyStopped: false,
+  };
+  autoStartStateByWorkspace.set(workspaceId, initialState);
+  return initialState;
+}
+
+type BrowserSessionClient = NonNullable<ReturnType<typeof useAPI>["api"]>["browserSession"];
+
+function getSessionErrorMessage(sessionError: unknown, fallbackMessage: string): string {
+  return sessionError instanceof Error ? sessionError.message : fallbackMessage;
+}
+
+function startBrowserSession(args: {
+  browserSessionApi: BrowserSessionClient | null;
+  workspaceId: string;
+  ownership: Extract<BrowserSession["ownership"], "agent" | "user">;
+  startingSession: boolean;
+  stoppingSession: boolean;
+  setStartingSession: (value: boolean) => void;
+  setStartError: (value: string | null) => void;
+  shouldIgnore?: () => boolean;
+}) {
+  if (args.browserSessionApi == null || args.startingSession || args.stoppingSession) {
+    return;
+  }
+
+  args.setStartingSession(true);
+  args.setStartError(null);
+
+  args.browserSessionApi
+    .start({
+      workspaceId: args.workspaceId,
+      ownership: args.ownership,
+    })
+    .catch((sessionError: unknown) => {
+      if (args.shouldIgnore?.() === true) {
+        return;
+      }
+
+      args.setStartError(getSessionErrorMessage(sessionError, "Failed to start session"));
+    })
+    .finally(() => {
+      if (args.shouldIgnore?.() === true) {
+        return;
+      }
+
+      args.setStartingSession(false);
+    });
+}
+
 export function BrowserTab(props: BrowserTabProps) {
   if (props.workspaceId.trim().length === 0) {
     throw new Error("Browser tab requires a workspaceId");
@@ -74,6 +141,8 @@ export function BrowserTab(props: BrowserTabProps) {
   const [startingSession, setStartingSession] = useState(false);
   const [stoppingSession, setStoppingSession] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const autoStartState = getAutoStartState(props.workspaceId);
+  const browserSessionApi = api?.browserSession ?? null;
 
   const isStarting = startingSession || session?.status === "starting";
   const screenshotSrc = session?.lastScreenshotBase64
@@ -101,43 +170,80 @@ export function BrowserTab(props: BrowserTabProps) {
       ? STATUS_BADGES.starting
       : null;
 
-  const handleStartSession = () => {
-    if (!api || startingSession) {
+  // This effect syncs the Browser tab with the external browser-session service by
+  // issuing a single agent-owned attach/start request when no session exists yet.
+  useEffect(() => {
+    if (
+      browserSessionApi == null ||
+      session != null ||
+      error != null ||
+      startError != null ||
+      startingSession ||
+      stoppingSession ||
+      autoStartState.attempted ||
+      autoStartState.manuallyStopped
+    ) {
       return;
     }
 
-    setStartingSession(true);
-    setStartError(null);
+    autoStartState.attempted = true;
 
-    api.browserSession
-      .start({
-        workspaceId: props.workspaceId,
-        ownership: "user",
-      })
-      .catch((sessionError: unknown) => {
-        setStartError(
-          sessionError instanceof Error ? sessionError.message : "Failed to start session"
-        );
-      })
-      .finally(() => {
-        setStartingSession(false);
-      });
+    let ignore = false;
+    startBrowserSession({
+      browserSessionApi,
+      workspaceId: props.workspaceId,
+      ownership: "agent",
+      startingSession,
+      stoppingSession,
+      setStartingSession,
+      setStartError,
+      shouldIgnore: () => ignore,
+    });
+
+    return () => {
+      ignore = true;
+    };
+  }, [
+    autoStartState,
+    browserSessionApi,
+    error,
+    props.workspaceId,
+    session,
+    startError,
+    startingSession,
+    stoppingSession,
+  ]);
+
+  const handleStartSession = () => {
+    if (browserSessionApi == null || startingSession || stoppingSession) {
+      return;
+    }
+
+    autoStartState.manuallyStopped = false;
+    startBrowserSession({
+      browserSessionApi,
+      workspaceId: props.workspaceId,
+      ownership: "user",
+      startingSession,
+      stoppingSession,
+      setStartingSession,
+      setStartError,
+    });
   };
 
   const handleStopSession = () => {
-    if (!api || stoppingSession) {
+    if (browserSessionApi == null || stoppingSession) {
       return;
     }
 
+    autoStartState.manuallyStopped = true;
     setStoppingSession(true);
     setStartError(null);
 
-    api.browserSession
+    browserSessionApi
       .stop({ workspaceId: props.workspaceId })
       .catch((sessionError: unknown) => {
-        setStartError(
-          sessionError instanceof Error ? sessionError.message : "Failed to stop session"
-        );
+        setStartError(getSessionErrorMessage(sessionError, "Failed to stop session"));
       })
       .finally(() => {
         setStoppingSession(false);
