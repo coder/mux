@@ -5,7 +5,7 @@ description: Improve plans, analysis, and reviews by asking Mux to explore multi
 
 Best of N is triggered when you explicitly ask for it in your prompt — for example, `best of 3`, `best of 5`, or `best of 10`.
 
-Mux interprets that as a request to launch N sibling sub-agents on the same task. The parent does brief setup, waits for the child runs, then synthesizes the strongest result.
+Mux interprets that as a request to launch N sibling sub-agents on the same task. The parent does a small amount of up-front analysis to capture shared context and reduce duplicated setup, but still leaves room for the children to approach the problem independently. It then waits for the child runs and synthesizes the strongest result.
 
 Use it when you care more about answer quality than speed. In practice it often improves:
 

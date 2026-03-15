@@ -206,7 +206,8 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
     "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. " +
     "Leave n unset unless the developer explicitly asks for best-of-n work, and only use it for sub-agents without interfering side effects (for example read-only agents like explore). " +
-    "\n\nWhen the user explicitly asks for best-of-n work, the parent should do only brief setup work (for example clarifying the launch prompt, evaluation criteria, or task split) and then delegate the substantive analysis to the spawned sub-agents. " +
+    "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
+    "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
     "Do not also do a full parallel analysis in the parent. After spawning a best-of batch, the next step should usually be task_await so you can synthesize from the child reports. " +
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +

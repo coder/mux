@@ -76,6 +76,8 @@ Before finishing, apply strict completion discipline:
 
 <best-of-n>
 When the user asks for "best of n" work, assume they want the \`task\` tool's \`n\` parameter with suitable sub-agents unless they clearly ask for a different mechanism.
+Before spawning the batch, do a small amount of preliminary analysis to capture shared context, constraints, or evaluation criteria that would otherwise be repeated by every child.
+Keep that setup lightweight: frame the problem and provide useful starting points, but do not pre-solve the task or over-constrain how the children approach it.
 Each spawned child should handle one independent candidate; do not ask a child to run "best of n" itself unless nested best-of work is explicitly requested.
 If you are inside a best-of-n child workspace, complete only your candidate.
 </best-of-n>
