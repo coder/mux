@@ -4,6 +4,8 @@ process.umask(0o077);
 
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 // Fix PATH on macOS when launched from Finder (not terminal).
 // GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.
@@ -17,6 +19,32 @@ if (process.platform === "darwin") {
     console.debug("[fix-path] Failed to enrich PATH:", e);
   }
 }
+
+function materializeVendoredBinWrappers(): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { generateAgentBrowserWrapper } = require("@/node/services/agentBrowserLauncher") as typeof import("@/node/services/agentBrowserLauncher");
+    const { dir, posixContent, windowsContent } = generateAgentBrowserWrapper();
+
+    fs.mkdirSync(dir, { recursive: true });
+
+    const wrapperPath =
+      process.platform === "win32" ? path.join(dir, "agent-browser.cmd") : path.join(dir, "agent-browser");
+    fs.writeFileSync(wrapperPath, process.platform === "win32" ? windowsContent : posixContent);
+
+    if (process.platform !== "win32") {
+      fs.chmodSync(wrapperPath, 0o755);
+    }
+
+    process.env.MUX_VENDORED_BIN_DIR = dir;
+    process.env.PATH = process.env.PATH ? `${dir}${path.delimiter}${process.env.PATH}` : dir;
+  } catch (error) {
+    // Startup initialization must never crash the app.
+    console.debug("[vendored-bin] Failed to materialize agent-browser wrapper:", error);
+  }
+}
+
+materializeVendoredBinWrappers();
 
 import { randomBytes } from "crypto";
 import { RPCHandler } from "@orpc/server/message-port";
@@ -52,8 +80,6 @@ crashReporter.start({ uploadToServer: false });
 // Must be called before app.whenReady().
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 
-import * as fs from "fs";
-import * as path from "path";
 import type { Config } from "../node/config";
 import type { ServiceContainer } from "../node/services/serviceContainer";
 import { VERSION } from "../version";
