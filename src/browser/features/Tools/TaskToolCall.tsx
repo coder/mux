@@ -99,7 +99,7 @@ const TaskStatusBadge: React.FC<{
     }
   };
 
-  const label = status === "awaiting_report" ? "finalizing" : status;
+  const label = status === "awaiting_report" ? "awaiting report" : status;
 
   return (
     <span

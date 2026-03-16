@@ -5874,11 +5874,6 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    // Simulate the "second attempt" state (the task was already reminded).
-    (taskService as unknown as { remindedAwaitingReport: Set<string> }).remindedAwaitingReport.add(
-      childId
-    );
-
     const parentPartial = createMuxMessage(
       "assistant-parent-partial",
       "assistant",
@@ -6115,7 +6110,7 @@ describe("TaskService", () => {
     }
   });
 
-  test("missing agent_report triggers one reminder, then posts fallback output and cleans up", async () => {
+  test("missing agent_report keeps the task awaiting_report and retries with agent_report-only prompts", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6151,8 +6146,8 @@ describe("TaskService", () => {
       await removeWorkspaceFromTestConfig(config, workspaceId);
       return Ok(undefined);
     });
-    const { workspaceService, sendMessage, emit } = createWorkspaceServiceMocks({ remove });
-    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({ remove });
+    const { partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
       workspaceService,
     });
@@ -6175,15 +6170,6 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
-    const assistantOutput = createMuxMessage(
-      "assistant-child-output",
-      "assistant",
-      "Final output without agent_report",
-      { timestamp: Date.now() }
-    );
-    const appendChildHistory = await historyService.appendToHistory(childId, assistantOutput);
-    expect(appendChildHistory.success).toBe(true);
-
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
@@ -6195,13 +6181,6 @@ describe("TaskService", () => {
       metadata: { model: "openai:gpt-4o-mini" },
       parts: [],
     });
-    expect(sendMessage).toHaveBeenCalled();
-
-    const midCfg = config.loadConfigOrDefault();
-    const midWs = Array.from(midCfg.projects.values())
-      .flatMap((p) => p.workspaces)
-      .find((w) => w.id === childId);
-    expect(midWs?.taskStatus).toBe("awaiting_report");
 
     await internal.handleStreamEnd({
       type: "stream-end",
@@ -6211,17 +6190,31 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    const emitCalls = (emit as unknown as { mock: { calls: Array<[string, unknown]> } }).mock.calls;
-    const metadataEmitsForChild = emitCalls.filter((call) => {
-      const [eventName, payload] = call;
-      if (eventName !== "metadata") return false;
-      if (!payload || typeof payload !== "object") return false;
-      const maybePayload = payload as { workspaceId?: unknown };
-      return maybePayload.workspaceId === childId;
-    });
-    expect(metadataEmitsForChild).toHaveLength(2);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      childId,
+      expect.stringContaining("Your stream ended without calling agent_report"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      childId,
+      expect.stringContaining("Do not continue investigating or call other tools"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
 
-    await collectFullHistory(historyService, parentId);
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("awaiting_report");
 
     const updatedParentPartial = await partialService.readPartial(parentId);
     expect(updatedParentPartial).not.toBeNull();
@@ -6240,26 +6233,13 @@ describe("TaskService", () => {
           }
         | undefined;
       expect(toolPart?.toolName).toBe("task");
-      expect(toolPart?.state).toBe("output-available");
-      expect(JSON.stringify(toolPart?.output)).toContain("Final output without agent_report");
-      expect(JSON.stringify(toolPart?.output)).toContain("fallback");
+      expect(toolPart?.state).toBe("input-available");
+      expect(toolPart?.output).toBeUndefined();
     }
 
-    const postCfg = config.loadConfigOrDefault();
-    const ws = Array.from(postCfg.projects.values())
-      .flatMap((p) => p.workspaces)
-      .find((w) => w.id === childId);
-    expect(ws).toBeUndefined();
-
-    expect(remove).toHaveBeenCalledTimes(1);
-    expect(remove).toHaveBeenCalledWith(childId, true);
-    // Parent auto-resume now uses sendMessage instead of resumeStream
-    expect(sendMessage).toHaveBeenCalledWith(
-      parentId,
-      expect.stringContaining("sub-agent task(s) have completed"),
-      expect.any(Object),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   test("parent stream-end rechecks cleanup for reported best-of children", async () => {
@@ -7513,7 +7493,7 @@ describe("TaskService", () => {
     expect(updatedTask?.taskStatus).toBe("awaiting_report");
   });
 
-  test("awaiting_report tasks fall back with a clear error report after repeated recovery failures", async () => {
+  test("awaiting_report tasks keep retrying agent_report after recovery errors instead of fabricating fallback reports", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -7544,32 +7524,8 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
     });
 
-    const { historyService, taskService } = createTaskServiceHarness(config);
-
-    await historyService.appendToHistory(childId, {
-      id: "assistant-history",
-      role: "assistant",
-      metadata: {
-        historySequence: 0,
-        timestamp: Date.now() - 1000,
-        model: "openai:gpt-5.4-pro",
-      },
-      parts: [{ type: "text", text: "Recovered assistant output from the earlier attempt." }],
-    });
-
-    await historyService.writePartial(childId, {
-      id: "assistant-partial",
-      role: "assistant",
-      metadata: {
-        historySequence: 1,
-        timestamp: Date.now(),
-        partial: true,
-        error: "The model ended the stream before producing any assistant-visible output.",
-        errorType: "empty_output",
-      },
-      // History replay loads raw JSON; malformed entries must not break fallback reporting.
-      parts: [null as unknown as MuxMessage["parts"][number]],
-    });
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -7594,14 +7550,36 @@ describe("TaskService", () => {
       });
     }
 
-    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
-    expect(report?.title).toBe("Subagent (explore) report (error fallback)");
-    expect(report?.reportMarkdown).toContain("Mux auto-recovery note");
-    expect(report?.reportMarkdown).toContain("Last error type: `empty_output`");
-    expect(report?.reportMarkdown).toContain(
-      "Recovered assistant output from the earlier attempt."
+    expect(sendMessage).toHaveBeenCalledTimes(4);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      childId,
+      expect.stringContaining("Your stream ended without calling agent_report"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
-    expect(report?.reportMarkdown).not.toContain("(No final assistant text was recovered.)");
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      childId,
+      expect.stringContaining(
+        "The previous agent_report attempt failed (last error: empty_output)"
+      ),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report).toBeNull();
+
+    const postCfg = config.loadConfigOrDefault();
+    const childWorkspace = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childWorkspace?.taskStatus).toBe("awaiting_report");
   });
 
   test("stream-end with propose_plan success in auto routing falls back to exec when plan content is unavailable", async () => {
