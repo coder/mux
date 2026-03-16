@@ -103,6 +103,127 @@ function extractCliString(data: unknown, field: string): string | null {
   return null;
 }
 
+type RawCliResult = { ok: true; stdout: string; stderr: string } | { ok: false; error: string };
+
+function isMissingBrowserSessionError(error: string): boolean {
+  return /session not found|no session/i.test(error);
+}
+
+function formatCliCommandFailure(
+  stderr: string,
+  code: number | null,
+  signal: NodeJS.Signals | null
+): string {
+  return (
+    stderr.trim() ||
+    (signal !== null
+      ? `CLI command exited via signal ${signal}`
+      : `CLI command failed with exit code ${code ?? "unknown"}`)
+  );
+}
+
+async function runAgentBrowserCliCommand(
+  sessionId: string,
+  args: string[],
+  timeoutMs = CLI_TIMEOUT_MS,
+  options?: { inFlightProcesses?: Set<ChildProcess> }
+): Promise<RawCliResult> {
+  assert(sessionId.trim().length > 0, "runAgentBrowserCliCommand requires a non-empty sessionId");
+  assert(args.length > 0, "runAgentBrowserCliCommand requires at least one CLI arg");
+
+  let agentBrowserBinary: string;
+  try {
+    agentBrowserBinary = resolveAgentBrowserBinary();
+  } catch (error) {
+    const launcherError = getAgentBrowserLauncherError(error);
+    if (launcherError !== null) {
+      return { ok: false, error: launcherError };
+    }
+    throw error;
+  }
+
+  const childProcess = spawn(agentBrowserBinary, ["--json", "--session", sessionId, ...args], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  const disposableProcess = new DisposableProcess(childProcess);
+  options?.inFlightProcesses?.add(childProcess);
+
+  return await new Promise<RawCliResult>((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const finish = (result: RawCliResult): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeoutId);
+      options?.inFlightProcesses?.delete(childProcess);
+      resolve(result);
+    };
+
+    const timeoutId = setTimeout(() => {
+      disposableProcess[Symbol.dispose]();
+      finish({ ok: false, error: `CLI command timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
+
+    childProcess.stdout?.setEncoding("utf8");
+    childProcess.stderr?.setEncoding("utf8");
+    childProcess.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    childProcess.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    childProcess.on("error", (error) => {
+      const spawnError = error as NodeJS.ErrnoException;
+      disposableProcess[Symbol.dispose]();
+      finish({
+        ok: false,
+        error: spawnError.code === "ENOENT" ? MISSING_BROWSER_BINARY_ERROR : error.message,
+      });
+    });
+
+    childProcess.on("close", (code, signal) => {
+      if (settled) {
+        return;
+      }
+
+      if (code !== 0 || signal !== null) {
+        finish({ ok: false, error: formatCliCommandFailure(stderr, code, signal) });
+        return;
+      }
+
+      finish({ ok: true, stdout, stderr });
+    });
+  });
+}
+
+export async function closeAgentBrowserSession(
+  sessionId: string,
+  timeoutMs = CLI_TIMEOUT_MS
+): Promise<{ success: boolean; error?: string }> {
+  assert(sessionId.trim().length > 0, "closeAgentBrowserSession requires a non-empty sessionId");
+
+  try {
+    const result = await runAgentBrowserCliCommand(sessionId, ["close"], timeoutMs);
+    if (result.ok || isMissingBrowserSessionError(result.error)) {
+      return { success: true };
+    }
+
+    return { success: false, error: result.error };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export class BrowserSessionBackend {
   private sessionId: string;
   private session: BrowserSession;
@@ -392,108 +513,32 @@ export class BrowserSessionBackend {
   }
 
   private async runCliCommand(args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliResult> {
-    let agentBrowserBinary: string;
-    try {
-      agentBrowserBinary = resolveAgentBrowserBinary();
-    } catch (error) {
-      const launcherError = getAgentBrowserLauncherError(error);
-      if (launcherError !== null) {
-        return { ok: false, error: launcherError };
-      }
-      throw error;
+    const result = await runAgentBrowserCliCommand(this.sessionId, args, timeoutMs, {
+      inFlightProcesses: this.inFlightProcesses,
+    });
+    if (!result.ok) {
+      return result;
     }
 
-    const childProcess = spawn(
-      agentBrowserBinary,
-      ["--json", "--session", this.sessionId, ...args],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      }
-    );
-    const disposableProcess = new DisposableProcess(childProcess);
-    this.inFlightProcesses.add(childProcess);
+    const trimmedStdout = result.stdout.trim();
+    if (trimmedStdout.length === 0) {
+      return { ok: false, error: "Unexpected CLI output" };
+    }
 
-    return await new Promise<CliResult>((resolve) => {
-      let stdout = "";
-      let stderr = "";
-      let settled = false;
+    let parsedOutput: unknown;
+    try {
+      parsedOutput = JSON.parse(trimmedStdout);
+    } catch {
+      return { ok: false, error: "Unexpected CLI output" };
+    }
 
-      const finish = (result: CliResult): void => {
-        if (settled) {
-          return;
-        }
+    if (isRecord(parsedOutput) && parsedOutput.success === false) {
+      const cliError =
+        typeof parsedOutput.error === "string" ? parsedOutput.error : "Unexpected CLI output";
+      return { ok: false, error: cliError };
+    }
 
-        settled = true;
-        clearTimeout(timeoutId);
-        this.inFlightProcesses.delete(childProcess);
-        resolve(result);
-      };
-
-      const timeoutId = setTimeout(() => {
-        disposableProcess[Symbol.dispose]();
-        finish({ ok: false, error: `CLI command timed out after ${timeoutMs}ms` });
-      }, timeoutMs);
-
-      childProcess.stdout?.setEncoding("utf8");
-      childProcess.stderr?.setEncoding("utf8");
-      childProcess.stdout?.on("data", (chunk: string) => {
-        stdout += chunk;
-      });
-      childProcess.stderr?.on("data", (chunk: string) => {
-        stderr += chunk;
-      });
-
-      childProcess.on("error", (error) => {
-        const spawnError = error as NodeJS.ErrnoException;
-        disposableProcess[Symbol.dispose]();
-        finish({
-          ok: false,
-          error: spawnError.code === "ENOENT" ? MISSING_BROWSER_BINARY_ERROR : error.message,
-        });
-      });
-
-      childProcess.on("close", (code, signal) => {
-        if (settled) {
-          return;
-        }
-
-        if (code !== 0 || signal !== null) {
-          finish({
-            ok: false,
-            error:
-              stderr.trim() ||
-              (signal !== null
-                ? `CLI command exited via signal ${signal}`
-                : `CLI command failed with exit code ${code ?? "unknown"}`),
-          });
-          return;
-        }
-
-        const trimmedStdout = stdout.trim();
-        if (trimmedStdout.length === 0) {
-          finish({ ok: false, error: "Unexpected CLI output" });
-          return;
-        }
-
-        let parsedOutput: unknown;
-        try {
-          parsedOutput = JSON.parse(trimmedStdout);
-        } catch {
-          finish({ ok: false, error: "Unexpected CLI output" });
-          return;
-        }
-
-        if (isRecord(parsedOutput) && parsedOutput.success === false) {
-          const cliError =
-            typeof parsedOutput.error === "string" ? parsedOutput.error : "Unexpected CLI output";
-          finish({ ok: false, error: cliError });
-          return;
-        }
-
-        finish({ ok: true, data: parsedOutput });
-      });
-    });
+    return { ok: true, data: parsedOutput };
   }
 
   private async convertScreenshot(pngPath: string): Promise<string> {
