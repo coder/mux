@@ -45,6 +45,7 @@ mock.module("child_process", () => ({ spawn: mockSpawn }));
 
 import type { ChildProcess } from "child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { closeAgentBrowserSession } from "@/node/services/browserSessionBackend";
 
 type MockReadableStream = PassThrough & {
