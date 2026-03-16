@@ -1,6 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
 
-import type { BrowserFrameMetadata, BrowserSession } from "@/common/types/browserSession";
+import WebSocket from "ws";
+import type {
+  BrowserFrameMetadata,
+  BrowserInputEvent,
+  BrowserSession,
+} from "@/common/types/browserSession";
 import {
   BrowserSessionBackend,
   type BrowserSessionBackendOptions,
@@ -41,6 +46,31 @@ function handleStreamMessage(backend: BrowserSessionBackend, payload: unknown): 
   ) => void;
   handler.call(backend, Buffer.from(JSON.stringify(payload), "utf8"));
 }
+
+function setStreamSocket(
+  backend: BrowserSessionBackend,
+  socket: { readyState: number; send: (data: string) => void }
+): void {
+  Reflect.set(backend, "streamSocket", socket as unknown as WebSocket);
+}
+
+const viewportMetadata: BrowserFrameMetadata = {
+  deviceWidth: 1280,
+  deviceHeight: 720,
+  pageScaleFactor: 1,
+  offsetTop: 0,
+  scrollOffsetX: 0,
+  scrollOffsetY: 0,
+};
+
+const mouseClickInput: BrowserInputEvent = {
+  kind: "mouse",
+  eventType: "mousePressed",
+  x: 100,
+  y: 200,
+  button: "left",
+  clickCount: 1,
+};
 
 describe("BrowserSessionBackend", () => {
   test("reuses the deterministic mux session id", () => {
@@ -278,5 +308,133 @@ describe("BrowserSessionBackend", () => {
 
     expect(streamingSession.streamState).not.toBe("fallback");
     expect(streamingFallbackRefresh).not.toHaveBeenCalled();
+  });
+
+  test("rejects input when the session is not live", () => {
+    const backend = createBackend();
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "starting",
+      streamState: "live",
+      ownership: "shared",
+      lastFrameMetadata: viewportMetadata,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput(mouseClickInput);
+
+    expect(result).toEqual({ success: false, error: "Session is not live" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("rejects input when ownership is agent", () => {
+    const backend = createBackend({ ownership: "agent" });
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      ownership: "agent",
+      lastFrameMetadata: viewportMetadata,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput(mouseClickInput);
+
+    expect(result).toEqual({ success: false, error: "Cannot send input to agent-owned session" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("rejects input when the stream is not live", () => {
+    const backend = createBackend();
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "live",
+      streamState: "connecting",
+      ownership: "shared",
+      lastFrameMetadata: viewportMetadata,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput(mouseClickInput);
+
+    expect(result).toEqual({ success: false, error: "Stream is not live (state: connecting)" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("rejects input when frame metadata is unavailable", () => {
+    const backend = createBackend();
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      ownership: "shared",
+      lastFrameMetadata: null,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput(mouseClickInput);
+
+    expect(result).toEqual({ success: false, error: "No frame metadata available" });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test("sends mapped input over the live stream socket", () => {
+    const backend = createBackend();
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      ownership: "shared",
+      lastFrameMetadata: viewportMetadata,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput(mouseClickInput);
+
+    expect(result).toEqual({ success: true });
+    expect(send).toHaveBeenCalledTimes(1);
+    const firstCall = Reflect.get(send.mock.calls, "0") as string[] | undefined;
+    const sentMessage = firstCall?.[0];
+    expect(JSON.parse(sentMessage ?? "{}")).toEqual({
+      type: "input_mouse",
+      eventType: "mousePressed",
+      x: 100,
+      y: 200,
+      button: "left",
+      clickCount: 1,
+    });
+  });
+
+  test("clamps mouse coordinates to the viewport before sending", () => {
+    const backend = createBackend();
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      ownership: "shared",
+      lastFrameMetadata: {
+        ...viewportMetadata,
+        deviceWidth: 640,
+        deviceHeight: 480,
+      },
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput({
+      kind: "mouse",
+      eventType: "mouseMoved",
+      x: 999,
+      y: -25,
+    });
+
+    expect(result).toEqual({ success: true });
+    const firstCall = Reflect.get(send.mock.calls, "0") as string[] | undefined;
+    const sentMessage = firstCall?.[0];
+    expect(JSON.parse(sentMessage ?? "{}")).toEqual({
+      type: "input_mouse",
+      eventType: "mouseMoved",
+      x: 640,
+      y: 0,
+    });
   });
 });

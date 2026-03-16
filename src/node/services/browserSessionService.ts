@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "events";
 import type {
   BrowserAction,
+  BrowserInputEvent,
   BrowserSession,
   BrowserSessionEvent,
 } from "@/common/types/browserSession";
@@ -38,7 +40,8 @@ export class BrowserSessionService extends EventEmitter {
   constructor(options?: BrowserSessionServiceOptions) {
     super();
     this.streamPortRegistry = options?.streamPortRegistry ?? null;
-    this.createBackend = options?.createBackend ?? ((backendOptions) => new BrowserSessionBackend(backendOptions));
+    this.createBackend =
+      options?.createBackend ?? ((backendOptions) => new BrowserSessionBackend(backendOptions));
   }
 
   getActiveSession(workspaceId: string): BrowserSession | null {
@@ -167,6 +170,22 @@ export class BrowserSessionService extends EventEmitter {
     this.releaseWorkspaceResources(workspaceId);
   }
 
+  sendInput(workspaceId: string, input: BrowserInputEvent): { success: boolean; error?: string } {
+    assert(workspaceId.trim().length > 0, "BrowserSessionService.sendInput requires a workspaceId");
+
+    const backend = this.activeBackends.get(workspaceId);
+    if (backend == null) {
+      return { success: false, error: "No active session for workspace" };
+    }
+
+    const result = backend.sendInput(input);
+    if (result.success) {
+      this.logInputAction(workspaceId, input);
+    }
+
+    return result;
+  }
+
   getRecentActions(workspaceId: string): BrowserAction[] {
     assert(
       workspaceId.trim().length > 0,
@@ -210,6 +229,51 @@ export class BrowserSessionService extends EventEmitter {
     if (actions.length > MAX_RECENT_ACTIONS) {
       actions.shift();
     }
+  }
+
+  private logInputAction(workspaceId: string, input: BrowserInputEvent): void {
+    let actionType: BrowserAction["type"];
+    let description: string;
+
+    switch (input.kind) {
+      case "mouse":
+        if (input.eventType === "mousePressed") {
+          actionType = "click";
+          description = `Clicked at (${Math.round(input.x)}, ${Math.round(input.y)})`;
+        } else if (input.eventType === "mouseWheel") {
+          actionType = "custom";
+          description = `Scrolled (${input.deltaX ?? 0}, ${input.deltaY ?? 0})`;
+        } else {
+          return;
+        }
+        break;
+      case "keyboard":
+        return;
+      case "touch": {
+        if (input.eventType !== "touchStart") {
+          return;
+        }
+
+        const point = input.touchPoints[0];
+        if (point == null) {
+          return;
+        }
+
+        actionType = "click";
+        description = `Tapped at (${Math.round(point.x)}, ${Math.round(point.y)})`;
+        break;
+      }
+    }
+
+    const action: BrowserAction = {
+      id: `browser-action-${randomUUID().slice(0, 8)}`,
+      type: actionType,
+      description,
+      timestamp: new Date().toISOString(),
+      metadata: { source: "user-input" },
+    };
+    this.appendAction(workspaceId, action);
+    this.emitEvent(workspaceId, { type: "action", action });
   }
 
   private async cleanupWorkspace(workspaceId: string): Promise<void> {

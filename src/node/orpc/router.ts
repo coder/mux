@@ -1099,6 +1099,12 @@ export const router = (authToken?: string) => {
           await context.browserSessionService.stopSession(input.workspaceId);
           return { success: true };
         }),
+      sendInput: t
+        .input(schemas.browserSession.sendInput.input)
+        .output(schemas.browserSession.sendInput.output)
+        .handler(({ context, input }) => {
+          return context.browserSessionService.sendInput(input.workspaceId, input.input);
+        }),
       subscribe: t
         .input(schemas.browserSession.subscribe.input)
         .output(schemas.browserSession.subscribe.output)

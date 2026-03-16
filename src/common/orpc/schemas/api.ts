@@ -2071,6 +2071,7 @@ export const browserSession = {
       .strict(),
     output: z.object({
       success: z.boolean(),
+      error: z.string().nullish(),
     }),
   },
   subscribe: {

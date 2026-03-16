@@ -7,6 +7,7 @@ import WebSocket, { type RawData } from "ws";
 import type {
   BrowserAction,
   BrowserFrameMetadata,
+  BrowserInputEvent,
   BrowserSession,
   BrowserSessionOwnership,
   BrowserStreamState,
@@ -514,6 +515,34 @@ export class BrowserSessionBackend {
     this.options.onEnded(this.options.workspaceId);
   }
 
+  sendInput(input: BrowserInputEvent): { success: boolean; error?: string } {
+    if (this.session.status !== "live") {
+      return { success: false, error: "Session is not live" };
+    }
+
+    if (this.session.streamState !== "live") {
+      return {
+        success: false,
+        error: `Stream is not live (state: ${String(this.session.streamState)})`,
+      };
+    }
+
+    if (this.session.ownership === "agent") {
+      return { success: false, error: "Cannot send input to agent-owned session" };
+    }
+
+    if (this.streamSocket == null || this.streamSocket.readyState !== WebSocket.OPEN) {
+      return { success: false, error: "Stream socket is not connected" };
+    }
+
+    if (this.session.lastFrameMetadata == null) {
+      return { success: false, error: "No frame metadata available" };
+    }
+
+    this.streamSocket.send(JSON.stringify(this.mapInputToProtocol(input)));
+    return { success: true };
+  }
+
   dispose(): void {
     if (this.disposed) {
       return;
@@ -606,6 +635,47 @@ export class BrowserSessionBackend {
       },
     };
     this.options.onAction(action);
+  }
+
+  private mapInputToProtocol(input: BrowserInputEvent): Record<string, unknown> {
+    switch (input.kind) {
+      case "mouse": {
+        const metadata = this.session.lastFrameMetadata;
+        assert(
+          metadata !== null,
+          "BrowserSessionBackend requires frame metadata to map mouse input"
+        );
+        const x = Math.max(0, Math.min(input.x, metadata.deviceWidth));
+        const y = Math.max(0, Math.min(input.y, metadata.deviceHeight));
+        return {
+          type: "input_mouse",
+          eventType: input.eventType,
+          x,
+          y,
+          ...(input.button != null ? { button: input.button } : {}),
+          ...(input.clickCount != null ? { clickCount: input.clickCount } : {}),
+          ...(input.deltaX != null ? { deltaX: input.deltaX } : {}),
+          ...(input.deltaY != null ? { deltaY: input.deltaY } : {}),
+          ...(input.modifiers != null ? { modifiers: input.modifiers } : {}),
+        };
+      }
+      case "keyboard":
+        return {
+          type: "input_keyboard",
+          eventType: input.eventType,
+          ...(input.key != null ? { key: input.key } : {}),
+          ...(input.code != null ? { code: input.code } : {}),
+          ...(input.text != null ? { text: input.text } : {}),
+          ...(input.modifiers != null ? { modifiers: input.modifiers } : {}),
+        };
+      case "touch":
+        return {
+          type: "input_touch",
+          eventType: input.eventType,
+          touchPoints: input.touchPoints,
+          ...(input.modifiers != null ? { modifiers: input.modifiers } : {}),
+        };
+    }
   }
 
   private async startStreamTransport(): Promise<StreamStartupMode> {
