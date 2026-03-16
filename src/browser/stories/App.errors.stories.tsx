@@ -550,59 +550,33 @@ export const ProjectRemovalDisabled: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    const removeButton = await waitFor(() => {
+    const projectOptionsButton = await waitFor(() => {
       const button = canvasElement.querySelector<HTMLButtonElement>(
-        'button[aria-label="Remove project my-app"]'
+        'button[aria-label="Project options for my-app"]'
       );
-      if (!button) throw new Error("Remove button not found");
+      if (!button) throw new Error("Project options button not found");
       return button;
     });
 
-    // Hover the project row so action icons become visible.
-    const projectRow =
-      removeButton.closest<HTMLElement>("[aria-controls]") ??
-      canvasElement.querySelector<HTMLElement>(
-        '[role="button"][aria-label="Create workspace in my-app"]'
-      );
-    if (!projectRow) throw new Error("Project row not found");
+    await userEvent.click(projectOptionsButton);
 
-    // Make project action affordances deterministic in this story capture.
-    const secretsButton = canvasElement.querySelector<HTMLButtonElement>(
-      'button[aria-label="Manage secrets for my-app"]'
-    );
-    if (secretsButton) {
-      secretsButton.style.opacity = "1";
-    }
-    removeButton.style.opacity = "1";
-
-    await userEvent.hover(projectRow);
-
-    // Hover the remove trigger so tooltip appears.
-    await userEvent.hover(removeButton);
-
-    // Tooltip should always say "Remove project" now (no blocker text).
-    await waitFor(
-      () => {
-        const tooltip = document.querySelector('[role="tooltip"]');
-        if (!tooltip) throw new Error("Tooltip not visible");
-        if (!tooltip.textContent?.includes("Remove project")) {
-          throw new Error("Expected 'Remove project' tooltip text");
-        }
-      },
-      { interval: 50 }
-    );
-
-    // Button should NOT be aria-disabled — it's always enabled now.
     await waitFor(() => {
-      if (removeButton.getAttribute("aria-disabled") === "true") {
-        throw new Error("Remove button should not be aria-disabled");
-      }
+      const menuIsVisible = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).some(
+        (button) => button.textContent?.trim() === "Delete..."
+      );
+      if (!menuIsVisible) throw new Error("Project options menu did not open");
     });
 
-    // Click the remove button — should open the confirmation modal.
-    await userEvent.click(removeButton);
+    const deleteMenuItem = await waitFor(() => {
+      const button = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (candidate) => candidate.textContent?.trim() === "Delete..."
+      );
+      if (!button) throw new Error("Delete menu item not found");
+      return button;
+    });
 
-    // Verify the confirmation modal appears.
+    await userEvent.click(deleteMenuItem);
+
     await waitFor(
       () => {
         const dialog = document.querySelector('[role="dialog"]');
