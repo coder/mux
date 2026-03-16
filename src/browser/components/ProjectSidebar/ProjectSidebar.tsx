@@ -1078,7 +1078,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         return;
       }
 
-      const projectName = getProjectNameFromPath(projectPath);
+      const projectName = projectConfig.displayName ?? getProjectNameFromPath(projectPath);
       const counts = getProjectWorkspaceCounts(projectConfig.workspaces);
       const total = counts.activeCount + counts.archivedCount;
       if (total > 0) {
