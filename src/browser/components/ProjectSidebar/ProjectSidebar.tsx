@@ -1108,8 +1108,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       if (!result.success) {
         console.error("Failed to update project display name:", result.error);
       }
-      setEditingProjectPath((currentPath) => (currentPath === projectPath ? null : currentPath));
-      setEditingProjectDisplayName("");
+      setEditingProjectPath((currentPath) => {
+        if (currentPath === projectPath) {
+          setEditingProjectDisplayName("");
+          return null;
+        }
+        return currentPath;
+      });
     },
     [updateDisplayName]
   );
