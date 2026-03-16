@@ -79,30 +79,6 @@ const STREAM_STATE_BADGES: Record<BrowserStreamState, { label: string; className
   },
 };
 
-const CONTROL_MODE_BADGES: Record<
-  BrowserSession["ownership"],
-  { label: string; className: string }
-> = {
-  agent: {
-    label: "View only",
-    className: "border-border-light bg-background-secondary text-muted",
-  },
-  user: {
-    label: "Interactive",
-    className: "border-success/30 bg-success/10 text-success",
-  },
-  shared: {
-    label: "Shared control",
-    className: "border-accent/30 bg-accent/10 text-accent",
-  },
-};
-
-const OWNERSHIP_LABELS: Record<BrowserSession["ownership"], string> = {
-  agent: "Agent",
-  user: "User",
-  shared: "Shared",
-};
-
 const ACTION_ICONS: Record<BrowserAction["type"], LucideIcon> = {
   navigate: Globe,
   click: MousePointerClick,
@@ -145,7 +121,6 @@ function getSessionErrorMessage(sessionError: unknown, fallbackMessage: string):
 function startBrowserSession(args: {
   browserSessionApi: BrowserSessionClient | null;
   workspaceId: string;
-  ownership: Extract<BrowserSession["ownership"], "agent" | "user">;
   startingSession: boolean;
   stoppingSession: boolean;
   setStartingSession: (value: boolean) => void;
@@ -161,7 +136,6 @@ function startBrowserSession(args: {
   args.browserSessionApi
     .start({
       workspaceId: args.workspaceId,
-      ownership: args.ownership,
     })
     .catch((sessionError: unknown) => {
       args.setStartError(getSessionErrorMessage(sessionError, "Failed to start session"));
@@ -194,17 +168,13 @@ export function BrowserTab(props: BrowserTabProps) {
   const sessionIsActive =
     session?.status === "live" || session?.status === "starting" || session?.status === "paused";
   const streamStateBadge = session?.streamState ? STREAM_STATE_BADGES[session.streamState] : null;
-  const controlModeBadge = session ? CONTROL_MODE_BADGES[session.ownership] : null;
   const showStopButton = stoppingSession || sessionIsActive;
   const showStartButton =
     !showStopButton &&
     (session == null || session.status === "ended" || session.status === "error");
   const headerTitle = session?.title ?? session?.currentUrl ?? "Browser session";
   const headerSubtitle = session
-    ? [
-        session.currentUrl ?? "No page loaded yet",
-        `${OWNERSHIP_LABELS[session.ownership]} owned`,
-      ].join(" · ")
+    ? session.currentUrl ?? "No page loaded yet"
     : isStarting
       ? "Starting browser session…"
       : "Start a browser session to see the live frame and recent actions.";
@@ -215,7 +185,7 @@ export function BrowserTab(props: BrowserTabProps) {
       : null;
 
   // This effect syncs the Browser tab with the external browser-session service by
-  // issuing a single agent-owned attach/start request when no session exists yet.
+  // issuing a single attach/start request when no session exists yet.
   useEffect(() => {
     if (
       browserSessionApi == null ||
@@ -237,7 +207,6 @@ export function BrowserTab(props: BrowserTabProps) {
     browserSessionApi
       .start({
         workspaceId: props.workspaceId,
-        ownership: "agent",
       })
       .catch((sessionError: unknown) => {
         setStartError(getSessionErrorMessage(sessionError, "Failed to start session"));
@@ -270,7 +239,6 @@ export function BrowserTab(props: BrowserTabProps) {
     startBrowserSession({
       browserSessionApi,
       workspaceId: props.workspaceId,
-      ownership: "user",
       startingSession,
       stoppingSession,
       setStartingSession,
@@ -320,7 +288,6 @@ export function BrowserTab(props: BrowserTabProps) {
       .then(() =>
         browserSessionApi.start({
           workspaceId: props.workspaceId,
-          ownership: "user",
         })
       )
       .catch((sessionError: unknown) => {
@@ -342,7 +309,6 @@ export function BrowserTab(props: BrowserTabProps) {
             </h3>
             {statusBadge && <BrowserHeaderBadge badge={statusBadge} />}
             {streamStateBadge && <BrowserHeaderBadge badge={streamStateBadge} />}
-            {controlModeBadge && <BrowserHeaderBadge badge={controlModeBadge} />}
           </div>
           {/* Use a portal-backed tooltip to avoid clipping inside overflow-hidden sidebar panels. */}
           <Tooltip>

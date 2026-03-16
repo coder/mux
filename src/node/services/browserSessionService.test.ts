@@ -49,7 +49,6 @@ function createLiveSession(workspaceId: string): BrowserSession {
     id: `mux-${workspaceId}-abcd1234`,
     workspaceId,
     status: "live",
-    ownership: "agent",
     currentUrl: "https://example.com",
     title: "Example",
     lastScreenshotBase64: null,
@@ -90,6 +89,7 @@ describe("BrowserSessionService.startSession", () => {
     expect(createdOptions).toHaveLength(1);
     expect(createdOptions[0].streamPort).toBe(streamPortRegistry.getReservedPort(workspaceId));
     expect(createdOptions[0].initialUrl).toBe("https://example.com");
+    expect(createdOptions[0]).not.toHaveProperty("ownership");
   });
 });
 

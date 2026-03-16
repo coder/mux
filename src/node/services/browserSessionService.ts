@@ -54,7 +54,7 @@ export class BrowserSessionService extends EventEmitter {
 
   async startSession(
     workspaceId: string,
-    options?: { ownership?: "agent" | "user" | "shared" | null; initialUrl?: string | null }
+    options?: { initialUrl?: string | null }
   ): Promise<BrowserSession> {
     assert(
       workspaceId.trim().length > 0,
@@ -80,7 +80,7 @@ export class BrowserSessionService extends EventEmitter {
 
   private async startSessionInternal(
     workspaceId: string,
-    options?: { ownership?: "agent" | "user" | "shared" | null; initialUrl?: string | null }
+    options?: { initialUrl?: string | null }
   ): Promise<BrowserSession> {
     const existing = this.activeSessions.get(workspaceId);
     if (existing && (existing.status === "starting" || existing.status === "live")) {
@@ -102,7 +102,6 @@ export class BrowserSessionService extends EventEmitter {
 
     const backendOptions: BrowserSessionBackendOptions = {
       workspaceId,
-      ownership: options?.ownership ?? "agent",
       initialUrl: options?.initialUrl ?? "about:blank",
       streamPort,
       onSessionUpdate: (session) => {

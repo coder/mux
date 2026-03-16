@@ -1923,7 +1923,6 @@ export const devtools = {
 };
 
 const BrowserSessionStatusSchema = z.enum(["starting", "live", "paused", "error", "ended"]);
-const BrowserSessionOwnershipSchema = z.enum(["agent", "user", "shared"]);
 const BrowserStreamStateSchema = z.enum([
   "disconnected",
   "connecting",
@@ -1996,7 +1995,6 @@ const BrowserSessionSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   status: BrowserSessionStatusSchema,
-  ownership: BrowserSessionOwnershipSchema,
   currentUrl: z.string().nullable(),
   title: z.string().nullable(),
   lastScreenshotBase64: z.string().nullable(),
@@ -2046,7 +2044,6 @@ export const browserSession = {
     input: z
       .object({
         workspaceId: z.string(),
-        ownership: BrowserSessionOwnershipSchema.nullish(),
         initialUrl: z.string().nullish(),
       })
       .strict(),

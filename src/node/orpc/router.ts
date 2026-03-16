@@ -1088,7 +1088,6 @@ export const router = (authToken?: string) => {
         .output(schemas.browserSession.start.output)
         .handler(async ({ context, input }) => {
           return context.browserSessionService.startSession(input.workspaceId, {
-            ownership: input.ownership,
             initialUrl: input.initialUrl,
           });
         }),

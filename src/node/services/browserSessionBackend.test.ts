@@ -16,7 +16,6 @@ const noop = (): void => undefined;
 function createBackend(overrides?: Partial<BrowserSessionBackendOptions>): BrowserSessionBackend {
   return new BrowserSessionBackend({
     workspaceId: "workspace-123",
-    ownership: "shared",
     initialUrl: "https://example.com",
     onSessionUpdate: noop,
     onAction: noop,
@@ -352,7 +351,6 @@ describe("BrowserSessionBackend", () => {
     setSession(backend, {
       status: "starting",
       streamState: "live",
-      ownership: "shared",
       lastFrameMetadata: viewportMetadata,
     });
     setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
@@ -363,30 +361,12 @@ describe("BrowserSessionBackend", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  test("rejects input when ownership is agent", () => {
-    const backend = createBackend({ ownership: "agent" });
-    const send = mock(() => undefined);
-    setSession(backend, {
-      status: "live",
-      streamState: "live",
-      ownership: "agent",
-      lastFrameMetadata: viewportMetadata,
-    });
-    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
-
-    const result = backend.sendInput(mouseClickInput);
-
-    expect(result).toEqual({ success: false, error: "Cannot send input to agent-owned session" });
-    expect(send).not.toHaveBeenCalled();
-  });
-
   test("rejects input when the stream is not live", () => {
     const backend = createBackend();
     const send = mock(() => undefined);
     setSession(backend, {
       status: "live",
       streamState: "connecting",
-      ownership: "shared",
       lastFrameMetadata: viewportMetadata,
     });
     setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
@@ -403,7 +383,6 @@ describe("BrowserSessionBackend", () => {
     setSession(backend, {
       status: "live",
       streamState: "live",
-      ownership: "shared",
       lastFrameMetadata: null,
     });
     setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
@@ -420,7 +399,6 @@ describe("BrowserSessionBackend", () => {
     setSession(backend, {
       status: "live",
       streamState: "live",
-      ownership: "shared",
       lastFrameMetadata: viewportMetadata,
     });
     setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
@@ -447,7 +425,6 @@ describe("BrowserSessionBackend", () => {
     setSession(backend, {
       status: "live",
       streamState: "live",
-      ownership: "shared",
       lastFrameMetadata: {
         ...viewportMetadata,
         deviceWidth: 640,

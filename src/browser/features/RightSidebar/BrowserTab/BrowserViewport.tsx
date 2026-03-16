@@ -32,7 +32,6 @@ interface BrowserViewportProps {
 interface ViewportInteractionState {
   canInteract: boolean;
   blockingMessage: string | null;
-  sharedControlLabel: string | null;
   showRestartCta?: boolean;
 }
 
@@ -140,7 +139,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       input,
     });
     sendPromise.catch(() => {
-      // Browser session churn is expected during sidebar remounts and ownership handoffs; the
+      // Browser session churn is expected during sidebar remounts and session restarts; the
       // surrounding status UI already surfaces durable backend failures, so dropped input sends
       // should fail closed here instead of throwing in the event loop.
     });
@@ -502,13 +501,6 @@ export function BrowserViewport(props: BrowserViewportProps) {
             hasFocus && "ring-accent ring-2 ring-inset"
           )}
         />
-        {interactionState.sharedControlLabel != null && (
-          <div className="pointer-events-none absolute top-3 left-3">
-            <span className="border-accent/30 bg-accent/10 text-accent inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium">
-              {interactionState.sharedControlLabel}
-            </span>
-          </div>
-        )}
         {interactionState.blockingMessage != null && (
           <div className="absolute inset-0 flex items-center justify-center p-6">
             <div className="border-border-light bg-background/90 flex max-w-xs flex-col items-center gap-3 rounded-md border px-4 py-3 text-center shadow-lg backdrop-blur-sm">
@@ -552,15 +544,6 @@ function getViewportInteractionState(session: BrowserSession | null): ViewportIn
     return {
       canInteract: false,
       blockingMessage: null,
-      sharedControlLabel: null,
-    };
-  }
-
-  if (session.ownership === "agent") {
-    return {
-      canInteract: false,
-      blockingMessage: "View only — agent-controlled session",
-      sharedControlLabel: null,
     };
   }
 
@@ -568,7 +551,6 @@ function getViewportInteractionState(session: BrowserSession | null): ViewportIn
     return {
       canInteract: false,
       blockingMessage: null,
-      sharedControlLabel: null,
     };
   }
 
@@ -577,47 +559,40 @@ function getViewportInteractionState(session: BrowserSession | null): ViewportIn
       return {
         canInteract: false,
         blockingMessage: "Restart browser to enable live control",
-        sharedControlLabel: null,
         showRestartCta: true,
       };
     case "fallback":
       return {
         canInteract: false,
         blockingMessage: "Screenshots only — streaming unavailable",
-        sharedControlLabel: null,
       };
     case "connecting":
       return {
         canInteract: false,
         blockingMessage: "Connecting to browser stream...",
-        sharedControlLabel: null,
       };
     case "error":
       return {
         canInteract: false,
         blockingMessage: `Stream error: ${session.streamErrorMessage ?? "unknown"}`,
-        sharedControlLabel: null,
       };
     case "disconnected":
     case null:
       return {
         canInteract: false,
         blockingMessage: null,
-        sharedControlLabel: null,
       };
     case "live":
       if (session.lastFrameMetadata == null) {
         return {
           canInteract: false,
           blockingMessage: "Waiting for first frame...",
-          sharedControlLabel: null,
         };
       }
 
       return {
         canInteract: true,
         blockingMessage: null,
-        sharedControlLabel: session.ownership === "shared" ? "Shared control" : null,
       };
   }
 }

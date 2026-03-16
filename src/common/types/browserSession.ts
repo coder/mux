@@ -1,9 +1,6 @@
 // Status of a browser session lifecycle
 export type BrowserSessionStatus = "starting" | "live" | "paused" | "error" | "ended";
 
-// Who initiated/owns the session
-export type BrowserSessionOwnership = "agent" | "user" | "shared";
-
 // A single recorded browser action
 export interface BrowserAction {
   id: string;
@@ -68,7 +65,6 @@ export interface BrowserSession {
   id: string;
   workspaceId: string;
   status: BrowserSessionStatus;
-  ownership: BrowserSessionOwnership;
   currentUrl: string | null;
   title: string | null;
   lastScreenshotBase64: string | null; // JPEG base64

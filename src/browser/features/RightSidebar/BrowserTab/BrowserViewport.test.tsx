@@ -35,7 +35,6 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
     id: "session-1",
     workspaceId: "workspace-1",
     status: "live",
-    ownership: "user",
     currentUrl: "https://example.com",
     title: "Example",
     lastScreenshotBase64: "frame-data",
@@ -293,22 +292,5 @@ describe("BrowserViewport", () => {
       })
     );
     expect(waitingView.getByText("Waiting for first frame...")).toBeTruthy();
-  });
-
-  test("shows a view-only overlay and suppresses input for agent-owned sessions", () => {
-    const view = renderViewport(createSession({ ownership: "agent" }));
-    const viewport = view.getByRole("region", { name: "Browser viewport" });
-
-    fireEvent.pointerDown(viewport, {
-      pointerId: 1,
-      button: 0,
-      buttons: 1,
-      clientX: 150,
-      clientY: 100,
-    });
-
-    expect(view.getByText("View only — agent-controlled session")).toBeTruthy();
-    expect(viewport.getAttribute("tabindex")).toBe("-1");
-    expect(sendInputMock).not.toHaveBeenCalled();
   });
 });

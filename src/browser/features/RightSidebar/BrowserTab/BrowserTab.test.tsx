@@ -43,7 +43,6 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
     id: "session-1",
     workspaceId: "workspace-1",
     status: "live",
-    ownership: "shared",
     currentUrl: "https://example.com",
     title: "Example page",
     lastScreenshotBase64: null,
@@ -92,14 +91,13 @@ describe("BrowserTab recent action timestamps", () => {
     globalThis.document = originalDocument;
   });
 
-  test("shows session status, stream status, and control mode badges for live shared sessions", () => {
+  test("shows session and stream status badges for live sessions", () => {
     mockSession = createSession();
 
     const view = renderBrowserTab();
 
     expect(view.getByText("Live")).toBeTruthy();
     expect(view.getByText("Stream live")).toBeTruthy();
-    expect(view.getByText("Shared control")).toBeTruthy();
   });
 
   test("uses the custom tooltip instead of a native title attribute for valid timestamps", () => {

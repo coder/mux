@@ -9,7 +9,6 @@ import type {
   BrowserFrameMetadata,
   BrowserInputEvent,
   BrowserSession,
-  BrowserSessionOwnership,
   BrowserStreamState,
 } from "@/common/types/browserSession";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
@@ -97,7 +96,6 @@ async function getSharpFactory(): Promise<SharpFactory | null> {
 
 export interface BrowserSessionBackendOptions {
   workspaceId: string;
-  ownership: BrowserSessionOwnership;
   initialUrl: string;
   streamPort?: number | null;
   onSessionUpdate: (session: BrowserSession) => void;
@@ -532,9 +530,6 @@ export class BrowserSessionBackend {
       };
     }
 
-    if (this.session.ownership === "agent") {
-      return { success: false, error: "Cannot send input to agent-owned session" };
-    }
 
     if (this.streamSocket == null || this.streamSocket.readyState !== WebSocket.OPEN) {
       return { success: false, error: "Stream socket is not connected" };
@@ -565,7 +560,6 @@ export class BrowserSessionBackend {
       id: runId,
       workspaceId: this.options.workspaceId,
       status,
-      ownership: this.options.ownership,
       currentUrl: null,
       title: null,
       lastScreenshotBase64: null,
