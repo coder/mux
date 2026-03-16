@@ -1139,7 +1139,7 @@ describe("GitStatusStore", () => {
 
     it("keeps the single-project executeBash refresh path unchanged", async () => {
       store.dispose();
-      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      const runtimeStatusStore = createRuntimeStatusStoreMock("running");
       store = createStore(runtimeStatusStore.runtimeStatusStore);
 
       const workspaceId = "single-regression";
@@ -1175,7 +1175,8 @@ describe("GitStatusStore", () => {
       await store.updateGitStatus();
 
       expect(mockGetProjectGitStatuses).not.toHaveBeenCalled();
-      expect(mockExecuteBash).toHaveBeenCalledTimes(1);
+      const fetchCallCount = getFetchCallCount();
+      expect(mockExecuteBash).toHaveBeenCalledTimes(fetchCallCount + 1);
       expect(store.getStatus(workspaceId)).toEqual({
         branch: "single-branch",
         ahead: 2,

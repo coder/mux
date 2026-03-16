@@ -434,22 +434,6 @@ export class GitStatusStore {
         }
       }
     }
-
-    // Clear stale status for devcontainer workspaces whose runtime is no longer eligible.
-    // This ensures git indicators disappear when a runtime stops, rather than
-    // showing stale data indefinitely.
-    for (const [workspaceId, metadata] of this.workspaceMetadata) {
-      if (
-        !canRunPassiveRuntimeCommand(
-          metadata.runtimeConfig,
-          this.runtimeStatusStore.getStatus(workspaceId)
-        ) &&
-        this.statusCache.has(workspaceId)
-      ) {
-        this.statusCache.delete(workspaceId);
-        this.statuses.bump(workspaceId);
-      }
-    }
   }
 
   private getBaseRef(metadata: FrontendWorkspaceMetadata): string {
@@ -586,7 +570,7 @@ export class GitStatusStore {
           )
         );
       }
-      return [metadata.id, null];
+      return { kind: "single", workspaceId: metadata.id, status: null };
     }
 
     try {
