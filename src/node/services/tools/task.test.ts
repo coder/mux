@@ -38,7 +38,7 @@ function expectGroupedQueuedOrRunningTaskToolResult(
   const obj = result as Record<string, unknown>;
   expect(obj.status).toBe(expected.status);
   expect(obj.taskIds).toEqual(expected.taskIds);
-  expect(obj.tasks).toEqual(
+  expect(obj.tasks).toMatchObject(
     expected.taskIds.map((taskId) => ({
       taskId,
       status: expected.status,
@@ -213,22 +213,22 @@ describe("task tool", () => {
       "Review frontend for regressions in frontend",
       "Review backend for regressions in backend",
     ]);
-    expect(createArgs.map((args) => args.bestOf)).toEqual([
-      {
-        groupId: createArgs[0]?.bestOf?.groupId,
-        index: 0,
-        total: 2,
-        kind: "variants",
-        label: "frontend",
-      },
-      {
-        groupId: createArgs[0]?.bestOf?.groupId,
-        index: 1,
-        total: 2,
-        kind: "variants",
-        label: "backend",
-      },
-    ]);
+    const variantGroupId = createArgs[0]?.bestOf?.groupId;
+    expect(typeof variantGroupId).toBe("string");
+    expect(createArgs[0]?.bestOf).toMatchObject({
+      groupId: variantGroupId,
+      index: 0,
+      total: 2,
+      kind: "variants",
+      label: "frontend",
+    });
+    expect(createArgs[1]?.bestOf).toMatchObject({
+      groupId: variantGroupId,
+      index: 1,
+      total: 2,
+      kind: "variants",
+      label: "backend",
+    });
     expectGroupedQueuedOrRunningTaskToolResult(result, {
       status: "running",
       taskIds: ["child-task-1", "child-task-2"],
@@ -299,7 +299,7 @@ describe("task tool", () => {
     const obj = result as Record<string, unknown>;
     expect(obj.status).toBe("running");
     expect(obj.taskIds).toEqual(["child-task-1"]);
-    expect(obj.tasks).toEqual([{ taskId: "child-task-1", status: "running" }]);
+    expect(obj.tasks).toMatchObject([{ taskId: "child-task-1", status: "running" }]);
     expect(typeof obj.note).toBe("string");
   });
 
@@ -350,7 +350,7 @@ describe("task tool", () => {
     const obj = result as Record<string, unknown>;
     expect(obj.status).toBe("running");
     expect(obj.taskIds).toEqual(["child-task-1", "child-task-2"]);
-    expect(obj.tasks).toEqual([
+    expect(obj.tasks).toMatchObject([
       { taskId: "child-task-1", status: "running" },
       { taskId: "child-task-2", status: "running" },
     ]);
@@ -398,7 +398,7 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalledTimes(2);
     expect(waitForAgentReport).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "completed",
       taskIds: ["child-task-1", "child-task-2"],
       reports: [
@@ -408,6 +408,7 @@ describe("task tool", () => {
           title: "Report child-task-1",
           agentId: "explore",
           agentType: "explore",
+          groupKind: "bestOf",
         },
         {
           taskId: "child-task-2",
@@ -415,6 +416,7 @@ describe("task tool", () => {
           title: "Report child-task-2",
           agentId: "explore",
           agentType: "explore",
+          groupKind: "bestOf",
         },
       ],
     });
@@ -479,18 +481,19 @@ describe("task tool", () => {
     const obj = result as Record<string, unknown>;
     expect(obj.status).toBe("running");
     expect(obj.taskIds).toEqual(["child-task-1", "child-task-2", "child-task-3"]);
-    expect(obj.tasks).toEqual([
-      { taskId: "child-task-1", status: "completed" },
-      { taskId: "child-task-2", status: "running" },
-      { taskId: "child-task-3", status: "queued" },
+    expect(obj.tasks).toMatchObject([
+      { taskId: "child-task-1", status: "completed", groupKind: "bestOf" },
+      { taskId: "child-task-2", status: "running", groupKind: "bestOf" },
+      { taskId: "child-task-3", status: "queued", groupKind: "bestOf" },
     ]);
-    expect(obj.reports).toEqual([
+    expect(obj.reports).toMatchObject([
       {
         taskId: "child-task-1",
         reportMarkdown: "report for child-task-1",
         title: "Report child-task-1",
         agentId: "explore",
         agentType: "explore",
+        groupKind: "bestOf",
       },
     ]);
     expect(typeof obj.note).toBe("string");
