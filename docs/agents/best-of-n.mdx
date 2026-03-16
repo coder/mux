@@ -31,6 +31,7 @@ Best of N is for **multiple attempts at the same task**.
 
 Use **variants** when the work should be split into a few distinct parallel lanes instead of retried N times.
 Best-of explores alternative answers; variants divide the job into labeled slices.
+For example, if you ask Mux to "Solve GitHub issues 23, 32, 45," it can spin up one sub-agent per issue as parallel variants instead of making three passes at the same task.
 
 <Note>
   Start with `best of 3` or `best of 5`. Larger batches cost more and take longer, but can pay off
