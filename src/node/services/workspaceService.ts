@@ -1103,6 +1103,9 @@ export class WorkspaceService extends EventEmitter {
   private desktopSessionManager?: DesktopSessionManager;
   // Optional browser session service for cleanup on workspace archive/removal.
   private browserSessionService?: BrowserSessionService;
+  private readonly sessionTimingService?: SessionTimingService;
+  private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
+  private taskService?: TaskService;
 
   /**
    * Set the MCP server manager for tool access.

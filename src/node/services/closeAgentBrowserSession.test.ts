@@ -47,7 +47,7 @@ import type { ChildProcess } from "child_process";
 import { EventEmitter } from "node:events";
 import { closeAgentBrowserSession } from "@/node/services/browserSessionBackend";
 
-type MockReadableStream = EventEmitter & {
+type MockReadableStream = PassThrough & {
   setEncoding: ReturnType<typeof mock>;
 };
 
@@ -62,7 +62,7 @@ type MockChildProcess = ChildProcess & {
 };
 
 function createMockReadableStream(): MockReadableStream {
-  const stream = new EventEmitter() as MockReadableStream;
+  const stream = new PassThrough() as MockReadableStream;
   stream.setEncoding = mock(() => stream);
   return stream;
 }
