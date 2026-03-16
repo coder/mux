@@ -1,28 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test, type Mock } from "bun:test";
-import type { closeAgentBrowserSession as closeAgentBrowserSessionFn } from "@/node/services/browserSessionBackend";
+import * as browserSessionBackendModule from "@/node/services/browserSessionBackend";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
 import { log } from "@/node/services/log";
-
-interface CloseSessionResult {
-  success: boolean;
-  error?: string;
-}
-
-type CloseAgentBrowserSession = typeof closeAgentBrowserSessionFn;
-
-const mockCloseAgentBrowserSession: Mock<CloseAgentBrowserSession> = mock(
-  (_sessionId: string, _timeoutMs?: number): ReturnType<CloseAgentBrowserSession> =>
-    Promise.resolve<CloseSessionResult>({ success: true })
-);
-
-class MockBrowserSessionBackend {}
-
-void mock.module("@/node/services/browserSessionBackend", () => ({
-  BrowserSessionBackend: MockBrowserSessionBackend,
-  closeAgentBrowserSession: mockCloseAgentBrowserSession,
-}));
-
 import { BrowserSessionService } from "@/node/services/browserSessionService";
+
+type CloseAgentBrowserSession = typeof browserSessionBackendModule.closeAgentBrowserSession;
+
+let mockCloseAgentBrowserSession: Mock<CloseAgentBrowserSession>;
 
 function getPrivateMap<T>(service: BrowserSessionService, fieldName: string): Map<string, T> {
   const value = (service as unknown as Record<string, unknown>)[fieldName];
@@ -40,8 +24,10 @@ function attachMockBackend(workspaceId: string, service: BrowserSessionService) 
 
 describe("BrowserSessionService.stopSession", () => {
   beforeEach(() => {
-    mockCloseAgentBrowserSession.mockReset();
-    mockCloseAgentBrowserSession.mockImplementation(() => Promise.resolve({ success: true }));
+    mockCloseAgentBrowserSession = spyOn(
+      browserSessionBackendModule,
+      "closeAgentBrowserSession"
+    ).mockImplementation(() => Promise.resolve({ success: true }));
   });
 
   afterEach(() => {
