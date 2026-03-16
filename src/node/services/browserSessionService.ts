@@ -136,7 +136,7 @@ export class BrowserSessionService extends EventEmitter {
     const sessionId = getMuxBrowserSessionId(workspaceId);
     const result = await closeAgentBrowserSession(sessionId);
     if (!result.success) {
-      log.warn(`Failed to close browser session ${sessionId}: ${result.error}`);
+      log.warn(`Failed to close browser session ${sessionId}: ${result.error ?? "unknown"}`);
     }
 
     this.recentActions.delete(workspaceId);

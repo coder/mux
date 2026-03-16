@@ -1,11 +1,18 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test, type Mock } from "bun:test";
+import type { closeAgentBrowserSession as closeAgentBrowserSessionFn } from "@/node/services/browserSessionBackend";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
 import { log } from "@/node/services/log";
 
-type CloseSessionResult = { success: boolean; error?: string };
+interface CloseSessionResult {
+  success: boolean;
+  error?: string;
+}
 
-const mockCloseAgentBrowserSession = mock((_sessionId: string, _timeoutMs?: number) =>
-  Promise.resolve<CloseSessionResult>({ success: true })
+type CloseAgentBrowserSession = typeof closeAgentBrowserSessionFn;
+
+const mockCloseAgentBrowserSession: Mock<CloseAgentBrowserSession> = mock(
+  (_sessionId: string, _timeoutMs?: number): ReturnType<CloseAgentBrowserSession> =>
+    Promise.resolve<CloseSessionResult>({ success: true })
 );
 
 class MockBrowserSessionBackend {}
@@ -18,7 +25,7 @@ void mock.module("@/node/services/browserSessionBackend", () => ({
 import { BrowserSessionService } from "@/node/services/browserSessionService";
 
 function getPrivateMap<T>(service: BrowserSessionService, fieldName: string): Map<string, T> {
-  const value = Reflect.get(service, fieldName);
+  const value = (service as Record<string, unknown>)[fieldName];
   expect(value).toBeInstanceOf(Map);
   return value as Map<string, T>;
 }
@@ -72,7 +79,7 @@ describe("BrowserSessionService.stopSession", () => {
       Promise.resolve({ success: false, error: "close failed" })
     );
 
-    await expect(service.stopSession(workspaceId)).resolves.toBeUndefined();
+    await service.stopSession(workspaceId);
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(
@@ -99,8 +106,8 @@ describe("BrowserSessionService.stopSession", () => {
     const service = new BrowserSessionService();
     const workspaceId = "workspace-repeat";
 
-    await expect(service.stopSession(workspaceId)).resolves.toBeUndefined();
-    await expect(service.stopSession(workspaceId)).resolves.toBeUndefined();
+    await service.stopSession(workspaceId);
+    await service.stopSession(workspaceId);
 
     expect(mockCloseAgentBrowserSession).toHaveBeenCalledTimes(2);
     expect(mockCloseAgentBrowserSession).toHaveBeenNthCalledWith(
@@ -116,9 +123,15 @@ describe("BrowserSessionService.stopSession", () => {
   test("asserts on an empty workspace id", async () => {
     const service = new BrowserSessionService();
 
-    await expect(service.stopSession("   ")).rejects.toThrow(
-      "BrowserSessionService.stopSession requires a workspaceId"
-    );
+    try {
+      await service.stopSession("   ");
+      expect.unreachable("stopSession should reject empty workspace ids");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toBe("BrowserSessionService.stopSession requires a workspaceId");
+      }
+    }
     expect(mockCloseAgentBrowserSession).not.toHaveBeenCalled();
   });
 });
