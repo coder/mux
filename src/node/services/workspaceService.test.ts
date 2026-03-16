@@ -22,6 +22,7 @@ import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
+import type { BrowserSessionService } from "@/node/services/browserSessionService";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -2905,6 +2906,20 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     expect(closeWorkspaceSessions).toHaveBeenCalledWith(workspaceId);
   });
 
+  test("archive() stops workspace browser sessions on success", async () => {
+    const stopSession = mock((_workspaceId: string) => Promise.resolve());
+    const browserSessionService = {
+      stopSession,
+    } as unknown as BrowserSessionService;
+    workspaceService.setBrowserSessionService(browserSessionService);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(stopSession).toHaveBeenCalledTimes(1);
+    expect(stopSession).toHaveBeenCalledWith(workspaceId);
+  });
+
   test("archive() does not close terminal sessions when beforeArchive hook fails", async () => {
     const hooks = new WorkspaceLifecycleHooks();
     hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
@@ -2951,6 +2966,40 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     expect(result.success).toBe(false);
     expect(close).not.toHaveBeenCalled();
+  });
+
+  test("archive() does not stop browser sessions when beforeArchive hook fails", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+    hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    const stopSession = mock((_workspaceId: string) => Promise.resolve());
+    const browserSessionService = {
+      stopSession,
+    } as unknown as BrowserSessionService;
+    workspaceService.setBrowserSessionService(browserSessionService);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(false);
+    expect(stopSession).not.toHaveBeenCalled();
+  });
+
+  test("archive() can stop browser sessions repeatedly without error", async () => {
+    const stopSession = mock((_workspaceId: string) => Promise.resolve());
+    const browserSessionService = {
+      stopSession,
+    } as unknown as BrowserSessionService;
+    workspaceService.setBrowserSessionService(browserSessionService);
+
+    const firstResult = await workspaceService.archive(workspaceId);
+    const secondResult = await workspaceService.archive(workspaceId);
+
+    expect(firstResult.success).toBe(true);
+    expect(secondResult.success).toBe(true);
+    expect(stopSession).toHaveBeenCalledTimes(2);
+    expect(stopSession).toHaveBeenNthCalledWith(1, workspaceId);
+    expect(stopSession).toHaveBeenNthCalledWith(2, workspaceId);
   });
 
   test("persists archivedAt when beforeArchive hooks succeed", async () => {
@@ -4027,6 +4076,51 @@ describe("WorkspaceService init cancellation", () => {
       expect(clearInMemoryStateMock).toHaveBeenCalledWith(workspaceId);
 
       expect(initAbortControllers.has(workspaceId)).toBe(false);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("remove() stops workspace browser sessions on success", async () => {
+    const workspaceId = "ws-remove-browser-cleanup";
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-ws-remove-browser-"));
+    try {
+      const stopSession = mock((_workspaceId: string) => Promise.resolve());
+      const browserSessionService = {
+        stopSession,
+      } as unknown as BrowserSessionService;
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+        getWorkspaceMetadata: mock(() => Promise.resolve({ success: false as const, error: "na" })),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        on: mock(() => {}),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        off: mock(() => {}),
+      } as unknown as AIService;
+
+      const mockConfig: Partial<Config> = {
+        srcDir: "/tmp/src",
+        getSessionDir: mock((id: string) => path.join(tempRoot, id)),
+        removeWorkspace: mock(() => Promise.resolve()),
+        findWorkspace: mock(() => null),
+      };
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        historyService,
+        mockAIService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+      workspaceService.setBrowserSessionService(browserSessionService);
+
+      const result = await workspaceService.remove(workspaceId, true);
+
+      expect(result.success).toBe(true);
+      expect(stopSession).toHaveBeenCalledTimes(1);
+      expect(stopSession).toHaveBeenCalledWith(workspaceId);
     } finally {
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
     }
