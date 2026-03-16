@@ -11,16 +11,35 @@ import {
   closeAgentBrowserSession,
   type BrowserSessionBackendOptions,
 } from "@/node/services/browserSessionBackend";
+import type { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 import { log } from "@/node/services/log";
 
 const MAX_RECENT_ACTIONS = 50;
+
+type BrowserSessionServiceStreamPortRegistry = Pick<
+  BrowserSessionStreamPortRegistry,
+  "reservePort" | "releasePort" | "isReservedPort"
+>;
+
+interface BrowserSessionServiceOptions {
+  streamPortRegistry?: BrowserSessionServiceStreamPortRegistry;
+  createBackend?: (options: BrowserSessionBackendOptions) => BrowserSessionBackend;
+}
 
 export class BrowserSessionService extends EventEmitter {
   private readonly activeSessions = new Map<string, BrowserSession>();
   private readonly activeBackends = new Map<string, BrowserSessionBackend>();
   private readonly recentActions = new Map<string, BrowserAction[]>();
   private readonly startPromises = new Map<string, Promise<BrowserSession>>();
+  private readonly streamPortRegistry: BrowserSessionServiceStreamPortRegistry | null;
+  private readonly createBackend: (options: BrowserSessionBackendOptions) => BrowserSessionBackend;
   private disposed = false;
+
+  constructor(options?: BrowserSessionServiceOptions) {
+    super();
+    this.streamPortRegistry = options?.streamPortRegistry ?? null;
+    this.createBackend = options?.createBackend ?? ((backendOptions) => new BrowserSessionBackend(backendOptions));
+  }
 
   getActiveSession(workspaceId: string): BrowserSession | null {
     assert(
@@ -70,6 +89,7 @@ export class BrowserSessionService extends EventEmitter {
     }
 
     this.recentActions.set(workspaceId, []);
+    const streamPort = await this.reserveStreamPort(workspaceId);
 
     let backend: BrowserSessionBackend | null = null;
     const isCurrentBackend = (wsId: string): boolean => {
@@ -81,6 +101,7 @@ export class BrowserSessionService extends EventEmitter {
       workspaceId,
       ownership: options?.ownership ?? "agent",
       initialUrl: options?.initialUrl ?? "about:blank",
+      streamPort,
       onSessionUpdate: (session) => {
         if (!isCurrentBackend(workspaceId)) {
           return;
@@ -99,12 +120,12 @@ export class BrowserSessionService extends EventEmitter {
       },
       onEnded: (wsId) => {
         if (!isCurrentBackend(wsId)) {
+          this.releaseWorkspaceResources(wsId);
           return;
         }
 
         this.emitEvent(wsId, { type: "session-ended", workspaceId: wsId });
-        this.activeSessions.delete(wsId);
-        this.activeBackends.delete(wsId);
+        this.releaseWorkspaceResources(wsId);
       },
       onError: (wsId, error) => {
         if (!isCurrentBackend(wsId)) {
@@ -115,7 +136,7 @@ export class BrowserSessionService extends EventEmitter {
       },
     };
 
-    backend = new BrowserSessionBackend(backendOptions);
+    backend = this.createBackend(backendOptions);
     this.activeBackends.set(workspaceId, backend);
     const session = await backend.start();
     this.activeSessions.set(workspaceId, session);
@@ -143,8 +164,7 @@ export class BrowserSessionService extends EventEmitter {
       }
     }
 
-    this.recentActions.delete(workspaceId);
-    this.startPromises.delete(workspaceId);
+    this.releaseWorkspaceResources(workspaceId);
   }
 
   getRecentActions(workspaceId: string): BrowserAction[] {
@@ -161,15 +181,17 @@ export class BrowserSessionService extends EventEmitter {
     }
 
     this.disposed = true;
-    for (const [, backend] of this.activeBackends) {
+    for (const [workspaceId, backend] of this.activeBackends) {
       // Shutdown is already in progress, so fire-and-forget is acceptable here:
       // no observers remain, and stop() best-effort sends agent-browser close
       // before the backend marks the session as ended.
       void backend.stop();
+      this.releaseWorkspaceResources(workspaceId);
     }
     this.activeBackends.clear();
     this.activeSessions.clear();
     this.recentActions.clear();
+    this.startPromises.clear();
     this.removeAllListeners();
   }
 
@@ -198,7 +220,27 @@ export class BrowserSessionService extends EventEmitter {
       await backend.stop();
     }
 
+    this.releaseWorkspaceResources(workspaceId);
+  }
+
+  private async reserveStreamPort(workspaceId: string): Promise<number | undefined> {
+    if (this.streamPortRegistry === null) {
+      return undefined;
+    }
+
+    const streamPort = await this.streamPortRegistry.reservePort(workspaceId);
+    assert(
+      this.streamPortRegistry.isReservedPort(workspaceId, streamPort),
+      `BrowserSessionService expected stream port ${streamPort} to remain reserved for ${workspaceId}`
+    );
+    return streamPort;
+  }
+
+  private releaseWorkspaceResources(workspaceId: string): void {
     this.activeBackends.delete(workspaceId);
     this.activeSessions.delete(workspaceId);
+    this.recentActions.delete(workspaceId);
+    this.startPromises.delete(workspaceId);
+    this.streamPortRegistry?.releasePort(workspaceId);
   }
 }

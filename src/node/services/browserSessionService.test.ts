@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test, type Mock } from "bun:test";
 import * as browserSessionBackendModule from "@/node/services/browserSessionBackend";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
+import type { BrowserSession } from "@/common/types/browserSession";
 import { log } from "@/node/services/log";
 import { BrowserSessionService } from "@/node/services/browserSessionService";
+import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 
 type CloseAgentBrowserSession = typeof browserSessionBackendModule.closeAgentBrowserSession;
 
@@ -21,6 +23,56 @@ function attachMockBackend(workspaceId: string, service: BrowserSessionService) 
   getPrivateMap<{ stop: typeof backend.stop }>(service, "activeBackends").set(workspaceId, backend);
   return backend;
 }
+
+function createLiveSession(workspaceId: string): BrowserSession {
+  const now = new Date().toISOString();
+  return {
+    id: `mux-${workspaceId}-abcd1234`,
+    workspaceId,
+    status: "live",
+    ownership: "agent",
+    currentUrl: "https://example.com",
+    title: "Example",
+    lastScreenshotBase64: null,
+    lastError: null,
+    streamState: "connecting",
+    lastFrameMetadata: null,
+    streamErrorMessage: null,
+    startedAt: now,
+    updatedAt: now,
+  };
+}
+
+describe("BrowserSessionService.startSession", () => {
+  test("reserves a stream port and passes it to the backend", async () => {
+    const workspaceId = "workspace-stream-port";
+    const streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    const createdOptions: browserSessionBackendModule.BrowserSessionBackendOptions[] = [];
+
+    const service = new BrowserSessionService({
+      streamPortRegistry,
+      createBackend: (options) => {
+        createdOptions.push(options);
+        return {
+          start: mock(() => {
+            options.onSessionUpdate(createLiveSession(workspaceId));
+            return Promise.resolve(createLiveSession(workspaceId));
+          }),
+          stop: mock(() => {
+            options.onEnded(workspaceId);
+            return Promise.resolve();
+          }),
+        } as unknown as browserSessionBackendModule.BrowserSessionBackend;
+      },
+    });
+
+    await service.startSession(workspaceId, { initialUrl: "https://example.com" });
+
+    expect(createdOptions).toHaveLength(1);
+    expect(createdOptions[0].streamPort).toBe(streamPortRegistry.getReservedPort(workspaceId));
+    expect(createdOptions[0].initialUrl).toBe("https://example.com");
+  });
+});
 
 describe("BrowserSessionService.stopSession", () => {
   beforeEach(() => {
@@ -45,6 +97,30 @@ describe("BrowserSessionService.stopSession", () => {
     expect(mockCloseAgentBrowserSession).not.toHaveBeenCalled();
   });
 
+  test("releases the reserved stream port when a tracked session stops", async () => {
+    const workspaceId = "workspace-release-port";
+    const streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    const service = new BrowserSessionService({ streamPortRegistry });
+    const reservedPort = await streamPortRegistry.reservePort(workspaceId);
+
+    const backend = {
+      stop: mock(() => {
+        expect(streamPortRegistry.isReservedPort(workspaceId, reservedPort)).toBe(true);
+        return Promise.resolve();
+      }),
+    };
+
+    getPrivateMap<{ stop: typeof backend.stop }>(service, "activeBackends").set(
+      workspaceId,
+      backend
+    );
+
+    await service.stopSession(workspaceId);
+
+    expect(backend.stop).toHaveBeenCalledTimes(1);
+    expect(streamPortRegistry.getReservedPort(workspaceId)).toBeNull();
+  });
+
   test("closes raw CLI sessions even when no tracked backend exists", async () => {
     const service = new BrowserSessionService();
     const workspaceId = "workspace-cli-only";
@@ -53,6 +129,17 @@ describe("BrowserSessionService.stopSession", () => {
 
     expect(mockCloseAgentBrowserSession).toHaveBeenCalledTimes(1);
     expect(mockCloseAgentBrowserSession).toHaveBeenCalledWith(getMuxBrowserSessionId(workspaceId));
+  });
+
+  test("releases reserved ports for raw CLI sessions too", async () => {
+    const workspaceId = "workspace-cli-release";
+    const streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    const service = new BrowserSessionService({ streamPortRegistry });
+    await streamPortRegistry.reservePort(workspaceId);
+
+    await service.stopSession(workspaceId);
+
+    expect(streamPortRegistry.getReservedPort(workspaceId)).toBeNull();
   });
 
   test("logs close failures without throwing", async () => {

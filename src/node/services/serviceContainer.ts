@@ -151,8 +151,10 @@ export class ServiceContainer {
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);
     this.devToolsService = new DevToolsService(config);
-    this.browserSessionService = new BrowserSessionService();
     this.streamPortRegistry = new BrowserSessionStreamPortRegistry();
+    this.browserSessionService = new BrowserSessionService({
+      streamPortRegistry: this.streamPortRegistry,
+    });
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.

@@ -3,10 +3,13 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
+import WebSocket, { type RawData } from "ws";
 import type {
   BrowserAction,
+  BrowserFrameMetadata,
   BrowserSession,
   BrowserSessionOwnership,
+  BrowserStreamState,
 } from "@/common/types/browserSession";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
 import {
@@ -15,15 +18,39 @@ import {
   AgentBrowserVendoredPackageNotFoundError,
   resolveAgentBrowserBinary,
 } from "@/node/services/agentBrowserLauncher";
+import { log } from "@/node/services/log";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 
 const CLI_TIMEOUT_MS = 30_000;
-const POLL_INTERVAL_MS = 2_000;
-const MAX_CONSECUTIVE_POLL_FAILURES = 3;
+const FALLBACK_POLL_INTERVAL_MS = 2_000;
+const METADATA_REFRESH_INTERVAL_MS = 5_000;
+const MAX_CONSECUTIVE_METADATA_FAILURES = 3;
+const MAX_STREAM_RETRY_COUNT = 3;
+const STREAM_RETRY_BASE_DELAY_MS = 500;
 const VENDORED_BROWSER_RECOVERY_HINT =
   "Reinstall Mux, or run bun install in the repo if you're developing locally.";
 const MISSING_BROWSER_BINARY_ERROR =
   "Vendored agent-browser binary disappeared before launch. Reinstall Mux, or run bun install in the repo if you're developing locally.";
+const DEFAULT_STREAM_ERROR_MESSAGE = "Browser preview stream was unavailable.";
+
+type StreamStartupMode = "stream" | "fallback" | "restart_required";
+
+type CliResult = { ok: true; data: unknown } | { ok: false; error: string };
+
+type StreamConnectResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+    };
+
+interface SharpTransformer {
+  jpeg(options: { quality: number }): { toBuffer(): Promise<Buffer> };
+}
+
+type SharpFactory = (input: Buffer) => SharpTransformer;
+
+let sharpFactoryPromise: Promise<SharpFactory | null> | null = null;
 
 function getAgentBrowserLauncherError(error: unknown): string | null {
   if (error instanceof AgentBrowserUnsupportedPlatformError) {
@@ -39,16 +66,6 @@ function getAgentBrowserLauncherError(error: unknown): string | null {
 
   return null;
 }
-
-type CliResult = { ok: true; data: unknown } | { ok: false; error: string };
-
-interface SharpTransformer {
-  jpeg(options: { quality: number }): { toBuffer(): Promise<Buffer> };
-}
-
-type SharpFactory = (input: Buffer) => SharpTransformer;
-
-let sharpFactoryPromise: Promise<SharpFactory | null> | null = null;
 
 function isSharpFactory(value: unknown): value is SharpFactory {
   return typeof value === "function";
@@ -81,6 +98,7 @@ export interface BrowserSessionBackendOptions {
   workspaceId: string;
   ownership: BrowserSessionOwnership;
   initialUrl: string;
+  streamPort?: number | null;
   onSessionUpdate: (session: BrowserSession) => void;
   onAction: (action: BrowserAction) => void;
   onEnded: (workspaceId: string) => void;
@@ -89,6 +107,10 @@ export interface BrowserSessionBackendOptions {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function extractCliString(data: unknown, field: string): string | null {
@@ -103,12 +125,131 @@ function extractCliString(data: unknown, field: string): string | null {
   return null;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getStreamRetryDelayMs(attemptNumber: number): number {
+  assert(attemptNumber > 0, "getStreamRetryDelayMs requires a positive attempt number");
+  return STREAM_RETRY_BASE_DELAY_MS * 2 ** (attemptNumber - 1);
+}
+
+function normalizeWebSocketMessage(data: RawData): string {
+  if (Buffer.isBuffer(data)) {
+    return data.toString("utf8");
+  }
+
+  if (Array.isArray(data)) {
+    return Buffer.concat(data).toString("utf8");
+  }
+
+  return Buffer.from(data).toString("utf8");
+}
+
+function getStreamCloseReason(
+  code: number,
+  rawReason: Buffer,
+  fallbackReason: string | null
+): string {
+  const closeReason = rawReason.toString("utf8").trim();
+  if (closeReason.length > 0) {
+    return closeReason;
+  }
+
+  if (fallbackReason !== null && fallbackReason.trim().length > 0) {
+    return fallbackReason;
+  }
+
+  if (code !== 1005) {
+    return `Browser preview socket closed (${code})`;
+  }
+
+  return DEFAULT_STREAM_ERROR_MESSAGE;
+}
+
+function parseFrameMetadata(metadata: unknown): BrowserFrameMetadata | null {
+  if (!isRecord(metadata)) {
+    return null;
+  }
+
+  const deviceWidth = metadata.deviceWidth;
+  const deviceHeight = metadata.deviceHeight;
+  const pageScaleFactor = metadata.pageScaleFactor;
+  const offsetTop = metadata.offsetTop;
+  const scrollOffsetX = metadata.scrollOffsetX;
+  const scrollOffsetY = metadata.scrollOffsetY;
+
+  if (
+    !isFiniteNumber(deviceWidth) ||
+    !isFiniteNumber(deviceHeight) ||
+    !isFiniteNumber(pageScaleFactor) ||
+    !isFiniteNumber(offsetTop) ||
+    !isFiniteNumber(scrollOffsetX) ||
+    !isFiniteNumber(scrollOffsetY)
+  ) {
+    return null;
+  }
+
+  if (deviceWidth <= 0 || deviceHeight <= 0) {
+    return null;
+  }
+
+  if (pageScaleFactor <= 0) {
+    return null;
+  }
+
+  return {
+    deviceWidth,
+    deviceHeight,
+    pageScaleFactor,
+    offsetTop,
+    scrollOffsetX,
+    scrollOffsetY,
+  };
+}
+
+function extractStreamStatus(payload: Record<string, unknown>): BrowserStreamState | null {
+  if (typeof payload.status === "string") {
+    switch (payload.status) {
+      case "connected":
+        return "connecting";
+      case "screencasting":
+        return "live";
+      default:
+        return null;
+    }
+  }
+
+  if (payload.connected === true && payload.screencasting === true) {
+    return "live";
+  }
+
+  if (payload.connected === true) {
+    return "connecting";
+  }
+
+  return null;
+}
+
+function extractStreamError(payload: Record<string, unknown>): string | null {
+  if (typeof payload.error === "string" && payload.error.trim().length > 0) {
+    return payload.error;
+  }
+
+  if (typeof payload.message === "string" && payload.message.trim().length > 0) {
+    return payload.message;
+  }
+
+  return null;
+}
+
 type RawCliResult = { ok: true; stdout: string; stderr: string } | { ok: false; error: string };
 
 interface AgentBrowserCliCommandOptions {
   inFlightProcesses?: Set<ChildProcess>;
   spawnFn?: typeof spawn;
   resolveAgentBrowserBinaryFn?: () => string;
+  env?: NodeJS.ProcessEnv;
 }
 
 function isMissingBrowserSessionError(error: string): boolean {
@@ -157,6 +298,7 @@ async function runAgentBrowserCliCommand(
   const childProcess = spawnFn(agentBrowserBinary, ["--json", "--session", sessionId, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    ...(options?.env != null ? { env: options.env } : {}),
   });
   const disposableProcess = new DisposableProcess(childProcess);
   options?.inFlightProcesses?.add(childProcess);
@@ -226,6 +368,7 @@ export async function closeAgentBrowserSession(
     const result = await runAgentBrowserCliCommand(sessionId, ["close"], timeoutMs, {
       spawnFn: options?.spawnFn,
       resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
+      env: options?.env,
     });
     if (!result.ok) {
       if (isMissingBrowserSessionError(result.error)) {
@@ -263,12 +406,21 @@ export async function closeAgentBrowserSession(
 }
 
 export class BrowserSessionBackend {
+  private readonly streamPort: number | null;
   private sessionId: string;
   private session: BrowserSession;
-  private pollIntervalId: ReturnType<typeof setInterval> | null = null;
+  private fallbackPollIntervalId: ReturnType<typeof setInterval> | null = null;
+  private metadataRefreshIntervalId: ReturnType<typeof setInterval> | null = null;
+  private streamRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private streamSocket: WebSocket | null = null;
+  private intentionalStreamCloseSocket: WebSocket | null = null;
+  private pendingStreamCloseReason: string | null = null;
   private disposed = false;
-  private pollInFlight = false;
-  private consecutivePollFailures = 0;
+  private metadataRefreshInFlight = false;
+  private fallbackScreenshotInFlight = false;
+  private consecutiveMetadataFailures = 0;
+  private streamRetryCount = 0;
+  private startedFromExistingSession = false;
   private readonly inFlightProcesses = new Set<ChildProcess>();
 
   constructor(private readonly options: BrowserSessionBackendOptions) {
@@ -276,7 +428,14 @@ export class BrowserSessionBackend {
       options.workspaceId.trim().length > 0,
       "BrowserSessionBackend requires a non-empty workspaceId"
     );
+    if (options.streamPort != null) {
+      assert(
+        Number.isFinite(options.streamPort) && options.streamPort > 0,
+        "BrowserSessionBackend requires streamPort to be a positive finite number"
+      );
+    }
 
+    this.streamPort = options.streamPort ?? null;
     this.sessionId = this.createSessionId();
     this.session = this.createSession("starting");
   }
@@ -292,15 +451,15 @@ export class BrowserSessionBackend {
       "BrowserSessionBackend.start requires a non-empty workspaceId"
     );
 
+    this.resetRuntimeState();
     this.sessionId = this.createSessionId();
     this.session = this.createSession("starting");
+    this.startedFromExistingSession = this.hasExistingSession();
     this.emitSessionUpdate();
 
-    if (!this.hasExistingSession()) {
+    if (!this.startedFromExistingSession) {
       const openResult = await this.runCliCommand(["open", this.options.initialUrl]);
       if (!openResult.ok) {
-        // If stop/dispose interrupts the CLI command, the session already transitioned
-        // to a terminal state elsewhere; keep that state instead of overwriting it.
         if (this.disposed) {
           return this.getSession();
         }
@@ -313,18 +472,25 @@ export class BrowserSessionBackend {
       }
     }
 
-    await this.refreshMetadata();
+    await this.refreshNavigationMetadata();
     if (this.disposed || this.session.status === "error") {
       return this.getSession();
     }
 
-    this.session = {
-      ...this.session,
-      status: "live",
-      updatedAt: new Date().toISOString(),
-    };
-    this.emitSessionUpdate();
-    this.startPolling();
+    const streamStartupMode = await this.startStreamTransport();
+    if (this.disposed || this.getSession().status === "error") {
+      return this.getSession();
+    }
+
+    if (streamStartupMode === "fallback") {
+      await this.refreshFallbackScreenshot();
+    }
+
+    this.patchSession({ status: "live" });
+    this.startMetadataRefreshLoop();
+    if (streamStartupMode === "fallback") {
+      this.startFallbackPolling();
+    }
 
     return this.getSession();
   }
@@ -334,7 +500,7 @@ export class BrowserSessionBackend {
       return;
     }
 
-    this.stopPolling();
+    this.stopBackgroundWork();
     this.disposed = true;
     this.killInFlightProcesses();
 
@@ -344,12 +510,7 @@ export class BrowserSessionBackend {
       // Best-effort shutdown; the session is ending locally regardless.
     }
 
-    this.session = {
-      ...this.session,
-      status: "ended",
-      updatedAt: new Date().toISOString(),
-    };
-    this.emitSessionUpdate();
+    this.patchSession({ status: "ended" });
     this.options.onEnded(this.options.workspaceId);
   }
 
@@ -358,7 +519,7 @@ export class BrowserSessionBackend {
       return;
     }
 
-    this.stopPolling();
+    this.stopBackgroundWork();
     this.disposed = true;
     this.killInFlightProcesses();
   }
@@ -387,6 +548,16 @@ export class BrowserSessionBackend {
     return getMuxBrowserSessionId(this.options.workspaceId);
   }
 
+  private resetRuntimeState(): void {
+    this.stopBackgroundWork();
+    this.consecutiveMetadataFailures = 0;
+    this.streamRetryCount = 0;
+    this.pendingStreamCloseReason = null;
+    this.startedFromExistingSession = false;
+    this.metadataRefreshInFlight = false;
+    this.fallbackScreenshotInFlight = false;
+  }
+
   private hasExistingSession(): boolean {
     try {
       // Lazy-load to avoid startup crashes when the optional agent-browser package is missing
@@ -404,6 +575,15 @@ export class BrowserSessionBackend {
 
   private emitSessionUpdate(): void {
     this.options.onSessionUpdate({ ...this.session });
+  }
+
+  private patchSession(patch: Partial<BrowserSession>): void {
+    this.session = {
+      ...this.session,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    this.emitSessionUpdate();
   }
 
   private emitNavigateAction(nextUrl: string | null, nextTitle: string | null): void {
@@ -428,49 +608,273 @@ export class BrowserSessionBackend {
     this.options.onAction(action);
   }
 
-  private startPolling(): void {
-    if (this.disposed || this.pollIntervalId !== null) {
-      return;
+  private async startStreamTransport(): Promise<StreamStartupMode> {
+    if (this.streamPort === null) {
+      this.transitionToStreamFallback("Streaming unavailable; falling back to CLI polling.");
+      return "fallback";
     }
 
-    this.pollIntervalId = setInterval(() => {
-      this.refreshMetadata().catch((error: unknown) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        this.handlePollFailure(errorMessage);
+    this.patchSession({ streamState: "connecting", streamErrorMessage: null });
+    let lastError = DEFAULT_STREAM_ERROR_MESSAGE;
+
+    for (let attempt = 1; attempt <= MAX_STREAM_RETRY_COUNT; attempt += 1) {
+      const connectResult = await this.connectStreamTransport();
+      if (connectResult.ok) {
+        this.streamRetryCount = 0;
+        return "stream";
+      }
+
+      lastError = connectResult.error;
+      if (this.disposed) {
+        return this.startedFromExistingSession ? "restart_required" : "fallback";
+      }
+
+      this.patchSession({ streamState: "connecting", streamErrorMessage: lastError });
+      if (attempt < MAX_STREAM_RETRY_COUNT) {
+        await this.sleep(getStreamRetryDelayMs(attempt));
+      }
+    }
+
+    if (this.startedFromExistingSession) {
+      this.transitionToRestartRequired(lastError);
+      return "restart_required";
+    }
+
+    this.transitionToStreamFallback(lastError);
+    return "fallback";
+  }
+
+  private async connectStreamTransport(): Promise<StreamConnectResult> {
+    assert(this.streamPort !== null, "connectStreamTransport requires a reserved streamPort");
+    if (this.disposed) {
+      return { ok: false, error: "Browser session backend was disposed before stream connect." };
+    }
+
+    const socketUrl = `ws://127.0.0.1:${this.streamPort}`;
+    return await new Promise<StreamConnectResult>((resolve) => {
+      let opened = false;
+      let settled = false;
+      const socket = new WebSocket(socketUrl);
+
+      const settle = (result: StreamConnectResult): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(result);
+      };
+
+      const failBeforeOpen = (error: string): void => {
+        const failureMessage = error.trim().length > 0 ? error : DEFAULT_STREAM_ERROR_MESSAGE;
+        this.closeSocket(socket, true);
+        settle({ ok: false, error: failureMessage });
+      };
+
+      socket.on("open", () => {
+        if (this.disposed) {
+          failBeforeOpen("Browser session backend was disposed before stream connect completed.");
+          return;
+        }
+
+        opened = true;
+        this.streamSocket = socket;
+        this.pendingStreamCloseReason = null;
+        this.patchSession({ streamState: "connecting", streamErrorMessage: null });
+        settle({ ok: true });
       });
-    }, POLL_INTERVAL_MS);
+
+      socket.on("message", (data) => {
+        if (this.disposed || this.streamSocket !== socket) {
+          return;
+        }
+
+        this.handleStreamSocketMessage(data);
+      });
+
+      socket.on("error", (error) => {
+        const message = getErrorMessage(error);
+        if (!opened) {
+          failBeforeOpen(message);
+          return;
+        }
+
+        this.pendingStreamCloseReason = message;
+        log.debug("BrowserSessionBackend stream socket error", {
+          workspaceId: this.options.workspaceId,
+          error: message,
+        });
+      });
+
+      socket.on("close", (code, rawReason) => {
+        const closeReason = getStreamCloseReason(code, rawReason, this.pendingStreamCloseReason);
+        this.pendingStreamCloseReason = null;
+
+        if (!opened) {
+          failBeforeOpen(closeReason);
+          return;
+        }
+
+        if (this.intentionalStreamCloseSocket === socket) {
+          this.intentionalStreamCloseSocket = null;
+          return;
+        }
+
+        if (this.streamSocket === socket) {
+          this.streamSocket = null;
+        }
+
+        if (this.disposed) {
+          return;
+        }
+
+        this.handleUnexpectedStreamClose(closeReason);
+      });
+    });
   }
 
-  private stopPolling(): void {
-    if (this.pollIntervalId !== null) {
-      clearInterval(this.pollIntervalId);
-      this.pollIntervalId = null;
-    }
-  }
-
-  private async refreshMetadata(): Promise<void> {
-    if (this.disposed || this.pollInFlight) {
+  private handleUnexpectedStreamClose(error: string): void {
+    if (this.disposed || this.session.status === "error") {
       return;
     }
 
-    this.pollInFlight = true;
+    if (this.streamRetryTimer !== null) {
+      return;
+    }
+
+    if (this.streamRetryCount >= MAX_STREAM_RETRY_COUNT) {
+      this.degradeAfterStreamFailure(error);
+      return;
+    }
+
+    const nextRetryCount = this.streamRetryCount + 1;
+    assert(
+      nextRetryCount <= MAX_STREAM_RETRY_COUNT,
+      "BrowserSessionBackend streamRetryCount exceeded the configured maximum"
+    );
+
+    this.streamRetryCount = nextRetryCount;
+    this.patchSession({ streamState: "connecting", streamErrorMessage: error });
+    const retryDelayMs = getStreamRetryDelayMs(nextRetryCount);
+
+    this.streamRetryTimer = setTimeout(() => {
+      this.streamRetryTimer = null;
+      void this.retryStreamConnection();
+    }, retryDelayMs);
+    this.streamRetryTimer.unref?.();
+  }
+
+  private async retryStreamConnection(): Promise<void> {
+    if (this.disposed || this.session.status === "error") {
+      return;
+    }
+
+    const result = await this.connectStreamTransport();
+    if (result.ok) {
+      this.streamRetryCount = 0;
+      return;
+    }
+
+    this.handleUnexpectedStreamClose(result.error);
+  }
+
+  private degradeAfterStreamFailure(error: string): void {
+    if (this.startedFromExistingSession) {
+      this.transitionToRestartRequired(error);
+      return;
+    }
+
+    this.transitionToStreamFallback(error);
+    this.startFallbackPolling();
+    void this.refreshFallbackScreenshot();
+  }
+
+  private transitionToStreamFallback(error: string): void {
+    this.clearStreamRetryTimer();
+    this.closeCurrentStreamSocket();
+    this.patchSession({
+      streamState: "fallback",
+      streamErrorMessage: error,
+      lastError: error,
+    });
+  }
+
+  private transitionToRestartRequired(error: string): void {
+    this.clearStreamRetryTimer();
+    this.closeCurrentStreamSocket();
+    this.stopFallbackPolling();
+    this.patchSession({
+      streamState: "restart_required",
+      streamErrorMessage: error,
+      lastError: error,
+    });
+  }
+
+  private startMetadataRefreshLoop(): void {
+    if (this.disposed || this.metadataRefreshIntervalId !== null) {
+      return;
+    }
+
+    this.metadataRefreshIntervalId = setInterval(() => {
+      void this.refreshNavigationMetadata().catch((error: unknown) => {
+        this.handleMetadataFailure(getErrorMessage(error));
+      });
+    }, METADATA_REFRESH_INTERVAL_MS);
+  }
+
+  private stopMetadataRefreshLoop(): void {
+    if (this.metadataRefreshIntervalId !== null) {
+      clearInterval(this.metadataRefreshIntervalId);
+      this.metadataRefreshIntervalId = null;
+    }
+  }
+
+  private startFallbackPolling(): void {
+    if (
+      this.disposed ||
+      this.fallbackPollIntervalId !== null ||
+      this.session.streamState !== "fallback"
+    ) {
+      return;
+    }
+
+    this.fallbackPollIntervalId = setInterval(() => {
+      void this.refreshFallbackScreenshot().catch((error: unknown) => {
+        const errorMessage = getErrorMessage(error);
+        this.patchSession({ lastError: errorMessage });
+      });
+    }, FALLBACK_POLL_INTERVAL_MS);
+  }
+
+  private stopFallbackPolling(): void {
+    if (this.fallbackPollIntervalId !== null) {
+      clearInterval(this.fallbackPollIntervalId);
+      this.fallbackPollIntervalId = null;
+    }
+  }
+
+  private async refreshNavigationMetadata(): Promise<void> {
+    if (this.disposed || this.metadataRefreshInFlight) {
+      return;
+    }
+
+    this.metadataRefreshInFlight = true;
     try {
       const urlResult = await this.runCliCommand(["get", "url"]);
       if (!urlResult.ok) {
-        this.handlePollFailure(urlResult.error);
+        this.handleMetadataFailure(urlResult.error);
         return;
       }
 
       const titleResult = await this.runCliCommand(["get", "title"]);
       if (!titleResult.ok) {
-        this.handlePollFailure(titleResult.error);
+        this.handleMetadataFailure(titleResult.error);
         return;
       }
 
       const nextUrl = extractCliString(urlResult.data, "url");
       const nextTitle = extractCliString(titleResult.data, "title");
       if (nextUrl === null) {
-        this.handlePollFailure("Unexpected CLI output");
+        this.handleMetadataFailure("Unexpected CLI output");
         return;
       }
 
@@ -482,67 +886,233 @@ export class BrowserSessionBackend {
         return;
       }
 
-      let nextScreenshotBase64 = this.session.lastScreenshotBase64;
-      let lastError: string | null = null;
-
-      const screenshotResult = await this.runCliCommand(["screenshot"]);
-      if (!screenshotResult.ok) {
-        lastError = screenshotResult.error;
-      } else {
-        const screenshotPath = extractCliString(screenshotResult.data, "path");
-        if (screenshotPath === null) {
-          lastError = "Unexpected CLI output";
-        } else {
-          try {
-            nextScreenshotBase64 = await this.convertScreenshot(screenshotPath);
-          } catch (error) {
-            lastError = error instanceof Error ? error.message : String(error);
-          }
-        }
-      }
-
-      this.consecutivePollFailures = 0;
+      this.consecutiveMetadataFailures = 0;
       this.emitNavigateAction(nextUrl, nextTitle);
-      this.session = {
-        ...this.session,
+      this.patchSession({
         currentUrl: nextUrl,
         title: nextTitle,
-        lastScreenshotBase64: nextScreenshotBase64,
-        lastError,
-        updatedAt: new Date().toISOString(),
-      };
-      this.emitSessionUpdate();
+      });
     } finally {
-      this.pollInFlight = false;
+      this.metadataRefreshInFlight = false;
     }
   }
 
-  private handlePollFailure(error: string): void {
-    this.consecutivePollFailures += 1;
-    this.session = {
-      ...this.session,
-      lastError: error,
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (this.consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-      this.transitionToError(error);
+  private async refreshFallbackScreenshot(): Promise<void> {
+    if (
+      this.disposed ||
+      this.session.streamState !== "fallback" ||
+      this.fallbackScreenshotInFlight
+    ) {
       return;
     }
 
-    this.emitSessionUpdate();
+    this.fallbackScreenshotInFlight = true;
+    try {
+      const screenshotResult = await this.runCliCommand(["screenshot"]);
+      if (!screenshotResult.ok) {
+        this.patchSession({ lastError: screenshotResult.error });
+        return;
+      }
+
+      const screenshotPath = extractCliString(screenshotResult.data, "path");
+      if (screenshotPath === null) {
+        this.patchSession({ lastError: "Unexpected CLI output" });
+        return;
+      }
+
+      try {
+        const nextScreenshotBase64 = await this.convertScreenshot(screenshotPath);
+        this.patchSession({
+          lastScreenshotBase64: nextScreenshotBase64,
+          lastError: null,
+        });
+      } catch (error) {
+        this.patchSession({ lastError: getErrorMessage(error) });
+      }
+    } finally {
+      this.fallbackScreenshotInFlight = false;
+    }
+  }
+
+  private handleMetadataFailure(error: string): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.consecutiveMetadataFailures += 1;
+    this.patchSession({ lastError: error });
+
+    if (this.consecutiveMetadataFailures >= MAX_CONSECUTIVE_METADATA_FAILURES) {
+      this.transitionToError(error);
+    }
+  }
+
+  private handleStreamSocketMessage(data: RawData): void {
+    if (this.disposed) {
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(normalizeWebSocketMessage(data));
+    } catch (error) {
+      log.debug("BrowserSessionBackend ignored malformed stream payload", {
+        workspaceId: this.options.workspaceId,
+        error: getErrorMessage(error),
+      });
+      return;
+    }
+
+    if (!isRecord(payload) || typeof payload.type !== "string") {
+      log.debug("BrowserSessionBackend ignored unsupported stream payload", {
+        workspaceId: this.options.workspaceId,
+        payload,
+      });
+      return;
+    }
+
+    switch (payload.type) {
+      case "frame":
+        this.handleFramePayload(payload);
+        return;
+      case "status":
+        this.handleStatusPayload(payload);
+        return;
+      case "error":
+        this.handleErrorPayload(payload);
+        return;
+      default:
+        log.debug("BrowserSessionBackend ignored unknown stream payload type", {
+          workspaceId: this.options.workspaceId,
+          type: payload.type,
+        });
+    }
+  }
+
+  private handleFramePayload(payload: Record<string, unknown>): void {
+    const base64Data =
+      typeof payload.data === "string" && payload.data.trim().length > 0 ? payload.data : null;
+    const metadata = parseFrameMetadata(payload.metadata);
+    if (base64Data === null || metadata === null) {
+      log.debug("BrowserSessionBackend ignored invalid frame payload", {
+        workspaceId: this.options.workspaceId,
+        hasData: base64Data !== null,
+        metadata: payload.metadata,
+      });
+      return;
+    }
+
+    this.streamRetryCount = 0;
+    this.patchSession({
+      lastScreenshotBase64: base64Data,
+      lastFrameMetadata: metadata,
+      lastError: null,
+      streamState: "live",
+      streamErrorMessage: null,
+    });
+  }
+
+  private handleStatusPayload(payload: Record<string, unknown>): void {
+    const nextState = extractStreamStatus(payload);
+    if (nextState === null) {
+      log.debug("BrowserSessionBackend ignored unsupported stream status payload", {
+        workspaceId: this.options.workspaceId,
+        payload,
+      });
+      return;
+    }
+
+    this.patchSession({
+      streamState: nextState,
+      streamErrorMessage: nextState === "live" ? null : this.session.streamErrorMessage,
+      lastError: nextState === "live" ? null : this.session.lastError,
+    });
+  }
+
+  private handleErrorPayload(payload: Record<string, unknown>): void {
+    const errorMessage = extractStreamError(payload);
+    if (errorMessage === null) {
+      log.debug("BrowserSessionBackend ignored stream error payload without a message", {
+        workspaceId: this.options.workspaceId,
+        payload,
+      });
+      return;
+    }
+
+    this.patchSession({
+      streamErrorMessage: errorMessage,
+      lastError: errorMessage,
+    });
+    this.closeCurrentStreamSocket();
+    this.handleUnexpectedStreamClose(errorMessage);
   }
 
   private transitionToError(error: string): void {
-    this.stopPolling();
+    if (this.session.status === "error" || this.disposed) {
+      return;
+    }
+
+    this.stopBackgroundWork();
+    const nextStreamState: BrowserStreamState | null =
+      this.session.streamState !== null ? "error" : this.session.streamState;
     this.session = {
       ...this.session,
       status: "error",
       lastError: error,
+      streamState: nextStreamState,
+      streamErrorMessage: nextStreamState !== null ? error : this.session.streamErrorMessage,
       updatedAt: new Date().toISOString(),
     };
     this.emitSessionUpdate();
     this.options.onError(this.options.workspaceId, error);
+  }
+
+  private stopBackgroundWork(): void {
+    this.stopMetadataRefreshLoop();
+    this.stopFallbackPolling();
+    this.clearStreamRetryTimer();
+    this.closeCurrentStreamSocket();
+  }
+
+  private clearStreamRetryTimer(): void {
+    if (this.streamRetryTimer !== null) {
+      clearTimeout(this.streamRetryTimer);
+      this.streamRetryTimer = null;
+    }
+  }
+
+  private closeCurrentStreamSocket(): void {
+    if (this.streamSocket === null) {
+      return;
+    }
+
+    const currentSocket = this.streamSocket;
+    this.streamSocket = null;
+    this.closeSocket(currentSocket, false);
+  }
+
+  private closeSocket(socket: WebSocket, terminate: boolean): void {
+    this.intentionalStreamCloseSocket = socket;
+    try {
+      if (terminate) {
+        socket.terminate();
+        return;
+      }
+
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        socket.close();
+        return;
+      }
+
+      if (socket.readyState !== WebSocket.CLOSED) {
+        socket.terminate();
+      }
+    } catch (error) {
+      log.debug("BrowserSessionBackend failed to close stream socket", {
+        workspaceId: this.options.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   private killInFlightProcesses(): void {
@@ -553,9 +1123,25 @@ export class BrowserSessionBackend {
     this.inFlightProcesses.clear();
   }
 
+  private async sleep(delayMs: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, delayMs);
+      timer.unref?.();
+    });
+  }
+
   private async runCliCommand(args: string[], timeoutMs = CLI_TIMEOUT_MS): Promise<CliResult> {
+    const env =
+      args[0] === "open" && this.streamPort !== null
+        ? {
+            ...process.env,
+            AGENT_BROWSER_STREAM_PORT: String(this.streamPort),
+          }
+        : undefined;
+
     const result = await runAgentBrowserCliCommand(this.sessionId, args, timeoutMs, {
       inFlightProcesses: this.inFlightProcesses,
+      env,
     });
     if (!result.ok) {
       return result;
