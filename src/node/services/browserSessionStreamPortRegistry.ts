@@ -74,6 +74,7 @@ export class BrowserSessionStreamPortRegistry {
   /** Release the port reservation for a workspace */
   releasePort(workspaceId: string): void {
     assert(workspaceId.trim().length > 0, "workspaceId must not be empty");
+    this.inFlight.delete(workspaceId);
     this.reservations.delete(workspaceId);
   }
 
