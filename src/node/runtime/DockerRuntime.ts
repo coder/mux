@@ -59,6 +59,15 @@ interface DockerCommandResult {
   stderr: string;
 }
 
+/**
+ * Sanitize container-provided uid/gid before embedding in host-side shell commands.
+ * Container images can override `id`; only decimal numeric IDs are valid for chown.
+ */
+function sanitizeContainerUserId(rawValue: string): string {
+  const trimmedValue = rawValue.trim();
+  return /^\d+$/.test(trimmedValue) ? trimmedValue : "0";
+}
+
 /** Result of checking if a container already exists and is valid for reuse */
 type ContainerCheckResult =
   | { action: "skip" } // Valid forked container, skip setup
@@ -681,8 +690,8 @@ export class DockerRuntime extends RemoteRuntime {
       runDockerCommand(`docker exec ${containerName} id -g`, 5000),
       runDockerCommand(`docker exec ${containerName} sh -c 'echo $HOME'`, 5000),
     ]);
-    this.containerUid = uidResult.stdout.trim() || "0";
-    this.containerGid = gidResult.stdout.trim() || "0";
+    this.containerUid = sanitizeContainerUserId(uidResult.stdout);
+    this.containerGid = sanitizeContainerUserId(gidResult.stdout);
     this.containerHome = homeResult.stdout.trim() || "/root";
 
     // Create /src directory and /var/mux/plans in container
@@ -1015,8 +1024,8 @@ export class DockerRuntime extends RemoteRuntime {
         runDockerCommand(`docker exec ${destContainerName} id -g`, 5000),
         runDockerCommand(`docker exec ${destContainerName} sh -c 'echo $HOME'`, 5000),
       ]);
-      const destUid = uidResult.stdout.trim() || "0";
-      const destGid = gidResult.stdout.trim() || "0";
+      const destUid = sanitizeContainerUserId(uidResult.stdout);
+      const destGid = sanitizeContainerUserId(gidResult.stdout);
       const destHome = homeResult.stdout.trim() || "/root";
 
       // Create /src and /var/mux/plans as root, then chown to container user
@@ -1209,8 +1218,8 @@ export class DockerRuntime extends RemoteRuntime {
         runDockerCommand(`docker exec ${this.containerName} id -g`, 5000),
         runDockerCommand(`docker exec ${this.containerName} sh -c 'echo $HOME'`, 5000),
       ]);
-      this.containerUid = uidResult.stdout.trim() || "0";
-      this.containerGid = gidResult.stdout.trim() || "0";
+      this.containerUid = sanitizeContainerUserId(uidResult.stdout);
+      this.containerGid = sanitizeContainerUserId(gidResult.stdout);
       this.containerHome = homeResult.stdout.trim() || "/root";
     }
 
