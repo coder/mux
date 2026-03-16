@@ -5,10 +5,13 @@ import type {
   BrowserSession,
   BrowserSessionEvent,
 } from "@/common/types/browserSession";
+import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
 import {
   BrowserSessionBackend,
+  closeAgentBrowserSession,
   type BrowserSessionBackendOptions,
 } from "@/node/services/browserSessionBackend";
+import { log } from "@/node/services/log";
 
 const MAX_RECENT_ACTIONS = 50;
 
@@ -124,10 +127,20 @@ export class BrowserSessionService extends EventEmitter {
       workspaceId.trim().length > 0,
       "BrowserSessionService.stopSession requires a workspaceId"
     );
+
     const backend = this.activeBackends.get(workspaceId);
     if (backend) {
       await backend.stop();
     }
+
+    const sessionId = getMuxBrowserSessionId(workspaceId);
+    const result = await closeAgentBrowserSession(sessionId);
+    if (!result.success) {
+      log.warn(`Failed to close browser session ${sessionId}: ${result.error}`);
+    }
+
+    this.recentActions.delete(workspaceId);
+    this.startPromises.delete(workspaceId);
   }
 
   getRecentActions(workspaceId: string): BrowserAction[] {
