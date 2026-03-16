@@ -105,6 +105,12 @@ function extractCliString(data: unknown, field: string): string | null {
 
 type RawCliResult = { ok: true; stdout: string; stderr: string } | { ok: false; error: string };
 
+interface AgentBrowserCliCommandOptions {
+  inFlightProcesses?: Set<ChildProcess>;
+  spawnFn?: typeof spawn;
+  resolveAgentBrowserBinaryFn?: () => string;
+}
+
 function isMissingBrowserSessionError(error: string): boolean {
   return /session not found|no session/i.test(error);
 }
@@ -126,14 +132,19 @@ async function runAgentBrowserCliCommand(
   sessionId: string,
   args: string[],
   timeoutMs = CLI_TIMEOUT_MS,
-  options?: { inFlightProcesses?: Set<ChildProcess>; spawnFn?: typeof spawn }
+  options?: AgentBrowserCliCommandOptions
 ): Promise<RawCliResult> {
   assert(sessionId.trim().length > 0, "runAgentBrowserCliCommand requires a non-empty sessionId");
   assert(args.length > 0, "runAgentBrowserCliCommand requires at least one CLI arg");
 
+  // Allow tests to inject the binary resolver so they can avoid Bun's process-wide
+  // module mocks, which can leak launcher state into unrelated BrowserSessionBackend tests.
+  const resolveAgentBrowserBinaryFn =
+    options?.resolveAgentBrowserBinaryFn ?? resolveAgentBrowserBinary;
+
   let agentBrowserBinary: string;
   try {
-    agentBrowserBinary = resolveAgentBrowserBinary();
+    agentBrowserBinary = resolveAgentBrowserBinaryFn();
   } catch (error) {
     const launcherError = getAgentBrowserLauncherError(error);
     if (launcherError !== null) {
@@ -207,13 +218,14 @@ async function runAgentBrowserCliCommand(
 export async function closeAgentBrowserSession(
   sessionId: string,
   timeoutMs = CLI_TIMEOUT_MS,
-  options?: { spawnFn?: typeof spawn }
+  options?: AgentBrowserCliCommandOptions
 ): Promise<{ success: boolean; error?: string }> {
   assert(sessionId.trim().length > 0, "closeAgentBrowserSession requires a non-empty sessionId");
 
   try {
     const result = await runAgentBrowserCliCommand(sessionId, ["close"], timeoutMs, {
       spawnFn: options?.spawnFn,
+      resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
     });
     if (result.ok || isMissingBrowserSessionError(result.error)) {
       return { success: true };
