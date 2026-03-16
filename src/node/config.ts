@@ -1131,6 +1131,7 @@ export class Config {
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               agentId: workspace.agentId,
+              bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -1225,6 +1226,7 @@ export class Config {
             metadata.parentWorkspaceId ??= workspace.parentWorkspaceId;
             metadata.agentType ??= workspace.agentType;
             metadata.agentId ??= workspace.agentId;
+            metadata.bestOf ??= workspace.bestOf;
             metadata.taskStatus ??= workspace.taskStatus;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
@@ -1282,6 +1284,7 @@ export class Config {
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               agentId: workspace.agentId,
+              bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -1328,6 +1331,7 @@ export class Config {
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
             agentId: workspace.agentId,
+            bestOf: workspace.bestOf,
             taskStatus: workspace.taskStatus,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
@@ -1390,6 +1394,7 @@ export class Config {
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,
+        bestOf: metadata.bestOf,
         taskStatus: metadata.taskStatus,
         reportedAt: metadata.reportedAt,
         taskModelString: metadata.taskModelString,

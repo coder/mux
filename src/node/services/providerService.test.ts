@@ -376,6 +376,38 @@ describe("ProviderService.setConfig", () => {
   });
 });
 
+describe("ProviderService denied keyPath segments", () => {
+  for (const deniedSegment of ["__proto__", "prototype", "constructor"] as const) {
+    it(`setConfigValue rejects ${deniedSegment} in keyPath`, async () => {
+      await withTempConfigAsync(async (config, service) => {
+        const result = await service.setConfigValue(
+          "openai",
+          ["auth", deniedSegment, "token"],
+          "sk-test"
+        );
+
+        expect(result).toEqual({
+          success: false,
+          error: `Denied key path segment: "${deniedSegment}"`,
+        });
+        expect(config.loadProvidersConfig()).toBeNull();
+      });
+    });
+  }
+
+  it("setConfig rejects __proto__ in keyPath", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const result = await service.setConfig("openai", ["auth", "__proto__", "token"], "sk-test");
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Denied key path segment: "__proto__"',
+      });
+      expect(config.loadProvidersConfig()).toBeNull();
+    });
+  });
+});
+
 describe("ProviderService gateway lifecycle", () => {
   it("auto-inserts gateway into routePriority when configured", async () => {
     await withTempConfigAsync(async (config, service) => {

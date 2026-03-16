@@ -17,6 +17,7 @@ import * as path from "node:path";
 
 import assert from "@/common/utils/assert";
 import type { MuxMessage } from "@/common/types/message";
+import type { DesktopCapability } from "@/common/types/desktop";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { MuxToolScope } from "@/common/types/toolScope";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -232,6 +233,7 @@ export interface BuildStreamSystemContextOptions {
   providersConfig?: ProvidersConfigMap | null;
   mcpServers: Parameters<typeof buildSystemMessage>[5];
   muxScope?: MuxToolScope;
+  loadDesktopCapability?: () => Promise<DesktopCapability>;
 }
 
 /** Result of system context assembly. */
@@ -444,6 +446,7 @@ export async function buildStreamSystemContext(
     providersConfig,
     mcpServers,
     muxScope,
+    loadDesktopCapability,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -484,6 +487,7 @@ export async function buildStreamSystemContext(
       runtime,
       workspacePath: agentDiscoveryPath,
       cfg,
+      loadDesktopCapability,
     });
   }
 
@@ -565,6 +569,7 @@ export async function discoverAvailableSubagentsForToolContext(args: {
   workspacePath: string;
   cfg: ProjectsConfig;
   roots?: AgentDefinitionsRoots;
+  loadDesktopCapability?: () => Promise<DesktopCapability>;
 }): Promise<Awaited<ReturnType<typeof discoverAgentDefinitions>>> {
   assert(args, "discoverAvailableSubagentsForToolContext: args is required");
   assert(args.runtime, "discoverAvailableSubagentsForToolContext: runtime is required");
@@ -577,6 +582,21 @@ export async function discoverAvailableSubagentsForToolContext(args: {
   const discovered = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
     roots: args.roots,
   });
+
+  let desktopAvailablePromise: Promise<boolean> | undefined;
+  const isDesktopAvailable = async (): Promise<boolean> => {
+    if (!args.loadDesktopCapability) {
+      return false;
+    }
+
+    // Keep desktop requirement checks request-scoped: one DesktopSessionManager probe can gate
+    // every desktop-only agent discovered for the same tool-context build.
+    desktopAvailablePromise ??= args
+      .loadDesktopCapability()
+      .then((desktopCapability) => desktopCapability.available)
+      .catch(() => false);
+    return await desktopAvailablePromise;
+  };
 
   const resolved = await Promise.all(
     discovered.map(async (descriptor) => {
@@ -595,6 +615,11 @@ export async function discoverAvailableSubagentsForToolContext(args: {
         });
 
         if (effectivelyDisabled) {
+          return null;
+        }
+
+        const requiresDesktop = resolvedFrontmatter.ui?.requires?.includes("desktop") ?? false;
+        if (requiresDesktop && !(await isDesktopAvailable())) {
           return null;
         }
 

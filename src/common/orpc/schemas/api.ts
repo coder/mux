@@ -218,7 +218,13 @@ export const providers = {
   setProviderConfig: {
     input: z.object({
       provider: z.string(),
-      keyPath: z.array(z.string()),
+      keyPath: z
+        .array(z.string())
+        .refine(
+          (path) =>
+            !path.some((segment) => ["__proto__", "prototype", "constructor"].includes(segment)),
+          { message: "keyPath contains a denied segment" }
+        ),
       value: z.union([z.string(), z.boolean()]),
     }),
     output: ResultSchema(z.void(), z.string()),
@@ -981,7 +987,11 @@ export const workspace = {
     ),
   },
   fork: {
-    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string().optional() }),
+    input: z.object({
+      sourceWorkspaceId: z.string(),
+      newName: z.string().optional(),
+      sourceMessageId: z.string().optional(),
+    }),
     output: z.discriminatedUnion("success", [
       z.object({
         success: z.literal(true),
@@ -1912,6 +1922,94 @@ export const devtools = {
   },
 };
 
+const BrowserSessionStatusSchema = z.enum(["starting", "live", "paused", "error", "ended"]);
+const BrowserSessionOwnershipSchema = z.enum(["agent", "user", "shared"]);
+
+const BrowserActionSchema = z.object({
+  id: z.string(),
+  type: z.enum(["navigate", "click", "fill", "screenshot", "custom"]),
+  description: z.string(),
+  timestamp: z.string(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+const BrowserSessionSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  status: BrowserSessionStatusSchema,
+  ownership: BrowserSessionOwnershipSchema,
+  currentUrl: z.string().nullable(),
+  title: z.string().nullable(),
+  lastScreenshotBase64: z.string().nullable(),
+  lastError: z.string().nullable(),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const BrowserSessionEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("snapshot"),
+    session: BrowserSessionSchema.nullable(),
+    recentActions: z.array(BrowserActionSchema),
+  }),
+  z.object({
+    type: z.literal("session-updated"),
+    session: BrowserSessionSchema,
+  }),
+  z.object({
+    type: z.literal("action"),
+    action: BrowserActionSchema,
+  }),
+  z.object({
+    type: z.literal("session-ended"),
+    workspaceId: z.string(),
+  }),
+  z.object({
+    type: z.literal("error"),
+    workspaceId: z.string(),
+    error: z.string(),
+  }),
+]);
+
+export const browserSession = {
+  getActive: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: BrowserSessionSchema.nullable(),
+  },
+  start: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        ownership: BrowserSessionOwnershipSchema.nullish(),
+        initialUrl: z.string().nullish(),
+      })
+      .strict(),
+    output: BrowserSessionSchema,
+  },
+  stop: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: z.object({
+      success: z.boolean(),
+    }),
+  },
+  subscribe: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+      })
+      .strict(),
+    output: eventIterator(BrowserSessionEventSchema),
+  },
+};
+
 // UI Layouts (global settings)
 export const uiLayouts = {
   getAll: {
@@ -2102,6 +2200,54 @@ export const debug = {
       errorMessage: z.string().optional(),
     }),
     output: z.boolean(), // true if error was triggered on an active stream
+  },
+};
+
+const DesktopPrereqStatusSchema = z.discriminatedUnion("available", [
+  z.object({
+    available: z.literal(true),
+  }),
+  z.object({
+    available: z.literal(false),
+    reason: z.enum(["unsupported_platform", "startup_failed", "binary_not_found"]),
+  }),
+]);
+
+const DesktopCapabilitySchema = z.discriminatedUnion("available", [
+  z.object({
+    available: z.literal(true),
+    width: z.number(),
+    height: z.number(),
+    sessionId: z.string(),
+  }),
+  z.object({
+    available: z.literal(false),
+    reason: z.enum([
+      "disabled",
+      "unsupported_platform",
+      "unsupported_runtime",
+      "startup_failed",
+      "binary_not_found",
+    ]),
+  }),
+]);
+
+export const desktop = {
+  getPrereqStatus: {
+    input: z.void(),
+    output: DesktopPrereqStatusSchema,
+  },
+  getCapability: {
+    input: z.object({ workspaceId: z.string() }),
+    output: DesktopCapabilitySchema,
+  },
+  getBootstrap: {
+    input: z.object({ workspaceId: z.string() }),
+    output: z.object({
+      capability: DesktopCapabilitySchema,
+      bridgePort: z.number().int().positive().optional(),
+      token: z.string().optional(),
+    }),
   },
 };
 

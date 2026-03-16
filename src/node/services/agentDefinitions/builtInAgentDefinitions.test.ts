@@ -31,6 +31,32 @@ describe("built-in agent definitions", () => {
     expect(orchestrator?.frontmatter.subagent?.runnable).toBe(false);
   });
 
+  test("includes desktop built-in with desktop automation safeguards", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const desktop = byId.get("desktop");
+    expect(desktop).toBeTruthy();
+    expect(desktop?.frontmatter.base).toBe("exec");
+    expect(desktop?.frontmatter.ui?.hidden).toBe(true);
+    expect(desktop?.frontmatter.ui?.routable).toBe(true);
+    expect(desktop?.frontmatter.ui?.requires).toContain("desktop");
+    expect(desktop?.frontmatter.subagent?.runnable).toBe(true);
+    expect(desktop?.frontmatter.ai?.thinkingLevel).toBe("medium");
+    expect(desktop?.frontmatter.tools?.add ?? []).toEqual([
+      "desktop_screenshot",
+      "desktop_move_mouse",
+      "desktop_click",
+      "desktop_double_click",
+      "desktop_drag",
+      "desktop_scroll",
+      "desktop_type",
+      "desktop_key_press",
+    ]);
+    expect(desktop?.frontmatter.tools?.remove ?? []).toContain("task");
+    expect(desktop?.body).toContain("screenshot");
+  });
+
   test("explore agent allows skill tools", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

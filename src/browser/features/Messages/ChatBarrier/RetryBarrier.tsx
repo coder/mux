@@ -6,7 +6,6 @@ import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import { getLastNonDecorativeMessage } from "@/common/utils/messages/retryEligibility";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
-import { cn } from "@/common/lib/utils";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
@@ -14,7 +13,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 interface RetryBarrierProps {
   workspaceId: string;
-  className?: string;
+  visible?: boolean;
 }
 
 export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
@@ -148,6 +147,12 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   }, [autoRetryStatus, isAutoRetryScheduled]);
 
   useEffect(() => {
+    if (props.visible === false) {
+      setManualRetryError(null);
+    }
+  }, [props.visible]);
+
+  useEffect(() => {
     if (isAutoRetryActive) {
       setManualRetryError(null);
     }
@@ -234,11 +239,6 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     void api?.workspace.setAutoRetryEnabled?.({ workspaceId: props.workspaceId, enabled: false });
   };
 
-  const barrierClassName = cn(
-    "my-5 px-5 py-4 bg-gradient-to-br from-[rgba(255,165,0,0.1)] to-[rgba(255,140,0,0.1)] border-l-4 border-warning rounded flex flex-col gap-3",
-    props.className
-  );
-
   const lastMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const lastStreamError = lastMessage?.type === "stream-error" ? lastMessage : null;
   const interruptionReason = lastStreamError?.errorType === "rate_limit" ? "Rate limited" : null;
@@ -319,8 +319,12 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     </div>
   ) : null;
 
+  if (props.visible === false) {
+    return null;
+  }
+
   return (
-    <div className={barrierClassName}>
+    <div className="border-warning my-5 flex flex-col gap-3 rounded border-l-4 bg-gradient-to-br from-[rgba(255,165,0,0.1)] to-[rgba(255,140,0,0.1)] px-5 py-4">
       <div className="flex items-center justify-between gap-4">
         <div className="flex flex-1 items-center gap-3">
           <span className="shrink-0">{statusIcon}</span>

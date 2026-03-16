@@ -375,6 +375,51 @@ export const AnthropicOverloaded: AppStory = {
   ),
 };
 
+export const MuxGatewayQuota: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-mux-gateway-quota";
+
+        return setupCustomChatStory({
+          workspaceId,
+          chatHandler: (callback: (event: WorkspaceChatMessage) => void) => {
+            setTimeout(() => {
+              callback(
+                createUserMessage("msg-1", "Why did my request fail?", {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 100000,
+                })
+              );
+              callback({ type: "caught-up" });
+
+              callback({
+                type: "stream-start",
+                workspaceId,
+                messageId: "assistant-1",
+                model: "mux-gateway:anthropic/claude-sonnet-4",
+                routedThroughGateway: true,
+                historySequence: 2,
+                startTime: STABLE_TIMESTAMP - 90000,
+                mode: "exec",
+              });
+
+              callback({
+                type: "stream-error",
+                messageId: "assistant-1",
+                error: "Insufficient balance. Please add credits to continue.",
+                errorType: "quota",
+              });
+            }, 50);
+            // eslint-disable-next-line @typescript-eslint/no-empty-function
+            return () => {};
+          },
+        });
+      }}
+    />
+  ),
+};
+
 /** Chat with truncated/hidden history indicator */
 export const HiddenHistory: AppStory = {
   render: () => (

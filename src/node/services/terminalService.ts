@@ -23,6 +23,15 @@ import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { NO_OSC_IDLE_FALLBACK_MS } from "@/constants/terminalActivity";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
+
+function quoteForNativeTerminalCommandArg(value: string): string {
+  if (process.platform === "win32") {
+    // cmd.exe expands %VAR% even in double quotes, so escape literal % as %%.
+    return `"${value.replace(/%/g, "%%").replace(/"/g, '""')}"`;
+  }
+  return shellQuote(value);
+}
 
 /**
  * Configuration for opening a native terminal
@@ -417,9 +426,11 @@ export class TerminalService {
           command: `docker exec -it ${containerName} /bin/sh -c "cd ${workspace.namedWorkspacePath} && exec /bin/sh"`,
         });
       } else if (isDevcontainerRuntime(runtimeConfig)) {
-        const quotedPath = JSON.stringify(workspace.namedWorkspacePath);
+        // These arguments are executed via `sh -c` in terminal launchers, so they
+        // must be escaped for the current host shell to prevent path-based injection.
+        const quotedPath = quoteForNativeTerminalCommandArg(workspace.namedWorkspacePath);
         const configArg = runtimeConfig.configPath
-          ? ` --config ${JSON.stringify(runtimeConfig.configPath)}`
+          ? ` --config ${quoteForNativeTerminalCommandArg(runtimeConfig.configPath)}`
           : "";
         await this.openNativeTerminal({
           type: "local",

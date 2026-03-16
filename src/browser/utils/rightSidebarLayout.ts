@@ -126,7 +126,7 @@ export function parseRightSidebarLayoutState(
   }
 
   if (isRightSidebarLayoutState(raw)) {
-    // Migrate: inject "explorer" tab if missing from persisted layout
+    // Migrate: inject new always-visible static tabs into persisted layouts.
     if (!layoutContainsTab(raw.root, "explorer")) {
       injectTabIntoLayout(raw.root, "explorer");
     }

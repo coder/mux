@@ -11,7 +11,7 @@
  */
 
 import type { TabType } from "@/browser/types/rightSidebar";
-import { formatDuration } from "@/common/utils/formatDuration";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ReviewNoteData } from "@/common/types/review";
 
 /** Stats reported by ReviewPanel for tab display */
@@ -79,29 +79,42 @@ export interface TabConfig {
 }
 
 /** Static tab configurations (non-terminal tabs) */
-export const TAB_CONFIGS: Record<"costs" | "review" | "explorer" | "output" | "debug", TabConfig> =
-  {
-    costs: {
-      name: "Stats", // Renamed from "Costs" — now hosts Cost/Timing/Models sub-tabs
-      contentClassName: "overflow-y-auto p-[15px]",
-    },
-    review: {
-      name: "Review",
-      contentClassName: "overflow-y-auto p-0",
-    },
-    explorer: {
-      name: "Explorer",
-      contentClassName: "overflow-y-auto p-0",
-    },
-    output: {
-      name: "Output",
-      contentClassName: "overflow-hidden p-0",
-    },
-    debug: {
-      name: "Debug",
-      contentClassName: "overflow-y-auto p-0",
-    },
-  };
+export const TAB_CONFIGS: Record<
+  "costs" | "review" | "explorer" | "desktop" | "browser" | "output" | "debug",
+  TabConfig
+> = {
+  costs: {
+    name: "Stats", // Renamed from "Costs" — now hosts Cost/Timing/Models sub-tabs
+    contentClassName: "overflow-y-auto p-[15px]",
+  },
+  review: {
+    name: "Review",
+    contentClassName: "overflow-y-auto p-0",
+  },
+  explorer: {
+    name: "Explorer",
+    contentClassName: "overflow-y-auto p-0",
+  },
+  desktop: {
+    name: "Desktop",
+    contentClassName: "overflow-hidden p-0",
+    featureFlag: EXPERIMENT_IDS.PORTABLE_DESKTOP,
+  },
+  browser: {
+    name: "Browser",
+    contentClassName: "overflow-hidden p-0",
+    keepAlive: false,
+    featureFlag: EXPERIMENT_IDS.AGENT_BROWSER,
+  },
+  output: {
+    name: "Output",
+    contentClassName: "overflow-hidden p-0",
+  },
+  debug: {
+    name: "Debug",
+    contentClassName: "overflow-y-auto p-0",
+  },
+};
 
 /** Terminal tab configuration */
 export const TERMINAL_TAB_CONFIG: TabConfig = {
@@ -123,6 +136,8 @@ export function getTabConfig(tab: TabType): TabConfig {
     tab === "costs" ||
     tab === "review" ||
     tab === "explorer" ||
+    tab === "desktop" ||
+    tab === "browser" ||
     tab === "output" ||
     tab === "debug"
   ) {
@@ -144,12 +159,4 @@ export function getTabName(tab: TabType): string {
 /** Get content container class name for a tab type */
 export function getTabContentClassName(tab: TabType): string {
   return getTabConfig(tab).contentClassName;
-}
-
-/** Format duration for tab display (compact format) */
-export function formatTabDuration(ms: number): string {
-  if (ms < 60_000) return formatDuration(ms);
-  const mins = Math.floor(ms / 60_000);
-  const secs = Math.round((ms % 60_000) / 1000);
-  return secs > 0 ? `${mins}m${secs}s` : `${mins}m`;
 }

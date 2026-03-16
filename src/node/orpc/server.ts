@@ -28,6 +28,7 @@ import {
 } from "@/node/services/serverAuthService";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
 import { getErrorMessage } from "@/common/utils/errors";
+import { escapeHtml } from "@/node/utils/oauthUtils";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -135,15 +136,6 @@ function injectProxyUriTemplate(indexHtml: string, proxyUriTemplate: string | nu
     /<head[^>]*>/i,
     (match) => `${match}\n    <script>window.__MUX_PROXY_URI_TEMPLATE__ = ${templateJson};</script>`
   );
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 type OriginValidationRequest = Pick<http.IncomingMessage, "headers" | "socket"> & {

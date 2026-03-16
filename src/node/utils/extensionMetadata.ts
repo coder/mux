@@ -17,6 +17,7 @@ export interface ExtensionAgentStatus {
 export interface ExtensionMetadata {
   recency: number;
   streaming: boolean;
+  streamingGeneration?: number;
   lastModel: string | null;
   lastThinkingLevel: ThinkingLevel | null;
   agentStatus: ExtensionAgentStatus | null;
@@ -93,9 +94,14 @@ export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
       const rawThinkingLevel = (metadata as { lastThinkingLevel?: unknown }).lastThinkingLevel;
       const rawAgentStatus = (metadata as { agentStatus?: unknown }).agentStatus;
       const rawLastStatusUrl = (metadata as { lastStatusUrl?: unknown }).lastStatusUrl;
+      const rawStreamingGeneration = (metadata as { streamingGeneration?: unknown })
+        .streamingGeneration;
       map.set(workspaceId, {
         recency: metadata.recency,
         streaming: metadata.streaming,
+        ...(typeof rawStreamingGeneration === "number"
+          ? { streamingGeneration: rawStreamingGeneration }
+          : {}),
         lastModel: metadata.lastModel ?? null,
         lastThinkingLevel: isThinkingLevel(rawThinkingLevel) ? rawThinkingLevel : null,
         agentStatus: coerceAgentStatus(rawAgentStatus),

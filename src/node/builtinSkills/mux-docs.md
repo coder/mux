@@ -84,6 +84,7 @@ Use this index to find a page's:
     - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx` — Review and collaborate on plans before execution
     - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx` — How Mux constructs the system prompt for AI models
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
+    - Best of N (`/agents/best-of-n`) → `references/docs/agents/best-of-n.mdx` — Improve plans, analysis, and reviews by asking Mux to explore multiple candidate answers in parallel
   - **Configuration**
     - MCP Servers (`/config/mcp-servers`) → `references/docs/config/mcp-servers.mdx` — Extend agent capabilities with Model Context Protocol servers
     - Policy File (`/config/policy-file`) → `references/docs/config/policy-file.mdx` — Admin-enforced restrictions for providers, models, MCP, and runtimes

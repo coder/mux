@@ -39,8 +39,11 @@ export function getErrorMessage(error: unknown): string {
   while (current instanceof Error) {
     if (seen.has(current)) break;
     seen.add(current);
-    if (current.message && !msg.includes(current.message)) {
-      msg += ` [cause: ${current.message}]`;
+    const causeMessage = current.message;
+    // Some wrapped SDK errors stringify a plain object to "[object Object]",
+    // which adds noise without surfacing any actionable context.
+    if (causeMessage && causeMessage !== "[object Object]" && !msg.includes(causeMessage)) {
+      msg += ` [cause: ${causeMessage}]`;
     }
     current = current.cause;
   }

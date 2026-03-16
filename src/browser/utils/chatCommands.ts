@@ -62,6 +62,7 @@ export interface ForkOptions {
   client: RouterClient<AppRouter>;
   sourceWorkspaceId: string;
   newName?: string;
+  sourceMessageId?: string;
   startMessage?: string;
   sendMessageOptions?: SendMessageOptions;
 }
@@ -83,6 +84,7 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   const result = await client.workspace.fork({
     sourceWorkspaceId: options.sourceWorkspaceId,
     newName: options.newName,
+    sourceMessageId: options.sourceMessageId,
   });
 
   if (!result.success) {
@@ -718,9 +720,6 @@ export async function createNewWorkspace(
 // ============================================================================
 // Compaction
 // ============================================================================
-
-// Re-export buildContinueMessage from common/types for backward compatibility
-export { buildContinueMessage } from "@/common/types/message";
 
 export interface CompactionOptions {
   api?: RouterClient<AppRouter>;

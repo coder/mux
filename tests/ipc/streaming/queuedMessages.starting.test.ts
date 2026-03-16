@@ -49,6 +49,8 @@ describe("Queued messages during stream start", () => {
     const collector = createStreamCollector(env.orpc, workspaceId);
     collector.start();
 
+    let reconnectCollector: ReturnType<typeof createStreamCollector> | null = null;
+
     try {
       await collector.waitForSubscription(5000);
 
@@ -81,6 +83,21 @@ describe("Queued messages during stream start", () => {
       if (!sawStartingWindow) {
         throw new Error("Stream never entered starting window before follow-up could queue");
       }
+
+      reconnectCollector = createStreamCollector(env.orpc, workspaceId);
+      reconnectCollector.start();
+      await reconnectCollector.waitForSubscription(5000);
+
+      const sawPreparingLifecycleOnReplay = reconnectCollector
+        .getEvents()
+        .some(
+          (event) =>
+            "type" in event &&
+            event.type === "stream-lifecycle" &&
+            event.phase === "preparing" &&
+            event.hadAnyOutput === false
+        );
+      expect(sawPreparingLifecycleOnReplay).toBe(true);
 
       const sawStreamStartEarly = collector
         .getEvents()
@@ -170,6 +187,7 @@ describe("Queued messages during stream start", () => {
       const firstSendResult = await firstSendPromise;
       expect(firstSendResult.success).toBe(true);
     } finally {
+      reconnectCollector?.stop();
       collector.stop();
       await env.orpc.workspace.remove({ workspaceId });
     }

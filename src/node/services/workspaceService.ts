@@ -316,29 +316,37 @@ function buildWorkspaceTitleConversationContext(
 }
 
 /**
+ * Find the highest sequential number among items that match `prefix<digits>trailingSuffix`.
+ * Returns 0 when no items match.
+ */
+function findMaxSequentialNumber(items: string[], prefix: string, trailingSuffix = ""): number {
+  let max = 0;
+  for (const item of items) {
+    if (!item.startsWith(prefix)) continue;
+    if (trailingSuffix && !item.endsWith(trailingSuffix)) continue;
+
+    const numberStr = trailingSuffix
+      ? item.slice(prefix.length, -trailingSuffix.length)
+      : item.slice(prefix.length);
+    if (!/^\d+$/.test(numberStr)) continue;
+
+    const n = Number(numberStr);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+/**
  * Generate a unique fork branch name from the parent workspace name.
- * Scans existing workspace names for the `{parentName}-fork-N` pattern
- * and picks N+1, guaranteeing a valid git-safe branch name.
+ * Scans existing workspace names for the parent fork family pattern and picks N+1,
+ * guaranteeing a valid git-safe branch name.
  */
 export function generateForkBranchName(parentName: string, existingNames: string[]): string {
-  const prefix = `${parentName}-fork-`;
-  let max = 0;
-  for (const name of existingNames) {
-    if (!name.startsWith(prefix)) {
-      continue;
-    }
-
-    const suffix = name.slice(prefix.length);
-    if (!/^\d+$/.test(suffix)) {
-      continue;
-    }
-
-    const n = Number(suffix);
-    if (n > max) {
-      max = n;
-    }
-  }
-  return `${prefix}${max + 1}`;
+  // Forking an existing fork should stay in the same numbered family.
+  // e.g. `feature-fork-2` -> `feature-fork-3`, not `feature-fork-2-fork-1`.
+  const base = parentName.replace(/-fork-\d+$/, "");
+  const prefix = `${base}-fork-`;
+  return `${prefix}${findMaxSequentialNumber(existingNames, prefix) + 1}`;
 }
 
 /**
@@ -349,26 +357,9 @@ export function generateForkTitle(parentTitle: string, existingTitles: string[])
   // Strip any existing " (N)" suffix from the parent title to get the base
   const base = parentTitle.replace(/ \(\d+\)$/, "");
   const prefix = `${base} (`;
-
-  let max = 0;
-  for (const title of existingTitles) {
-    if (!title.startsWith(prefix) || !title.endsWith(")")) {
-      continue;
-    }
-
-    const suffix = title.slice(prefix.length, -1);
-    if (!/^\d+$/.test(suffix)) {
-      continue;
-    }
-
-    const n = Number(suffix);
-    if (n > max) {
-      max = n;
-    }
-  }
   // If parent title itself exists in the list (without suffix), start at (1)
   // Otherwise continue from the highest found suffix
-  return `${base} (${max + 1})`;
+  return `${base} (${findMaxSequentialNumber(existingTitles, prefix, ")") + 1})`;
 }
 
 function isErrnoWithCode(error: unknown, code: string): boolean {
@@ -383,6 +374,22 @@ async function copyIfExists(sourcePath: string, destinationPath: string): Promis
       throw error;
     }
   }
+}
+
+async function resetForkedSessionUsage(
+  sessionUsageService: SessionUsageService | undefined,
+  workspaceId: string,
+  sessionDir: string
+): Promise<void> {
+  if (sessionUsageService) {
+    await sessionUsageService.resetSessionUsage(workspaceId);
+    return;
+  }
+
+  await fsPromises.writeFile(
+    path.join(sessionDir, "session-usage.json"),
+    JSON.stringify({ byModel: {}, version: 1 }, null, 2)
+  );
 }
 
 function isPathInsideDir(dirPath: string, filePath: string): boolean {
@@ -1184,11 +1191,17 @@ export class WorkspaceService extends EventEmitter {
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
-        this.streamingGenerations.set(
+        const generation = (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1;
+        this.streamingGenerations.set(data.workspaceId, generation);
+        void this.updateStreamingStatus(
           data.workspaceId,
-          (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1
+          true,
+          data.model,
+          data.agentId,
+          undefined,
+          undefined,
+          generation
         );
-        void this.updateStreamingStatus(data.workspaceId, true, data.model, data.agentId);
       }
     });
 
@@ -1276,7 +1289,8 @@ export class WorkspaceService extends EventEmitter {
     model?: string,
     agentId?: string,
     hasTodos?: boolean,
-    expectedGeneration?: number
+    expectedGeneration?: number,
+    streamingGeneration?: number
   ): Promise<void> {
     try {
       let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
@@ -1318,7 +1332,8 @@ export class WorkspaceService extends EventEmitter {
         streaming,
         model,
         thinkingLevel,
-        hasTodos
+        hasTodos,
+        streamingGeneration
       );
       // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
       // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
@@ -1352,6 +1367,7 @@ export class WorkspaceService extends EventEmitter {
       undefined,
       undefined,
       undefined,
+      generation,
       generation
     );
   }
@@ -4070,7 +4086,8 @@ export class WorkspaceService extends EventEmitter {
 
   async fork(
     sourceWorkspaceId: string,
-    newName?: string
+    newName?: string,
+    sourceMessageId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
       if (sourceWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
@@ -4271,18 +4288,40 @@ export class WorkspaceService extends EventEmitter {
       try {
         await ensurePrivateDir(newSessionDir);
 
-        const sessionFiles = [
-          "chat.jsonl",
-          "partial.json",
-          "session-timing.json",
-          "session-usage.json",
-        ] as const;
+        const sessionFiles = ["chat.jsonl", "partial.json", "session-timing.json"] as const;
         for (const fileName of sessionFiles) {
           await copyIfExists(
             path.join(sourceSessionDir, fileName),
             path.join(newSessionDir, fileName)
           );
         }
+
+        if (sourceMessageId) {
+          const truncateResult = await this.historyService.truncateAfterMessage(
+            newWorkspaceId,
+            sourceMessageId,
+            {
+              keepTargetMessage: true,
+            }
+          );
+          if (!truncateResult.success) {
+            throw new Error(truncateResult.error);
+          }
+
+          // Forking from a prior assistant response intentionally discards any later in-flight
+          // state so the new workspace resumes cleanly at the chosen branch point.
+          await fsPromises.rm(path.join(newSessionDir, "partial.json"), { force: true });
+          if (this.sessionTimingService) {
+            await this.sessionTimingService.clearTimingFile(newWorkspaceId);
+          } else {
+            await fsPromises.rm(path.join(newSessionDir, "session-timing.json"), { force: true });
+          }
+        }
+
+        // Forks inherit chat history, but their cost ledger must start fresh.
+        // Persist an explicit empty usage file so later reads do not rebuild
+        // historical costs from the copied messages.
+        await resetForkedSessionUsage(this.sessionUsageService, newWorkspaceId, newSessionDir);
       } catch (copyError) {
         const forkTrusted = projectConfig.trusted ?? false;
         await targetRuntime.deleteWorkspace(

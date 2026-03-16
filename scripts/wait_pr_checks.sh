@@ -179,6 +179,7 @@ CHECK_PR_CHECKS_ONCE() {
     echo "   ./scripts/extract_pr_logs.sh $PR_NUMBER <job_pattern>"
     echo ""
     echo "💡 Common local repro commands for this repo:"
+    echo "   make static-check-full"
     echo "   make static-check"
     echo "   make test"
     echo ""

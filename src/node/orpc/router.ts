@@ -72,6 +72,7 @@ import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
+import type { BrowserSessionEvent } from "@/common/types/browserSession";
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
@@ -1075,6 +1076,110 @@ export const router = (authToken?: string) => {
           }
         }),
     },
+    browserSession: {
+      getActive: t
+        .input(schemas.browserSession.getActive.input)
+        .output(schemas.browserSession.getActive.output)
+        .handler(({ context, input }) => {
+          return context.browserSessionService.getActiveSession(input.workspaceId);
+        }),
+      start: t
+        .input(schemas.browserSession.start.input)
+        .output(schemas.browserSession.start.output)
+        .handler(async ({ context, input }) => {
+          return context.browserSessionService.startSession(input.workspaceId, {
+            ownership: input.ownership,
+            initialUrl: input.initialUrl,
+          });
+        }),
+      stop: t
+        .input(schemas.browserSession.stop.input)
+        .output(schemas.browserSession.stop.output)
+        .handler(async ({ context, input }) => {
+          await context.browserSessionService.stopSession(input.workspaceId);
+          return { success: true };
+        }),
+      subscribe: t
+        .input(schemas.browserSession.subscribe.input)
+        .output(schemas.browserSession.subscribe.output)
+        .handler(async function* ({ context, input, signal }) {
+          const service = context.browserSessionService;
+          let resolveNext: ((value: BrowserSessionEvent | null) => void) | null = null;
+          const queue: BrowserSessionEvent[] = [];
+          let ended = false;
+
+          const push = (event: BrowserSessionEvent) => {
+            if (ended) {
+              return;
+            }
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(event);
+              return;
+            }
+
+            queue.push(event);
+          };
+
+          const eventName = `update:${input.workspaceId}`;
+          const onEvent = (event: BrowserSessionEvent) => {
+            push(event);
+          };
+
+          service.on(eventName, onEvent);
+
+          const onAbort = () => {
+            if (ended) {
+              return;
+            }
+
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            const session = service.getActiveSession(input.workspaceId);
+            const recentActions = service.getRecentActions(input.workspaceId);
+            yield { type: "snapshot" as const, session, recentActions };
+
+            while (!ended) {
+              const queuedEvent = queue.shift();
+              if (queuedEvent) {
+                yield queuedEvent;
+                continue;
+              }
+
+              const event = await new Promise<BrowserSessionEvent | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (event == null || ended) {
+                break;
+              }
+
+              yield event;
+            }
+          } finally {
+            ended = true;
+            signal?.removeEventListener("abort", onAbort);
+            service.off(eventName, onEvent);
+          }
+        }),
+    },
     uiLayouts: {
       getAll: t
         .input(schemas.uiLayouts.getAll.input)
@@ -1162,29 +1267,68 @@ export const router = (authToken?: string) => {
                       ? resolvedFrontmatter.ui.selectable
                       : true;
 
-                const requiresPlan = resolvedFrontmatter.ui?.requires?.includes("plan") ?? false;
-                const uiSelectable = requiresPlan && !planReady ? false : uiSelectableBase;
-
                 return {
-                  ...descriptor,
-                  name: resolvedFrontmatter.name,
-                  description: resolvedFrontmatter.description,
-                  uiSelectable,
-                  uiColor: resolvedFrontmatter.ui?.color,
-                  subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
-                  base: resolvedFrontmatter.base,
-                  aiDefaults: resolvedFrontmatter.ai,
-                  tools: resolvedFrontmatter.tools,
+                  kind: "resolved" as const,
+                  descriptor,
+                  resolvedFrontmatter,
+                  uiSelectableBase,
                 };
               } catch {
-                return descriptor;
+                return { kind: "fallback" as const, descriptor };
               }
             })
           );
 
-          return resolved.filter((descriptor): descriptor is NonNullable<typeof descriptor> =>
-            Boolean(descriptor)
+          const needsDesktopCapability = resolved.some(
+            (entry) =>
+              entry?.kind === "resolved" &&
+              (entry.resolvedFrontmatter.ui?.requires?.includes("desktop") ?? false)
           );
+          // Fail closed: desktop-only agents stay non-selectable unless this request proves
+          // the active workspace has desktop capability.
+          let desktopCapabilityAvailable = false;
+          if (needsDesktopCapability && input.workspaceId) {
+            try {
+              // DesktopSessionManager.getCapability() is the source of truth for desktop-only UI
+              // gating. Reuse one request-scoped probe for every desktop-required agent.
+              desktopCapabilityAvailable = (
+                await context.desktopSessionManager.getCapability(input.workspaceId)
+              ).available;
+            } catch {
+              desktopCapabilityAvailable = false;
+            }
+          }
+
+          return resolved.flatMap((entry) => {
+            if (!entry) {
+              return [];
+            }
+            if (entry.kind === "fallback") {
+              return [entry.descriptor];
+            }
+
+            const requiresPlan = entry.resolvedFrontmatter.ui?.requires?.includes("plan") ?? false;
+            const requiresDesktop =
+              entry.resolvedFrontmatter.ui?.requires?.includes("desktop") ?? false;
+            const uiSelectable =
+              entry.uiSelectableBase &&
+              (!requiresPlan || planReady) &&
+              (!requiresDesktop || desktopCapabilityAvailable);
+
+            return [
+              {
+                ...entry.descriptor,
+                name: entry.resolvedFrontmatter.name,
+                description: entry.resolvedFrontmatter.description,
+                uiSelectable,
+                uiColor: entry.resolvedFrontmatter.ui?.color,
+                subagentRunnable: entry.resolvedFrontmatter.subagent?.runnable ?? false,
+                base: entry.resolvedFrontmatter.base,
+                aiDefaults: entry.resolvedFrontmatter.ai,
+                tools: entry.resolvedFrontmatter.tools,
+              },
+            ];
+          });
         }),
       get: t
         .input(schemas.agents.get.input)
@@ -2946,7 +3090,8 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const result = await context.workspaceService.fork(
             input.sourceWorkspaceId,
-            input.newName
+            input.newName,
+            input.sourceMessageId
           );
           if (!result.success) {
             return { success: false, error: result.error };
@@ -4277,6 +4422,60 @@ export const router = (authToken?: string) => {
             }
           }),
       },
+    },
+    desktop: {
+      getPrereqStatus: t
+        .input(schemas.desktop.getPrereqStatus.input)
+        .output(schemas.desktop.getPrereqStatus.output)
+        .handler(({ context }) => {
+          return context.desktopSessionManager.getPrereqStatus();
+        }),
+      getCapability: t
+        .input(schemas.desktop.getCapability.input)
+        .output(schemas.desktop.getCapability.output)
+        .handler(async ({ context, input }) => {
+          return context.desktopSessionManager.getCapability(input.workspaceId);
+        }),
+      getBootstrap: t
+        .input(schemas.desktop.getBootstrap.input)
+        .output(schemas.desktop.getBootstrap.output)
+        .handler(async ({ context, input }) => {
+          const capability = await context.desktopSessionManager.getCapability(input.workspaceId);
+          if (!capability.available) {
+            return { capability };
+          }
+
+          try {
+            const session = await context.desktopSessionManager.ensureStarted(input.workspaceId);
+            const sessionInfo = session.getSessionInfo();
+            // Reuse the API server bind host so browser clients can reach the desktop bridge over
+            // the same interface they used for the main backend instead of a loopback-only socket.
+            const bridgeBindHost =
+              context.serverService.getServerInfo()?.bindHost ??
+              context.config.loadConfigOrDefault().apiServerBindHost ??
+              "127.0.0.1";
+            const bridgePort = await context.desktopBridgeServer.start(bridgeBindHost);
+            const startedCapability = {
+              available: true as const,
+              width: sessionInfo.width,
+              height: sessionInfo.height,
+              sessionId: sessionInfo.sessionId ?? capability.sessionId,
+            };
+            const token = context.desktopTokenManager.mint(
+              input.workspaceId,
+              startedCapability.sessionId
+            );
+            return { capability: startedCapability, bridgePort, token };
+          } catch (error) {
+            log.error("Desktop bootstrap failed", {
+              workspaceId: input.workspaceId,
+              error,
+            });
+            return {
+              capability: { available: false as const, reason: "startup_failed" as const },
+            };
+          }
+        }),
     },
     update: {
       check: t

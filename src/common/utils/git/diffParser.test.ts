@@ -620,4 +620,11 @@ function greet(name) {
     execSync("git checkout test-main --force", { cwd: testRepoPath });
     execSync("git branch -D feature-branch", { cwd: testRepoPath });
   });
+
+  it("should shell-quote diffBase to prevent command injection", () => {
+    const gitCommand = buildGitDiffCommand("main;touch /tmp/pwned", false, "", "diff");
+
+    expect(gitCommand).toContain("git diff 'main;touch /tmp/pwned'...HEAD -M");
+    expect(gitCommand).not.toContain("git diff main;touch /tmp/pwned...HEAD -M");
+  });
 });

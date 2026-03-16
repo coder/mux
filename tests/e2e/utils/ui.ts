@@ -373,7 +373,18 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
                 continue;
               }
               const eventType = (message as { type: string }).type;
-              const isStreamEvent = eventType.startsWith("stream-");
+              const isReplayTerminalError =
+                eventType === "stream-error" &&
+                "replay" in message &&
+                (message as { replay?: unknown }).replay === true;
+              if (isReplayTerminalError) {
+                continue;
+              }
+              // `stream-lifecycle` is backend bookkeeping for startup/interruption state.
+              // Keep timeline captures focused on user-visible content/tool flow ordering so
+              // additive lifecycle events do not break existing sequencing assertions.
+              const isStreamEvent =
+                eventType.startsWith("stream-") && eventType !== "stream-lifecycle";
               const isToolEvent = eventType.startsWith("tool-call-");
               const isReasoningEvent = eventType.startsWith("reasoning-");
               if (!isStreamEvent && !isToolEvent && !isReasoningEvent) {

@@ -108,4 +108,26 @@ describe("StreamingMessageAggregator runtime-status", () => {
       expect(aggregator.getRuntimeStatus()).toBeNull();
     });
   }
+
+  test("repeated pre-stream errors preserve synthesized message metadata", () => {
+    const aggregator = createAggregator();
+    const errorEvent = {
+      type: "stream-error" as const,
+      messageId: "msg-1",
+      error: "boom",
+      errorType: "runtime_start_failed" as const,
+    };
+
+    aggregator.handleStreamError(errorEvent);
+    const firstMessage = aggregator
+      .getAllMessages()
+      .find((message) => message.id === errorEvent.messageId);
+    aggregator.handleStreamError(errorEvent);
+    const secondMessage = aggregator
+      .getAllMessages()
+      .find((message) => message.id === errorEvent.messageId);
+
+    expect(secondMessage?.metadata?.historySequence).toBe(firstMessage?.metadata?.historySequence);
+    expect(secondMessage?.metadata?.timestamp).toBe(firstMessage?.metadata?.timestamp);
+  });
 });

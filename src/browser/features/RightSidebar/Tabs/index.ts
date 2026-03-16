@@ -13,7 +13,6 @@ export {
   getTabConfig,
   getTabName,
   getTabContentClassName,
-  formatTabDuration,
   type TabConfig,
   type TabRenderContext,
   type TerminalTabRenderContext,

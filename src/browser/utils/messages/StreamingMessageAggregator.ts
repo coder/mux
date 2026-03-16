@@ -7,19 +7,22 @@ import type {
 } from "@/common/types/message";
 import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
 
-import type {
-  StreamStartEvent,
-  StreamDeltaEvent,
-  UsageDeltaEvent,
-  StreamEndEvent,
-  StreamAbortEvent,
-  StreamAbortReasonSnapshot,
-  ToolCallStartEvent,
-  ToolCallDeltaEvent,
-  ToolCallEndEvent,
-  ReasoningDeltaEvent,
-  ReasoningEndEvent,
-  RuntimeStatusEvent,
+import {
+  copyStreamLifecycleSnapshot,
+  type StreamStartEvent,
+  type StreamDeltaEvent,
+  type UsageDeltaEvent,
+  type StreamEndEvent,
+  type StreamAbortEvent,
+  type StreamAbortReasonSnapshot,
+  type ToolCallStartEvent,
+  type ToolCallDeltaEvent,
+  type ToolCallEndEvent,
+  type ReasoningDeltaEvent,
+  type ReasoningEndEvent,
+  type RuntimeStatusEvent,
+  type StreamLifecycleEvent,
+  type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
@@ -34,6 +37,10 @@ import type {
   OnChatCursor,
 } from "@/common/orpc/types";
 import { isInitStart, isInitOutput, isInitEnd, isMuxMessage } from "@/common/orpc/types";
+import {
+  buildResponseCompleteMetadata,
+  type ResponseCompleteMetadata,
+} from "./responseCompletionMetadata";
 import type {
   DynamicToolPart,
   DynamicToolPartPending,
@@ -113,10 +120,10 @@ interface StreamingContext {
   isComplete: boolean;
   isCompacting: boolean;
   hasCompactionContinue: boolean;
-  // Track the last known queued-follow-up state on the compaction stream itself so
-  // background activity completion can still suppress the intermediate notification
+  // Track the last known queued-follow-up state on the active stream itself so
+  // background activity completion can still suppress intermediate notifications
   // after the workspace loses its live queued-message subscription.
-  hasQueuedCompactionFollowUp: boolean;
+  hasQueuedFollowUp: boolean;
   isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
@@ -417,6 +424,10 @@ export class StreamingMessageAggregator {
   // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
   private pendingStreamStartTime: number | null = null;
 
+  // Canonical backend-owned stream lifecycle. This distinguishes slow startup from a
+  // genuinely interrupted/failed turn, including reconnects while PREPARING is still in flight.
+  private streamLifecycle: StreamLifecycleSnapshot | null = null;
+
   // Last observed stream-abort reason (used to gate auto-retry).
   private lastAbortReason: StreamAbortReasonSnapshot | null = null;
 
@@ -478,7 +489,8 @@ export class StreamingMessageAggregator {
   // Optional callback when an assistant response completes (used for "notify on response" feature)
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (the final response to show in notification)
-  // compaction is provided when this was a compaction stream (includes continue metadata)
+  // completion carries notification-policy metadata (compaction vs normal response,
+  // and whether another queued/auto follow-up will immediately take over).
   // completedAt: non-null for all final streams. Drives read-marking in App.tsx.
   // Only non-compaction completions also bump lastResponseCompletedAt (recency).
   onResponseComplete?: (
@@ -486,7 +498,7 @@ export class StreamingMessageAggregator {
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    compaction?: { hasContinueMessage: boolean; isIdle?: boolean },
+    completion?: ResponseCompleteMetadata,
     completedAt?: number | null
   ) => void;
 
@@ -1051,6 +1063,15 @@ export class StreamingMessageAggregator {
     }
 
     this.invalidateCache();
+
+    if (!opts?.skipDerivedState && !hasActiveStream && this.pendingStreamStartTime !== null) {
+      const latestMessage = this.getAllMessages().at(-1);
+      if (!latestMessage || latestMessage.role === "assistant") {
+        // Authoritative history now shows an idle/assistant-ended transcript, so any
+        // preserved "starting..." state came from a disconnected pre-stream turn.
+        this.clearPendingStreamLifecycleState();
+      }
+    }
   }
 
   setEstablishedOldestHistorySequence(sequence: number | null): void {
@@ -1157,6 +1178,10 @@ export class StreamingMessageAggregator {
     return this.lastAbortReason;
   }
 
+  getStreamLifecycle(): StreamLifecycleSnapshot | null {
+    return this.streamLifecycle;
+  }
+
   getPendingStreamStartTime(): number | null {
     return this.pendingStreamStartTime;
   }
@@ -1167,6 +1192,30 @@ export class StreamingMessageAggregator {
    */
   getRuntimeStatus(): RuntimeStatusEvent | null {
     return this.runtimeStatus;
+  }
+
+  handleStreamLifecycle(event: StreamLifecycleEvent): void {
+    this.streamLifecycle = copyStreamLifecycleSnapshot(event);
+
+    if (event.phase === "interrupted" && event.abortReason) {
+      this.lastAbortReason = {
+        reason: event.abortReason,
+        at: Date.now(),
+      };
+      return;
+    }
+
+    this.lastAbortReason = null;
+  }
+
+  private clearInFlightStreamLifecycle(): void {
+    if (
+      this.streamLifecycle?.phase === "preparing" ||
+      this.streamLifecycle?.phase === "streaming" ||
+      this.streamLifecycle?.phase === "completing"
+    ) {
+      this.streamLifecycle = null;
+    }
   }
 
   /**
@@ -1185,6 +1234,11 @@ export class StreamingMessageAggregator {
 
   private clearRuntimeStatus(): void {
     this.runtimeStatus = null;
+  }
+
+  private clearPendingStreamLifecycleState(): void {
+    this.setPendingStreamStartTime(null);
+    this.clearRuntimeStatus();
   }
 
   getPendingStreamModel(): string | null {
@@ -1421,12 +1475,9 @@ export class StreamingMessageAggregator {
     return Array.from(this.activeStreams.values());
   }
 
-  setActiveCompactionQueuedFollowUp(hasQueuedFollowUp: boolean): void {
+  setActiveQueuedFollowUp(hasQueuedFollowUp: boolean): void {
     for (const context of this.activeStreams.values()) {
-      if (!context.isCompacting) {
-        continue;
-      }
-      context.hasQueuedCompactionFollowUp = hasQueuedFollowUp;
+      context.hasQueuedFollowUp = hasQueuedFollowUp;
     }
   }
 
@@ -1542,7 +1593,9 @@ export class StreamingMessageAggregator {
     this.activeStreams.clear();
     this.displayedMessageCache.clear();
     this.messageVersions.clear();
+    this.clearPendingStreamLifecycleState();
     this.interruptingMessageId = null;
+    this.streamLifecycle = null;
     this.lastAbortReason = null;
     this.lastResponseCompletedAt = null;
     this.establishedOldestHistorySequence = null;
@@ -1571,17 +1624,19 @@ export class StreamingMessageAggregator {
   handleStreamStart(data: StreamStartEvent): void {
     const { isCompacting, hasCompactionContinue } = this.resolveStreamStartCompaction(data);
 
-    // Clear pending stream start timestamp - stream has started
-    this.setPendingStreamStartTime(null);
+    // Clear pending "starting..." UI now that the assistant turn is live.
+    this.clearPendingStreamLifecycleState();
     this.lastAbortReason = null;
-
-    // Clear runtime status - runtime is ready now that stream has started
-    this.clearRuntimeStatus();
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
     // ensuring consistent behavior whether loading from history or processing live events.
 
+    for (const activeStream of this.activeStreams.values()) {
+      // A queued follow-up belongs to the handoff into the next stream. Once that next
+      // stream starts, older contexts must not keep suppressing later completions.
+      activeStream.hasQueuedFollowUp = false;
+    }
     const routeProvider = resolveRouteProvider(data.routeProvider, data.routedThroughGateway);
 
     const now = Date.now();
@@ -1592,7 +1647,7 @@ export class StreamingMessageAggregator {
       isComplete: false,
       isCompacting,
       hasCompactionContinue,
-      hasQueuedCompactionFollowUp: false,
+      hasQueuedFollowUp: false,
       isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
@@ -1686,6 +1741,10 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamEnd(data: StreamEndEvent): void {
+    // A terminal event means any locally preserved "starting..." state is stale,
+    // even if reconnect delivered stream-end without the earlier stream-start.
+    this.clearPendingStreamLifecycleState();
+
     // Direct lookup by messageId - O(1) instead of O(n) find
     const activeStream = this.activeStreams.get(data.messageId);
 
@@ -1733,13 +1792,9 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Capture compaction info before cleanup (cleanup removes the stream context)
-      const compaction = activeStream.isCompacting
-        ? {
-            hasContinueMessage:
-              activeStream.hasCompactionContinue || activeStream.hasQueuedCompactionFollowUp,
-          }
-        : undefined;
+      // Capture completion metadata before cleanup (cleanup removes the stream context).
+      // If another turn is already queued, this stream end is only an intermediate handoff.
+      const completion = buildResponseCompleteMetadata(activeStream);
 
       // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
@@ -1765,7 +1820,7 @@ export class StreamingMessageAggregator {
           data.messageId,
           isFinal,
           finalText,
-          compaction,
+          completion,
           completedAt
         );
       }
@@ -1811,9 +1866,9 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamAbort(data: StreamAbortEvent): void {
-    // Clear pending stream start timestamp - abort can arrive before stream-start.
-    // This ensures StreamingBarrier exits the "starting..." phase immediately.
-    this.setPendingStreamStartTime(null);
+    // Abort can arrive before stream-start. Clear pending lifecycle UI immediately.
+    this.clearPendingStreamLifecycleState();
+    this.clearInFlightStreamLifecycle();
     this.lastAbortReason = {
       reason: data.abortReason ?? "system",
       at: Date.now(),
@@ -1825,9 +1880,6 @@ export class StreamingMessageAggregator {
     }
 
     // Direct lookup by messageId
-
-    // Clear runtime status (ensureReady is no longer relevant once stream aborts)
-    this.clearRuntimeStatus();
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1852,14 +1904,11 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamError(data: StreamErrorMessage): void {
-    // Clear pending stream start timestamp - error arrived before/instead of stream-start.
-    // This ensures StreamingBarrier exits the "starting..." phase immediately.
-    this.setPendingStreamStartTime(null);
+    // Error can arrive before/instead of stream-start. Clear pending lifecycle UI immediately.
+    this.clearPendingStreamLifecycleState();
+    this.clearInFlightStreamLifecycle();
 
     // Direct lookup by messageId
-
-    // Clear runtime status - runtime start/ensureReady failed
-    this.clearRuntimeStatus();
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1879,9 +1928,19 @@ export class StreamingMessageAggregator {
       // Assistant message is now stable (errored) - invalidate all caches.
       this.markMessageDirty(data.messageId);
     } else {
+      const existingMessage = this.messages.get(data.messageId);
+      if (existingMessage?.role === "assistant" && existingMessage.metadata) {
+        existingMessage.metadata.partial = true;
+        existingMessage.metadata.error = data.error;
+        existingMessage.metadata.errorType = data.errorType;
+        this.markMessageDirty(data.messageId);
+        return;
+      }
+
       // Pre-stream error (e.g., API key not configured before streaming starts)
-      // Create a synthetic error message since there's no active stream to attach to
-      // Get the highest historySequence from existing messages so this appears at the end
+      // Create a synthetic error message since there's no active stream to attach to.
+      // If replay re-emits the same terminal error later, preserve this message's metadata
+      // instead of regenerating ordering fields that can churn append-replay state.
       const maxSequence = Math.max(
         0,
         ...Array.from(this.messages.values()).map((m) => m.metadata?.historySequence ?? 0)
@@ -2378,6 +2437,11 @@ export class StreamingMessageAggregator {
 
       // If this is a user message, clear derived state and record timestamp
       if (incomingMessage.role === "user") {
+        // Reset terminal lifecycle snapshots from the previous turn immediately so the next
+        // accepted send never inherits a stale interrupted/failed classification while we wait
+        // for the backend's authoritative PREPARING lifecycle event.
+        this.streamLifecycle = null;
+
         const muxMeta = incomingMessage.metadata?.muxMetadata as
           | { displayStatus?: { emoji: string; message: string } }
           | undefined;

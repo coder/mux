@@ -6,6 +6,7 @@ import type {
   LegacyProposePlanToolResult,
 } from "@/common/types/tools";
 import {
+  ToolChrome,
   ToolContainer,
   ToolHeader,
   ExpandIcon,
@@ -29,6 +30,7 @@ import { useStartHere } from "@/browser/hooks/useStartHere";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { createMuxMessage } from "@/common/types/message";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { TranscriptQuoteRoot } from "../Messages/TranscriptQuoteBoundary";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
@@ -824,6 +826,48 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     });
   }
 
+  const planContentBody = errorMessage ? (
+    <div className="text-error rounded-sm p-2 font-mono text-xs">{errorMessage}</div>
+  ) : annotateMode && canAnnotate ? (
+    <PlanAnnotationView
+      planContent={planContent}
+      planPath={effectivePlanPath ?? undefined}
+      onReviewNote={reviews.addReview}
+      reviews={planReviews}
+      reviewActions={reviewActions}
+    />
+  ) : showRaw ? (
+    <div className="relative">
+      <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+        {planContent}
+      </pre>
+      <div className="absolute right-2 bottom-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
+          onClick={() => void copyToClipboard(planContent)}
+        >
+          {copied ? <ClipboardCheck /> : <Clipboard />}
+          {copied ? "Copied" : "Copy to clipboard"}
+        </Button>
+      </div>
+    </div>
+  ) : (
+    <MarkdownRenderer content={planContent} />
+  );
+
+  const planBodyClassName = !errorMessage && !annotateMode && !showRaw ? "plan-content" : undefined;
+
+  const planQuoteContent = isEphemeralPreview ? (
+    <TranscriptQuoteRoot text={errorMessage ?? planContent} className={planBodyClassName}>
+      {planContentBody}
+    </TranscriptQuoteRoot>
+  ) : (
+    <div className={planBodyClassName}>{planContentBody}</div>
+  );
+
   // Shared plan UI content (used in both tool call and ephemeral preview modes)
   const planUI = (
     <div
@@ -833,7 +877,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       )}
     >
       {/* Header: title only */}
-      <div className="plan-divider mb-3 flex items-center gap-2 border-b pb-2">
+      <ToolChrome className="plan-divider mb-3 flex items-center gap-2 border-b pb-2">
         <ClipboardList aria-hidden="true" className="h-4 w-4" />
         <div className="text-plan-mode font-mono text-[13px] font-semibold">{planTitle}</div>
         {annotateMode && (
@@ -844,54 +888,22 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         {isEphemeralPreview && (
           <div className="text-muted font-mono text-[10px] italic">preview only</div>
         )}
-      </div>
+      </ToolChrome>
 
       {/* Content */}
-      {errorMessage ? (
-        <div className="text-error rounded-sm p-2 font-mono text-xs">{errorMessage}</div>
-      ) : annotateMode && canAnnotate ? (
-        <PlanAnnotationView
-          planContent={planContent}
-          planPath={effectivePlanPath ?? undefined}
-          onReviewNote={reviews.addReview}
-          reviews={planReviews}
-          reviewActions={reviewActions}
-        />
-      ) : showRaw ? (
-        <div className="relative">
-          <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-            {planContent}
-          </pre>
-          <div className="absolute right-2 bottom-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
-              onClick={() => void copyToClipboard(planContent)}
-            >
-              {copied ? <ClipboardCheck /> : <Clipboard />}
-              {copied ? "Copied" : "Copy to clipboard"}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="plan-content">
-          <MarkdownRenderer content={planContent} />
-        </div>
-      )}
+      {planQuoteContent}
 
       {/* Completion guidance: only for completed tool calls without errors, not ephemeral previews */}
       {!isEphemeralPreview && status === "completed" && !errorMessage && (
-        <div className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
+        <ToolChrome className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
           Respond with revisions or switch to the Exec agent (
           <span className="font-primary not-italic">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span> to
           cycle) and ask to implement.
-        </div>
+        </ToolChrome>
       )}
 
       {/* Actions row at the bottom (matching MessageWindow style) */}
-      <div className="mt-3 flex items-center gap-0.5">
+      <ToolChrome className="mt-3 flex items-center gap-0.5">
         <div className="flex min-w-0 flex-1 items-center gap-0.5">
           {actionButtons.map((button, index) => (
             <IconActionButton key={index} button={button} />
@@ -980,7 +992,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
             )}
           </div>
         )}
-      </div>
+      </ToolChrome>
     </div>
   );
 
@@ -1004,7 +1016,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
           <StatusIndicator status={status}>{statusDisplay}</StatusIndicator>
         </ToolHeader>
 
-        {expanded && <ToolDetails>{planUI}</ToolDetails>}
+        {expanded && <ToolDetails text={errorMessage ?? planContent}>{planUI}</ToolDetails>}
 
         {modal}
       </ToolContainer>

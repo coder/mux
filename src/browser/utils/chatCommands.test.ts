@@ -6,7 +6,6 @@ import {
   handlePlanShowCommand,
   handlePlanOpenCommand,
   handleCompactCommand,
-  buildContinueMessage,
 } from "./chatCommands";
 import type { CommandHandlerContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -167,91 +166,6 @@ describe("parseRuntimeString", () => {
     expect(() => parseRuntimeString("kubernetes", workspaceName)).toThrow(
       "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
     );
-  });
-});
-
-describe("buildContinueMessage", () => {
-  test("returns undefined when no content provided", () => {
-    const result = buildContinueMessage({
-      model: "anthropic:claude-3-5-sonnet",
-      agentId: "exec",
-    });
-    expect(result).toBeUndefined();
-  });
-
-  test("returns undefined when text is empty string", () => {
-    const result = buildContinueMessage({
-      text: "",
-      model: "anthropic:claude-3-5-sonnet",
-      agentId: "exec",
-    });
-    expect(result).toBeUndefined();
-  });
-
-  test("returns message when text is provided", () => {
-    const result = buildContinueMessage({
-      text: "Continue with this",
-      model: "anthropic:claude-3-5-sonnet",
-      agentId: "exec",
-    });
-    expect(result).toBeDefined();
-    expect(result?.text).toBe("Continue with this");
-    expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
-    expect(result?.agentId).toBe("exec");
-  });
-
-  test("returns message when only images provided", () => {
-    const result = buildContinueMessage({
-      fileParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
-      model: "anthropic:claude-3-5-sonnet",
-      agentId: "plan",
-    });
-    expect(result).toBeDefined();
-    expect(result?.text).toBe("");
-    expect(result?.fileParts).toHaveLength(1);
-    expect(result?.agentId).toBe("plan");
-  });
-
-  test("returns message when only reviews provided", () => {
-    const reviews: ReviewNoteData[] = [
-      {
-        filePath: "src/test.ts",
-        lineRange: "10-15",
-        selectedCode: "const x = 1;",
-        userNote: "Fix this",
-      },
-    ];
-    const result = buildContinueMessage({
-      reviews,
-      model: "anthropic:claude-3-5-sonnet",
-      agentId: "exec",
-    });
-    expect(result).toBeDefined();
-    expect(result?.text).toBe("");
-    expect(result?.reviews).toHaveLength(1);
-    expect(result?.reviews?.[0].userNote).toBe("Fix this");
-  });
-
-  test("includes all fields when all provided", () => {
-    const reviews: ReviewNoteData[] = [
-      { filePath: "src/a.ts", lineRange: "1", selectedCode: "x", userNote: "note" },
-    ];
-    const fileParts = [{ url: "data:image/png;base64,abc", mediaType: "image/png" }];
-
-    const result = buildContinueMessage({
-      text: "Check this",
-      fileParts,
-      reviews,
-      model: "anthropic:claude-3-5-sonnet",
-      agentId: "plan",
-    });
-
-    expect(result).toBeDefined();
-    expect(result?.text).toBe("Check this");
-    expect(result?.fileParts).toHaveLength(1);
-    expect(result?.reviews).toHaveLength(1);
-    expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
-    expect(result?.agentId).toBe("plan");
   });
 });
 

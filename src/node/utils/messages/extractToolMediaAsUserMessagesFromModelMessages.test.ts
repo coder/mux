@@ -1,10 +1,22 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, expect, it } from "@jest/globals";
 import type { ModelMessage } from "ai";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "./extractToolMediaAsUserMessagesFromModelMessages";
 
 describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
-  it("moves base64 media out of tool output and into a synthetic user image part", () => {
+  it("rewrites attach_file image output for prepareStep messages", () => {
     const base64 = "A".repeat(50_000);
+    const attachFileOutput = {
+      type: "content",
+      value: [
+        { type: "text", text: "[Attachment prepared: screenshot.png]" },
+        {
+          type: "media",
+          mediaType: "image/png",
+          data: base64,
+          filename: "screenshot.png",
+        },
+      ],
+    } as const satisfies { type: "content"; value: unknown[] };
 
     const input: ModelMessage[] = [
       { role: "user", content: "hi" },
@@ -14,11 +26,8 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
           {
             type: "tool-result",
             toolCallId: "call1",
-            toolName: "mcp_chrome_devtools_screenshot",
-            output: {
-              type: "content",
-              value: [{ type: "media", mediaType: "image/png", data: base64 }],
-            },
+            toolName: "attach_file",
+            output: attachFileOutput,
           },
         ],
       },
@@ -33,7 +42,7 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     const toolResultPart = (rewrittenTool as Extract<ModelMessage, { role: "tool" }>).content[0];
     if (toolResultPart.type !== "tool-result") throw new Error("Expected tool-result part");
     const outputText = JSON.stringify(toolResultPart.output);
-    expect(outputText).toContain("[Image attached:");
+    expect(outputText).toContain("[Attachment attached:");
     expect(outputText).not.toMatch(/[A]{1000,}/);
 
     const syntheticUser = rewritten[2];
@@ -41,7 +50,7 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     expect(Array.isArray(syntheticUser.content)).toBe(true);
 
     const imagePart = Array.isArray(syntheticUser.content)
-      ? syntheticUser.content.find((p) => p.type === "image")
+      ? syntheticUser.content.find((part) => part.type === "image")
       : undefined;
 
     expect(imagePart).toBeDefined();
@@ -51,7 +60,98 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     }
   });
 
-  it("is a no-op when tool outputs have no media", () => {
+  it("rewrites attach_file PDF output for prepareStep messages", () => {
+    const base64 = Buffer.from("%PDF-1.7").toString("base64");
+    const attachFileOutput = {
+      type: "content",
+      value: [
+        { type: "text", text: "[Attachment prepared: report.pdf]" },
+        {
+          type: "media",
+          mediaType: "application/pdf",
+          data: base64,
+          filename: "report.pdf",
+        },
+      ],
+    } as const satisfies { type: "content"; value: unknown[] };
+
+    const input: ModelMessage[] = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call2",
+            toolName: "attach_file",
+            output: attachFileOutput,
+          },
+        ],
+      },
+    ];
+
+    const rewritten = extractToolMediaAsUserMessagesFromModelMessages(input);
+    expect(rewritten).toHaveLength(2);
+
+    const syntheticUser = rewritten[1];
+    expect(syntheticUser.role).toBe("user");
+    const filePart = Array.isArray(syntheticUser.content)
+      ? syntheticUser.content.find((part) => part.type === "file")
+      : undefined;
+
+    expect(filePart).toBeDefined();
+    if (filePart?.type === "file") {
+      expect(filePart.mediaType).toBe("application/pdf");
+      expect(filePart.filename).toBe("report pdf");
+      expect(filePart.data).toBe(base64);
+    }
+  });
+
+  it("self-heals oversized SVG tool attachments instead of throwing", () => {
+    const oversizedSvg = `<svg>${"a".repeat(50_001)}</svg>`;
+    const base64 = Buffer.from(oversizedSvg, "utf8").toString("base64");
+    const attachFileOutput = {
+      type: "content",
+      value: [
+        { type: "text", text: "[Attachment prepared: diagram.svg]" },
+        {
+          type: "media",
+          mediaType: "image/svg+xml",
+          data: base64,
+          filename: "diagram.svg",
+        },
+      ],
+    } as const satisfies { type: "content"; value: unknown[] };
+
+    const input: ModelMessage[] = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call3",
+            toolName: "attach_file",
+            output: attachFileOutput,
+          },
+        ],
+      },
+    ];
+
+    const rewritten = extractToolMediaAsUserMessagesFromModelMessages(input);
+    expect(rewritten).toHaveLength(2);
+    const syntheticUser = rewritten[1];
+    expect(syntheticUser.role).toBe("user");
+    expect(Array.isArray(syntheticUser.content)).toBe(true);
+    const svgTextPart = Array.isArray(syntheticUser.content)
+      ? syntheticUser.content.find(
+          (part) =>
+            part.type === "text" &&
+            part.text.includes("[SVG attachment omitted from provider request:")
+        )
+      : undefined;
+    expect(svgTextPart).toBeDefined();
+  });
+
+  it("is a no-op when there is no media", () => {
     const input: ModelMessage[] = [
       {
         role: "tool",

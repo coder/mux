@@ -131,7 +131,9 @@ jobs:
           key: ${{ runner.os }}-lint-fmt-${{ hashFiles('eslint.config.mjs', '.prettierrc', '.prettierignore') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-lint-fmt-${{ hashFiles('eslint.config.mjs', '.prettierrc', '.prettierignore') }}-
-      - run: make -j static-check
+      - run: make -j static-check-full
+        env:
+          MUX_ESLINT_CONCURRENCY: 4
 
   flake-hash-check:
     name: Flake Hash Check

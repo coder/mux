@@ -13,11 +13,14 @@
 export function generateGitStatusScript(baseRef?: string): string {
   // Extract branch name if it's an origin/ ref, otherwise empty for auto-detect
   const preferredBranch = baseRef?.startsWith("origin/") ? baseRef.replace(/^origin\//, "") : "";
+  // Security rationale: baseRef is client-controlled in some IPC paths, so quote as a single-quoted
+  // shell literal to prevent command substitution / quote-breaking injection when embedding in bash.
+  const shellSafePreferredBranch = `'${preferredBranch.replace(/'/g, `'\\''`)}'`;
 
   return `
 # Determine primary branch to compare against
 PRIMARY_BRANCH=""
-PREFERRED_BRANCH="${preferredBranch}"
+PREFERRED_BRANCH=${shellSafePreferredBranch}
 
 # Try preferred branch first if specified
 if [ -n "$PREFERRED_BRANCH" ]; then

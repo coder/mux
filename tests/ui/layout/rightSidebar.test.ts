@@ -35,6 +35,7 @@ import {
   getRightSidebarLayoutKey,
   getTerminalTitlesKey,
 } from "@/common/constants/storage";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 // RightSidebarLayoutState used for initial setup via persisted-state helpers - acceptable for test fixtures
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
@@ -105,6 +106,7 @@ describeIntegration("RightSidebar (UI)", () => {
     // Reset all right-sidebar persisted state so each test starts clean.
     updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
     updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, null);
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.AGENT_BROWSER), null);
     updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, null);
     updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
     updatePersistedState(getTerminalTitlesKey(workspaceId), null);
@@ -121,6 +123,80 @@ describeIntegration("RightSidebar (UI)", () => {
       })
     );
   }, 20_000);
+
+  test("does not show the browser tab by default", async () => {
+    const cleanupDom = installDom();
+
+    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata,
+    });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      const sidebar = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            '[role="complementary"][aria-label="Workspace insights"]'
+          );
+          if (!el) throw new Error("RightSidebar not found");
+          return el as HTMLElement;
+        },
+        { timeout: 10_000 }
+      );
+
+      await waitFor(() => {
+        const browserTab = sidebar.querySelector('[role="tab"][aria-controls*="browser"]');
+        expect(browserTab).toBeNull();
+      });
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("adds the browser tab when the experiment is enabled", async () => {
+    const cleanupDom = installDom();
+
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.AGENT_BROWSER), true);
+    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata,
+    });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      const sidebar = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            '[role="complementary"][aria-label="Workspace insights"]'
+          );
+          if (!el) throw new Error("RightSidebar not found");
+          return el as HTMLElement;
+        },
+        { timeout: 10_000 }
+      );
+
+      await waitFor(() => {
+        const browserTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="browser"]'
+        ) as HTMLElement | null;
+        if (!browserTab) {
+          throw new Error("Browser tab not found");
+        }
+      });
+    } finally {
+      updatePersistedState(getExperimentKey(EXPERIMENT_IDS.AGENT_BROWSER), null);
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
 
   test("tab switching updates active tab and persists selection", async () => {
     const cleanupDom = installDom();

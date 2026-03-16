@@ -27,12 +27,16 @@ import type { SigningService } from "@/node/services/signingService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { TaskService } from "@/node/services/taskService";
+import type { BrowserSessionService } from "@/node/services/browserSessionService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { PolicyService } from "@/node/services/policyService";
 import type { CoderService } from "@/node/services/coderService";
 import type { ServerAuthService } from "@/node/services/serverAuthService";
 import type { SshPromptService } from "@/node/services/sshPromptService";
 import type { AnalyticsService } from "@/node/services/analytics/analyticsService";
+import type { DesktopBridgeServer } from "@/node/services/desktop/DesktopBridgeServer";
+import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
+import type { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
 
 export interface ORPCContext {
   config: Config;
@@ -63,11 +67,15 @@ export interface ORPCContext {
   experimentsService: ExperimentsService;
   sessionUsageService: SessionUsageService;
   devToolsService: DevToolsService;
+  browserSessionService: BrowserSessionService;
   policyService: PolicyService;
   signingService: SigningService;
   coderService: CoderService;
   serverAuthService: ServerAuthService;
   sshPromptService: SshPromptService;
   analyticsService: AnalyticsService;
+  desktopSessionManager: DesktopSessionManager;
+  desktopTokenManager: DesktopTokenManager;
+  desktopBridgeServer: DesktopBridgeServer;
   headers?: IncomingHttpHeaders;
 }

@@ -272,11 +272,15 @@ export function buildGitIgnoredScript(relativePath: string): string {
  * Returns only the paths that are ignored.
  */
 export function buildGitCheckIgnoreScript(paths: string[]): string {
-  // Echo paths (one per line) and pipe to git check-ignore --stdin
-  // --stdin reads paths from stdin, outputs only ignored ones
-  // Use printf to avoid issues with echo -e portability
-  const escapedPaths = paths.map((p) => shellEscape(p)).join("\\n");
-  return `printf '${escapedPaths}\\n' | git check-ignore --stdin 2>/dev/null || true`;
+  if (paths.length === 0) {
+    return "true";
+  }
+
+  // Echo paths (one per line) and pipe to git check-ignore --stdin.
+  // SECURITY: never embed shell-escaped values inside another single-quoted string,
+  // otherwise path content can break quoting and execute shell metacharacters.
+  const escapedPaths = paths.map((p) => shellEscape(p)).join(" ");
+  return `printf '%s\\n' ${escapedPaths} | git check-ignore --stdin 2>/dev/null || true`;
 }
 
 /**

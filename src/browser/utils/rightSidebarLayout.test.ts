@@ -424,7 +424,7 @@ test("parseRightSidebarLayoutState strips legacy 'stats' tabs from persisted lay
   expect(result.root.type).toBe("tabset");
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
-  // "stats" should be stripped, other tabs preserved
+  // "stats" should be stripped, then always-visible tabs are re-injected.
   expect(result.root.tabs).toEqual(["costs", "review", "explorer"]);
   expect(result.root.activeTab).toBe("costs");
 });
@@ -447,7 +447,7 @@ test("parseRightSidebarLayoutState falls back activeTab when stats was active", 
   expect(result.root.type).toBe("tabset");
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
-  // "stats" stripped; activeTab should fall back to first remaining tab
+  // "stats" stripped; activeTab should fall back to the first remaining tab.
   expect(result.root.tabs).toEqual(["costs", "review", "explorer"]);
   expect(result.root.activeTab).toBe("costs");
 });
@@ -470,7 +470,7 @@ test("parseRightSidebarLayoutState maps stats activeTab to costs even when reord
   expect(result.root.type).toBe("tabset");
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
-  // "stats" stripped; activeTab should map to "costs" (semantic replacement), not "review" (first tab)
+  // "stats" stripped; activeTab should map to "costs" (semantic replacement), not "review".
   expect(result.root.tabs).toEqual(["review", "costs", "explorer"]);
   expect(result.root.activeTab).toBe("costs");
 });

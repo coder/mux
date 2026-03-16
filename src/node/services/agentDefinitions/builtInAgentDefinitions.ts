@@ -20,6 +20,7 @@ const BUILT_IN_SOURCES: BuiltInSource[] = [
   { id: "ask", content: BUILTIN_AGENT_CONTENT.ask },
   { id: "auto", content: BUILTIN_AGENT_CONTENT.auto },
   { id: "compact", content: BUILTIN_AGENT_CONTENT.compact },
+  { id: "desktop", content: BUILTIN_AGENT_CONTENT.desktop },
   { id: "explore", content: BUILTIN_AGENT_CONTENT.explore },
   { id: "system1_bash", content: BUILTIN_AGENT_CONTENT.system1_bash },
   { id: "mux", content: BUILTIN_AGENT_CONTENT.mux },

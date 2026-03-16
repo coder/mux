@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { Info } from "lucide-react";
 import {
   ToolContainer,
@@ -25,13 +25,14 @@ import {
   useOptionalWorkspaceContext,
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
-import { useTaskToolLiveTaskId } from "@/browser/stores/WorkspaceStore";
+import { useTaskToolLiveTaskIds } from "@/browser/stores/WorkspaceStore";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
   TaskToolArgs,
   TaskToolResult,
+  TaskToolSuccessResult,
   TaskAwaitToolArgs,
   TaskAwaitToolSuccessResult,
   TaskListToolArgs,
@@ -288,7 +289,340 @@ interface TaskToolCallProps {
   taskReportLinking?: TaskReportLinking;
   workspaceId?: string;
   toolCallId?: string;
+  startedAt?: number;
 }
+
+interface TaskToolDisplayEntry {
+  taskId: string;
+  status: string;
+  title?: string;
+  reportMarkdown?: string;
+}
+
+interface TaskToolOwnReport {
+  reportMarkdown: string;
+  title?: string;
+}
+
+function hasNonEmptyText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function trimToNonEmptyString(value: unknown): string | null {
+  return hasNonEmptyText(value) ? value.trim() : null;
+}
+
+function normalizeTaskId(value: unknown): string | null {
+  return trimToNonEmptyString(value);
+}
+
+interface TaskToolWorkspaceEntry {
+  taskId: string;
+  index?: number;
+  status?: string;
+  title?: string;
+  createdAtMs?: number;
+}
+
+function normalizeTaskAgent(value: string | undefined): string | null {
+  const normalized = trimToNonEmptyString(value);
+  return normalized ? normalized.toLowerCase() : null;
+}
+
+function normalizeTaskTitle(value: string | undefined): string | null {
+  return trimToNonEmptyString(value);
+}
+
+function parseWorkspaceCreatedAtMs(createdAt: string | undefined): number | undefined {
+  const normalizedCreatedAt = trimToNonEmptyString(createdAt);
+  if (!normalizedCreatedAt) {
+    return undefined;
+  }
+  const timestamp = Date.parse(normalizedCreatedAt);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function getTaskToolWorkspaceStatus(
+  taskStatus: FrontendWorkspaceMetadata["taskStatus"]
+): string | undefined {
+  switch (taskStatus) {
+    case "reported":
+      return "completed";
+    case "queued":
+    case "running":
+    case "awaiting_report":
+    case "interrupted":
+      return taskStatus;
+    default:
+      return undefined;
+  }
+}
+
+function getTaskToolWorkspaceTitle(
+  metadata: FrontendWorkspaceMetadata | null | undefined
+): string | undefined {
+  return normalizeTaskTitle(metadata?.title) ?? normalizeTaskTitle(metadata?.name) ?? undefined;
+}
+
+function mergeTaskIdsInDisplayOrder(taskIdLists: ReadonlyArray<readonly string[]>): string[] {
+  const taskIds: string[] = [];
+  const seen = new Set<string>();
+
+  for (const taskIdList of taskIdLists) {
+    for (const taskId of taskIdList) {
+      const normalizedTaskId = normalizeTaskId(taskId);
+      if (!normalizedTaskId || seen.has(normalizedTaskId)) {
+        continue;
+      }
+      seen.add(normalizedTaskId);
+      taskIds.push(normalizedTaskId);
+    }
+  }
+
+  return taskIds;
+}
+
+// task-created events are intentionally ephemeral UI hints. If the parent workspace
+// is opened after those events were missed, recover the current best-of candidates
+// from child workspace metadata when the matching group is unambiguous.
+function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
+  workspaceId: string | undefined;
+  requestedAgentType: string;
+  requestedTitle: string | undefined;
+  requestedCandidateCount: number;
+  knownTaskIds: readonly string[];
+  toolStartedAt: number | undefined;
+  workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
+}): TaskToolWorkspaceEntry[] {
+  if (!params.workspaceId || params.requestedCandidateCount <= 1 || !params.workspaceMetadata) {
+    return [];
+  }
+
+  const requestedAgentType = normalizeTaskAgent(params.requestedAgentType);
+  const requestedTitle = normalizeTaskTitle(params.requestedTitle);
+  const groupedCandidates = new Map<string, TaskToolWorkspaceEntry[]>();
+
+  for (const metadata of params.workspaceMetadata.values()) {
+    if (metadata.parentWorkspaceId !== params.workspaceId) {
+      continue;
+    }
+    if (metadata.bestOf?.total !== params.requestedCandidateCount) {
+      continue;
+    }
+    if (requestedAgentType) {
+      const metadataAgentType = normalizeTaskAgent(metadata.agentId ?? metadata.agentType);
+      if (metadataAgentType && metadataAgentType !== requestedAgentType) {
+        continue;
+      }
+    }
+
+    const taskId = normalizeTaskId(metadata.id);
+    const metadataTitle = getTaskToolWorkspaceTitle(metadata);
+    if (!taskId) {
+      continue;
+    }
+    if (requestedTitle && normalizeTaskTitle(metadataTitle) !== requestedTitle) {
+      continue;
+    }
+
+    const candidates = groupedCandidates.get(metadata.bestOf.groupId) ?? [];
+    candidates.push({
+      taskId,
+      index: metadata.bestOf.index,
+      status: getTaskToolWorkspaceStatus(metadata.taskStatus),
+      title: metadataTitle,
+      createdAtMs: parseWorkspaceCreatedAtMs(metadata.createdAt),
+    });
+    groupedCandidates.set(metadata.bestOf.groupId, candidates);
+  }
+
+  const groups = Array.from(groupedCandidates.values()).filter(
+    (group) => group.length <= params.requestedCandidateCount
+  );
+  if (groups.length === 0) {
+    return [];
+  }
+
+  const knownTaskIds = new Set(
+    params.knownTaskIds
+      .map((taskId) => normalizeTaskId(taskId))
+      .filter((taskId): taskId is string => taskId != null)
+  );
+
+  let selectedGroup: TaskToolWorkspaceEntry[] | undefined;
+  if (knownTaskIds.size > 0) {
+    const matchingGroups = groups
+      .map((group) => ({
+        group,
+        matchCount: group.filter((candidate) => knownTaskIds.has(candidate.taskId)).length,
+      }))
+      .filter((group) => group.matchCount > 0)
+      .sort((left, right) => right.matchCount - left.matchCount);
+
+    if (
+      matchingGroups.length === 1 ||
+      matchingGroups[0]?.matchCount !== matchingGroups[1]?.matchCount
+    ) {
+      selectedGroup = matchingGroups[0]?.group;
+    }
+  }
+
+  const toolStartedAt = params.toolStartedAt;
+  if (!selectedGroup && knownTaskIds.size === 0 && groups.length === 1 && toolStartedAt != null) {
+    const createdAfterToolStart = groups[0]?.every((candidate) => {
+      return candidate.createdAtMs != null && candidate.createdAtMs >= toolStartedAt;
+    });
+    if (createdAfterToolStart) {
+      selectedGroup = groups[0];
+    }
+  }
+  if (!selectedGroup) {
+    return [];
+  }
+
+  return [...selectedGroup].sort(
+    (left, right) =>
+      (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null): {
+  taskIds: string[];
+  statusByTaskId: Map<string, string>;
+  ownReportsByTaskId: Map<string, TaskToolOwnReport>;
+} {
+  const taskIds = new Set<string>();
+  const statusByTaskId = new Map<string, string>();
+  const ownReportsByTaskId = new Map<string, TaskToolOwnReport>();
+  if (!result) {
+    return {
+      taskIds: [],
+      statusByTaskId,
+      ownReportsByTaskId,
+    };
+  }
+
+  const rememberTaskId = (taskId: unknown): string | null => {
+    const normalizedTaskId = normalizeTaskId(taskId);
+    if (normalizedTaskId) {
+      taskIds.add(normalizedTaskId);
+    }
+    return normalizedTaskId;
+  };
+
+  const taskStatuses = "tasks" in result && Array.isArray(result.tasks) ? result.tasks : undefined;
+  const singleTaskId = rememberTaskId(result.taskId);
+  if (singleTaskId && result.status === "completed" && typeof result.reportMarkdown === "string") {
+    ownReportsByTaskId.set(singleTaskId, {
+      reportMarkdown: result.reportMarkdown,
+      title: result.title,
+    });
+  }
+
+  if (Array.isArray(result.taskIds)) {
+    for (const taskId of result.taskIds) {
+      rememberTaskId(taskId);
+    }
+  }
+
+  if (taskStatuses) {
+    for (const task of taskStatuses) {
+      const taskId = rememberTaskId(task.taskId);
+      if (taskId) {
+        statusByTaskId.set(taskId, task.status);
+      }
+    }
+  }
+
+  if ("reports" in result && Array.isArray(result.reports)) {
+    for (const report of result.reports) {
+      const taskId = rememberTaskId(report.taskId);
+      if (taskId) {
+        ownReportsByTaskId.set(taskId, {
+          reportMarkdown: report.reportMarkdown,
+          title: report.title,
+        });
+      }
+    }
+  }
+
+  if (!taskStatuses) {
+    const fallbackStatus = result.status;
+    for (const taskId of taskIds) {
+      statusByTaskId.set(taskId, fallbackStatus);
+    }
+  }
+
+  return {
+    taskIds: Array.from(taskIds),
+    statusByTaskId,
+    ownReportsByTaskId,
+  };
+}
+
+function getAggregateTaskStatus(
+  displayEntries: readonly TaskToolDisplayEntry[],
+  fallbackStatus: TaskToolSuccessResult["status"] | undefined
+): string | undefined {
+  if (displayEntries.length === 0) {
+    return fallbackStatus;
+  }
+  if (displayEntries.every((entry) => entry.status === "completed")) {
+    return "completed";
+  }
+  if (
+    displayEntries.some((entry) => entry.status === "running" || entry.status === "awaiting_report")
+  ) {
+    return "running";
+  }
+  if (displayEntries.some((entry) => entry.status === "queued")) {
+    return "queued";
+  }
+  if (displayEntries.some((entry) => entry.status === "interrupted")) {
+    return "interrupted";
+  }
+  return fallbackStatus;
+}
+
+const TaskToolCandidateCard: React.FC<{
+  entry: TaskToolDisplayEntry;
+  index: number;
+  total: number;
+  onOpenTranscript: (taskId: string) => void;
+}> = ({ entry, index, total, onOpenTranscript }) => {
+  const canViewTranscript = entry.status === "completed";
+  const hasReport = hasNonEmptyText(entry.reportMarkdown);
+
+  return (
+    <div className="bg-code-bg rounded-sm p-2">
+      <div className={cn("flex flex-wrap items-center gap-2", hasReport && "mb-2")}>
+        {total > 1 && <span className="text-muted text-[10px]">candidate {index + 1}</span>}
+        <TaskId id={entry.taskId} />
+        <TaskStatusBadge status={entry.status} />
+        {entry.title && (
+          <span className="text-foreground text-[11px] font-medium">{entry.title}</span>
+        )}
+        {canViewTranscript && (
+          <button
+            type="button"
+            className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
+            onClick={() => {
+              onOpenTranscript(entry.taskId);
+            }}
+          >
+            View transcript
+          </button>
+        )}
+      </div>
+
+      {hasReport && entry.reportMarkdown && (
+        <div className="text-[11px]">
+          <MarkdownRenderer content={entry.reportMarkdown} />
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   workspaceId,
@@ -297,65 +631,112 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   status = "pending",
   taskReportLinking,
   toolCallId,
+  startedAt,
 }) => {
-  // Narrow result to error or success shape
   const errorResult = isToolErrorResult(result) ? result : null;
-  const successResult = result && typeof result === "object" && "status" in result ? result : null;
+  const successResult: TaskToolSuccessResult | null =
+    result && typeof result === "object" && "status" in result ? result : null;
 
-  const liveTaskId = useTaskToolLiveTaskId(workspaceId, toolCallId);
+  const liveTaskIds = useTaskToolLiveTaskIds(workspaceId, toolCallId) ?? [];
+  const workspaceContext = useOptionalWorkspaceContext();
+  const workspaceMetadata = workspaceContext?.workspaceMetadata;
+  const {
+    taskIds: resultTaskIds,
+    statusByTaskId,
+    ownReportsByTaskId,
+  } = collectTaskToolResultDisplayData(successResult);
 
-  // Derive task state from the spawn response (or UI-only task-created event while executing)
-  const taskId = successResult?.taskId ?? liveTaskId ?? undefined;
-  const taskStatus = successResult?.status;
+  const requestedCandidateCount = args.n ?? 1;
+  const title = args.title ?? "Task";
+  const prompt = args.prompt ?? "";
+  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
+  const recoveredTaskIdsRef = useRef<string[]>([]);
+  // Keep the current best-of binding stable once a task call has matched concrete child IDs.
+  // This prevents a recovered group from disappearing when the last running child flips to
+  // reported before the parent task tool call itself produces a result.
+  const recoveredWorkspaceEntries = recoverBestOfTaskIdsFromWorkspaceMetadata({
+    workspaceId,
+    requestedAgentType: agentType,
+    requestedTitle: title,
+    requestedCandidateCount,
+    knownTaskIds: [...resultTaskIds, ...liveTaskIds, ...recoveredTaskIdsRef.current],
+    toolStartedAt: startedAt,
+    workspaceMetadata,
+  });
+  if (recoveredWorkspaceEntries.length > 0) {
+    recoveredTaskIdsRef.current = recoveredWorkspaceEntries.map((entry) => entry.taskId);
+  }
+  const taskIds = mergeTaskIdsInDisplayOrder([
+    resultTaskIds,
+    recoveredWorkspaceEntries.map((entry) => entry.taskId),
+    liveTaskIds,
+  ]);
 
-  // Render-time linking: if a later task_await produced the final report, display it here.
-  // This keeps the report under the original spawn card without mutating history.
-  const linkedReport =
-    typeof taskId === "string" ? taskReportLinking?.reportByTaskId.get(taskId) : undefined;
-  const hasLinkedCompletion = Boolean(linkedReport);
+  const totalCandidateCount = Math.max(
+    successResult && (resultTaskIds.length > 0 || ownReportsByTaskId.size > 0)
+      ? 0
+      : requestedCandidateCount,
+    taskIds.length,
+    ownReportsByTaskId.size
+  );
+  const isBestOf = totalCandidateCount > 1;
 
-  const ownReportMarkdown =
-    successResult?.status === "completed" ? successResult.reportMarkdown : undefined;
-  const ownReportTitle = successResult?.status === "completed" ? successResult.title : undefined;
+  const kindBadge = <AgentTypeBadge type={agentType} />;
+  const isBackground = args.run_in_background;
 
-  const reportMarkdown =
-    typeof ownReportMarkdown === "string" && ownReportMarkdown.trim().length > 0
-      ? ownReportMarkdown
+  const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId) => {
+    const ownReport = ownReportsByTaskId.get(taskId);
+    const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
+    const metadata = workspaceMetadata?.get(taskId);
+    const reportMarkdown = hasNonEmptyText(ownReport?.reportMarkdown)
+      ? ownReport.reportMarkdown
       : linkedReport?.reportMarkdown;
-  const reportTitle = ownReportTitle ?? linkedReport?.title;
+    const reportTitle = ownReport?.title ?? linkedReport?.title;
+    const derivedStatus =
+      (ownReport ?? linkedReport)
+        ? "completed"
+        : (getTaskToolWorkspaceStatus(metadata?.taskStatus) ?? statusByTaskId.get(taskId));
 
-  const displayTaskStatus = hasLinkedCompletion ? "completed" : taskStatus;
+    return {
+      taskId,
+      status:
+        derivedStatus ?? (status === "executing" ? "running" : (successResult?.status ?? "queued")),
+      title: reportTitle ?? getTaskToolWorkspaceTitle(metadata) ?? title,
+      reportMarkdown,
+    };
+  });
 
-  // Override status for background tasks: the aggregator sees success=true and marks "completed",
-  // but if the task is still queued/running, we should show "backgrounded" instead.
-  // If we have a linked completion report, show the task as completed.
-  const effectiveStatus: ToolStatus = hasLinkedCompletion
-    ? "completed"
-    : status === "completed" &&
-        successResult &&
-        (successResult.status === "queued" || successResult.status === "running")
-      ? "backgrounded"
-      : status;
+  const completedCandidateCount = displayEntries.filter(
+    (entry) => entry.status === "completed"
+  ).length;
+  const hasAnyReport = displayEntries.some((entry) => hasNonEmptyText(entry.reportMarkdown));
+  const aggregateTaskStatus = getAggregateTaskStatus(displayEntries, successResult?.status);
 
-  // Derive expansion: keep task cards collapsed by default (reports can be long),
-  // but auto-expand on error. Always respect the user's explicit toggle.
-  const hasReport = typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0;
+  const effectiveStatus: ToolStatus =
+    aggregateTaskStatus === "completed"
+      ? "completed"
+      : aggregateTaskStatus === "interrupted"
+        ? "interrupted"
+        : status === "completed" &&
+            (aggregateTaskStatus === "queued" || aggregateTaskStatus === "running")
+          ? "backgrounded"
+          : status;
+
   const shouldAutoExpand = !!errorResult;
   const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
   const expanded = userExpandedChoice ?? shouldAutoExpand;
   const toggleExpanded = () => setUserExpandedChoice(!expanded);
 
-  const isBackground = args.run_in_background;
-
-  const title = args.title ?? "Task";
-  const prompt = args.prompt ?? "";
-  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
-  const kindBadge = <AgentTypeBadge type={agentType} />;
-
-  const canViewTranscript = displayTaskStatus === "completed" && typeof taskId === "string";
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
-  // Show preview (first line or truncated)
+  const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
+  const collapsedPreview = isBestOf ? `Best of ${totalCandidateCount} · ${preview}` : preview;
+  const singleEntry = !isBestOf ? displayEntries[0] : undefined;
+  const createdCandidateCount = taskIds.length;
+  const shouldShowCreationProgress =
+    isBestOf &&
+    !errorResult &&
+    status === "executing" &&
+    createdCandidateCount < totalCandidateCount;
 
   return (
     <ToolContainer expanded={expanded}>
@@ -364,6 +745,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         <TaskIcon toolName="task" />
         <ToolName>task</ToolName>
         {kindBadge}
+        {isBestOf && <span className="text-muted text-[10px]">best of {totalCandidateCount}</span>}
         {isBackground && (
           <span className="text-backgrounded text-[10px] font-medium">background</span>
         )}
@@ -372,31 +754,42 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         </StatusIndicator>
       </ToolHeader>
 
-      {canViewTranscript && taskId && (
+      {transcriptTaskId && (
         <SubagentTranscriptDialog
-          open={transcriptOpen}
-          onOpenChange={setTranscriptOpen}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) {
+              setTranscriptTaskId(null);
+            }
+          }}
           workspaceId={workspaceId}
-          taskId={taskId}
+          taskId={transcriptTaskId}
         />
       )}
 
       {expanded && (
         <ToolDetails>
-          {/* Task info surface */}
           <div className="task-surface mt-1 rounded-md p-3">
             <div className="task-divider mb-2 flex flex-wrap items-center gap-2 border-b pb-2">
               <span className="text-task-mode text-[12px] font-semibold">
-                {reportTitle ?? title}
+                {isBestOf
+                  ? `Best of ${totalCandidateCount} · ${title}`
+                  : (singleEntry?.title ?? title)}
               </span>
-              {taskId && <TaskId id={taskId} />}
-              {displayTaskStatus && <TaskStatusBadge status={displayTaskStatus} />}
-              {canViewTranscript && (
+              {isBestOf ? (
+                <span className="text-muted text-[10px]">
+                  {completedCandidateCount}/{totalCandidateCount} completed
+                </span>
+              ) : (
+                singleEntry?.taskId && <TaskId id={singleEntry.taskId} />
+              )}
+              {!isBestOf && singleEntry?.status && <TaskStatusBadge status={singleEntry.status} />}
+              {!isBestOf && singleEntry?.status === "completed" && (
                 <button
                   type="button"
                   className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
                   onClick={() => {
-                    setTranscriptOpen(true);
+                    setTranscriptTaskId(singleEntry.taskId);
                   }}
                 >
                   View transcript
@@ -404,7 +797,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               )}
             </div>
 
-            {/* Prompt / script */}
             <div className="mb-2">
               <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Prompt</div>
               <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
@@ -412,34 +804,54 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               </div>
             </div>
 
-            {/* Report section */}
-            {hasReport && reportMarkdown && (
+            {isBestOf ? (
               <div className="task-divider border-t pt-2">
-                <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
-                <div
-                  className={cn("text-[11px]", hasLinkedCompletion && "bg-code-bg rounded-sm p-2")}
-                >
-                  <MarkdownRenderer content={reportMarkdown} />
+                <div className="text-muted mb-2 text-[10px] tracking-wide uppercase">
+                  Candidates
                 </div>
+                <div className="space-y-2">
+                  {displayEntries.map((entry, index) => (
+                    <TaskToolCandidateCard
+                      key={entry.taskId}
+                      entry={entry}
+                      index={index}
+                      total={totalCandidateCount}
+                      onOpenTranscript={setTranscriptTaskId}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              singleEntry?.reportMarkdown && (
+                <div className="task-divider border-t pt-2">
+                  <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
+                  <div className="text-[11px]">
+                    <MarkdownRenderer content={singleEntry.reportMarkdown} />
+                  </div>
+                </div>
+              )
+            )}
+
+            {shouldShowCreationProgress && (
+              <div className="text-muted mt-2 text-[11px] italic">
+                Creating candidates ({createdCandidateCount}/{totalCandidateCount})
+                <LoadingDots />
               </div>
             )}
 
-            {/* Pending state */}
-            {effectiveStatus === "executing" && !hasReport && (
-              <div className="text-muted text-[11px] italic">
+            {effectiveStatus === "executing" && !hasAnyReport && !shouldShowCreationProgress && (
+              <div className="text-muted mt-2 text-[11px] italic">
                 Task {isBackground ? "running in background" : "executing"}
                 <LoadingDots />
               </div>
             )}
 
-            {/* Error state */}
             {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
           </div>
         </ToolDetails>
       )}
 
-      {/* Collapsed preview */}
-      {!expanded && <div className="text-muted mt-1 truncate text-[10px]">{preview}</div>}
+      {!expanded && <div className="text-muted mt-1 truncate text-[10px]">{collapsedPreview}</div>}
     </ToolContainer>
   );
 };
@@ -520,14 +932,6 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     }
   }
 
-  function getWorkspaceTitle(taskId: string): string | undefined {
-    const metadata = workspaceMetadata?.get(taskId);
-    const title = metadata?.title?.trim();
-    if (title && title.length > 0) return title;
-
-    const name = metadata?.name?.trim();
-    return name && name.length > 0 ? name : undefined;
-  }
   // Keep task_await collapsed by default, but auto-expand when failures are present.
   // This avoids hiding failures behind a "completed" badge in the header.
   const shouldAutoExpand = failedCount > 0;
@@ -576,9 +980,10 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
                   const spawnTitle = taskId
                     ? taskReportLinking?.spawnTitleByTaskId.get(taskId)
                     : undefined;
-                  const fallbackTitle =
-                    (spawnTitle && spawnTitle.trim().length > 0 ? spawnTitle.trim() : undefined) ??
-                    (taskId ? getWorkspaceTitle(taskId) : undefined);
+                  const workspaceTitle = taskId
+                    ? getTaskToolWorkspaceTitle(workspaceMetadata?.get(taskId))
+                    : undefined;
+                  const fallbackTitle = trimToNonEmptyString(spawnTitle) ?? workspaceTitle;
 
                   return (
                     <TaskAwaitResult
@@ -620,14 +1025,9 @@ const TaskAwaitResult: React.FC<{
   const reportMarkdown = isCompleted ? result.reportMarkdown : undefined;
 
   const rawReportTitle = isCompleted ? result.title : undefined;
-  const reportTitle =
-    typeof rawReportTitle === "string" && rawReportTitle.trim().length > 0
-      ? rawReportTitle.trim()
-      : undefined;
+  const reportTitle = trimToNonEmptyString(rawReportTitle) ?? undefined;
 
-  const title =
-    reportTitle ??
-    (fallbackTitle && fallbackTitle.trim().length > 0 ? fallbackTitle.trim() : undefined);
+  const title = reportTitle ?? trimToNonEmptyString(fallbackTitle) ?? undefined;
 
   const output = "output" in result ? result.output : undefined;
   const note = "note" in result ? result.note : undefined;
@@ -639,7 +1039,7 @@ const TaskAwaitResult: React.FC<{
   const patchSummary = formatGitPatchArtifactSummary(gitPatchArtifact);
   const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
 
-  const showDetails = suppressReport !== true;
+  const showDetails = !suppressReport;
 
   return (
     <div className="bg-code-bg rounded-sm p-2">

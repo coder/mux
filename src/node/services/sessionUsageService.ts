@@ -108,13 +108,17 @@ export class SessionUsageService {
     return path.join(this.config.getSessionDir(workspaceId), this.SESSION_USAGE_FILE);
   }
 
+  private createEmptyUsageFile(): SessionUsageFile {
+    return { byModel: {}, version: 1 };
+  }
+
   private async readFile(workspaceId: string): Promise<SessionUsageFile> {
     try {
       const data = await fs.readFile(this.getFilePath(workspaceId), "utf-8");
       return JSON.parse(data) as SessionUsageFile;
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-        return { byModel: {}, version: 1 };
+        return this.createEmptyUsageFile();
       }
       throw error;
     }
@@ -185,7 +189,7 @@ export class SessionUsageService {
           await this.rebuildFromMessagesInternal(workspaceId, messages);
           current = await this.readFile(workspaceId);
         } else {
-          current = { byModel: {}, version: 1 };
+          current = this.createEmptyUsageFile();
         }
       }
 
@@ -240,7 +244,7 @@ export class SessionUsageService {
           await this.rebuildFromMessagesInternal(parentWorkspaceId, messages);
           current = await this.readFile(parentWorkspaceId);
         } else {
-          current = { byModel: {}, version: 1 };
+          current = this.createEmptyUsageFile();
         }
       }
 
@@ -355,6 +359,18 @@ export class SessionUsageService {
   }
 
   /**
+   * Reset a workspace's persisted cost ledger while keeping copied chat history intact.
+   *
+   * Forked workspaces need an explicit empty session-usage.json so later reads do not
+   * rebuild historical costs from the copied messages.
+   */
+  async resetSessionUsage(workspaceId: string): Promise<void> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      await this.writeFile(workspaceId, this.createEmptyUsageFile());
+    });
+  }
+
+  /**
    * Batch fetch session usage for multiple workspaces.
    * Optimized for displaying costs in archived workspaces list.
    */
@@ -386,7 +402,7 @@ export class SessionUsageService {
     workspaceId: string,
     messages: MuxMessage[]
   ): Promise<void> {
-    const result: SessionUsageFile = { byModel: {}, version: 1 };
+    const result: SessionUsageFile = this.createEmptyUsageFile();
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
 
     for (const msg of messages) {

@@ -25,10 +25,10 @@ import type {
   OnChatMode,
   OnChatCursor,
   ProvidersConfigMap,
+  StreamErrorMessage,
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
-import type { StreamAbortReason } from "@/common/types/stream";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import {
   buildStreamErrorEventData,
@@ -74,7 +74,12 @@ import {
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
-import type { StreamEndEvent } from "@/common/types/stream";
+import {
+  copyStreamLifecycleSnapshot,
+  type StreamAbortReason,
+  type StreamEndEvent,
+  type StreamLifecycleSnapshot,
+} from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
@@ -355,6 +360,23 @@ export class AgentSession {
   private activeStreamHadAnyDelta = false;
 
   /**
+   * Backend-owned terminal lifecycle for the most recent turn.
+   *
+   * We retain interrupted/failed state after turnPhase returns to IDLE so reconnects and the
+   * browser can distinguish a real stop/failure from a slow PREPARING turn that is still alive.
+   */
+  private terminalStreamLifecycle: StreamLifecycleSnapshot | null = null;
+
+  /**
+   * Most recent terminal stream-error event, retained so reconnect replay can restore specific
+   * failure UI instead of degrading terminal failures to a generic interruption.
+   */
+  private terminalStreamError: StreamErrorMessage | null = null;
+
+  /** Last lifecycle snapshot emitted to live subscribers (used for change detection only). */
+  private lastEmittedStreamLifecycle: StreamLifecycleSnapshot | null = null;
+
+  /**
    * True when AIService has already emitted an `error` event for the current stream attempt.
    * Used to avoid duplicate retry scheduling when streamMessage later returns the same failure.
    */
@@ -538,6 +560,72 @@ export class AgentSession {
     }
 
     return streamLastTimestamp;
+  }
+
+  private getCurrentStreamLifecycleSnapshot(): StreamLifecycleSnapshot {
+    if (this.turnPhase === TurnPhase.PREPARING) {
+      return { phase: "preparing", hadAnyOutput: false };
+    }
+
+    if (this.turnPhase === TurnPhase.STREAMING) {
+      return {
+        phase: "streaming",
+        hadAnyOutput: this.activeStreamHadAnyDelta,
+      };
+    }
+
+    if (this.turnPhase === TurnPhase.COMPLETING) {
+      return {
+        phase: "completing",
+        hadAnyOutput: this.activeStreamHadAnyDelta,
+      };
+    }
+
+    return this.terminalStreamLifecycle ?? { phase: "idle", hadAnyOutput: false };
+  }
+
+  private emitStreamLifecycleIfChanged(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    const snapshot = this.getCurrentStreamLifecycleSnapshot();
+    const lastSnapshot = this.lastEmittedStreamLifecycle;
+    if (
+      lastSnapshot &&
+      lastSnapshot.phase === snapshot.phase &&
+      lastSnapshot.hadAnyOutput === snapshot.hadAnyOutput &&
+      (lastSnapshot.abortReason ?? null) === (snapshot.abortReason ?? null)
+    ) {
+      return;
+    }
+
+    this.lastEmittedStreamLifecycle = copyStreamLifecycleSnapshot(snapshot);
+    this.emitChatEvent({
+      type: "stream-lifecycle",
+      workspaceId: this.workspaceId,
+      ...snapshot,
+    });
+  }
+
+  private markActiveStreamHadAnyOutput(): void {
+    if (this.activeStreamHadAnyDelta) {
+      return;
+    }
+
+    this.activeStreamHadAnyDelta = true;
+    this.emitStreamLifecycleIfChanged();
+  }
+
+  private setTerminalStreamLifecycle(
+    phase: Extract<StreamLifecycleSnapshot["phase"], "interrupted" | "failed">,
+    options?: { abortReason?: StreamAbortReason; hadAnyOutput?: boolean }
+  ): void {
+    this.terminalStreamLifecycle = copyStreamLifecycleSnapshot({
+      phase,
+      hadAnyOutput: options?.hadAnyOutput ?? this.activeStreamHadAnyDelta,
+      abortReason: options?.abortReason,
+    });
   }
 
   private emitRetryEvent(event: RetryStatusEvent): void {
@@ -1353,6 +1441,38 @@ export class AgentSession {
       listener({ workspaceId: this.workspaceId, message });
     };
 
+    let replayedTerminalStreamError = false;
+    let replayedStreamLifecycle: StreamLifecycleSnapshot | null = null;
+    const emitReplayStatusMessage = (message: WorkspaceChatMessage): void => {
+      listener({ workspaceId: this.workspaceId, message });
+    };
+    const emitCurrentReplayTerminalState = (): void => {
+      if (!replayedTerminalStreamError && this.terminalStreamError) {
+        replayedTerminalStreamError = true;
+        emitReplayStatusMessage({
+          ...this.terminalStreamError,
+          replay: true,
+        });
+      }
+
+      const lifecycle = this.getCurrentStreamLifecycleSnapshot();
+      if (
+        replayedStreamLifecycle &&
+        replayedStreamLifecycle.phase === lifecycle.phase &&
+        replayedStreamLifecycle.hadAnyOutput === lifecycle.hadAnyOutput &&
+        (replayedStreamLifecycle.abortReason ?? null) === (lifecycle.abortReason ?? null)
+      ) {
+        return;
+      }
+
+      replayedStreamLifecycle = copyStreamLifecycleSnapshot(lifecycle);
+      emitReplayStatusMessage({
+        type: "stream-lifecycle",
+        workspaceId: this.workspaceId,
+        ...lifecycle,
+      });
+    };
+
     let emittedReplayStreamEvents = false;
     const replayStreamEventTracker = (event: AgentSessionChatEvent) => {
       if (event.workspaceId !== this.workspaceId) {
@@ -1372,9 +1492,17 @@ export class AgentSession {
     };
     this.emitter.on("chat-event", replayStreamEventTracker);
 
+    const shouldReplayTerminalState = mode?.type !== "live";
+
     // try/catch/finally guarantees caught-up is always sent, even if replay fails.
     // Without caught-up, the frontend stays in "Loading workspace..." forever.
     try {
+      if (shouldReplayTerminalState) {
+        // Rehydrate the current terminal/preparing state immediately so reconnect clients do not
+        // regress to transcript heuristics while the rest of replay is still streaming in.
+        emitCurrentReplayTerminalState();
+      }
+
       if (mode?.type === "live") {
         replayMode = "live";
 
@@ -1389,7 +1517,7 @@ export class AgentSession {
           });
 
           // Stream can end while replayStream runs; only expose cursor when still active.
-          const liveStreamInfoAfterReplay = this.aiService.getStreamInfo(this.workspaceId);
+          const liveStreamInfoAfterReplay = this.aiService.getStreamInfo?.(this.workspaceId);
           if (liveStreamInfoAfterReplay) {
             serverCursor = {
               ...serverCursor,
@@ -1574,7 +1702,7 @@ export class AgentSession {
       // Re-read stream state after replay. The stream can end while we are
       // replaying history, and caught-up cursor metadata must reflect that
       // latest backend state to avoid phantom active streams in the client.
-      const streamInfoAfterReplay = this.aiService.getStreamInfo(this.workspaceId);
+      const streamInfoAfterReplay = this.aiService.getStreamInfo?.(this.workspaceId);
       if (streamInfoAfterReplay) {
         serverCursor = {
           ...serverCursor,
@@ -1610,6 +1738,12 @@ export class AgentSession {
       serverCursor = undefined;
     } finally {
       this.emitter.off("chat-event", replayStreamEventTracker);
+
+      if (shouldReplayTerminalState) {
+        // Replay the latest terminal/preparing state one last time before caught-up in case the
+        // stream changed while history was replaying (for example PREPARING -> failed/idle).
+        emitCurrentReplayTerminalState();
+      }
 
       // Replay queued-message snapshot before caught-up so reconnect clients can
       // rebuild queue UI state even when history replay errored mid-flight.
@@ -3514,6 +3648,9 @@ export class AgentSession {
     // Terminal error — no retry succeeded
     const failedUserMessageId = this.activeStreamUserMessageId;
     const failureType = data.errorType ?? "unknown";
+    const streamErrorMessage = createStreamErrorMessage(data);
+    this.setTerminalStreamLifecycle("failed");
+    this.terminalStreamError = streamErrorMessage;
     this.activeCompactionRequest = undefined;
     this.resetActiveStreamState();
 
@@ -3527,7 +3664,7 @@ export class AgentSession {
     });
     await this.updateStartupAutoRetryAbandonFromFailure(failureType, failedUserMessageId);
 
-    this.emitChatEvent(createStreamErrorMessage(data));
+    this.emitChatEvent(streamErrorMessage);
     this.setTurnPhase(TurnPhase.IDLE);
   }
 
@@ -3557,26 +3694,26 @@ export class AgentSession {
       this.emitChatEvent(payload);
     });
     forward("stream-delta", (payload) => {
-      this.activeStreamHadAnyDelta = true;
+      this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });
     forward("tool-call-start", (payload) => {
-      this.activeStreamHadAnyDelta = true;
+      this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });
     forward("bash-output", (payload) => {
-      this.activeStreamHadAnyDelta = true;
+      this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });
     forward("task-created", (payload) => {
       this.emitChatEvent(payload);
     });
     forward("tool-call-delta", (payload) => {
-      this.activeStreamHadAnyDelta = true;
+      this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });
     forward("tool-call-end", (payload) => {
-      this.activeStreamHadAnyDelta = true;
+      this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
 
       // Post-compaction context state depends on plan writes + tracked file diffs.
@@ -3589,7 +3726,7 @@ export class AgentSession {
       }
     });
     forward("reasoning-delta", (payload) => {
-      this.activeStreamHadAnyDelta = true;
+      this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
@@ -3654,6 +3791,12 @@ export class AgentSession {
         });
 
         const preStreamAbortReason = "abortReason" in payload ? payload.abortReason : undefined;
+        if (this.turnPhase === TurnPhase.PREPARING) {
+          this.setTerminalStreamLifecycle("interrupted", {
+            abortReason: preStreamAbortReason,
+            hadAnyOutput: false,
+          });
+        }
         await this.updateStartupAutoRetryAbandonFromAbort(
           preStreamAbortReason,
           this.activeStreamUserMessageId
@@ -3678,12 +3821,13 @@ export class AgentSession {
 
       const failedUserMessageId = this.activeStreamUserMessageId;
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
+      const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
+      this.setTerminalStreamLifecycle("interrupted", { abortReason });
       this.activeCompactionRequest = undefined;
       this.resetActiveStreamState();
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
-      const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
       await this.handleStreamFailureForAutoRetry({
         type: "aborted",
         message: abortReason,
@@ -3895,6 +4039,13 @@ export class AgentSession {
 
   private setTurnPhase(next: TurnPhase): void {
     this.turnPhase = next;
+
+    if (next !== TurnPhase.IDLE) {
+      this.terminalStreamLifecycle = null;
+      this.terminalStreamError = null;
+    }
+
+    this.emitStreamLifecycleIfChanged();
 
     if (next === TurnPhase.IDLE) {
       const waiters = this.idleWaiters;

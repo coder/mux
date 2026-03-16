@@ -59,41 +59,7 @@ async function createTestServer(): Promise<TestServerHandle> {
   services.windowService.setMainWindow(mockWindow);
 
   // Build context
-  const context: ORPCContext = {
-    config: services.config,
-    aiService: services.aiService,
-    projectService: services.projectService,
-    workspaceService: services.workspaceService,
-    muxGatewayOauthService: services.muxGatewayOauthService,
-    muxGovernorOauthService: services.muxGovernorOauthService,
-    codexOauthService: services.codexOauthService,
-    copilotOauthService: services.copilotOauthService,
-    taskService: services.taskService,
-    providerService: services.providerService,
-    terminalService: services.terminalService,
-    editorService: services.editorService,
-    windowService: services.windowService,
-    updateService: services.updateService,
-    tokenizerService: services.tokenizerService,
-    serverService: services.serverService,
-    workspaceMcpOverridesService: services.workspaceMcpOverridesService,
-    mcpConfigService: services.mcpConfigService,
-    mcpOauthService: services.mcpOauthService,
-    sessionTimingService: services.sessionTimingService,
-    mcpServerManager: services.mcpServerManager,
-    menuEventService: services.menuEventService,
-    experimentsService: services.experimentsService,
-    voiceService: services.voiceService,
-    devToolsService: services.devToolsService,
-    telemetryService: services.telemetryService,
-    policyService: services.policyService,
-    sessionUsageService: services.sessionUsageService,
-    signingService: services.signingService,
-    coderService: services.coderService,
-    serverAuthService: services.serverAuthService,
-    sshPromptService: services.sshPromptService,
-    analyticsService: services.analyticsService,
-  };
+  const context: ORPCContext = services.toORPCContext();
 
   // Use the actual createOrpcServer function
   const server = await createOrpcServer({

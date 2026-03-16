@@ -193,4 +193,34 @@ describe("ServiceContainer", () => {
       )
     ).toBe(true);
   });
+
+  it("exposes desktopSessionManager in the ORPC context", () => {
+    services = new ServiceContainer(config);
+
+    const context = services.toORPCContext();
+
+    expect(context.desktopSessionManager).toBe(services.desktopSessionManager);
+  });
+
+  it("closes desktop sessions during shutdown", async () => {
+    services = new ServiceContainer(config);
+    const closeAllSpy = spyOn(services.desktopSessionManager, "closeAll").mockImplementation(() =>
+      Promise.resolve(undefined)
+    );
+
+    await services.shutdown();
+
+    expect(closeAllSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes desktop sessions during dispose", async () => {
+    services = new ServiceContainer(config);
+    const closeAllSpy = spyOn(services.desktopSessionManager, "closeAll").mockImplementation(() =>
+      Promise.resolve(undefined)
+    );
+
+    await services.dispose();
+
+    expect(closeAllSpy).toHaveBeenCalledTimes(1);
+  });
 });

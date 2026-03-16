@@ -6,7 +6,7 @@ export const AgentDefinitionScopeSchema = z.enum(["built-in", "project", "global
 
 export { AgentIdSchema } from "@/common/schemas/ids";
 
-const AgentDefinitionUiRequirementSchema = z.enum(["plan"]);
+const AgentDefinitionUiRequirementSchema = z.enum(["plan", "desktop"]);
 
 const AgentDefinitionUiSchema = z
   .object({

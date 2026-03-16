@@ -7,18 +7,12 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
-import { Clipboard, Lightbulb, TextQuote } from "lucide-react";
-import { copyToClipboard } from "@/browser/utils/clipboard";
-import {
-  formatTranscriptTextAsQuote,
-  getTranscriptContextMenuText,
-} from "@/browser/utils/messages/transcriptContextMenu";
-import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
-import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/PositionedMenu";
+import { Lightbulb } from "lucide-react";
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "@/browser/features/Messages/MessageRenderer";
 import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
+import { useTranscriptContextMenu } from "@/browser/features/Messages/useTranscriptContextMenu";
 import type { UserMessageNavigation } from "@/browser/features/Messages/UserMessage";
 import { InterruptedBarrier } from "@/browser/features/Messages/ChatBarrier/InterruptedBarrier";
 import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditCutoffBarrier";
@@ -396,46 +390,17 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
 
-  // Right-clicking transcript text offers quick quote/copy actions,
-  // using selection first and hovered text as a fallback when nothing is selected.
-  const transcriptMenu = useContextMenuPosition();
-  const transcriptMenuTextRef = useRef<string>("");
-
-  const handleTranscriptContextMenu = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      const transcriptRoot = contentRef.current;
-      if (!transcriptRoot) return;
-
-      const selection = typeof window === "undefined" ? null : window.getSelection();
-      const text = getTranscriptContextMenuText({
-        transcriptRoot,
-        target: event.target,
-        selection,
-      });
-
-      if (!text) {
-        transcriptMenu.close();
-        return;
-      }
-
-      transcriptMenuTextRef.current = text;
-      transcriptMenu.onContextMenu(event);
-    },
-    [contentRef, transcriptMenu]
-  );
-
-  const handleQuoteHoveredText = useCallback(() => {
-    const quotedText = formatTranscriptTextAsQuote(transcriptMenuTextRef.current.trim());
-    transcriptMenu.close();
-    if (!quotedText) return;
+  const handleQuoteText = useCallback((quotedText: string) => {
     chatInputAPI.current?.appendText(quotedText);
     chatInputAPI.current?.focus();
-  }, [transcriptMenu]);
+  }, []);
 
-  const handleCopyHoveredText = useCallback(() => {
-    void copyToClipboard(transcriptMenuTextRef.current);
-    transcriptMenu.close();
-  }, [transcriptMenu]);
+  // Right-clicking transcript text offers quick quote/copy actions,
+  // using selection first and hovered text as a fallback when nothing is selected.
+  const transcriptContextMenu = useTranscriptContextMenu({
+    transcriptRootRef: contentRef,
+    onQuoteText: handleQuoteText,
+  });
 
   // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
   // resets on workspace switches. Clear background errors so they don't leak across workspaces.
@@ -621,15 +586,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // feel stable; only show the full placeholder when there's no transcript content yet.
   const showTranscriptHydrationPlaceholder = isHydratingTranscript && deferredMessages.length === 0;
   const showRetryBarrier =
-    !isHydratingTranscript && !workspaceState.canInterrupt && hasInterruptedStream;
+    !isHydratingTranscript &&
+    !workspaceState.canInterrupt &&
+    !workspaceState.isStreamStarting &&
+    hasInterruptedStream;
 
   const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
     lastActionableMessage?.type === "stream-error" &&
     lastActionableMessage.errorType === "context_exceeded";
-  // Keep RetryBarrier mounted (but visually hidden) while a resumed stream is in flight
-  // so its temporary auto-retry rollback effect can observe terminal stream outcomes.
-  const shouldMountRetryBarrier = hasInterruptedStream && !suppressRetryBarrier;
+  const shouldMountRetryBarrier = !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
   const handleLoadOlderHistory = useCallback(() => {
@@ -647,8 +613,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceId,
     // Allow interrupt keybind even while waiting for stream-start ("starting...").
     canInterrupt:
-      (workspaceState?.canInterrupt ?? false) ||
-      typeof workspaceState?.pendingStreamStartTime === "number",
+      (workspaceState?.canInterrupt ?? false) || (workspaceState?.isStreamStarting ?? false),
     showRetryBarrier,
     chatInputAPI,
     jumpToBottom,
@@ -749,7 +714,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
               onWheel={markUserInteraction}
               onTouchMove={markUserInteraction}
               onScroll={handleScroll}
-              onContextMenu={handleTranscriptContextMenu}
+              onContextMenu={transcriptContextMenu.onContextMenu}
               role="log"
               aria-live={canInterrupt ? "polite" : "off"}
               aria-busy={canInterrupt || isHydratingTranscript}
@@ -836,36 +801,25 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
                         return (
                           <React.Fragment key={msg.id}>
-                            <div
-                              data-testid="chat-message"
-                              data-message-id={
-                                msg.type !== "history-hidden" &&
-                                msg.type !== "workspace-init" &&
-                                msg.type !== "compaction-boundary"
-                                  ? msg.historyId
+                            <MessageRenderer
+                              message={msg}
+                              onEditUserMessage={handleEditUserMessage}
+                              workspaceId={workspaceId}
+                              isCompacting={isCompacting}
+                              onReviewNote={handleReviewNote}
+                              isLatestProposePlan={
+                                msg.type === "tool" &&
+                                msg.toolName === "propose_plan" &&
+                                msg.id === latestProposePlanId
+                              }
+                              bashOutputGroup={bashOutputGroup}
+                              taskReportLinking={taskReportLinkingForMessage}
+                              userMessageNavigation={
+                                msg.type === "user"
+                                  ? userMessageNavigationByHistoryId?.get(msg.historyId)
                                   : undefined
                               }
-                            >
-                              <MessageRenderer
-                                message={msg}
-                                onEditUserMessage={handleEditUserMessage}
-                                workspaceId={workspaceId}
-                                isCompacting={isCompacting}
-                                onReviewNote={handleReviewNote}
-                                isLatestProposePlan={
-                                  msg.type === "tool" &&
-                                  msg.toolName === "propose_plan" &&
-                                  msg.id === latestProposePlanId
-                                }
-                                bashOutputGroup={bashOutputGroup}
-                                taskReportLinking={taskReportLinkingForMessage}
-                                userMessageNavigation={
-                                  msg.type === "user"
-                                    ? userMessageNavigationByHistoryId?.get(msg.historyId)
-                                    : undefined
-                                }
-                              />
-                            </div>
+                            />
                             {/* Show collapsed indicator after the first item in a bash_output group */}
                             {bashOutputGroup?.position === "first" && groupKey && (
                               <BashOutputCollapsedIndicator
@@ -892,10 +846,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                       })}
                       {/* Show RetryBarrier after the last message if needed */}
                       {shouldMountRetryBarrier && (
-                        <RetryBarrier
-                          workspaceId={workspaceId}
-                          className={!showRetryBarrierUI ? "hidden" : undefined}
-                        />
+                        <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />
                       )}
                     </>
                   </MessageListProvider>
@@ -926,22 +877,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                 />
               </div>
             </div>
-            <PositionedMenu
-              open={transcriptMenu.isOpen}
-              onOpenChange={transcriptMenu.onOpenChange}
-              position={transcriptMenu.position}
-            >
-              <PositionedMenuItem
-                icon={<TextQuote />}
-                label="Quote in input"
-                onClick={handleQuoteHoveredText}
-              />
-              <PositionedMenuItem
-                icon={<Clipboard />}
-                label="Copy text"
-                onClick={handleCopyHoveredText}
-              />
-            </PositionedMenu>
+            {transcriptContextMenu.menu}
             {!autoScroll && (
               <button
                 onClick={jumpToBottom}

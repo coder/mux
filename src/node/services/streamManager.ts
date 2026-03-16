@@ -67,6 +67,16 @@ import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
+const EMPTY_STREAM_OUTPUT_ERROR_MESSAGE =
+  "The provider ended the stream before any assistant output arrived. This usually means the stream was dropped upstream rather than completed normally. Retry to continue.";
+
+class EmptyStreamOutputError extends Error {
+  constructor() {
+    super(EMPTY_STREAM_OUTPUT_ERROR_MESSAGE);
+    this.name = "EmptyStreamOutputError";
+  }
+}
+
 // Type definitions for stream parts with extended properties
 interface ReasoningDeltaPart {
   type: "reasoning-delta";
@@ -1262,7 +1272,7 @@ export class StreamManager extends EventEmitter {
       abortSignal: abortController.signal,
       prepareStep: ({ messages: stepMessages }) => {
         // streamText runs multiple internal LLM calls (steps) when tools are enabled.
-        // Extract base64 images out of tool-result JSON so providers don't treat them as text.
+        // Extract supported attachments out of tool-result JSON so providers don't treat them as text.
         const rewritten = extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
         const effectiveMessages = rewritten === stepMessages ? stepMessages : rewritten;
         if (stepTracker) {
@@ -1638,6 +1648,32 @@ export class StreamManager extends EventEmitter {
       abandonPartial,
       acpPromptId,
     });
+  }
+
+  private async handleEmptyStreamCompletion(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo
+  ): Promise<void> {
+    const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+    const streamMeta = await this.getStreamMetadata(streamInfo);
+    const totalUsage = this.resolveTotalUsageForStreamEnd(streamInfo, streamMeta.totalUsage);
+    const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
+    const previousResponseId = this.getOpenAIPreviousResponseId(streamInfo.request.providerOptions);
+
+    // Surface silent provider drops instead of leaving an empty assistant placeholder behind.
+    // Recent gpt-5.4-pro stalls only logged stream startup, so future occurrences need an
+    // explicit backend breadcrumb and a user-visible retryable error.
+    workspaceLog.error("Stream ended without emitting text, reasoning, or tool events", {
+      messageId: streamInfo.messageId,
+      model: streamInfo.model,
+      durationMs: streamMeta.duration,
+      totalUsage,
+      contextUsage,
+      cumulativeUsage: streamInfo.cumulativeUsage,
+      previousResponseId,
+    });
+
+    await this.handleStreamFailure(workspaceId, streamInfo, new EmptyStreamOutputError());
   }
 
   /**
@@ -2020,6 +2056,11 @@ export class StreamManager extends EventEmitter {
 
           // Check if stream completed successfully
           if (!streamInfo.abortController.signal.aborted) {
+            if (streamInfo.parts.length === 0) {
+              await this.handleEmptyStreamCompletion(workspaceId, streamInfo);
+              break;
+            }
+
             // Get all metadata from stream result in one call
             // - totalUsage: sum of all steps (for cost calculation)
             // - contextUsage: last step only (for context window display)
@@ -2209,6 +2250,15 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     error: unknown
   ): StreamErrorPayload & { errorType: StreamErrorType } {
+    if (error instanceof EmptyStreamOutputError) {
+      return {
+        messageId: streamInfo.messageId,
+        error: error.message,
+        errorType: "unknown",
+        acpPromptId: streamInfo.initialMetadata?.acpPromptId,
+      };
+    }
+
     // Extract error message (errors thrown from 'error' parts already have the correct message)
     // Apply prefix stripping to remove noisy "undefined: " prefixes from provider errors
     let errorMessage: string = stripNoisyErrorPrefix(getErrorMessage(error));

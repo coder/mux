@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 
+import type { z } from "zod";
+
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { Config, Workspace as WorkspaceConfigEntry } from "@/node/config";
@@ -97,6 +99,12 @@ export interface TaskCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  /** Shared best-of grouping metadata when one tool call spawns multiple sibling tasks. */
+  bestOf?: {
+    groupId: string;
+    index: number;
+    total: number;
+  };
   /** Experiments to inherit to subagent */
   experiments?: {
     programmaticToolCalling?: boolean;
@@ -148,7 +156,6 @@ interface AgentTaskIndex {
 
 interface PendingTaskWaiter {
   taskId: string;
-  createdAt: number;
   resolve: (report: { reportMarkdown: string; title?: string }) => void;
   reject: (error: Error) => void;
   cleanup: () => void;
@@ -157,7 +164,6 @@ interface PendingTaskWaiter {
 }
 
 interface PendingTaskStartWaiter {
-  createdAt: number;
   start: () => void;
   cleanup: () => void;
 }
@@ -277,6 +283,10 @@ export class TaskService {
   // Serialize stream-end processing per workspace to avoid races when
   // finalizing reported tasks and cleanup state transitions.
   private readonly workspaceEventLocks = new MutexMap<string>();
+  // Separate parent-scoped lock for deferred best-of fallback/finalization. This path can run
+  // concurrently from multiple child stream-end handlers for the same parent, and it must remain
+  // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
+  private readonly deferredBestOfLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
@@ -784,7 +794,19 @@ export class TaskService {
   }
 
   async initialize(): Promise<void> {
+    const startupStartedAt = Date.now();
+    const startupConfig = this.config.loadConfigOrDefault();
+    const queuedTaskCountAtStartup = this.listAgentTaskWorkspaces(startupConfig).filter(
+      (task) => task.taskStatus === "queued" && typeof task.id === "string"
+    ).length;
+
+    log.info("[startup] TaskService.initialize starting", {
+      queuedTaskCountAtStartup,
+    });
+
+    const maybeStartQueuedTasksStartedAt = Date.now();
     await this.maybeStartQueuedTasks();
+    const maybeStartQueuedTasksMs = Date.now() - maybeStartQueuedTasksStartedAt;
 
     const config = this.config.loadConfigOrDefault();
     const awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
@@ -794,12 +816,17 @@ export class TaskService {
       (t) => t.taskStatus === "running"
     );
 
+    let resumedAwaitingReportCount = 0;
+    let skippedAwaitingReportDueToActiveDescendants = 0;
+    let failedAwaitingReportCount = 0;
+
     for (const task of awaitingReportTasks) {
       if (!task.id) continue;
 
       // Avoid resuming a task while it still has active descendants (it shouldn't report yet).
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
+        skippedAwaitingReportDueToActiveDescendants += 1;
         continue;
       }
 
@@ -814,6 +841,16 @@ export class TaskService {
       const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
 
       const model = task.taskModelString ?? defaultModel;
+      const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+      log.info("[startup] Resuming awaiting_report task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        completionToolName,
+      });
+      const resumeStartedAt = Date.now();
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
         isPlanLike
@@ -821,15 +858,23 @@ export class TaskService {
           : "This task is awaiting its final agent_report. Call agent_report exactly once now.",
         {
           model,
-          agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+          agentId,
           thinkingLevel: task.taskThinkingLevel,
           toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
         },
         { synthetic: true, agentInitiated: true }
       );
+      const durationMs = Date.now() - resumeStartedAt;
       if (!sendResult.success) {
+        failedAwaitingReportCount += 1;
         log.error("Failed to resume awaiting_report task on startup", {
           taskId: task.id,
+          taskName: task.name,
+          projectPath: task.projectPath,
+          model,
+          agentId,
+          completionToolName,
+          durationMs,
           error: sendResult.error,
         });
 
@@ -840,8 +885,24 @@ export class TaskService {
           },
           completionToolName
         );
+        continue;
       }
+
+      resumedAwaitingReportCount += 1;
+      log.info("[startup] Resumed awaiting_report task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        completionToolName,
+        durationMs,
+      });
     }
+
+    let resumedRunningCount = 0;
+    let skippedRunningDueToActiveDescendants = 0;
+    let failedRunningCount = 0;
 
     for (const task of runningTasks) {
       if (!task.id) continue;
@@ -849,6 +910,7 @@ export class TaskService {
       // Only do this when the task has no running descendants, to avoid duplicate spawns.
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
+        skippedRunningDueToActiveDescendants += 1;
         continue;
       }
 
@@ -858,7 +920,17 @@ export class TaskService {
       });
 
       const model = task.taskModelString ?? defaultModel;
-      await this.workspaceService.sendMessage(
+      const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+      log.info("[startup] Resuming running task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        isPlanLike,
+      });
+      const resumeStartedAt = Date.now();
+      const sendResult = await this.workspaceService.sendMessage(
         task.id,
         isPlanLike
           ? "Mux restarted while this task was running. Continue where you left off. " +
@@ -867,12 +939,38 @@ export class TaskService {
               "When you have a final answer, call agent_report exactly once.",
         {
           model,
-          agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+          agentId,
           thinkingLevel: task.taskThinkingLevel,
           experiments: task.taskExperiments,
         },
         { synthetic: true, agentInitiated: true }
       );
+      const durationMs = Date.now() - resumeStartedAt;
+      if (!sendResult.success) {
+        failedRunningCount += 1;
+        log.error("Failed to resume running task on startup", {
+          taskId: task.id,
+          taskName: task.name,
+          projectPath: task.projectPath,
+          model,
+          agentId,
+          isPlanLike,
+          durationMs,
+          error: sendResult.error,
+        });
+        continue;
+      }
+
+      resumedRunningCount += 1;
+      log.info("[startup] Resumed running task", {
+        taskId: task.id,
+        taskName: task.name,
+        projectPath: task.projectPath,
+        model,
+        agentId,
+        isPlanLike,
+        durationMs,
+      });
     }
 
     // Restart-safety for git patch artifacts:
@@ -883,6 +981,7 @@ export class TaskService {
       (task) => hasCompletedAgentReport(task) && typeof task.id === "string" && task.id.length > 0
     );
 
+    const patchGenerationRecoveryStartedAt = Date.now();
     for (const task of completedReportTasks) {
       if (!task.parentWorkspaceId) continue;
       try {
@@ -899,12 +998,54 @@ export class TaskService {
         });
       }
     }
+    const patchGenerationRecoveryMs = Date.now() - patchGenerationRecoveryStartedAt;
+
+    // Restart-safety for grouped best-of completion: if child report artifacts already exist
+    // on disk after a restart, there may be no later child stream-end to finalize the pending
+    // parent task tool call. Re-run the deferred parent delivery/finalization pass first so
+    // cleanup rechecks do not stay blocked forever behind a stale input-available partial.
+    const bestOfRecoveryStartedAt = Date.now();
+    const bestOfParentWorkspaceIds = new Set<string>();
+    for (const task of completedReportTasks) {
+      const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
+      if (!parentWorkspaceId || (task.bestOf?.total ?? 1) <= 1) {
+        continue;
+      }
+      if (this.aiService.isStreaming(parentWorkspaceId)) {
+        continue;
+      }
+      bestOfParentWorkspaceIds.add(parentWorkspaceId);
+    }
+    for (const parentWorkspaceId of bestOfParentWorkspaceIds) {
+      await this.deliverDeferredBestOfReportsForParent(parentWorkspaceId);
+    }
+    const bestOfRecoveryMs = Date.now() - bestOfRecoveryStartedAt;
 
     // Best-effort completed-report ancestor recheck after restart.
+    const cleanupReportedTasksStartedAt = Date.now();
     for (const task of completedReportTasks) {
       if (!task.id) continue;
       await this.cleanupReportedLeafTask(task.id);
     }
+    const cleanupReportedTasksMs = Date.now() - cleanupReportedTasksStartedAt;
+
+    log.info("[startup] TaskService.initialize completed", {
+      totalMs: Date.now() - startupStartedAt,
+      maybeStartQueuedTasksMs,
+      awaitingReportTaskCount: awaitingReportTasks.length,
+      resumedAwaitingReportCount,
+      skippedAwaitingReportDueToActiveDescendants,
+      failedAwaitingReportCount,
+      runningTaskCount: runningTasks.length,
+      resumedRunningCount,
+      skippedRunningDueToActiveDescendants,
+      failedRunningCount,
+      completedReportTaskCount: completedReportTasks.length,
+      patchGenerationRecoveryMs,
+      bestOfParentRecoveryCount: bestOfParentWorkspaceIds.size,
+      bestOfRecoveryMs,
+      cleanupReportedTasksMs,
+    });
   }
 
   private startWorkspaceInit(workspaceId: string, projectPath: string): InitLogger {
@@ -944,6 +1085,29 @@ export class TaskService {
     const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
     if (!parsedAgentId.success) {
       return Err(`Task.create: invalid agentId (${normalizedAgentId})`);
+    }
+
+    let normalizedBestOf: TaskCreateArgs["bestOf"];
+    const bestOf = args.bestOf;
+    if (bestOf) {
+      const groupId = coerceNonEmptyString(bestOf.groupId);
+      if (!groupId) {
+        return Err("Task.create: bestOf.groupId is required when bestOf is provided");
+      }
+      if (!Number.isInteger(bestOf.index) || bestOf.index < 0) {
+        return Err("Task.create: bestOf.index must be a non-negative integer");
+      }
+      if (!Number.isInteger(bestOf.total) || bestOf.total < 2) {
+        return Err("Task.create: bestOf.total must be an integer >= 2");
+      }
+      if (bestOf.index >= bestOf.total) {
+        return Err("Task.create: bestOf.index must be less than bestOf.total");
+      }
+      normalizedBestOf = {
+        groupId,
+        index: bestOf.index,
+        total: bestOf.total,
+      };
     }
 
     const agentId = parsedAgentId.data;
@@ -1157,6 +1321,7 @@ export class TaskService {
           parentWorkspaceId,
           agentId,
           agentType,
+          bestOf: normalizedBestOf,
           taskStatus: "queued",
           taskPrompt: prompt,
           taskTrunkBranch: trunkBranch,
@@ -1273,6 +1438,7 @@ export class TaskService {
         agentId,
         parentWorkspaceId,
         agentType,
+        bestOf: normalizedBestOf,
         taskStatus: "running",
         taskTrunkBranch: trunkBranch,
         taskBaseCommitSha: taskBaseCommitSha ?? undefined,
@@ -1807,7 +1973,6 @@ export class TaskService {
 
         const entry: PendingTaskWaiter = {
           taskId,
-          createdAt: Date.now(),
           requestingWorkspaceId: undefined,
           backgroundOnMessageQueued: false,
           resolve: (report) => {
@@ -1874,7 +2039,6 @@ export class TaskService {
         const initialStatus = taskWorkspaceEntry.workspace.taskStatus;
         if (initialStatus === "queued") {
           const startWaiterEntry: PendingTaskStartWaiter = {
-            createdAt: Date.now(),
             start: startReportTimeout,
             cleanup: () => {
               const currentStartWaiters = this.pendingStartWaitersByTaskId.get(taskId);
@@ -2938,6 +3102,11 @@ export class TaskService {
     if (!entry.workspace.parentWorkspaceId) {
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
       if (!hasActiveDescendants) {
+        // Foreground best-of children can finish while the parent task tool call is still pending,
+        // which temporarily blocks their leaf cleanup and may defer synthetic fallback delivery.
+        // Recheck both once the parent stream reaches a descendant-free stream-end.
+        await this.deliverDeferredBestOfReportsForParent(workspaceId);
+        await this.requestReportedChildCleanupRechecks(workspaceId);
         return;
       }
 
@@ -3102,6 +3271,21 @@ export class TaskService {
     }
 
     this.rejectWaiters(workspaceId, new Error("Task interrupted"));
+
+    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
+    const bestOf = entry.workspace.bestOf;
+    if (
+      parentWorkspaceId &&
+      bestOf?.total != null &&
+      bestOf.total > 1 &&
+      !this.aiService.isStreaming(parentWorkspaceId)
+    ) {
+      await this.deliverDeferredBestOfSiblingReports({
+        parentWorkspaceId,
+        groupId: bestOf.groupId,
+        total: bestOf.total,
+      });
+    }
   }
 
   private async handleSuccessfulProposePlanAutoHandoff(args: {
@@ -3357,6 +3541,254 @@ export class TaskService {
     return this.workspaceEventLocks.withLock(workspaceId, async () => {
       await this.cleanupReportedLeafTask(workspaceId);
     });
+  }
+
+  private async requestReportedChildCleanupRechecks(parentWorkspaceId: string): Promise<void> {
+    assert(
+      parentWorkspaceId.length > 0,
+      "requestReportedChildCleanupRechecks: parentWorkspaceId must be non-empty"
+    );
+
+    const cfg = this.config.loadConfigOrDefault();
+    const reportedChildTaskIds: string[] = [];
+    for (const project of cfg.projects.values()) {
+      for (const workspace of project.workspaces) {
+        const workspaceId = coerceNonEmptyString(workspace.id);
+        if (!workspaceId || workspace.parentWorkspaceId !== parentWorkspaceId) {
+          continue;
+        }
+        if (!hasCompletedAgentReport(workspace)) {
+          continue;
+        }
+        reportedChildTaskIds.push(workspaceId);
+      }
+    }
+
+    for (const workspaceId of reportedChildTaskIds) {
+      await this.requestReportedTaskCleanupRecheck(workspaceId);
+    }
+  }
+
+  private async deliverDeferredBestOfReportsForParent(parentWorkspaceId: string): Promise<void> {
+    assert(
+      parentWorkspaceId.length > 0,
+      "deliverDeferredBestOfReportsForParent: parentWorkspaceId must be non-empty"
+    );
+
+    const pendingGroup = await this.resolvePendingBestOfGroupForParent(parentWorkspaceId);
+    if (!pendingGroup) {
+      return;
+    }
+
+    await this.deliverDeferredBestOfSiblingReports({
+      parentWorkspaceId,
+      groupId: pendingGroup.groupId,
+      total: pendingGroup.total,
+    });
+  }
+
+  private async resolvePendingBestOfGroupForParent(
+    parentWorkspaceId: string
+  ): Promise<{ groupId: string; total: number } | null> {
+    const partial = await this.historyService.readPartial(parentWorkspaceId);
+    if (!partial) {
+      return null;
+    }
+
+    const pendingParts = partial.parts.filter(
+      (part): part is DynamicToolPart & { toolName: "task"; state: "input-available" } =>
+        isDynamicToolPart(part) && part.toolName === "task" && part.state === "input-available"
+    );
+    if (pendingParts.length !== 1) {
+      return null;
+    }
+
+    const parsedInput = TaskToolArgsSchema.safeParse(pendingParts[0].input);
+    if (!parsedInput.success) {
+      return null;
+    }
+
+    const requestedTotal = parsedInput.data.n ?? 1;
+    if (requestedTotal <= 1) {
+      return null;
+    }
+
+    const requestedAgentId = coerceNonEmptyString(
+      parsedInput.data.agentId ?? parsedInput.data.subagent_type
+    )?.toLowerCase();
+    const requestedTitle = coerceNonEmptyString(parsedInput.data.title);
+    const partialStartedAt =
+      typeof partial.metadata?.timestamp === "number" ? partial.metadata.timestamp : undefined;
+
+    const cfg = this.config.loadConfigOrDefault();
+    const groups = new Map<string, { groupId: string; total: number; createdAtMs: number[] }>();
+    for (const project of cfg.projects.values()) {
+      for (const workspace of project.workspaces) {
+        if (workspace.parentWorkspaceId !== parentWorkspaceId) {
+          continue;
+        }
+
+        const groupId = coerceNonEmptyString(workspace.bestOf?.groupId);
+        const total = workspace.bestOf?.total;
+        if (!groupId || total !== requestedTotal) {
+          continue;
+        }
+
+        const workspaceAgentId = coerceNonEmptyString(
+          workspace.agentId ?? workspace.agentType
+        )?.toLowerCase();
+        if (requestedAgentId && workspaceAgentId && workspaceAgentId !== requestedAgentId) {
+          continue;
+        }
+
+        const workspaceTitle = coerceNonEmptyString(workspace.title);
+        if (requestedTitle && workspaceTitle && workspaceTitle !== requestedTitle) {
+          continue;
+        }
+
+        const entry = groups.get(groupId) ?? { groupId, total, createdAtMs: [] };
+        const createdAtMs =
+          typeof workspace.createdAt === "string" ? Date.parse(workspace.createdAt) : Number.NaN;
+        if (Number.isFinite(createdAtMs)) {
+          entry.createdAtMs.push(createdAtMs);
+        }
+        groups.set(groupId, entry);
+      }
+    }
+
+    const matchingGroups = Array.from(groups.values());
+    const startedAfterPartial = (group: { createdAtMs: number[] }): boolean => {
+      if (partialStartedAt == null) {
+        return true;
+      }
+
+      return (
+        group.createdAtMs.length > 0 &&
+        group.createdAtMs.every((createdAtMs) => createdAtMs >= partialStartedAt)
+      );
+    };
+    if (matchingGroups.length === 0) {
+      return null;
+    }
+    if (matchingGroups.length === 1) {
+      return startedAfterPartial(matchingGroups[0]) ? matchingGroups[0] : null;
+    }
+    if (partialStartedAt == null) {
+      return null;
+    }
+
+    const recentMatchingGroups = matchingGroups.filter((group) => startedAfterPartial(group));
+    return recentMatchingGroups.length === 1 ? recentMatchingGroups[0] : null;
+  }
+
+  private async deliverDeferredBestOfSiblingReports(params: {
+    parentWorkspaceId: string;
+    groupId: string;
+    total: number;
+  }): Promise<void> {
+    assert(
+      params.parentWorkspaceId.length > 0,
+      "deliverDeferredBestOfSiblingReports: parentWorkspaceId must be non-empty"
+    );
+
+    const cleanupTaskIds = new Set<string>();
+    await this.deferredBestOfLocks.withLock(params.parentWorkspaceId, async () => {
+      const cfg = this.config.loadConfigOrDefault();
+      const siblings = this.listBestOfSiblingTasks({
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+      });
+      const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+        total: params.total,
+      });
+      if (groupedOutput) {
+        const representativeTaskId = siblings[0]?.taskId;
+        if (representativeTaskId) {
+          const finalization = await this.tryFinalizePendingTaskToolCallInPartial(
+            params.parentWorkspaceId,
+            groupedOutput,
+            representativeTaskId,
+            findWorkspaceEntry(cfg, representativeTaskId)
+          );
+          if (finalization.kind === "finalized") {
+            for (const taskId of finalization.taskIds) {
+              cleanupTaskIds.add(taskId);
+            }
+            return;
+          }
+        }
+      }
+
+      if (
+        await this.shouldDeferBestOfFallback({
+          parentWorkspaceId: params.parentWorkspaceId,
+          groupId: params.groupId,
+          total: params.total,
+        })
+      ) {
+        return;
+      }
+
+      const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
+      const syntheticReportTaskIds = new Set<string>();
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+        params.parentWorkspaceId
+      );
+      if (historyResult.success) {
+        for (const message of historyResult.data) {
+          if (message.role !== "user" || message.metadata?.synthetic !== true) {
+            continue;
+          }
+          const text = message.parts
+            .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+            .map((part) => part.text)
+            .join("\n");
+          if (!text.includes("<mux_subagent_report>")) {
+            continue;
+          }
+          for (const match of text.matchAll(/<task_id>([^<]+)<\/task_id>/g)) {
+            const taskId = coerceNonEmptyString(match[1]);
+            if (taskId) {
+              syntheticReportTaskIds.add(taskId);
+            }
+          }
+        }
+      }
+
+      const parentSessionDir = this.config.getSessionDir(params.parentWorkspaceId);
+      for (const sibling of siblings) {
+        if (
+          parentTaskToolState.referencedTaskIds.has(sibling.taskId) ||
+          syntheticReportTaskIds.has(sibling.taskId)
+        ) {
+          continue;
+        }
+        if (!(sibling.taskStatus === "reported" || sibling.taskStatus === "interrupted")) {
+          continue;
+        }
+
+        const artifact = await readSubagentReportArtifact(parentSessionDir, sibling.taskId);
+        if (!artifact) {
+          continue;
+        }
+
+        const siblingCleanupTaskIds = await this.deliverReportToParentUnlocked(
+          params.parentWorkspaceId,
+          sibling.taskId,
+          findWorkspaceEntry(cfg, sibling.taskId),
+          { reportMarkdown: artifact.reportMarkdown, title: artifact.title }
+        );
+        for (const taskId of siblingCleanupTaskIds) {
+          cleanupTaskIds.add(taskId);
+        }
+      }
+    });
+
+    for (const taskId of cleanupTaskIds) {
+      await this.requestReportedTaskCleanupRecheck(taskId);
+    }
   }
 
   private async fallbackReportMissingCompletionTool(
@@ -3689,6 +4121,225 @@ export class TaskService {
     return null;
   }
 
+  private listBestOfSiblingTasks(params: { parentWorkspaceId: string; groupId: string }): Array<{
+    taskId: string;
+    index: number;
+    agentId?: string;
+    agentType?: string;
+    taskStatus?: WorkspaceConfigEntry["taskStatus"];
+  }> {
+    const cfg = this.config.loadConfigOrDefault();
+    const siblings: Array<{
+      taskId: string;
+      index: number;
+      agentId?: string;
+      agentType?: string;
+      taskStatus?: WorkspaceConfigEntry["taskStatus"];
+    }> = [];
+
+    for (const project of cfg.projects.values()) {
+      for (const workspace of project.workspaces) {
+        const taskId = coerceNonEmptyString(workspace.id);
+        if (!taskId) {
+          continue;
+        }
+        if (workspace.parentWorkspaceId !== params.parentWorkspaceId) {
+          continue;
+        }
+        if (workspace.bestOf?.groupId !== params.groupId) {
+          continue;
+        }
+        if (!Number.isInteger(workspace.bestOf.index)) {
+          continue;
+        }
+
+        siblings.push({
+          taskId,
+          index: workspace.bestOf.index,
+          agentId: coerceNonEmptyString(workspace.agentId),
+          agentType: coerceNonEmptyString(workspace.agentType),
+          taskStatus: workspace.taskStatus,
+        });
+      }
+    }
+
+    siblings.sort(
+      (left, right) => left.index - right.index || left.taskId.localeCompare(right.taskId)
+    );
+    return siblings;
+  }
+
+  private async buildBestOfCompletedTaskToolOutput(params: {
+    parentWorkspaceId: string;
+    groupId: string;
+    total: number;
+  }): Promise<z.infer<typeof TaskToolResultSchema> | null> {
+    const siblings = this.listBestOfSiblingTasks({
+      parentWorkspaceId: params.parentWorkspaceId,
+      groupId: params.groupId,
+    });
+    if (siblings.length === 0) {
+      return null;
+    }
+    if (siblings.length > params.total) {
+      log.error("buildBestOfCompletedTaskToolOutput: found more siblings than requested", {
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+        siblingCount: siblings.length,
+        requestedTotal: params.total,
+      });
+      return null;
+    }
+
+    // Best-of creation can fail or be interrupted after only some candidates are spawned.
+    // When recovering an interrupted parent stream, finalize against the siblings that
+    // actually exist so the parent task tool call does not stay pending forever.
+    const parentSessionDir = this.config.getSessionDir(params.parentWorkspaceId);
+    const reports: Array<{
+      taskId: string;
+      reportMarkdown: string;
+      title?: string;
+      agentId?: string;
+      agentType?: string;
+    }> = [];
+
+    for (const sibling of siblings) {
+      const artifact = await readSubagentReportArtifact(parentSessionDir, sibling.taskId);
+      if (!artifact) {
+        return null;
+      }
+
+      reports.push({
+        taskId: sibling.taskId,
+        reportMarkdown: artifact.reportMarkdown,
+        title: artifact.title,
+        agentId: sibling.agentId,
+        agentType: sibling.agentType,
+      });
+    }
+
+    const output = {
+      status: "completed" as const,
+      taskIds: siblings.map((sibling) => sibling.taskId),
+      reports,
+    };
+    const parsed = TaskToolResultSchema.safeParse(output);
+    if (!parsed.success) {
+      log.error("buildBestOfCompletedTaskToolOutput: invalid grouped task output", {
+        error: parsed.error.message,
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+      });
+      return null;
+    }
+
+    return parsed.data;
+  }
+
+  private async getTaskToolPartialState(workspaceId: string): Promise<{
+    pendingBestOfTaskToolCount: number;
+    pendingTaskToolCount: number;
+    referencedTaskIds: Set<string>;
+  }> {
+    const partial = await this.historyService.readPartial(workspaceId);
+    const referencedTaskIds = new Set<string>();
+    if (!partial) {
+      return {
+        pendingBestOfTaskToolCount: 0,
+        pendingTaskToolCount: 0,
+        referencedTaskIds,
+      };
+    }
+
+    let pendingBestOfTaskToolCount = 0;
+    let pendingTaskToolCount = 0;
+    for (const part of partial.parts) {
+      if (!isDynamicToolPart(part) || part.toolName !== "task") {
+        continue;
+      }
+
+      if (part.state === "input-available") {
+        pendingTaskToolCount += 1;
+        const parsedInput = TaskToolArgsSchema.safeParse(part.input);
+        if (parsedInput.success && (parsedInput.data.n ?? 1) > 1) {
+          pendingBestOfTaskToolCount += 1;
+        }
+        continue;
+      }
+      if (part.state !== "output-available") {
+        continue;
+      }
+
+      const parsedOutput = TaskToolResultSchema.safeParse(part.output);
+      if (!parsedOutput.success) {
+        continue;
+      }
+
+      const output = parsedOutput.data;
+      if (typeof output.taskId === "string") {
+        referencedTaskIds.add(output.taskId);
+      }
+      if (Array.isArray(output.taskIds)) {
+        for (const taskId of output.taskIds) {
+          referencedTaskIds.add(taskId);
+        }
+      }
+      if ("tasks" in output && Array.isArray(output.tasks)) {
+        for (const task of output.tasks) {
+          referencedTaskIds.add(task.taskId);
+        }
+      }
+      if ("reports" in output && Array.isArray(output.reports)) {
+        for (const report of output.reports) {
+          referencedTaskIds.add(report.taskId);
+        }
+      }
+    }
+
+    return {
+      pendingBestOfTaskToolCount,
+      pendingTaskToolCount,
+      referencedTaskIds,
+    };
+  }
+
+  private async shouldDeferBestOfFallback(params: {
+    parentWorkspaceId: string;
+    groupId: string;
+    total: number;
+  }): Promise<boolean> {
+    const parentTaskToolState = await this.getTaskToolPartialState(params.parentWorkspaceId);
+    if (
+      parentTaskToolState.pendingBestOfTaskToolCount !== 1 ||
+      parentTaskToolState.pendingTaskToolCount !== 1
+    ) {
+      return false;
+    }
+
+    const siblings = this.listBestOfSiblingTasks({
+      parentWorkspaceId: params.parentWorkspaceId,
+      groupId: params.groupId,
+    });
+    const hasRecoverableSibling = siblings.some((sibling) => {
+      return (
+        sibling.taskStatus === "queued" ||
+        sibling.taskStatus === "running" ||
+        sibling.taskStatus === "awaiting_report"
+      );
+    });
+    if (hasRecoverableSibling) {
+      return true;
+    }
+
+    return (
+      (await this.buildBestOfCompletedTaskToolOutput({
+        parentWorkspaceId: params.parentWorkspaceId,
+        groupId: params.groupId,
+        total: params.total,
+      })) != null
+    );
+  }
+
   private async deliverReportToParent(
     parentWorkspaceId: string,
     childWorkspaceId: string,
@@ -3700,6 +4351,37 @@ export class TaskService {
       "deliverReportToParent: childWorkspaceId must be non-empty"
     );
 
+    let cleanupTaskIds: readonly string[] = [];
+    const bestOfTotal = childEntry?.workspace.bestOf?.total ?? 1;
+    if (bestOfTotal > 1) {
+      await this.deferredBestOfLocks.withLock(parentWorkspaceId, async () => {
+        cleanupTaskIds = await this.deliverReportToParentUnlocked(
+          parentWorkspaceId,
+          childWorkspaceId,
+          childEntry,
+          report
+        );
+      });
+    } else {
+      cleanupTaskIds = await this.deliverReportToParentUnlocked(
+        parentWorkspaceId,
+        childWorkspaceId,
+        childEntry,
+        report
+      );
+    }
+
+    for (const taskId of cleanupTaskIds) {
+      await this.requestReportedTaskCleanupRecheck(taskId);
+    }
+  }
+
+  private async deliverReportToParentUnlocked(
+    parentWorkspaceId: string,
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
+    report: { reportMarkdown: string; title?: string }
+  ): Promise<readonly string[]> {
     const agentType = childEntry?.workspace.agentType ?? "agent";
 
     const output = {
@@ -3712,7 +4394,7 @@ export class TaskService {
     const parsedOutput = TaskToolResultSchema.safeParse(output);
     if (!parsedOutput.success) {
       log.error("Task tool output schema validation failed", { error: parsedOutput.error.message });
-      return;
+      return [];
     }
 
     // If someone is actively awaiting this report (foreground task tool call or task_await),
@@ -3720,19 +4402,43 @@ export class TaskService {
     if (childWorkspaceId) {
       const waiters = this.pendingWaitersByTaskId.get(childWorkspaceId);
       if (waiters && waiters.length > 0) {
-        return;
+        return [];
       }
     }
 
     // Restart-safe: if the parent has a pending task tool call in partial.json (interrupted stream),
     // finalize it with the report. Avoid rewriting persisted history to keep earlier messages immutable.
     if (!this.aiService.isStreaming(parentWorkspaceId)) {
-      const finalizedPending = await this.tryFinalizePendingTaskToolCallInPartial(
+      const finalization = await this.tryFinalizePendingTaskToolCallInPartial(
         parentWorkspaceId,
-        parsedOutput.data
+        parsedOutput.data,
+        childWorkspaceId,
+        childEntry
       );
-      if (finalizedPending) {
-        return;
+      if (finalization.kind === "finalized") {
+        return finalization.taskIds.filter((taskId) => taskId !== childWorkspaceId);
+      }
+
+      if (childEntry?.workspace.bestOf?.total != null && childEntry.workspace.bestOf.total > 1) {
+        const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
+
+        // Concurrent sibling completions can arrive after another sibling already finalized
+        // the grouped task output in the interrupted parent partial. Avoid appending an
+        // extra synthetic fallback report once that grouped result already contains this child.
+        if (parentTaskToolState.referencedTaskIds.has(childWorkspaceId)) {
+          return [];
+        }
+
+        if (
+          finalization.kind === "not_ready" &&
+          (await this.shouldDeferBestOfFallback({
+            parentWorkspaceId,
+            groupId: childEntry.workspace.bestOf.groupId,
+            total: childEntry.workspace.bestOf.total,
+          }))
+        ) {
+          return [];
+        }
       }
     }
 
@@ -3766,23 +4472,29 @@ export class TaskService {
         error: appendResult.error,
       });
     }
+
+    return [];
   }
 
   private async tryFinalizePendingTaskToolCallInPartial(
     workspaceId: string,
-    output: unknown
-  ): Promise<boolean> {
+    output: unknown,
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined
+  ): Promise<
+    { kind: "finalized"; taskIds: readonly string[] } | { kind: "not_ready" } | { kind: "failed" }
+  > {
     const parsedOutput = TaskToolResultSchema.safeParse(output);
     if (!parsedOutput.success || parsedOutput.data.status !== "completed") {
       log.error("tryFinalizePendingTaskToolCallInPartial: invalid output", {
         error: parsedOutput.success ? "status is not 'completed'" : parsedOutput.error.message,
       });
-      return false;
+      return { kind: "failed" };
     }
 
     const partial = await this.historyService.readPartial(workspaceId);
     if (!partial) {
-      return false;
+      return { kind: "failed" };
     }
 
     type PendingTaskToolPart = DynamicToolPart & { toolName: "task"; state: "input-available" };
@@ -3792,13 +4504,13 @@ export class TaskService {
     );
 
     if (pendingParts.length === 0) {
-      return false;
+      return { kind: "failed" };
     }
     if (pendingParts.length > 1) {
       log.error("tryFinalizePendingTaskToolCallInPartial: multiple pending task tool calls", {
         workspaceId,
       });
-      return false;
+      return { kind: "failed" };
     }
 
     const toolCallId = pendingParts[0].toolCallId;
@@ -3809,7 +4521,34 @@ export class TaskService {
         workspaceId,
         error: parsedInput.error.message,
       });
-      return false;
+      return { kind: "failed" };
+    }
+
+    let finalizedOutput: z.infer<typeof TaskToolResultSchema> = parsedOutput.data;
+    if ((parsedInput.data.n ?? 1) > 1) {
+      const hasGroupedCompletedOutput =
+        Array.isArray(parsedOutput.data.taskIds) &&
+        "reports" in parsedOutput.data &&
+        Array.isArray(parsedOutput.data.reports);
+      if (hasGroupedCompletedOutput) {
+        finalizedOutput = parsedOutput.data;
+      } else {
+        const bestOf = childEntry?.workspace.bestOf;
+        if (!bestOf) {
+          return { kind: "failed" };
+        }
+
+        const groupedOutput = await this.buildBestOfCompletedTaskToolOutput({
+          parentWorkspaceId: workspaceId,
+          groupId: bestOf.groupId,
+          total: bestOf.total,
+        });
+        if (!groupedOutput) {
+          return { kind: "not_ready" };
+        }
+
+        finalizedOutput = groupedOutput;
+      }
     }
 
     const updated: MuxMessage = {
@@ -3819,7 +4558,7 @@ export class TaskService {
         if (part.toolCallId !== toolCallId) return part;
         if (part.toolName !== "task") return part;
         if (part.state === "output-available") return part;
-        return { ...part, state: "output-available" as const, output: parsedOutput.data };
+        return { ...part, state: "output-available" as const, output: finalizedOutput };
       }),
     };
 
@@ -3829,7 +4568,7 @@ export class TaskService {
         workspaceId,
         error: writeResult.error,
       });
-      return false;
+      return { kind: "failed" };
     }
 
     this.workspaceService.emit("chat", {
@@ -3840,12 +4579,19 @@ export class TaskService {
         messageId: updated.id,
         toolCallId,
         toolName: "task",
-        result: parsedOutput.data,
+        result: finalizedOutput,
         timestamp: Date.now(),
       },
     });
 
-    return true;
+    if (Array.isArray(finalizedOutput.taskIds) && finalizedOutput.taskIds.length > 0) {
+      return { kind: "finalized", taskIds: finalizedOutput.taskIds };
+    }
+
+    return {
+      kind: "finalized",
+      taskIds: finalizedOutput.taskId ? [finalizedOutput.taskId] : [childWorkspaceId],
+    };
   }
 
   private async canCleanupReportedTask(
@@ -3866,6 +4612,18 @@ export class TaskService {
 
     if (!hasCompletedAgentReport(entry.workspace)) {
       return { ok: false, reason: "task_not_reported" };
+    }
+
+    if (entry.workspace.bestOf?.total != null && entry.workspace.bestOf.total > 1) {
+      if (
+        await this.shouldDeferBestOfFallback({
+          parentWorkspaceId,
+          groupId: entry.workspace.bestOf.groupId,
+          total: entry.workspace.bestOf.total,
+        })
+      ) {
+        return { ok: false, reason: "best_of_parent_partial_pending" };
+      }
     }
 
     if (this.aiService.isStreaming(workspaceId)) {

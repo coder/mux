@@ -120,6 +120,9 @@ export const StreamErrorMessageSchema = z.object({
   messageId: z.string(),
   error: z.string(),
   errorType: StreamErrorTypeSchema,
+  replay: z.boolean().optional().meta({
+    description: "Present when replay re-emits a terminal stream error for reconnect UIs.",
+  }),
   acpPromptId: z
     .string()
     .optional()
@@ -252,6 +255,32 @@ export const StreamEndEventSchema = z.object({
 });
 
 export const StreamAbortReasonSchema = z.enum(["user", "startup", "system"]);
+
+export const StreamLifecyclePhaseSchema = z.enum([
+  "idle",
+  "preparing",
+  "streaming",
+  "completing",
+  "interrupted",
+  "failed",
+]);
+
+export const StreamLifecycleSnapshotSchema = z.object({
+  phase: StreamLifecyclePhaseSchema,
+  hadAnyOutput: z.boolean().meta({
+    description:
+      "Whether the current or most recent stream produced any model/tool output yet. Distinguishes slow startup from a cut-off response.",
+  }),
+  abortReason: StreamAbortReasonSchema.optional().meta({
+    description:
+      "Present for interrupted lifecycle snapshots when the backend knows why the stream stopped.",
+  }),
+});
+
+export const StreamLifecycleEventSchema = StreamLifecycleSnapshotSchema.extend({
+  type: z.literal("stream-lifecycle"),
+  workspaceId: z.string(),
+});
 
 export const StreamAbortEventSchema = z.object({
   type: z.literal("stream-abort"),
@@ -505,6 +534,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   CaughtUpMessageSchema,
   StreamErrorMessageSchema,
   DeleteMessageSchema,
+  StreamLifecycleEventSchema,
   StreamStartEventSchema,
   StreamDeltaEventSchema,
   StreamEndEventSchema,

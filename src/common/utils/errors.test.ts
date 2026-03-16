@@ -83,6 +83,12 @@ describe("getErrorMessage", () => {
     expect(getErrorMessage(err)).toBe("wrapped");
   });
 
+  it("skips non-informative [object Object] cause messages", () => {
+    const inner = new Error("[object Object]");
+    const outer = new Error("outer", { cause: inner });
+    expect(getErrorMessage(outer)).toBe("outer");
+  });
+
   it("handles empty cause message", () => {
     const inner = new Error("");
     const outer = new Error("outer", { cause: inner });

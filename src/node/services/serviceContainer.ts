@@ -38,6 +38,7 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
 } from "@/common/types/stream";
+import { BrowserSessionService } from "@/node/services/browserSessionService";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
@@ -58,6 +59,9 @@ import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
 import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/SSH2ConnectionPool";
 import { PolicyService } from "@/node/services/policyService";
 import { ServerAuthService } from "@/node/services/serverAuthService";
+import { DesktopBridgeServer } from "@/node/services/desktop/DesktopBridgeServer";
+import { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
+import { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 
@@ -117,12 +121,16 @@ export class ServiceContainer {
   public readonly telemetryService: TelemetryService;
   public readonly sessionTimingService: SessionTimingService;
   public readonly devToolsService: DevToolsService;
+  public readonly browserSessionService: BrowserSessionService;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   public readonly serverAuthService: ServerAuthService;
+  public readonly desktopSessionManager: DesktopSessionManager;
+  public readonly desktopTokenManager: DesktopTokenManager;
+  public readonly desktopBridgeServer: DesktopBridgeServer;
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
@@ -141,6 +149,7 @@ export class ServiceContainer {
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);
     this.devToolsService = new DevToolsService(config);
+    this.browserSessionService = new BrowserSessionService();
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -184,6 +193,17 @@ export class ServiceContainer {
 
     this.projectService = new ProjectService(config, this.sshPromptService);
     this.projectService.setWorkspaceService(this.workspaceService);
+    this.desktopSessionManager = new DesktopSessionManager({
+      config,
+      experimentsService: this.experimentsService,
+      workspaceService: this.workspaceService,
+    });
+    this.aiService.setDesktopSessionManager(this.desktopSessionManager);
+    this.desktopTokenManager = new DesktopTokenManager();
+    this.desktopBridgeServer = new DesktopBridgeServer({
+      desktopSessionManager: this.desktopSessionManager,
+      desktopTokenManager: this.desktopTokenManager,
+    });
 
     // Idle compaction service - auto-compacts workspaces after configured idle period
     this.idleCompactionService = new IdleCompactionService(
@@ -336,17 +356,33 @@ export class ServiceContainer {
   }
 
   async initialize(): Promise<void> {
-    await this.extensionMetadata.initialize();
+    const startupStartedAt = Date.now();
+    const stepDurationsMs: Record<string, number> = {};
+    const recordStep = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+      const stepStartedAt = Date.now();
+      try {
+        return await fn();
+      } finally {
+        stepDurationsMs[name] = Date.now() - stepStartedAt;
+      }
+    };
+
+    log.info("[startup] ServiceContainer.initialize starting");
+
+    await recordStep("extensionMetadata.initialize", () => this.extensionMetadata.initialize());
     // Initialize telemetry service
-    await this.telemetryService.initialize();
+    await recordStep("telemetryService.initialize", () => this.telemetryService.initialize());
 
     // Initialize policy service (startup gating)
-    await this.policyService.initialize();
+    await recordStep("policyService.initialize", () => this.policyService.initialize());
 
-    await this.experimentsService.initialize();
-    await this.taskService.initialize();
+    await recordStep("experimentsService.initialize", () => this.experimentsService.initialize());
+    await recordStep("taskService.initialize", () => this.taskService.initialize());
+
+    const idleCompactionStartedAt = Date.now();
     // Start idle compaction checker
     this.idleCompactionService.start();
+    stepDurationsMs["idleCompactionService.start"] = Date.now() - idleCompactionStartedAt;
 
     // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
@@ -356,11 +392,19 @@ export class ServiceContainer {
 
     // Ensure the built-in Chat with Mux system workspace exists.
     // Defensive: startup-time initialization must never crash the app.
+    const ensureMuxChatWorkspaceStartedAt = Date.now();
     try {
       await this.ensureMuxChatWorkspace();
     } catch (error) {
       log.warn("[ServiceContainer] Failed to ensure Chat with Mux workspace", { error });
+    } finally {
+      stepDurationsMs.ensureMuxChatWorkspace = Date.now() - ensureMuxChatWorkspaceStartedAt;
     }
+
+    log.info("[startup] ServiceContainer.initialize completed", {
+      totalMs: Date.now() - startupStartedAt,
+      stepDurationsMs,
+    });
   }
 
   private async ensureMuxChatWorkspace(): Promise<void> {
@@ -517,12 +561,16 @@ export class ServiceContainer {
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
       devToolsService: this.devToolsService,
+      browserSessionService: this.browserSessionService,
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
       analyticsService: this.analyticsService,
+      desktopSessionManager: this.desktopSessionManager,
+      desktopTokenManager: this.desktopTokenManager,
+      desktopBridgeServer: this.desktopBridgeServer,
     };
   }
 
@@ -530,7 +578,12 @@ export class ServiceContainer {
    * Shutdown services that need cleanup
    */
   async shutdown(): Promise<void> {
+    // Stop the bridge before closing sessions so desktop clients get a clean disconnect.
+    await this.desktopBridgeServer.stop();
+    this.desktopTokenManager.dispose();
+    await this.desktopSessionManager.closeAll();
     this.idleCompactionService.stop();
+    this.browserSessionService.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
@@ -548,6 +601,11 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    // Stop the bridge before closing sessions so desktop clients get a clean disconnect.
+    await this.desktopBridgeServer.stop();
+    this.desktopTokenManager.dispose();
+    await this.desktopSessionManager.closeAll();
+    this.browserSessionService.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();

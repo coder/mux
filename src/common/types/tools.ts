@@ -9,7 +9,6 @@ import type {
   AgentReportToolResultSchema,
   AgentSkillReadFileToolResultSchema,
   AgentSkillReadToolResultSchema,
-  AskUserQuestionOptionSchema,
   AskUserQuestionQuestionSchema,
   AskUserQuestionToolResultSchema,
   BashBackgroundListResultSchema,
@@ -23,6 +22,7 @@ import type {
   MuxAgentsReadToolResultSchema,
   MuxAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
+  AttachFileToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
   TaskApplyGitPatchToolResultSchema,
@@ -127,6 +127,9 @@ export interface ToolOutputUiOnlyFields {
 // FileReadToolResult derived from Zod schema (single source of truth)
 export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
 
+// AttachFileToolResult derived from Zod schema (single source of truth)
+export type AttachFileToolResult = z.infer<typeof AttachFileToolResultSchema>;
+
 // mux_config_read tool types
 export type MuxConfigReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_read.schema>;
 export type MuxConfigReadToolResult = z.infer<typeof MuxConfigReadToolResultSchema>;
@@ -136,7 +139,6 @@ export type MuxConfigWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_
 export type MuxConfigWriteToolResult = z.infer<typeof MuxConfigWriteToolResultSchema>;
 
 // mux_agents_read tool types
-export type MuxAgentsReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_agents_read.schema>;
 export type MuxAgentsReadToolResult = z.infer<typeof MuxAgentsReadToolResultSchema>;
 
 // mux_agents_write tool types
@@ -185,18 +187,11 @@ export type FileEditReplaceLinesToolResult =
     })
   | FileEditErrorResult;
 
-export type FileEditSharedToolResult =
-  | FileEditReplaceStringToolResult
-  | FileEditReplaceLinesToolResult
-  | FileEditInsertToolResult;
-
 export const FILE_EDIT_TOOL_NAMES = [
   "file_edit_replace_string",
   "file_edit_replace_lines",
   "file_edit_insert",
 ] as const;
-
-export type FileEditToolName = (typeof FILE_EDIT_TOOL_NAMES)[number];
 
 /**
  * Prefix for file write denial error messages.
@@ -229,16 +224,10 @@ export interface ToolErrorResult extends ToolOutputUiOnlyFields {
   success: false;
   error: string;
 }
-export type FileEditToolArgs =
-  | FileEditReplaceStringToolArgs
-  | FileEditReplaceLinesToolArgs
-  | FileEditInsertToolArgs;
-
 // Ask User Question Tool Types
 // Args derived from schema (avoid drift)
 export type AskUserQuestionToolArgs = z.infer<typeof TOOL_DEFINITIONS.ask_user_question.schema>;
 
-export type AskUserQuestionOption = z.infer<typeof AskUserQuestionOptionSchema>;
 export type AskUserQuestionQuestion = z.infer<typeof AskUserQuestionQuestionSchema>;
 
 export type AskUserQuestionToolSuccessResult = z.infer<typeof AskUserQuestionToolResultSchema>;
@@ -246,7 +235,14 @@ export type AskUserQuestionToolSuccessResult = z.infer<typeof AskUserQuestionToo
 export type AskUserQuestionToolResult = AskUserQuestionToolSuccessResult | ToolErrorResult;
 
 // Task Tool Types
-export type TaskToolArgs = z.infer<typeof TOOL_DEFINITIONS.task.schema>;
+export interface TaskToolArgs {
+  agentId?: string | null;
+  subagent_type?: string | null;
+  prompt: string;
+  title: string;
+  run_in_background?: boolean;
+  n?: number | null;
+}
 
 export type TaskToolSuccessResult = z.infer<typeof TaskToolResultSchema>;
 
@@ -266,21 +262,15 @@ export type TaskApplyGitPatchToolSuccessResult = z.infer<typeof TaskApplyGitPatc
 
 export type TaskApplyGitPatchToolResult = TaskApplyGitPatchToolSuccessResult | ToolErrorResult;
 
-export type TaskAwaitToolResult = TaskAwaitToolSuccessResult | ToolErrorResult;
-
 // Task List Tool Types
 export type TaskListToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_list.schema>;
 
 export type TaskListToolSuccessResult = z.infer<typeof TaskListToolResultSchema>;
 
-export type TaskListToolResult = TaskListToolSuccessResult | ToolErrorResult;
-
 // Task Terminate Tool Types
 export type TaskTerminateToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_terminate.schema>;
 
 export type TaskTerminateToolSuccessResult = z.infer<typeof TaskTerminateToolResultSchema>;
-
-export type TaskTerminateToolResult = TaskTerminateToolSuccessResult | ToolErrorResult;
 
 // Agent Report Tool Types
 export type AgentReportToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_report.schema>;
@@ -288,9 +278,6 @@ export type AgentReportToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_report.s
 export type AgentReportToolResult = z.infer<typeof AgentReportToolResultSchema> | ToolErrorResult;
 
 // Propose Plan Tool Types
-// Args derived from schema
-export type ProposePlanToolArgs = z.infer<typeof TOOL_DEFINITIONS.propose_plan.schema>;
-
 // Result type for file-based propose_plan tool
 // Note: planContent is NOT included to save context - plan is visible via file_edit_* diffs
 // and will be included in mode transition message when switching to exec mode

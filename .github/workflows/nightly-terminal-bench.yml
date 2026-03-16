@@ -33,7 +33,13 @@ jobs:
       env: "daytona"
       task_names: "chess-best-move"
       experiments: ${{ inputs.experiments }}
-    secrets: inherit # zizmor: ignore[secrets-inherit]
+    # Keep least-privilege secret scope for reusable workflow calls.
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
   # Smoke tests for Harbor SWE-style datasets (single task each).
   # These validate that mux can run inside the dataset's repo checkout (--runtime local)
@@ -52,7 +58,12 @@ jobs:
       mux_project_path: "/testbed"
       timeout: "3000"
       experiments: ${{ inputs.experiments }}
-    secrets: inherit # zizmor: ignore[secrets-inherit]
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
   swe-gen-js-smoke-test:
     name: "Smoke test (swe-gen-js: biomejs__biome-7314)"
@@ -68,7 +79,12 @@ jobs:
       mux_project_path: "/app/src"
       timeout: "600"
       experiments: ${{ inputs.experiments }}
-    secrets: inherit # zizmor: ignore[secrets-inherit]
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
   aider-polyglot-smoke-test:
     name: "Smoke test (aider-polyglot: polyglot_cpp_all-your-base)"
@@ -84,7 +100,12 @@ jobs:
       mux_project_path: "/app"
       timeout: "1800"
       experiments: ${{ inputs.experiments }}
-    secrets: inherit # zizmor: ignore[secrets-inherit]
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
 
   determine-models:
     name: Determine models to test
@@ -123,4 +144,9 @@ jobs:
       concurrency: "48"
       env: "daytona"
       experiments: ${{ inputs.experiments }}
-    secrets: inherit # zizmor: ignore[secrets-inherit]
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}

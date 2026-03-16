@@ -671,10 +671,6 @@ export function getPRStatusStoreInstance(): PRStatusStore {
   return storeInstance;
 }
 
-export function setPRStatusStoreInstance(store: PRStatusStore): void {
-  storeInstance = store;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // React hooks
 // ─────────────────────────────────────────────────────────────────────────────

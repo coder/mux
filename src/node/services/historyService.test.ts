@@ -597,6 +597,30 @@ describe("HistoryService", () => {
     });
   });
 
+  describe("truncateAfterMessage keepTargetMessage", () => {
+    it("should retain the target message when requested", async () => {
+      const workspaceId = "workspace1";
+      const msg1 = createMuxMessage("msg1", "user", "First");
+      const msg2 = createMuxMessage("msg2", "assistant", "Second");
+      const msg3 = createMuxMessage("msg3", "user", "Third");
+
+      await service.appendToHistory(workspaceId, msg1);
+      await service.appendToHistory(workspaceId, msg2);
+      await service.appendToHistory(workspaceId, msg3);
+
+      const result = await service.truncateAfterMessage(workspaceId, "msg2", {
+        keepTargetMessage: true,
+      });
+
+      expect(result.success).toBe(true);
+
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(2);
+      expect(messages[0].id).toBe("msg1");
+      expect(messages[1].id).toBe("msg2");
+    });
+  });
+
   describe("clearHistory", () => {
     it("should delete chat.jsonl file", async () => {
       const workspaceId = "workspace1";

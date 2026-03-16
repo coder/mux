@@ -23,12 +23,21 @@ if [ -n "$PNG_FILES" ]; then
 fi
 
 ESLINT_PATTERN='src/**/*.{ts,tsx}'
+# Keep cold lint responsive without letting ESLint's auto concurrency over-commit memory.
+# CI can raise this via MUX_ESLINT_CONCURRENCY=4 on larger runners.
+ESLINT_CONCURRENCY="${MUX_ESLINT_CONCURRENCY:-2}"
+ESLINT_ARGS=(
+  --concurrency "$ESLINT_CONCURRENCY"
+  --cache
+  --cache-strategy content
+  --max-warnings 0
+)
 
-if [ "$1" = "--fix" ]; then
-  echo "Running bun x eslint with --fix..."
-  bun x eslint --cache --cache-strategy content --max-warnings 0 "$ESLINT_PATTERN" --fix
+if [ "${1:-}" = "--fix" ]; then
+  echo "Running bun x eslint with --fix (concurrency=$ESLINT_CONCURRENCY)..."
+  bun x eslint "${ESLINT_ARGS[@]}" "$ESLINT_PATTERN" --fix
 else
-  echo "Running eslint..."
-  bun x eslint --cache --cache-strategy content --max-warnings 0 "$ESLINT_PATTERN"
+  echo "Running eslint (concurrency=$ESLINT_CONCURRENCY)..."
+  bun x eslint "${ESLINT_ARGS[@]}" "$ESLINT_PATTERN"
   echo "ESLint checks passed!"
 fi

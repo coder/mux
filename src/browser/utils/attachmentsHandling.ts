@@ -1,13 +1,8 @@
 import type { FilePart } from "@/common/orpc/types";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
+import { getSupportedAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
 import { resizeImageIfNeeded } from "@/browser/utils/imageResize";
-
-const PDF_MEDIA_TYPE = "application/pdf";
-
-function normalizeMediaType(mediaType: string): string {
-  return mediaType.toLowerCase().trim().split(";")[0];
-}
 
 /**
  * Generates a unique ID for a chat attachment.
@@ -16,33 +11,11 @@ export function generateAttachmentId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-/**
- * Detects MIME type from file extension as fallback.
- *
- * This is primarily used for macOS drag-and-drop where file.type can be "".
- */
-function getMimeTypeFromExtension(filename: string): string | null {
-  const ext = filename.toLowerCase().split(".").pop();
-  const mimeTypes: Record<string, string> = {
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    gif: "image/gif",
-    webp: "image/webp",
-    bmp: "image/bmp",
-    svg: SVG_MEDIA_TYPE,
-    pdf: PDF_MEDIA_TYPE,
-  };
-  return mimeTypes[ext ?? ""] ?? null;
-}
-
 function getSupportedMediaType(file: File): string | null {
-  const raw = file.type !== "" ? file.type : (getMimeTypeFromExtension(file.name) ?? "");
-  const base = normalizeMediaType(raw);
-
-  if (base.startsWith("image/")) return base;
-  if (base === PDF_MEDIA_TYPE) return base;
-  return null;
+  return getSupportedAttachmentMediaType({
+    mediaType: file.type !== "" ? file.type : null,
+    filename: file.name,
+  });
 }
 
 /**

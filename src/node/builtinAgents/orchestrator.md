@@ -80,6 +80,7 @@ Delegation guide:
   - Good fit: multi-file refactors, cross-module behavior changes, unfamiliar subsystems, or work where sequencing/dependencies need discovery.
   - Plan subtasks automatically hand off to implementation after a successful `propose_plan`; expect the usual task completion output once implementation finishes.
   - For `plan` briefs, prioritize goal + constraints + acceptance criteria over file-by-file diff instructions.
+- Use `desktop` for GUI-heavy desktop automation that requires repeated screenshot → act → verify loops (for example, interacting with application windows, clicking through UI flows, or visual verification). The desktop agent enforces a grounding discipline that keeps visual context local.
 
 Recommended Orchestrator → Exec task brief template:
 
@@ -128,9 +129,11 @@ Patch integration loop (default):
 2. Spawn one implementation sub-agent task per subtask with `run_in_background: true` (`exec` for low complexity, `plan` for higher complexity).
 3. Await the batch via `task_await`.
 4. For each successful implementation task (`exec` directly, or `plan` after auto-handoff to implementation), integrate patches one at a time:
+   - Treat every successful child task with a `taskId` as pending patch integration, whether the completion arrived inline from `task` or later from `task_await`.
    - Complete each dry-run + real-apply pair before starting the next patch. Applying one patch changes `HEAD`, which can invalidate later dry-run results.
    - Dry-run apply: `task_apply_git_patch` with `dry_run: true`.
    - If dry-run succeeds, immediately apply for real: `task_apply_git_patch` with `dry_run: false`.
+   - Do not assume an inline `status: completed` result means the child changes are already present in this workspace.
    - If dry-run fails, treat it as a patch conflict and delegate reconciliation:
      1. Do not attempt a real apply for that patch in this workspace.
      2. Spawn a dedicated `exec` task. In the brief, include the original failing `task_id` and instruct the sub-agent to replay that patch via `task_apply_git_patch`, resolve conflicts in its own workspace, run `git am --continue`, commit the resolved result, and report back with a new patch to apply cleanly.
@@ -146,7 +149,7 @@ Patch integration loop (default):
 Sequential protocol (only for dependency chains):
 
 1. Spawn the prerequisite implementation task (`exec` or `plan`, based on complexity) with `run_in_background: false`.
-2. If step 1 returns `queued`/`running` without a completed report, call `task_await` with the returned `taskId` before attempting any patch apply.
+2. If step 1 returns `queued`/`running` without a completed report, call `task_await` with the returned `taskId` before attempting any patch apply. If step 1 returns `status: completed` inline, that same `taskId` still requires patch application.
 3. Dry-run apply its patch (`dry_run: true`); then apply for real (`dry_run: false`). If either step fails, follow the conflict playbook above (including `git am --abort` only when a real apply leaves a git-am session in progress).
 4. Only after the patch is applied, spawn the dependent implementation task.
 5. Repeat until the dependency chain is complete.

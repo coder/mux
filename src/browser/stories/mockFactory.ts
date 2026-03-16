@@ -42,6 +42,7 @@ export interface WorkspaceFixture {
   projectName: string;
   runtimeConfig?: RuntimeConfig;
   createdAt?: string;
+  bestOf?: FrontendWorkspaceMetadata["bestOf"];
   title?: string;
 }
 
@@ -61,6 +62,7 @@ export function createWorkspace(
     // Default to current time so workspaces aren't filtered as "old" by age-based UI
     createdAt: opts.createdAt ?? new Date().toISOString(),
     title: opts.title,
+    bestOf: opts.bestOf,
   };
 }
 

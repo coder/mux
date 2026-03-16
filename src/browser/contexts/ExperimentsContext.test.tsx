@@ -247,6 +247,30 @@ describe("ExperimentsProvider", () => {
     });
   });
 
+  test("returns false for a platform-restricted experiment on unsupported platforms", () => {
+    const windowApi: WindowApi = { platform: "darwin", versions: {} };
+    globalThis.window.api = windowApi;
+    globalThis.window.localStorage.setItem(
+      getExperimentKey(EXPERIMENT_IDS.PORTABLE_DESKTOP),
+      JSON.stringify(true)
+    );
+
+    function Observer() {
+      const enabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
+      return <div data-testid="enabled">{String(enabled)}</div>;
+    }
+
+    const { getByTestId } = render(
+      <APIProvider client={currentClientMock as APIClient}>
+        <ExperimentsProvider>
+          <Observer />
+        </ExperimentsProvider>
+      </APIProvider>
+    );
+
+    expect(getByTestId("enabled").textContent).toBe("false");
+  });
+
   test("persists backend overrides when a user toggles an experiment", async () => {
     const setOverrideMock = mock(() => Promise.resolve());
     currentClientMock = {

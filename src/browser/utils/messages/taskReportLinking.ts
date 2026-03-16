@@ -30,12 +30,37 @@ export interface TaskReportLinking {
   spawnTitleByTaskId: Map<string, string>;
 }
 
-function getTaskIdFromToolResult(result: unknown): string | null {
-  if (typeof result !== "object" || result === null) return null;
-  if (!("taskId" in result)) return null;
+function getTaskIdsFromToolResult(result: unknown): string[] {
+  if (typeof result !== "object" || result === null) return [];
+
+  const taskIds = new Set<string>();
 
   const taskId = (result as { taskId?: unknown }).taskId;
-  return typeof taskId === "string" && taskId.trim().length > 0 ? taskId : null;
+  if (typeof taskId === "string" && taskId.trim().length > 0) {
+    taskIds.add(taskId.trim());
+  }
+
+  const pluralTaskIds = (result as { taskIds?: unknown }).taskIds;
+  if (Array.isArray(pluralTaskIds)) {
+    for (const candidate of pluralTaskIds) {
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        taskIds.add(candidate.trim());
+      }
+    }
+  }
+
+  const tasks = (result as { tasks?: unknown }).tasks;
+  if (Array.isArray(tasks)) {
+    for (const task of tasks) {
+      if (typeof task !== "object" || task === null) continue;
+      const candidate = (task as { taskId?: unknown }).taskId;
+      if (typeof candidate === "string" && candidate.trim().length > 0) {
+        taskIds.add(candidate.trim());
+      }
+    }
+  }
+
+  return Array.from(taskIds);
 }
 
 function getTitleFromTaskToolArgs(args: unknown): string | null {
@@ -60,14 +85,15 @@ export function computeTaskReportLinking(messages: DisplayedMessage[]): TaskRepo
   for (const msg of messages) {
     if (msg.type !== "tool" || msg.toolName !== "task") continue;
 
-    const taskId = getTaskIdFromToolResult(msg.result);
-    if (!taskId) continue;
-
-    taskToolCallTaskIds.add(taskId);
+    const taskIds = getTaskIdsFromToolResult(msg.result);
+    if (taskIds.length === 0) continue;
 
     const title = getTitleFromTaskToolArgs(msg.args);
-    if (title) {
-      spawnTitleByTaskId.set(taskId, title);
+    for (const taskId of taskIds) {
+      taskToolCallTaskIds.add(taskId);
+      if (title) {
+        spawnTitleByTaskId.set(taskId, title);
+      }
     }
   }
 

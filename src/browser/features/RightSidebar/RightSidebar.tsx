@@ -7,6 +7,8 @@ import {
   getTerminalTitlesKey,
 } from "@/common/constants/storage";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import {
   readPersistedState,
@@ -19,8 +21,10 @@ import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary"
 
 import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
+import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 
 import { DevToolsTab } from "./DevToolsTab";
+import { BrowserTab } from "./BrowserTab";
 import {
   matchesKeybind,
   KEYBINDS,
@@ -85,7 +89,7 @@ import {
   getTabContentClassName,
   type ReviewStats,
 } from "@/browser/features/RightSidebar/Tabs";
-import { DebugTabLabel } from "./Tabs/TabLabels";
+import { BrowserTabLabel, DebugTabLabel, DesktopTabLabel } from "./Tabs/TabLabels";
 import { FileViewerTab } from "@/browser/features/RightSidebar/FileViewer";
 import { ExplorerTab } from "@/browser/features/RightSidebar/ExplorerTab";
 import {
@@ -388,6 +392,10 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <ReviewTabLabel reviewStats={props.reviewStats} />;
     } else if (tab === "explorer") {
       label = <ExplorerTabLabel />;
+    } else if (tab === "desktop") {
+      label = <DesktopTabLabel />;
+    } else if (tab === "browser") {
+      label = <BrowserTabLabel />;
     } else if (tab === "output") {
       label = <OutputTabLabel />;
     } else if (tab === "debug") {
@@ -431,12 +439,16 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
+  const desktopPanelId = `${tabsetBaseId}-panel-desktop`;
+  const browserPanelId = `${tabsetBaseId}-panel-browser`;
   const outputPanelId = `${tabsetBaseId}-panel-output`;
   const debugPanelId = `${tabsetBaseId}-panel-debug`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
+  const desktopTabId = `${tabsetBaseId}-tab-desktop`;
+  const browserTabId = `${tabsetBaseId}-tab-browser`;
   const outputTabId = `${tabsetBaseId}-tab-output`;
   const debugTabId = `${tabsetBaseId}-tab-debug`;
 
@@ -514,6 +526,32 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
             <ErrorBoundary workspaceInfo="Stats tab">
               <StatsContainer workspaceId={props.workspaceId} />
+            </ErrorBoundary>
+          </div>
+        )}
+
+        {props.node.activeTab === "desktop" && (
+          <div
+            role="tabpanel"
+            id={desktopPanelId}
+            aria-labelledby={desktopTabId}
+            className="h-full"
+          >
+            <ErrorBoundary workspaceInfo="Desktop tab">
+              <DesktopPanel workspaceId={props.workspaceId} />
+            </ErrorBoundary>
+          </div>
+        )}
+
+        {props.node.activeTab === "browser" && (
+          <div
+            role="tabpanel"
+            id={browserPanelId}
+            aria-labelledby={browserTabId}
+            className="h-full"
+          >
+            <ErrorBoundary workspaceInfo="Browser tab">
+              <BrowserTab workspaceId={props.workspaceId} />
             </ErrorBoundary>
           </div>
         )}
@@ -663,8 +701,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [isTouchReviewImmersive, setIsTouchReviewImmersive] = React.useState(false);
 
   // API for reading config and managing terminal sessions.
-  const { api } = useAPI();
+  const apiState = useAPI();
+  const api = apiState.api;
+  const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
+  const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
+  const [desktopAvailable, setDesktopAvailable] = React.useState<boolean | null>(null);
+  const [browserAvailable, setBrowserAvailable] = React.useState<boolean | null>(null);
   const debugLogsLocalOverrideRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -815,6 +858,83 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return prev;
     });
   }, [initialActiveTab, layoutRaw, llmDebugLogsEnabled, setLayoutRaw]);
+  React.useEffect(() => {
+    setBrowserAvailable(browserExperimentEnabled);
+  }, [browserExperimentEnabled]);
+
+  React.useEffect(() => {
+    if (browserAvailable == null) {
+      return;
+    }
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasBrowser = collectAllTabs(prev.root).includes("browser");
+
+      if (browserAvailable && !hasBrowser) {
+        return addTabToFocusedTabset(prev, "browser", false);
+      }
+
+      if (!browserAvailable && hasBrowser) {
+        return removeTabEverywhere(prev, "browser");
+      }
+
+      return prev;
+    });
+  }, [browserAvailable, initialActiveTab, setLayoutRaw]);
+
+  React.useEffect(() => {
+    if (!desktopExperimentEnabled) {
+      setDesktopAvailable(false);
+      return;
+    }
+
+    if (apiState.status !== "connected" || !api) {
+      setDesktopAvailable(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void api.desktop
+      .getCapability({ workspaceId })
+      .then((capability) => {
+        if (!cancelled) {
+          setDesktopAvailable(capability.available);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDesktopAvailable(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, apiState.status, desktopExperimentEnabled, workspaceId]);
+
+  React.useEffect(() => {
+    if (desktopAvailable == null) {
+      return;
+    }
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasDesktop = collectAllTabs(prev.root).includes("desktop");
+
+      if (desktopAvailable && !hasDesktop) {
+        return addTabToFocusedTabset(prev, "desktop", false);
+      }
+
+      if (!desktopAvailable && hasDesktop) {
+        return removeTabEverywhere(prev, "desktop");
+      }
+
+      return prev;
+    });
+  }, [desktopAvailable, initialActiveTab, setLayoutRaw]);
+
   // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
   React.useEffect(() => {
     if (!isRightSidebarLayoutState(layoutRaw)) {

@@ -1,5 +1,6 @@
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage, MuxMessage, QueuedMessage } from "@/common/types/message";
+import { TranscriptQuoteRoot } from "./TranscriptQuoteBoundary";
 import { formatTimestamp } from "@/browser/utils/ui/dateTime";
 import { Code2Icon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -87,7 +88,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
       >
         {backgroundEffect}
         <div className="relative z-10 flex flex-col gap-2">
-          <div data-message-content>
+          <TranscriptQuoteRoot data-message-content>
             {isShowingJson ? (
               <pre className="m-0 overflow-x-auto rounded-xl border border-[var(--color-message-debug-border)] bg-[var(--color-message-debug-bg)] p-3 text-[12px] leading-snug whitespace-pre-wrap text-[var(--color-message-debug-text)]">
                 {JSON.stringify(message, null, 2)}
@@ -95,7 +96,7 @@ export const MessageWindow: React.FC<MessageWindowProps> = ({
             ) : (
               children
             )}
-          </div>
+          </TranscriptQuoteRoot>
         </div>
       </div>
       {showMetaRow && (

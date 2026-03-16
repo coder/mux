@@ -15,6 +15,9 @@ import type {
   ReasoningEndEventSchema,
   StreamAbortReasonSchema,
   StreamAbortEventSchema,
+  StreamLifecycleEventSchema,
+  StreamLifecyclePhaseSchema,
+  StreamLifecycleSnapshotSchema,
   StreamDeltaEventSchema,
   StreamEndEventSchema,
   StreamStartEventSchema,
@@ -37,6 +40,20 @@ export type StreamStartEvent = z.infer<typeof StreamStartEventSchema>;
 export type StreamDeltaEvent = z.infer<typeof StreamDeltaEventSchema>;
 export type StreamEndEvent = z.infer<typeof StreamEndEventSchema>;
 export type StreamAbortReason = z.infer<typeof StreamAbortReasonSchema>;
+export type StreamLifecyclePhase = z.infer<typeof StreamLifecyclePhaseSchema>;
+export type StreamLifecycleSnapshot = z.infer<typeof StreamLifecycleSnapshotSchema>;
+export type StreamLifecycleEvent = z.infer<typeof StreamLifecycleEventSchema>;
+
+export function copyStreamLifecycleSnapshot(
+  snapshot: Pick<StreamLifecycleSnapshot, "phase" | "hadAnyOutput" | "abortReason">
+): StreamLifecycleSnapshot {
+  return {
+    phase: snapshot.phase,
+    hadAnyOutput: snapshot.hadAnyOutput,
+    ...(snapshot.abortReason != null ? { abortReason: snapshot.abortReason } : {}),
+  };
+}
+
 export interface StreamAbortReasonSnapshot {
   reason: StreamAbortReason;
   at: number;

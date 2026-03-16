@@ -4,6 +4,7 @@ import "../src/browser/styles/globals.css";
 import {
   TUTORIAL_STATE_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
+  LEFT_SIDEBAR_COLLAPSED_KEY,
   EXPANDED_PROJECTS_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
   type TutorialState,
@@ -68,6 +69,14 @@ function collapseRightSidebar() {
     localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
   }
 }
+// Reset the left sidebar to the app's viewport default before each story render.
+// This prevents stories from inheriting whichever open/closed state a previous
+// story left behind, while still allowing individual stories to override it.
+function resetLeftSidebar() {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(window.innerWidth <= 768));
+  }
+}
 // Collapse projects by default to ensure deterministic snapshots.
 // Some stories explicitly expand projects via expandProjects() in their setup.
 function collapseProjects() {
@@ -127,6 +136,10 @@ const preview: Preview = {
       if (!context.parameters?.tutorialEnabled) {
         disableTutorials();
       }
+
+      // Reset the left sidebar to the app's viewport-dependent default.
+      // Stories that need a specific open/closed state can override it in setup.
+      resetLeftSidebar();
 
       // Collapse right sidebar by default for deterministic snapshots
       // Stories can expand via expandRightSidebar() in setup after this runs

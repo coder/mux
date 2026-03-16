@@ -37,6 +37,16 @@ describe("isExperimentEnabled", () => {
     expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBe(false);
   });
 
+  test("returns false for a platform-restricted experiment on unsupported platforms", () => {
+    const key = getExperimentKey(EXPERIMENT_IDS.PORTABLE_DESKTOP);
+
+    globalThis.window.localStorage.setItem(key, JSON.stringify(true));
+    const windowApi: WindowApi = { platform: "darwin", versions: {} };
+    globalThis.window.api = windowApi;
+
+    expect(isExperimentEnabled(EXPERIMENT_IDS.PORTABLE_DESKTOP)).toBe(false);
+  });
+
   test('treats literal "undefined" as no override', () => {
     const key = getExperimentKey(EXPERIMENT_IDS.SYSTEM_1);
 

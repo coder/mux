@@ -97,6 +97,26 @@ function renderUnknown(value: unknown): string {
   }
 }
 
+function extractTaskIdArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(
+    (taskId): taskId is string => typeof taskId === "string" && taskId.length > 0
+  );
+}
+
+function formatTaskIdSummary(taskIds: string[]): string {
+  const preview = taskIds
+    .slice(0, 3)
+    .map((taskId) => chalk.dim(taskId))
+    .join(", ");
+  if (taskIds.length <= 3) {
+    return preview;
+  }
+  return `${preview}${chalk.dim(` +${taskIds.length - 3} more`)}`;
+}
+
 // ============================================================================
 // Tool Start Formatters
 // ============================================================================
@@ -289,6 +309,10 @@ function formatTaskEnd(_toolName: string, _args: unknown, result: unknown): stri
   const status = (taskResult as { status?: unknown }).status;
   const taskId = (taskResult as { taskId?: unknown }).taskId;
   const reportMarkdown = (taskResult as { reportMarkdown?: unknown }).reportMarkdown;
+  const taskIds = extractTaskIdArray((taskResult as { taskIds?: unknown }).taskIds);
+  const reports = Array.isArray((taskResult as { reports?: unknown }).reports)
+    ? ((taskResult as { reports?: Array<{ taskId?: unknown }> }).reports ?? [])
+    : [];
 
   if (status === "completed" && typeof reportMarkdown === "string") {
     // Truncate long reports
@@ -299,8 +323,24 @@ function formatTaskEnd(_toolName: string, _args: unknown, result: unknown): stri
     return `${chalk.green("✓")}${id}\n${indent(chalk.dim(truncated))}`;
   }
 
+  if (status === "completed" && reports.length > 0) {
+    const groupedTaskIds =
+      taskIds.length > 0
+        ? taskIds
+        : reports
+            .map((report) => report.taskId)
+            .filter((reportTaskId): reportTaskId is string => typeof reportTaskId === "string");
+    const idSummary = groupedTaskIds.length > 0 ? ` ${formatTaskIdSummary(groupedTaskIds)}` : "";
+    const reportCount = `${reports.length} report${reports.length === 1 ? "" : "s"}`;
+    return `${chalk.green("✓")} ${reportCount}${idSummary}`;
+  }
+
   if ((status === "queued" || status === "running") && typeof taskId === "string") {
     return `${chalk.blue("→")} ${status}: ${chalk.dim(taskId)}`;
+  }
+
+  if ((status === "queued" || status === "running") && taskIds.length > 0) {
+    return `${chalk.blue("→")} ${status}: ${formatTaskIdSummary(taskIds)}`;
   }
 
   return null;
