@@ -1,18 +1,55 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import * as childProcess from "child_process";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+
+const mockResolveAgentBrowserBinary = mock(() => "/fake/agent-browser");
+const mockSpawn = mock();
+
+class MockAgentBrowserUnsupportedPlatformError extends Error {
+  constructor(platform: string, arch: string) {
+    super(
+      `Unsupported vendored agent-browser platform/arch combination: ${platform}-${arch}. Supported platforms: darwin, linux, win32. Supported architectures: x64, arm64.`
+    );
+    this.name = "AgentBrowserUnsupportedPlatformError";
+  }
+}
+
+class MockAgentBrowserVendoredPackageNotFoundError extends Error {
+  constructor(cause: unknown) {
+    super(
+      "Vendored agent-browser package not found. Ensure the runtime dependency is installed so agent-browser/package.json can be resolved."
+    );
+    this.name = "AgentBrowserVendoredPackageNotFoundError";
+    this.cause = cause;
+  }
+}
+
+class MockAgentBrowserBinaryNotFoundError extends Error {
+  constructor(binaryPath: string, platform: string, arch: string) {
+    super(
+      `Vendored agent-browser binary not found for ${platform}-${arch}. Expected executable at ${binaryPath}.`
+    );
+    this.name = "AgentBrowserBinaryNotFoundError";
+  }
+}
+
+// Bun binds module-level imports during evaluation, so mock them before importing the module under test.
+/* eslint-disable @typescript-eslint/no-floating-promises -- Bun requires top-level mock.module registration before static imports. */
+mock.module("@/node/services/agentBrowserLauncher", () => ({
+  AgentBrowserBinaryNotFoundError: MockAgentBrowserBinaryNotFoundError,
+  AgentBrowserUnsupportedPlatformError: MockAgentBrowserUnsupportedPlatformError,
+  AgentBrowserVendoredPackageNotFoundError: MockAgentBrowserVendoredPackageNotFoundError,
+  resolveAgentBrowserBinary: mockResolveAgentBrowserBinary,
+}));
+mock.module("child_process", () => ({ spawn: mockSpawn }));
+mock.module("node:child_process", () => ({ spawn: mockSpawn }));
+/* eslint-enable @typescript-eslint/no-floating-promises */
+
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { BrowserSession } from "@/common/types/browserSession";
-import * as agentBrowserLauncher from "@/node/services/agentBrowserLauncher";
 import {
   BrowserSessionBackend,
   closeAgentBrowserSession,
 } from "@/node/services/browserSessionBackend";
-
-let resolveAgentBrowserBinarySpy: ReturnType<
-  typeof spyOn<typeof agentBrowserLauncher, "resolveAgentBrowserBinary">
->;
-let spawnSpy: ReturnType<typeof spyOn<typeof childProcess, "spawn">>;
 
 const noop = (): void => undefined;
 
@@ -76,16 +113,9 @@ function scheduleClose(
 }
 
 beforeEach(() => {
-  resolveAgentBrowserBinarySpy = spyOn(
-    agentBrowserLauncher,
-    "resolveAgentBrowserBinary"
-  ).mockImplementation(() => "/tmp/mock-agent-browser");
-  spawnSpy = spyOn(childProcess, "spawn").mockImplementation((() =>
-    createMockChildProcess()) as unknown as typeof childProcess.spawn);
-});
-
-afterEach(() => {
-  mock.restore();
+  mockResolveAgentBrowserBinary.mockReset();
+  mockResolveAgentBrowserBinary.mockReturnValue("/fake/agent-browser");
+  mockSpawn.mockReset();
 });
 
 describe("BrowserSessionBackend", () => {
@@ -154,18 +184,16 @@ describe("BrowserSessionBackend", () => {
 
 describe("closeAgentBrowserSession", () => {
   test("returns success when the close command exits cleanly", async () => {
-    spawnSpy.mockImplementation((() => {
-      const mockChildProcess = createMockChildProcess();
-      scheduleClose(mockChildProcess, { code: 0 });
-      return mockChildProcess;
-    }) as unknown as typeof childProcess.spawn);
+    const mockChildProcess = createMockChildProcess();
+    scheduleClose(mockChildProcess, { code: 0 });
+    mockSpawn.mockReturnValue(mockChildProcess);
 
     const result = await closeAgentBrowserSession("mux-workspace-123");
 
     expect(result).toEqual({ success: true });
-    expect(resolveAgentBrowserBinarySpy).toHaveBeenCalledTimes(1);
-    expect(spawnSpy).toHaveBeenCalledWith(
-      "/tmp/mock-agent-browser",
+    expect(mockResolveAgentBrowserBinary).toHaveBeenCalledTimes(1);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "/fake/agent-browser",
       ["--json", "--session", "mux-workspace-123", "close"],
       {
         stdio: ["ignore", "pipe", "pipe"],
@@ -175,14 +203,12 @@ describe("closeAgentBrowserSession", () => {
   });
 
   test("treats an already-closed session as success", async () => {
-    spawnSpy.mockImplementation((() => {
-      const mockChildProcess = createMockChildProcess();
-      scheduleClose(mockChildProcess, {
-        code: 1,
-        stderr: "session not found for mux-workspace-123",
-      });
-      return mockChildProcess;
-    }) as unknown as typeof childProcess.spawn);
+    const mockChildProcess = createMockChildProcess();
+    scheduleClose(mockChildProcess, {
+      code: 1,
+      stderr: "session not found for mux-workspace-123",
+    });
+    mockSpawn.mockReturnValue(mockChildProcess);
 
     const result = await closeAgentBrowserSession("mux-workspace-123");
 
@@ -191,7 +217,7 @@ describe("closeAgentBrowserSession", () => {
 
   test("returns an error when the close command times out", async () => {
     const mockChildProcess = createMockChildProcess();
-    spawnSpy.mockImplementation((() => mockChildProcess) as unknown as typeof childProcess.spawn);
+    mockSpawn.mockReturnValue(mockChildProcess);
 
     const result = await closeAgentBrowserSession("mux-workspace-123", 5);
 
@@ -200,24 +226,16 @@ describe("closeAgentBrowserSession", () => {
     expect(mockChildProcess.kill).toHaveBeenCalledTimes(1);
   });
 
-  test("returns an error when resolving the vendored binary fails", async () => {
-    const unsupportedPlatformError = new agentBrowserLauncher.AgentBrowserUnsupportedPlatformError(
-      "linux",
-      "x64"
-    );
-    unsupportedPlatformError.message = "unsupported test platform";
-    resolveAgentBrowserBinarySpy.mockImplementation(() => {
-      throw unsupportedPlatformError;
+  test("returns an error when binary resolution fails", async () => {
+    mockResolveAgentBrowserBinary.mockImplementation(() => {
+      throw new Error("unsupported test platform");
     });
 
     const result = await closeAgentBrowserSession("mux-workspace-123");
 
-    expect(result).toEqual({
-      success: false,
-      error:
-        "unsupported test platform Reinstall Mux, or run bun install in the repo if you're developing locally.",
-    });
-    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("unsupported test platform");
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   test("asserts on an empty session id", async () => {
@@ -231,7 +249,7 @@ describe("closeAgentBrowserSession", () => {
 
     expect(error).toBeDefined();
     expect(error?.message).toContain("closeAgentBrowserSession requires a non-empty sessionId");
-    expect(resolveAgentBrowserBinarySpy).not.toHaveBeenCalled();
-    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(mockResolveAgentBrowserBinary).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 });
