@@ -126,7 +126,7 @@ async function runAgentBrowserCliCommand(
   sessionId: string,
   args: string[],
   timeoutMs = CLI_TIMEOUT_MS,
-  options?: { inFlightProcesses?: Set<ChildProcess> }
+  options?: { inFlightProcesses?: Set<ChildProcess>; spawnFn?: typeof spawn }
 ): Promise<RawCliResult> {
   assert(sessionId.trim().length > 0, "runAgentBrowserCliCommand requires a non-empty sessionId");
   assert(args.length > 0, "runAgentBrowserCliCommand requires at least one CLI arg");
@@ -142,7 +142,8 @@ async function runAgentBrowserCliCommand(
     throw error;
   }
 
-  const childProcess = spawn(agentBrowserBinary, ["--json", "--session", sessionId, ...args], {
+  const spawnFn = options?.spawnFn ?? spawn;
+  const childProcess = spawnFn(agentBrowserBinary, ["--json", "--session", sessionId, ...args], {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -205,12 +206,15 @@ async function runAgentBrowserCliCommand(
 
 export async function closeAgentBrowserSession(
   sessionId: string,
-  timeoutMs = CLI_TIMEOUT_MS
+  timeoutMs = CLI_TIMEOUT_MS,
+  options?: { spawnFn?: typeof spawn }
 ): Promise<{ success: boolean; error?: string }> {
   assert(sessionId.trim().length > 0, "closeAgentBrowserSession requires a non-empty sessionId");
 
   try {
-    const result = await runAgentBrowserCliCommand(sessionId, ["close"], timeoutMs);
+    const result = await runAgentBrowserCliCommand(sessionId, ["close"], timeoutMs, {
+      spawnFn: options?.spawnFn,
+    });
     if (result.ok || isMissingBrowserSessionError(result.error)) {
       return { success: true };
     }

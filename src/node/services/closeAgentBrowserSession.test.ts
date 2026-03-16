@@ -39,20 +39,20 @@ mock.module("@/node/services/agentBrowserLauncher", () => ({
   AgentBrowserVendoredPackageNotFoundError: MockAgentBrowserVendoredPackageNotFoundError,
   resolveAgentBrowserBinary: mockResolveAgentBrowserBinary,
 }));
-mock.module("node:child_process", () => ({ spawn: mockSpawn }));
-mock.module("child_process", () => ({ spawn: mockSpawn }));
 /* eslint-enable @typescript-eslint/no-floating-promises */
 
-import type { ChildProcess } from "child_process";
+import type * as childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { closeAgentBrowserSession } from "@/node/services/browserSessionBackend";
+
+type SpawnFn = typeof childProcess.spawn;
 
 type MockReadableStream = PassThrough & {
   setEncoding: ReturnType<typeof mock>;
 };
 
-type MockChildProcess = ChildProcess & {
+type MockChildProcess = ReturnType<SpawnFn> & {
   stdout: MockReadableStream;
   stderr: MockReadableStream;
   kill: ReturnType<typeof mock>;
@@ -115,7 +115,9 @@ describe("closeAgentBrowserSession", () => {
     const mockChildProcess = createMockChildProcess();
     mockSpawn.mockReturnValue(mockChildProcess);
 
-    const result = await closeAgentBrowserSession("mux-workspace-123");
+    const result = await closeAgentBrowserSession("mux-workspace-123", undefined, {
+      spawnFn: mockSpawn as SpawnFn,
+    });
 
     expect(result).toEqual({ success: true });
     expect(mockResolveAgentBrowserBinary).toHaveBeenCalledTimes(1);
@@ -137,7 +139,9 @@ describe("closeAgentBrowserSession", () => {
     );
     mockSpawn.mockReturnValue(mockChildProcess);
 
-    const result = await closeAgentBrowserSession("mux-workspace-123");
+    const result = await closeAgentBrowserSession("mux-workspace-123", undefined, {
+      spawnFn: mockSpawn as SpawnFn,
+    });
 
     expect(result).toEqual({ success: true });
   });
@@ -146,7 +150,9 @@ describe("closeAgentBrowserSession", () => {
     const mockChildProcess = createMockChildProcess(1, "", "permission denied");
     mockSpawn.mockReturnValue(mockChildProcess);
 
-    const result = await closeAgentBrowserSession("mux-workspace-123");
+    const result = await closeAgentBrowserSession("mux-workspace-123", undefined, {
+      spawnFn: mockSpawn as SpawnFn,
+    });
 
     expect(result).toEqual({ success: false, error: "permission denied" });
   });
@@ -155,7 +161,9 @@ describe("closeAgentBrowserSession", () => {
     const mockChildProcess = createMockChildProcess(0, "", "", { autoClose: false });
     mockSpawn.mockReturnValue(mockChildProcess);
 
-    const result = await closeAgentBrowserSession("mux-workspace-123", 5);
+    const result = await closeAgentBrowserSession("mux-workspace-123", 5, {
+      spawnFn: mockSpawn as SpawnFn,
+    });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("timed out after 5ms");
@@ -167,7 +175,9 @@ describe("closeAgentBrowserSession", () => {
       throw new Error("unsupported test platform");
     });
 
-    const result = await closeAgentBrowserSession("mux-workspace-123");
+    const result = await closeAgentBrowserSession("mux-workspace-123", undefined, {
+      spawnFn: mockSpawn as SpawnFn,
+    });
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("unsupported test platform");
@@ -179,7 +189,9 @@ describe("closeAgentBrowserSession", () => {
     // inconsistently, so this test only locks in the pre-spawn invariant that
     // matters for production behavior.
     try {
-      await closeAgentBrowserSession("   ");
+      await closeAgentBrowserSession("   ", undefined, {
+        spawnFn: mockSpawn as SpawnFn,
+      });
     } catch {
       // Ignore assertion failures here; the important behavior is that the
       // function never attempts binary resolution or process spawning.
