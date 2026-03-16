@@ -1349,7 +1349,8 @@ export class AIService extends EventEmitter {
         workspaceId,
         truncationMode,
         this.providerService.getConfig(),
-        routeProvider
+        routeProvider,
+        metadata.projectName
       );
       recordStartupPhaseTiming("buildProviderOptionsMs", buildProviderOptionsStartedAt);
 
@@ -1480,6 +1481,7 @@ export class AIService extends EventEmitter {
               routeProvider,
               muxProviderOptions: effectiveMuxProviderOptions,
               workspaceId,
+              projectName: metadata.projectName,
               effectiveMode,
               planFilePath,
               taskSettings,

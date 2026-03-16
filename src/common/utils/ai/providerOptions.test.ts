@@ -538,7 +538,27 @@ describe("buildProviderOptions - OpenAI", () => {
   });
 
   describe("promptCacheKey derivation", () => {
-    test("should derive promptCacheKey from workspaceId when provided", () => {
+    test("should prefer projectName over workspaceId for promptCacheKey", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        "workspace-abc123",
+        undefined,
+        undefined,
+        undefined,
+        "my-project"
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.promptCacheKey).toBe("mux-v1-my-project");
+      expect(openai!.truncation).toBe("disabled");
+    });
+
+    test("should fall back to workspaceId when projectName is not provided", () => {
       const result = buildProviderOptions(
         "openai:gpt-5.2",
         "off",
@@ -569,19 +589,23 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai).toBeDefined();
       expect(openai!.truncation).toBe("auto");
     });
-    test("should derive promptCacheKey for gateway OpenAI model", () => {
+    test("should derive promptCacheKey for gateway OpenAI model with projectName", () => {
       const result = buildProviderOptions(
         "mux-gateway:openai/gpt-5.2",
         "off",
         undefined,
         undefined,
         undefined,
-        "workspace-xyz"
+        "workspace-xyz",
+        undefined,
+        undefined,
+        undefined,
+        "gateway-project"
       );
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();
-      expect(openai!.promptCacheKey).toBe("mux-v1-workspace-xyz");
+      expect(openai!.promptCacheKey).toBe("mux-v1-gateway-project");
       expect(openai!.truncation).toBe("disabled");
     });
   });

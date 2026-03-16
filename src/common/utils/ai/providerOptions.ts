@@ -200,6 +200,7 @@ export function preserveAnthropic1MContextForFollowUp(
  * @param openaiTruncationMode - Optional truncation mode for OpenAI responses (auto/disabled)
  * @param providersConfig - Optional providers config for mapped model capability detection
  * @param routeProvider - Optional route provider (gateway/direct) for SDK format selection
+ * @param projectName - Optional project name for project-scoped cache routing
  * @returns Provider options object for AI SDK
  */
 export function buildProviderOptions(
@@ -211,7 +212,8 @@ export function buildProviderOptions(
   workspaceId?: string, // Optional for non-OpenAI providers
   openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"],
   providersConfig?: ProvidersConfigMap | null,
-  routeProvider?: ProviderName
+  routeProvider?: ProviderName,
+  projectName?: string
 ): ProviderOptions {
   // Caller is responsible for enforcing thinking policy before calling this function.
   // agentSession.ts is the canonical enforcement point.
@@ -331,10 +333,13 @@ export function buildProviderOptions(
     // Chaining it on top of explicit history double-counts prior turns and caused GPT-5.4
     // requests to hit context_exceeded far below the documented native window.
 
-    // Prompt cache key: derive from workspaceId
-    // This helps OpenAI route requests to cached prefixes for improved hit rates
-    // workspaceId is always passed from AIService.streamMessage for real requests
-    const promptCacheKey = workspaceId ? `mux-v1-${workspaceId}` : undefined;
+    // Prompt cache key: prefer project-scoped routing over workspace-scoped.
+    // Project-scoped keys allow sibling workspaces (parent + subagents) on
+    // the same project to share OpenAI's server-side KV cache, improving
+    // hit rates for shared prefixes (system prompts, tool schemas, AGENTS.md).
+    // Falls back to workspaceId when projectName is unavailable.
+    const cacheScope = projectName || workspaceId;
+    const promptCacheKey = cacheScope ? `mux-v1-${cacheScope}` : undefined;
 
     const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
     const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";

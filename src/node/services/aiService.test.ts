@@ -1444,7 +1444,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
     expect(openaiOptions.previousResponseId).toBeUndefined();
-    expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
+    expect(openaiOptions.promptCacheKey).toBe("mux-v1-project-under-test");
   });
 
   it("passes the resolved routeProvider into initial stream metadata", async () => {
@@ -1661,7 +1661,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
     expect(openaiOptions.previousResponseId).toBeUndefined();
-    expect(openaiOptions.promptCacheKey).toBe(`mux-v1-${workspaceId}`);
+    expect(openaiOptions.promptCacheKey).toBe("mux-v1-project-under-test");
   });
 });
 

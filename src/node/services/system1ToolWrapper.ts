@@ -58,6 +58,7 @@ export interface System1WrapOptions {
   routeProvider?: ProviderName;
   muxProviderOptions: MuxProviderOptions;
   workspaceId: string;
+  projectName?: string;
   effectiveMode: string;
   planFilePath: string;
   taskSettings: TaskSettings;
@@ -359,7 +360,8 @@ async function maybeFilterBashOutput(
       opts.workspaceId,
       undefined,
       undefined,
-      system1RouteProvider
+      system1RouteProvider,
+      opts.projectName
     ) as unknown as Record<string, unknown>;
 
     const numberedOutput = formatNumberedLinesForSystem1(lines);
