@@ -3,9 +3,6 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { MAX_LOG_ENTRIES } from "@/common/constants/ui";
 import {
   clearLogEntries,
-  getEpoch,
-  getRecentLogs,
-  onLogEntry,
   pushLogEntry,
   subscribeLogFeed,
   type BufferEvent,
@@ -27,12 +24,12 @@ describe("logBuffer", () => {
   });
 
   test("pushLogEntry emits append events with the current epoch", () => {
-    const startEpoch = getEpoch();
     const received: BufferEvent[] = [];
 
-    const unsubscribe = onLogEntry((event) => {
+    const { snapshot, unsubscribe } = subscribeLogFeed((event) => {
       received.push(event);
     });
+    const startEpoch = snapshot.epoch;
 
     const entry = createEntry(1);
     pushLogEntry(entry);
@@ -45,43 +42,41 @@ describe("logBuffer", () => {
   test("subscribeLogFeed snapshots existing entries and streams new events", () => {
     const existingEntry = createEntry(2);
     pushLogEntry(existingEntry);
-    const currentEpoch = getEpoch();
     const received: BufferEvent[] = [];
 
     const { snapshot, unsubscribe } = subscribeLogFeed((event) => {
       received.push(event);
     });
 
-    expect(snapshot).toEqual({ epoch: currentEpoch, entries: [existingEntry] });
+    expect(snapshot.entries).toEqual([existingEntry]);
 
     const nextEntry = createEntry(3);
     pushLogEntry(nextEntry);
 
     unsubscribe();
 
-    expect(received).toEqual([{ type: "append", epoch: currentEpoch, entry: nextEntry }]);
+    expect(received).toEqual([{ type: "append", epoch: snapshot.epoch, entry: nextEntry }]);
   });
 
   test("clearLogEntries emits a reset event and increments epoch", () => {
-    const startEpoch = getEpoch();
     const received: BufferEvent[] = [];
 
-    const unsubscribe = onLogEntry((event) => {
+    const { snapshot, unsubscribe } = subscribeLogFeed((event) => {
       received.push(event);
     });
+    const startEpoch = snapshot.epoch;
 
     clearLogEntries();
 
     unsubscribe();
 
     expect(received).toEqual([{ type: "reset", epoch: startEpoch + 1 }]);
-    expect(getEpoch()).toBe(startEpoch + 1);
   });
 
   test("unsubscribe stops receiving append and reset events", () => {
     const received: BufferEvent[] = [];
 
-    const unsubscribe = onLogEntry((event) => {
+    const { unsubscribe } = subscribeLogFeed((event) => {
       received.push(event);
     });
 
@@ -92,18 +87,22 @@ describe("logBuffer", () => {
     expect(received).toHaveLength(0);
   });
 
-  test("getEpoch only advances on reset events", () => {
-    const initialEpoch = getEpoch();
+  test("epoch only advances on reset events", () => {
+    const noop = () => void 0;
+    const { snapshot: before } = subscribeLogFeed(noop);
+    const initialEpoch = before.epoch;
 
     pushLogEntry(createEntry(3));
-    expect(getEpoch()).toBe(initialEpoch);
+    const { snapshot: afterPush } = subscribeLogFeed(noop);
+    expect(afterPush.epoch).toBe(initialEpoch);
 
     clearLogEntries();
-    const afterFirstReset = getEpoch();
-    expect(afterFirstReset).toBe(initialEpoch + 1);
+    const { snapshot: afterFirstReset } = subscribeLogFeed(noop);
+    expect(afterFirstReset.epoch).toBe(initialEpoch + 1);
 
     clearLogEntries();
-    expect(getEpoch()).toBe(afterFirstReset + 1);
+    const { snapshot: afterSecondReset } = subscribeLogFeed(noop);
+    expect(afterSecondReset.epoch).toBe(initialEpoch + 2);
   });
 
   test("retains only the most recent MAX_LOG_ENTRIES entries", () => {
@@ -114,10 +113,10 @@ describe("logBuffer", () => {
       pushLogEntry(createEntry(id));
     }
 
-    const recent = getRecentLogs();
+    const { snapshot } = subscribeLogFeed(() => void 0);
 
-    expect(recent).toHaveLength(MAX_LOG_ENTRIES);
-    expect(recent[0]?.message).toBe(`entry-${overflowCount}`);
-    expect(recent.at(-1)?.message).toBe(`entry-${totalEntries - 1}`);
+    expect(snapshot.entries).toHaveLength(MAX_LOG_ENTRIES);
+    expect(snapshot.entries[0]?.message).toBe(`entry-${overflowCount}`);
+    expect(snapshot.entries.at(-1)?.message).toBe(`entry-${totalEntries - 1}`);
   });
 });

@@ -36,14 +36,6 @@ export function pushLogEntry(entry: LogEntry): void {
   }
 }
 
-export function getRecentLogs(): LogEntry[] {
-  return [...buffer];
-}
-
-export function getEpoch(): number {
-  return epoch;
-}
-
 export function subscribeLogFeed(
   listener: (event: BufferEvent) => void,
   requestedLevel?: LogLevel
@@ -70,18 +62,6 @@ export function clearLogEntries(): void {
   for (const listener of listeners) {
     listener(resetEvent);
   }
-}
-
-export function onLogEntry(listener: LogListener, requestedLevel?: LogLevel): () => void {
-  listeners.add(listener);
-  if (requestedLevel) {
-    subscriberLevels.set(listener, requestedLevel);
-  }
-
-  return () => {
-    listeners.delete(listener);
-    subscriberLevels.delete(listener);
-  };
 }
 
 export function hasDebugSubscriber(): boolean {
