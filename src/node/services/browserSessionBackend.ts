@@ -511,7 +511,12 @@ export class BrowserSessionBackend {
       // Best-effort shutdown; the session is ending locally regardless.
     }
 
-    this.patchSession({ status: "ended" });
+    this.patchSession({
+      status: "ended",
+      streamState: null,
+      lastFrameMetadata: null,
+      streamErrorMessage: null,
+    });
     this.options.onEnded(this.options.workspaceId);
   }
 

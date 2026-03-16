@@ -310,6 +310,42 @@ describe("BrowserSessionBackend", () => {
     expect(streamingFallbackRefresh).not.toHaveBeenCalled();
   });
 
+  test("clears stream state when the session stops", async () => {
+    const onSessionUpdate = mock(() => undefined);
+    const onEnded = mock(() => undefined);
+    const backend = createBackend({ onSessionUpdate, onEnded });
+
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+      streamErrorMessage: "socket closed",
+    });
+
+    expect(
+      Reflect.set(backend, "runCliCommand", () => Promise.resolve({ ok: true as const, data: {} }))
+    ).toBe(true);
+
+    await backend.stop();
+
+    const session = getSession(backend);
+    expect(session.status).toBe("ended");
+    expect(session.streamState).toBeNull();
+    expect(session.lastFrameMetadata).toBeNull();
+    expect(session.streamErrorMessage).toBeNull();
+    expect(onSessionUpdate).toHaveBeenCalledTimes(1);
+    expect(onSessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "ended",
+        streamState: null,
+        lastFrameMetadata: null,
+        streamErrorMessage: null,
+      })
+    );
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    expect(onEnded).toHaveBeenCalledWith("workspace-123");
+  });
+
   test("rejects input when the session is not live", () => {
     const backend = createBackend();
     const send = mock(() => undefined);

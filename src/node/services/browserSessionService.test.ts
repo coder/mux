@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test, type Mock } from "bun:test";
 import * as browserSessionBackendModule from "@/node/services/browserSessionBackend";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
-import type { BrowserInputEvent, BrowserSession } from "@/common/types/browserSession";
+import type {
+  BrowserInputEvent,
+  BrowserSession,
+  BrowserSessionEvent,
+} from "@/common/types/browserSession";
 import { log } from "@/node/services/log";
 import { BrowserSessionService } from "@/node/services/browserSessionService";
 import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
@@ -155,6 +159,57 @@ describe("BrowserSessionService.stopSession", () => {
     await service.stopSession(workspaceId);
 
     expect(streamPortRegistry.getReservedPort(workspaceId)).toBeNull();
+  });
+
+  test("emits the cleared stream fields before notifying listeners that the session ended", async () => {
+    const workspaceId = "workspace-ended-update";
+    const events: BrowserSessionEvent[] = [];
+    let backendOptions: browserSessionBackendModule.BrowserSessionBackendOptions | null = null;
+
+    const service = new BrowserSessionService({
+      createBackend: (options) => {
+        backendOptions = options;
+        return {
+          start: mock(() => {
+            const session = createLiveSession(workspaceId);
+            options.onSessionUpdate(session);
+            return Promise.resolve(session);
+          }),
+          stop: mock(() => {
+            options.onSessionUpdate({
+              ...createLiveSession(workspaceId),
+              status: "ended",
+              streamState: null,
+              lastFrameMetadata: null,
+              streamErrorMessage: null,
+            });
+            options.onEnded(workspaceId);
+            return Promise.resolve();
+          }),
+        } as unknown as browserSessionBackendModule.BrowserSessionBackend;
+      },
+    });
+
+    service.on(`update:${workspaceId}`, (event: BrowserSessionEvent) => {
+      events.push(event);
+    });
+
+    await service.startSession(workspaceId);
+    expect(backendOptions).not.toBeNull();
+
+    events.length = 0;
+    await service.stopSession(workspaceId);
+
+    expect(events).toHaveLength(2);
+    expect(events[0]?.type).toBe("session-updated");
+    if (events[0]?.type !== "session-updated") {
+      expect.unreachable("expected stopSession to emit a session-updated event before ending");
+    }
+    expect(events[0].session.status).toBe("ended");
+    expect(events[0].session.streamState).toBeNull();
+    expect(events[0].session.lastFrameMetadata).toBeNull();
+    expect(events[0].session.streamErrorMessage).toBeNull();
+    expect(events[1]).toEqual({ type: "session-ended", workspaceId });
   });
 
   test("logs close failures without throwing", async () => {
