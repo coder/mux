@@ -103,7 +103,6 @@ function startBrowserSession(args: {
   stoppingSession: boolean;
   setStartingSession: (value: boolean) => void;
   setStartError: (value: string | null) => void;
-  shouldIgnore?: () => boolean;
 }) {
   if (args.browserSessionApi == null || args.startingSession || args.stoppingSession) {
     return;
@@ -118,17 +117,9 @@ function startBrowserSession(args: {
       ownership: args.ownership,
     })
     .catch((sessionError: unknown) => {
-      if (args.shouldIgnore?.() === true) {
-        return;
-      }
-
       args.setStartError(getSessionErrorMessage(sessionError, "Failed to start session"));
     })
     .finally(() => {
-      if (args.shouldIgnore?.() === true) {
-        return;
-      }
-
       args.setStartingSession(false);
     });
 }
@@ -146,7 +137,8 @@ export function BrowserTab(props: BrowserTabProps) {
   const autoStartState = getAutoStartState(props.workspaceId);
   const browserSessionApi = api?.browserSession ?? null;
 
-  const isStarting = startingSession || session?.status === "starting";
+  const isStarting =
+    startingSession || autoStartState.autoStartPending || session?.status === "starting";
   const screenshotSrc = session?.lastScreenshotBase64
     ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
     : null;
@@ -180,7 +172,6 @@ export function BrowserTab(props: BrowserTabProps) {
       session != null ||
       error != null ||
       startError != null ||
-      startingSession ||
       stoppingSession ||
       autoStartState.attempted ||
       autoStartState.autoStartPending ||
@@ -191,26 +182,19 @@ export function BrowserTab(props: BrowserTabProps) {
 
     autoStartState.attempted = true;
     autoStartState.autoStartPending = true;
+    setStartError(null);
 
-    let ignore = false;
-    startBrowserSession({
-      browserSessionApi,
-      workspaceId: props.workspaceId,
-      ownership: "agent",
-      startingSession,
-      stoppingSession,
-      setStartingSession,
-      setStartError,
-      shouldIgnore: () => ignore,
-    });
-
-    return () => {
-      ignore = true;
-      const state = autoStartStateByWorkspace.get(props.workspaceId);
-      if (state != null) {
-        state.autoStartPending = false;
-      }
-    };
+    browserSessionApi
+      .start({
+        workspaceId: props.workspaceId,
+        ownership: "agent",
+      })
+      .catch((sessionError: unknown) => {
+        setStartError(getSessionErrorMessage(sessionError, "Failed to start session"));
+      })
+      .finally(() => {
+        autoStartState.autoStartPending = false;
+      });
   }, [
     autoStartState,
     browserSessionApi,
@@ -218,7 +202,6 @@ export function BrowserTab(props: BrowserTabProps) {
     props.workspaceId,
     session,
     startError,
-    startingSession,
     stoppingSession,
   ]);
 
