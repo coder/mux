@@ -38,6 +38,7 @@ import type { LanguageModel, Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import { uniqueSuffix } from "@/common/utils/hasher";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import type { StreamManager } from "./streamManager";
@@ -1444,7 +1445,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
     expect(openaiOptions.previousResponseId).toBeUndefined();
-    expect(openaiOptions.promptCacheKey).toBe("mux-v1-project-under-test");
+    expect(openaiOptions.promptCacheKey).toBe(
+      `mux-v1-project-under-test-${uniqueSuffix([projectPath])}`
+    );
   });
 
   it("passes the resolved routeProvider into initial stream metadata", async () => {
@@ -1661,7 +1664,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
     expect(openaiOptions.previousResponseId).toBeUndefined();
-    expect(openaiOptions.promptCacheKey).toBe("mux-v1-project-under-test");
+    expect(openaiOptions.promptCacheKey).toBe(
+      `mux-v1-project-under-test-${uniqueSuffix([projectPath])}`
+    );
   });
 });
 

@@ -58,7 +58,7 @@ export interface System1WrapOptions {
   routeProvider?: ProviderName;
   muxProviderOptions: MuxProviderOptions;
   workspaceId: string;
-  projectName?: string;
+  promptCacheScope?: string;
   effectiveMode: string;
   planFilePath: string;
   taskSettings: TaskSettings;
@@ -361,7 +361,7 @@ async function maybeFilterBashOutput(
       undefined,
       undefined,
       system1RouteProvider,
-      opts.projectName
+      opts.promptCacheScope
     ) as unknown as Record<string, unknown>;
 
     const numberedOutput = formatNumberedLinesForSystem1(lines);

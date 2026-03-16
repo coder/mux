@@ -538,7 +538,7 @@ describe("buildProviderOptions - OpenAI", () => {
   });
 
   describe("promptCacheKey derivation", () => {
-    test("should prefer projectName over workspaceId for promptCacheKey", () => {
+    test("should prefer promptCacheScope over workspaceId for promptCacheKey", () => {
       const result = buildProviderOptions(
         "openai:gpt-5.2",
         "off",
@@ -549,12 +549,12 @@ describe("buildProviderOptions - OpenAI", () => {
         undefined,
         undefined,
         undefined,
-        "my-project"
+        "my-project-deadbeef"
       );
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();
-      expect(openai!.promptCacheKey).toBe("mux-v1-my-project");
+      expect(openai!.promptCacheKey).toBe("mux-v1-my-project-deadbeef");
       expect(openai!.truncation).toBe("disabled");
     });
 
@@ -589,7 +589,7 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai).toBeDefined();
       expect(openai!.truncation).toBe("auto");
     });
-    test("should derive promptCacheKey for gateway OpenAI model with projectName", () => {
+    test("should derive promptCacheKey for gateway OpenAI model with promptCacheScope", () => {
       const result = buildProviderOptions(
         "mux-gateway:openai/gpt-5.2",
         "off",
@@ -600,12 +600,12 @@ describe("buildProviderOptions - OpenAI", () => {
         undefined,
         undefined,
         undefined,
-        "gateway-project"
+        "gateway-project-cafebabe"
       );
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();
-      expect(openai!.promptCacheKey).toBe("mux-v1-gateway-project");
+      expect(openai!.promptCacheKey).toBe("mux-v1-gateway-project-cafebabe");
       expect(openai!.truncation).toBe("disabled");
     });
   });

@@ -69,6 +69,7 @@ import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameter
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
+import { uniqueSuffix } from "@/common/utils/hasher";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
@@ -198,6 +199,10 @@ export function resolveMuxProjectRootForHostFs(
 ): string {
   const runtimeType = metadata.runtimeConfig.type;
   return runtimeType === "ssh" || runtimeType === "docker" ? metadata.projectPath : workspacePath;
+}
+
+function derivePromptCacheScope(metadata: WorkspaceMetadata): string {
+  return `${metadata.projectName}-${uniqueSuffix([metadata.projectPath])}`;
 }
 
 export class AIService extends EventEmitter {
@@ -1340,6 +1345,7 @@ export class AIService extends EventEmitter {
       // This keeps OpenAI request state aligned with the explicit history Mux sends.
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching.
       const buildProviderOptionsStartedAt = Date.now();
+      const promptCacheScope = derivePromptCacheScope(metadata);
       const providerOptions = buildProviderOptions(
         modelString,
         effectiveThinkingLevel,
@@ -1350,7 +1356,7 @@ export class AIService extends EventEmitter {
         truncationMode,
         this.providerService.getConfig(),
         routeProvider,
-        metadata.projectName
+        promptCacheScope
       );
       recordStartupPhaseTiming("buildProviderOptionsMs", buildProviderOptionsStartedAt);
 
@@ -1481,7 +1487,7 @@ export class AIService extends EventEmitter {
               routeProvider,
               muxProviderOptions: effectiveMuxProviderOptions,
               workspaceId,
-              projectName: metadata.projectName,
+              promptCacheScope,
               effectiveMode,
               planFilePath,
               taskSettings,
