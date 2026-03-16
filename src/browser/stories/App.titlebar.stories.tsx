@@ -168,11 +168,15 @@ function createDevcontainerClient(runtimeStatus: "running" | "stopped" | "unknow
   collapseRightSidebar();
 
   const branches = new Map([
-    ["dc-1", "feature/lazy-start"],
+    // dc-1 branch is only available from git when the runtime is running;
+    // otherwise BranchSelector falls back to branchCache / workspaceName.
+    ...(runtimeStatus === "running" ? [["dc-1", "feature/lazy-start"] as const] : []),
     ["dc-2", "fix/sidebar-overflow"],
   ]);
   const gitStatus = new Map([
-    ["dc-1", { ahead: 2, dirty: 1 }],
+    // Passive git status is gated behind runtime eligibility — stopped/unknown
+    // devcontainers have no git status data until the runtime starts.
+    ...(runtimeStatus === "running" ? [["dc-1", { ahead: 2, dirty: 1 }] as const] : []),
     ["dc-2", { ahead: 0, behind: 3 }],
   ]);
 

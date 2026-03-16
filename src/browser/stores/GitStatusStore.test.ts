@@ -472,7 +472,7 @@ describe("GitStatusStore", () => {
   });
 
   describe("passive fetch runtime gating", () => {
-    it("skips passive fetch for devcontainer with unresolved runtime status", async () => {
+    it("skips passive fetch and status checks for devcontainer with unresolved runtime status", async () => {
       store.dispose();
       const workspaceId = "dc-unresolved";
       const runtimeStatusStore = createRuntimeStatusStoreMock(null);
@@ -491,7 +491,7 @@ describe("GitStatusStore", () => {
       await store.updateGitStatus();
 
       expect(getFetchCallCount()).toBe(0);
-      expect(mockExecuteBash).toHaveBeenCalled();
+      expect(mockExecuteBash).not.toHaveBeenCalled();
 
       unsubscribe();
     });
