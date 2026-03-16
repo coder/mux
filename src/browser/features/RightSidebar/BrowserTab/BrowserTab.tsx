@@ -206,7 +206,13 @@ export function BrowserTab(props: BrowserTabProps) {
   ]);
 
   const handleStartSession = () => {
-    if (browserSessionApi == null || startingSession || stoppingSession) {
+    const currentAutoStartState = autoStartStateByWorkspace.get(props.workspaceId);
+    if (
+      browserSessionApi == null ||
+      startingSession ||
+      stoppingSession ||
+      currentAutoStartState?.autoStartPending
+    ) {
       return;
     }
 
@@ -276,10 +282,10 @@ export function BrowserTab(props: BrowserTabProps) {
           <button
             type="button"
             onClick={handleStartSession}
-            disabled={!api || startingSession}
+            disabled={!api || isStarting}
             className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex max-w-full items-center gap-1.5 self-start rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {startingSession ? (
+            {isStarting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : session?.status === "ended" || session?.status === "error" ? (
               <RefreshCw className="h-3.5 w-3.5" />
