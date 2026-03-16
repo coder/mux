@@ -374,25 +374,7 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
   return `${trimmed}/v1`;
 }
 
-import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
 import { getErrorMessage } from "@/common/utils/errors";
-
-/**
- * Build headers for Anthropic provider, optionally including the 1M context beta header.
- * Exported for testing.
- */
-export function buildAnthropicHeaders(
-  existingHeaders: Record<string, string> | undefined,
-  use1MContext: boolean | undefined
-): Record<string, string> | undefined {
-  if (!use1MContext) {
-    return existingHeaders;
-  }
-  if (existingHeaders) {
-    return { ...existingHeaders, "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
-  }
-  return { "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER };
-}
 
 /**
  * Build app attribution headers used by OpenRouter (and other compatible platforms).
