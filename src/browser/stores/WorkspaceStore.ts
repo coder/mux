@@ -1633,7 +1633,8 @@ export class WorkspaceStore {
         aggregatorRecency === null
           ? (activity?.recency ?? null)
           : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
-      const isStreamStarting = pendingStreamStartTime !== null && !canInterrupt;
+      const isStreamStarting =
+        pendingStreamStartTime !== null && !canInterrupt && useAggregatorState;
       const isHydratingTranscript =
         isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp;
       const agentStatus = useAggregatorState
@@ -2438,6 +2439,7 @@ export class WorkspaceStore {
       // activity confirms streaming stopped, clear stale stream contexts so they
       // cannot leak compaction metadata into future completion callbacks.
       this.aggregators.get(workspaceId)?.clearActiveStreams();
+      this.aggregators.get(workspaceId)?.clearPendingStreamStart();
     }
 
     if (snapshot?.streaming !== true) {
@@ -3530,6 +3532,11 @@ export class WorkspaceStore {
         streamContextMismatched
       ) {
         aggregator.clearActiveStreams();
+      }
+      // When server confirms no active stream, clear optimistic pending-start state
+      // so the UI doesn't remain stuck in "starting..." after reconnect.
+      if (serverActiveStreamMessageId === undefined) {
+        aggregator.clearPendingStreamStart();
       }
 
       if (replay === "full") {

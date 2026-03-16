@@ -193,6 +193,21 @@ function createHistoryMessageEvent(id: string, historySequence: number): Workspa
   };
 }
 
+function createUserMessageEvent(
+  id: string,
+  text: string,
+  historySequence: number,
+  timestamp: number
+): WorkspaceChatMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text }],
+    metadata: { historySequence, timestamp },
+  };
+}
+
 async function waitForAbortSignal(signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve) => {
     if (!signal) {
@@ -1378,6 +1393,175 @@ describe("WorkspaceStore", () => {
       expect(state1).toEqual(state2);
       expect(state1.canInterrupt).toBe(state2.canInterrupt);
       expect(state1.loading).toBe(state2.loading);
+    });
+  });
+
+  describe("stream starting state", () => {
+    it("clears stale starting state when background workspace stops streaming", async () => {
+      const activeWorkspaceId = "active-workspace-starting-state";
+      const backgroundWorkspaceId = "background-workspace-starting-state";
+      const streamingRecency = new Date("2024-01-11T00:00:00.000Z").getTime();
+      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
+        recency: streamingRecency,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+      };
+
+      let releaseStopSnapshot!: () => void;
+      const stopSnapshotReady = new Promise<void>((resolve) => {
+        releaseStopSnapshot = resolve;
+      });
+
+      store.dispose();
+      store = new WorkspaceStore(mockOnModelUsed);
+      mockActivityList.mockResolvedValue({
+        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
+      });
+      mockActivitySubscribe.mockImplementation(async function* (
+        _input?: void,
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+        await stopSnapshotReady;
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        yield {
+          type: "activity" as const,
+          workspaceId: backgroundWorkspaceId,
+          activity: {
+            ...backgroundStreamingSnapshot,
+            recency: streamingRecency + 1,
+            streaming: false,
+          },
+        };
+
+        await waitForAbortSignal(options?.signal);
+      });
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== backgroundWorkspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield createUserMessageEvent("pending-start-message", "hello", 1, streamingRecency);
+        await waitForAbortSignal(options?.signal);
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+      store.setClient(mockClient as any);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      createAndAddWorkspace(store, backgroundWorkspaceId);
+
+      const sawStarting = await waitUntil(
+        () => store.getWorkspaceState(backgroundWorkspaceId).isStreamStarting
+      );
+      expect(sawStarting).toBe(true);
+      expect(store.getWorkspaceSidebarState(backgroundWorkspaceId).isStarting).toBe(true);
+
+      createAndAddWorkspace(store, activeWorkspaceId);
+      releaseStopSnapshot();
+
+      const clearedStarting = await waitUntil(() => {
+        const state = store.getWorkspaceState(backgroundWorkspaceId);
+        const sidebarState = store.getWorkspaceSidebarState(backgroundWorkspaceId);
+        return (
+          state.pendingStreamStartTime === null &&
+          state.isStreamStarting === false &&
+          sidebarState.isStarting === false
+        );
+      });
+      expect(clearedStarting).toBe(true);
+    });
+
+    it("clears stale starting state on reconnect when server has no active stream", async () => {
+      const workspaceId = "stream-starting-reconnect-workspace";
+      const otherWorkspaceId = "stream-starting-other-workspace";
+      let subscriptionCount = 0;
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        subscriptionCount += 1;
+
+        if (subscriptionCount === 1) {
+          yield { type: "caught-up" };
+          await Promise.resolve();
+          yield createUserMessageEvent("reconnect-pending-start", "hello", 1, 1_000);
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield {
+          type: "caught-up",
+          replay: "since",
+          cursor: {
+            history: {
+              messageId: "reconnect-pending-start",
+              historySequence: 1,
+            },
+          },
+        };
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const sawStarting = await waitUntil(
+        () => store.getWorkspaceState(workspaceId).isStreamStarting
+      );
+      expect(sawStarting).toBe(true);
+
+      createAndAddWorkspace(store, otherWorkspaceId);
+      store.setActiveWorkspaceId(workspaceId);
+
+      const clearedStarting = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return subscriptionCount >= 2 && state.pendingStreamStartTime === null;
+      });
+      expect(clearedStarting).toBe(true);
+      expect(store.getWorkspaceState(workspaceId).isStreamStarting).toBe(false);
+    });
+
+    it("active workspace still shows starting during legitimate startup gap", async () => {
+      const workspaceId = "stream-starting-active-workspace";
+
+      mockOnChat.mockImplementation(async function* (
+        input?: { workspaceId: string; mode?: unknown },
+        options?: { signal?: AbortSignal }
+      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+        if (input?.workspaceId !== workspaceId) {
+          await waitForAbortSignal(options?.signal);
+          return;
+        }
+
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield createUserMessageEvent("active-pending-start", "hello", 1, 2_000);
+        await waitForAbortSignal(options?.signal);
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const sawStarting = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        const sidebarState = store.getWorkspaceSidebarState(workspaceId);
+        return state.isStreamStarting === true && sidebarState.isStarting === true;
+      });
+      expect(sawStarting).toBe(true);
     });
   });
 
