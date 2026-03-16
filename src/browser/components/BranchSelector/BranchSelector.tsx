@@ -15,7 +15,7 @@ const branchCache = createLRUCache<string>({
   entryPrefix: "branch:",
   indexKey: "branchIndex",
   maxEntries: 100,
-  // No TTL - branch info is fetched on mount anyway
+  // No TTL - cached branch info seeds the selector until passive git status refreshes arrive.
 });
 
 interface BranchSelectorProps {
@@ -76,43 +76,6 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
 
   // Track if we're refreshing with a cached value (for optimistic UI pulse effect)
   const isRefreshing = currentBranch !== null && currentBranch !== false && isSwitching;
-
-  // Fetch current branch on mount to detect if we're in a git repo
-  useEffect(() => {
-    if (!api) return;
-
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const result = await api.workspace.executeBash({
-          workspaceId,
-          script: `git rev-parse --abbrev-ref HEAD 2>/dev/null`,
-          options: repoRootBashOptions(5),
-        });
-
-        if (cancelled) return;
-
-        if (result.success && result.data.success && result.data.output?.trim()) {
-          const branch = result.data.output.trim();
-          setCurrentBranch(branch);
-          // Persist to localStorage for instant display on app restart
-          branchCache.set(workspaceId, branch);
-        } else {
-          // Not a git repo or git command failed
-          setCurrentBranch(false);
-        }
-      } catch {
-        if (!cancelled) {
-          setCurrentBranch(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [api, workspaceId]);
 
   const fetchLocalBranches = useCallback(async () => {
     if (!api || currentBranch === false) return;

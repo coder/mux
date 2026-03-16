@@ -1189,7 +1189,6 @@ export const workspace = {
       // (without shell interpolation) and falls back to shell-quoted argv for remote runtimes.
       command: z.string().nullish(),
       args: z.array(z.string()).nullish(),
-      executionTarget: z.enum(["runtime", "host-workspace"]).nullish(),
       options: z
         .object({
           timeout_secs: z.number().nullish(),

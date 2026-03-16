@@ -212,7 +212,6 @@ interface ExecuteBashOptions {
   timeout_secs?: number | null;
   cwdMode?: "default" | "repo-root" | null;
   repoRootProjectPath?: string | null;
-  executionTarget?: "runtime" | "host-workspace";
 }
 
 /**
@@ -5718,64 +5717,6 @@ export class WorkspaceService extends EventEmitter {
     const metadata = metadataResult.data;
     if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) {
       return Err(`Workspace ${workspaceId} is archived; cannot execute bash`);
-    }
-
-    if (
-      options?.executionTarget === "host-workspace" &&
-      metadata.runtimeConfig?.type === "devcontainer"
-    ) {
-      try {
-        // Preserve the existing config guard even when bypassing the devcontainer runtime.
-        const workspace = this.config.findWorkspace(workspaceId);
-        if (!workspace) {
-          return Err(`Workspace ${workspaceId} not found in config`);
-        }
-
-        let hostScript = script;
-        if (command != null) {
-          if (command !== "git") {
-            return Err("executeBash command mode only supports git");
-          }
-          const commandArgs = args ?? [];
-          hostScript = [shellQuote(command), ...commandArgs.map((a) => shellQuote(a))].join(" ");
-        }
-
-        // Passive git/PR metadata refreshes only need the host worktree for devcontainer workspaces.
-        // Running them on the host avoids waking every visible devcontainer via ensureReady().
-        const hostRuntime = new WorktreeRuntime(this.config.srcDir, {
-          projectPath: metadata.projectPath,
-          workspaceName: metadata.name,
-        });
-        const hostWorkspacePath = workspace.workspacePath;
-        const projectSecrets = this.config.getEffectiveSecrets(metadata.projectPath);
-        const configSnapshot = this.config.loadConfigOrDefault();
-
-        using tempDir = new DisposableTempDir("mux-ipc-bash");
-        const bashTool = createBashTool({
-          cwd: hostWorkspacePath,
-          runtime: hostRuntime,
-          secrets: await secretsToRecord(projectSecrets, this.opResolver),
-          runtimeTempDir: tempDir.path,
-          overflow_policy: "truncate",
-          trusted: isWorkspaceTrustedForSharedExecution(metadata, configSnapshot.projects),
-        });
-
-        const result = (await bashTool.execute!(
-          {
-            script: hostScript,
-            timeout_secs: options?.timeout_secs ?? 120,
-          },
-          {
-            toolCallId: `bash-${Date.now()}`,
-            messages: [],
-          }
-        )) as BashToolResult;
-
-        return Ok(result);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        return Err(`Failed to execute bash command: ${message}`);
-      }
     }
 
     // Wait for workspace initialization (container creation, code sync, etc.)
