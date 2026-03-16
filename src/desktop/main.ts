@@ -6,6 +6,7 @@ process.umask(0o077);
 import "source-map-support/register";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 
 interface AgentBrowserLauncherModule {
   generateAgentBrowserWrapper: () => {
@@ -55,6 +56,15 @@ function materializeVendoredBinWrappers(): void {
   }
 }
 
+// Migrate ~/.cmux before wrapper materialization because the wrappers resolve getMuxHome(),
+// which creates ~/.mux/bin and would make the migration incorrectly treat the new home as existing.
+try {
+  migrateLegacyMuxHome();
+} catch (error) {
+  // Startup initialization must never crash the app.
+  console.debug("[mux-home] Failed to migrate legacy mux home:", error);
+}
+
 materializeVendoredBinWrappers();
 
 import { randomBytes } from "crypto";
@@ -94,7 +104,6 @@ app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 import type { Config } from "../node/config";
 import type { ServiceContainer } from "../node/services/serviceContainer";
 import { VERSION } from "../version";
-import { getMuxHome, migrateLegacyMuxHome } from "../common/constants/paths";
 import type { MuxDeepLinkPayload } from "../common/types/deepLink";
 import type { UpdateStatus } from "../common/orpc/types";
 import { parseMuxDeepLink } from "../common/utils/deepLink";
@@ -1095,7 +1104,7 @@ if (gotTheLock) {
 
       registerMuxProtocolClient();
 
-      // Migrate from .cmux to .mux directory structure if needed
+      // Safe to retry after ready: migrateLegacyMuxHome() is idempotent and returns once ~/.mux exists.
       migrateLegacyMuxHome();
 
       // Install React DevTools in development
