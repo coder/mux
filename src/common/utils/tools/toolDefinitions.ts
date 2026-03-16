@@ -46,6 +46,7 @@ import { THINKING_LEVELS } from "@/common/types/thinking";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
+import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 
 // -----------------------------------------------------------------------------
 // ask_user_question (plan-mode interactive questions)
@@ -162,10 +163,11 @@ const TaskAgentIdSchema = z.preprocess(
   AgentIdSchema
 );
 
-const TaskToolBestOfCountSchema = z.preprocess(
-  (value) => value ?? undefined,
-  z.number().int().min(1).max(20).default(1)
-);
+const TaskToolBestOfCountSchema = z.number().int().min(1).max(20);
+
+const TaskToolVariantSchema = z.string().trim().min(1);
+
+const TaskToolVariantsSchema = z.array(TaskToolVariantSchema).min(1).max(20);
 
 function getTaskRuntimeVisibilityGuidance(runtimeMode: RuntimeMode | undefined): string {
   switch (runtimeMode) {
@@ -204,14 +206,15 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Spawn a sub-agent task (child workspace). " +
     "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
     `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
-    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. " +
-    "Leave n unset unless the developer explicitly asks for best-of-n work, and only use it for sub-agents without interfering side effects (for example read-only agents like explore). " +
+    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. " +
+    `Use n for best-of-n batches, or use variants for labeled sibling tasks where the prompt references ${TASK_VARIANT_PLACEHOLDER}. ` +
+    "Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
     "Do not also do a full parallel analysis in the parent. After spawning a best-of batch, the next step should usually be task_await so you can synthesize from the child reports. " +
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
-    "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When n > 1, the completed result includes one report per spawned task. " +
+    "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
     "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
     "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
@@ -229,8 +232,11 @@ const TaskToolAgentArgsSchema = z
     prompt: z.string().min(1),
     title: z.string().min(1),
     run_in_background: z.boolean().default(false),
-    n: TaskToolBestOfCountSchema.describe(
-      "Optional best-of count. Defaults to 1 when omitted. Usually leave unset unless the developer explicitly asks for best-of-n work. Only use this for sub-agents without interfering side effects, such as read-only agents like explore."
+    n: TaskToolBestOfCountSchema.nullish().describe(
+      "Optional best-of count. Mutually exclusive with variants. Use either n or variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
+    ),
+    variants: TaskToolVariantsSchema.nullish().describe(
+      `Optional labels for a grouped task run. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
     ),
   })
   .strict()
@@ -257,6 +263,35 @@ const TaskToolAgentArgsSchema = z
       });
       return;
     }
+
+    if (args.n != null && args.variants != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "n and variants are mutually exclusive",
+        path: ["variants"],
+      });
+    }
+
+    if (args.variants == null) {
+      return;
+    }
+
+    const uniqueVariants = new Set(args.variants);
+    if (uniqueVariants.size !== args.variants.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "variants must be unique",
+        path: ["variants"],
+      });
+    }
+
+    if (!args.prompt.includes(TASK_VARIANT_PLACEHOLDER)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `prompt must reference ${TASK_VARIANT_PLACEHOLDER} when variants are provided`,
+        path: ["prompt"],
+      });
+    }
   });
 
 export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
@@ -265,6 +300,8 @@ const TaskToolSpawnedTaskSchema = z
   .object({
     taskId: z.string(),
     status: z.enum(["queued", "running", "completed", "interrupted"]),
+    groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
+    label: z.string().optional(),
   })
   .strict();
 
@@ -275,6 +312,8 @@ const TaskToolCompletedReportSchema = z
     title: z.string().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
+    groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
+    label: z.string().optional(),
   })
   .strict();
 
@@ -299,7 +338,7 @@ export const TaskToolQueuedResultSchema = z
     if (!hasSingleTaskId && !hasTaskIds && !hasTasks) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Provide taskId for single-task results or taskIds/tasks for best-of results",
+        message: "Provide taskId for single-task results or taskIds/tasks for grouped task results",
         path: ["taskId"],
       });
     }
@@ -334,7 +373,7 @@ export const TaskToolCompletedResultSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "Provide taskId/reportMarkdown for single-task results or reports for best-of results",
+          "Provide taskId/reportMarkdown for single-task results or reports for grouped task results",
         path: ["reports"],
       });
     }

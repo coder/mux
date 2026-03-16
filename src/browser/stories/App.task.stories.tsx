@@ -337,6 +337,79 @@ export const BestOfTaskGroup: Story = {
 };
 
 /**
+ * Variants task card: grouped siblings show labels instead of candidate numbers.
+ */
+export const VariantTaskGroup: Story = {
+  render: () => {
+    const client = createMockORPCClient();
+
+    return (
+      <TaskStoryFrame client={client}>
+        <TaskToolCall
+          workspaceId="ws-variants"
+          args={{
+            subagent_type: "explore",
+            prompt: "Review ${variant} for regressions",
+            title: "Split review",
+            run_in_background: false,
+            variants: ["frontend", "backend", "tests"],
+          }}
+          result={{
+            status: "completed",
+            taskIds: ["task-variant-1", "task-variant-2", "task-variant-3"],
+            reports: [
+              {
+                taskId: "task-variant-1",
+                title: "Split review",
+                agentId: "explore",
+                agentType: "explore",
+                groupKind: "variants",
+                label: "frontend",
+                reportMarkdown: "Found one **frontend** regression risk.",
+              },
+              {
+                taskId: "task-variant-2",
+                title: "Split review",
+                agentId: "explore",
+                agentType: "explore",
+                groupKind: "variants",
+                label: "backend",
+                reportMarkdown: "Found two **backend** cleanup opportunities.",
+              },
+              {
+                taskId: "task-variant-3",
+                title: "Split review",
+                agentId: "explore",
+                agentType: "explore",
+                groupKind: "variants",
+                label: "tests",
+                reportMarkdown: "Found one **test coverage** gap.",
+              },
+            ],
+          }}
+          status="completed"
+        />
+      </TaskStoryFrame>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toolHeader = await canvas.findByText("task", { selector: "span" });
+    await userEvent.click(toolHeader);
+
+    await waitFor(() => {
+      const text = canvasElement.textContent ?? "";
+      if (!text.includes("Variants · Split review")) {
+        throw new Error("Expected grouped variants task header to be rendered");
+      }
+      if (!text.includes("frontend") || !text.includes("tests")) {
+        throw new Error("Expected variant labels to be rendered");
+      }
+    });
+  },
+};
+
+/**
  * Completed task with transcript viewer support.
  */
 export const TaskTranscriptViewer: Story = {

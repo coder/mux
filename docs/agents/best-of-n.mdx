@@ -25,6 +25,14 @@ It tends to help most when the first plausible answer is often incomplete.
 - **Code review**: broader coverage of correctness, tests, design, and edge cases
 - **Production metrics**: several competing explanations for an anomaly
 
+## When to use variants instead
+
+Best of N is for **multiple attempts at the same task**.
+
+If you want sibling sub-agents to cover **different named slices** — for example `frontend`,
+`backend`, `tests`, or a list of specific commits — use the task tool's `variants` parameter instead.
+When you do, include `${variant}` in the prompt so each child receives its own substituted label.
+
 <Note>
   Start with `best of 3` or `best of 5`. Larger batches cost more and take longer, but can pay off
   on high-stakes or unusually open-ended problems.

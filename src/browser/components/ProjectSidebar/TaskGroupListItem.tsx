@@ -1,10 +1,16 @@
 import { ChevronRight, Layers3 } from "lucide-react";
 
 import { cn } from "@/common/lib/utils";
+import {
+  formatTaskGroupHeader,
+  formatTaskGroupItemsLabel,
+  type TaskGroupKind,
+} from "@/common/utils/tools/taskGroups";
 
-interface BestOfGroupListItemProps {
+interface TaskGroupListItemProps {
   groupId: string;
   title: string;
+  kind: TaskGroupKind;
   depth: number;
   totalCount: number;
   visibleCount: number;
@@ -21,7 +27,7 @@ function getItemPaddingLeft(depth: number): number {
   return 12 + Math.min(32, Math.max(0, depth)) * 12;
 }
 
-export function BestOfGroupListItem(props: BestOfGroupListItemProps) {
+export function TaskGroupListItem(props: TaskGroupListItemProps) {
   const paddingLeft = getItemPaddingLeft(props.depth);
   const statusParts: string[] = [];
   if (props.runningCount > 0) {
@@ -45,8 +51,8 @@ export function BestOfGroupListItem(props: BestOfGroupListItemProps) {
       role="button"
       tabIndex={0}
       aria-expanded={props.isExpanded}
-      aria-label={`${props.isExpanded ? "Collapse" : "Expand"} best-of group ${props.title}`}
-      data-testid={`best-of-group-${props.groupId}`}
+      aria-label={`${props.isExpanded ? "Collapse" : "Expand"} task group ${props.title}`}
+      data-testid={`task-group-${props.groupId}`}
       className={cn(
         "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 pl-1 select-none transition-all duration-150 hover:bg-surface-secondary",
         props.isSelected && "bg-surface-secondary"
@@ -77,7 +83,7 @@ export function BestOfGroupListItem(props: BestOfGroupListItemProps) {
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
           <span className="text-foreground min-w-0 truncate text-left text-[14px] leading-6">
-            Best of {props.totalCount} · {props.title}
+            {formatTaskGroupHeader(props.kind, props.totalCount, props.title)}
           </span>
           <span className="text-muted text-[11px]">
             {props.completedCount}/{props.totalCount}
@@ -87,7 +93,9 @@ export function BestOfGroupListItem(props: BestOfGroupListItemProps) {
           {statusParts.length > 0 ? (
             statusParts.map((part) => <span key={part}>{part}</span>)
           ) : (
-            <span>{props.totalCount} candidates</span>
+            <span>
+              {props.totalCount} {formatTaskGroupItemsLabel(props.kind).toLowerCase()}
+            </span>
           )}
         </div>
       </div>

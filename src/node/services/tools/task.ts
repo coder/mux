@@ -15,6 +15,7 @@ import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 
+import { buildTaskGroupLaunches, type TaskGroupKind } from "@/common/utils/tools/taskGroups";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -46,11 +47,15 @@ function buildTaskDescription(config: ToolConfiguration): string {
 interface SpawnedTaskInfo {
   taskId: string;
   status: "queued" | "running";
+  groupKind?: TaskGroupKind;
+  label?: string;
 }
 
 interface PendingTaskInfo {
   taskId: string;
   status: "queued" | "running" | "completed" | "interrupted";
+  groupKind?: TaskGroupKind;
+  label?: string;
 }
 
 interface CompletedTaskInfo {
@@ -59,6 +64,8 @@ interface CompletedTaskInfo {
   title?: string;
   agentId: string;
   agentType: string;
+  groupKind?: TaskGroupKind;
+  label?: string;
 }
 
 type ForegroundWaitOutcome =
@@ -69,8 +76,8 @@ type ForegroundWaitOutcome =
   | { kind: "task_interrupted" }
   | { kind: "error"; error: unknown };
 
-function buildBestOfGroupId(workspaceId: string, toolCallId: string | undefined): string {
-  return `best-of:${workspaceId}:${toolCallId ?? randomUUID()}`;
+function buildTaskGroupId(workspaceId: string, toolCallId: string | undefined): string {
+  return `task-group:${workspaceId}:${toolCallId ?? randomUUID()}`;
 }
 
 function emitTaskCreatedEvent(params: {
@@ -105,6 +112,8 @@ function serializeCompletedReport(report: CompletedTaskInfo) {
     title: report.title,
     agentId: report.agentId,
     agentType: report.agentType,
+    groupKind: report.groupKind,
+    label: report.label,
   };
 }
 
@@ -163,7 +172,12 @@ function buildPendingTaskResult(params: {
   return {
     status,
     taskIds: params.tasks.map((task) => task.taskId),
-    tasks: params.tasks.map((task) => ({ taskId: task.taskId, status: task.status })),
+    tasks: params.tasks.map((task) => ({
+      taskId: task.taskId,
+      status: task.status,
+      groupKind: task.groupKind,
+      label: task.label,
+    })),
     note: params.note,
     ...(serializedReports ? { reports: serializedReports } : {}),
   };
@@ -203,6 +217,8 @@ function normalizePendingTaskStatuses(params: {
       return {
         taskId: createdTask.taskId,
         status: "completed",
+        groupKind: createdTask.groupKind,
+        label: createdTask.label,
       };
     }
 
@@ -216,6 +232,8 @@ function normalizePendingTaskStatuses(params: {
           : currentStatus === "interrupted"
             ? "interrupted"
             : "running",
+      groupKind: createdTask.groupKind,
+      label: createdTask.label,
     };
   });
 }
@@ -245,7 +263,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("Interrupted");
       }
 
-      const { agentId, subagent_type, prompt, title, run_in_background, n } = validatedArgs;
+      const { agentId, subagent_type, prompt, title, run_in_background, n, variants } =
+        validatedArgs;
       const requestedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0 ? agentId : subagent_type;
       if (!requestedAgentId) {
@@ -254,9 +273,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
 
       const workspaceId = requireWorkspaceId(config, "task");
       const taskService = requireTaskService(config, "task");
-      const bestOfCount = n ?? 1;
-      const bestOfGroupId =
-        bestOfCount > 1 ? buildBestOfGroupId(workspaceId, toolCallId) : undefined;
+      const taskGroupLaunches = buildTaskGroupLaunches({ prompt, n, variants });
+      const taskGroupCount = taskGroupLaunches.length;
+      const taskGroupId =
+        taskGroupCount > 1 ? buildTaskGroupId(workspaceId, toolCallId) : undefined;
 
       // Nested task spawning is allowed and enforced via maxTaskNestingDepth in TaskService
       // (and by tool policy at/over the depth limit).
@@ -273,7 +293,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const thinkingLevel = coerceThinkingLevel(config.muxEnv?.MUX_THINKING_LEVEL);
 
       const createdTasks: SpawnedTaskInfo[] = [];
-      for (let index = 0; index < bestOfCount; index += 1) {
+      for (const launch of taskGroupLaunches) {
         if (abortSignal?.aborted) {
           throw new Error("Interrupted");
         }
@@ -284,17 +304,19 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           agentId: requestedAgentId,
           // Legacy alias (persisted for older clients / on-disk compatibility).
           agentType: requestedAgentId,
-          prompt,
+          prompt: launch.prompt,
           title,
           modelString,
           thinkingLevel,
           experiments: config.experiments,
           bestOf:
-            bestOfGroupId != null
+            taskGroupId != null
               ? {
-                  groupId: bestOfGroupId,
-                  index,
-                  total: bestOfCount,
+                  groupId: taskGroupId,
+                  index: launch.index,
+                  total: launch.total,
+                  kind: launch.kind,
+                  ...(launch.label ? { label: launch.label } : {}),
                 }
               : undefined,
         });
@@ -306,9 +328,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
               buildPendingTaskResult({
                 tasks: createdTasks,
                 note:
-                  `Best-of task creation stopped after spawning ${createdTasks.length} of ${bestOfCount} candidate(s): ${created.error}. ` +
+                  `Grouped task creation stopped after spawning ${createdTasks.length} of ${taskGroupCount} task(s): ${created.error}. ` +
                   "Use task_await on the returned task metadata before retrying, or you may duplicate work.",
-                forceGrouped: bestOfCount > 1,
+                forceGrouped: taskGroupCount > 1,
               }),
               "task"
             );
@@ -320,6 +342,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         const task = {
           taskId: created.data.taskId,
           status: created.data.status,
+          ...(taskGroupCount > 1 || launch.label
+            ? { groupKind: launch.kind, ...(launch.label ? { label: launch.label } : {}) }
+            : {}),
         } satisfies SpawnedTaskInfo;
         createdTasks.push(task);
 
@@ -338,7 +363,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           buildPendingTaskResult({
             tasks: createdTasks,
             note: buildBackgroundStartNote(createdTasks.length),
-            forceGrouped: bestOfCount > 1,
+            forceGrouped: taskGroupCount > 1,
           }),
           "task"
         );
@@ -361,6 +386,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
                 title: report.title,
                 agentId: requestedAgentId,
                 agentType: requestedAgentId,
+                groupKind: createdTask.groupKind,
+                label: createdTask.label,
               } satisfies CompletedTaskInfo,
             };
           } catch (error: unknown) {
@@ -426,7 +453,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
                   createdTasks.length,
                   wasBackgrounded ? "backgrounded" : "timed_out"
                 ),
-            forceGrouped: bestOfCount > 1,
+            forceGrouped: taskGroupCount > 1,
           }),
           "task"
         );

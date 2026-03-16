@@ -21,7 +21,7 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
-  it("defaults n to 1 for task tool calls when omitted", () => {
+  it("leaves n unset for task tool calls when omitted", () => {
     const parsed = TaskToolArgsSchema.safeParse({
       subagent_type: "explore",
       prompt: "do the thing",
@@ -30,7 +30,8 @@ describe("TOOL_DEFINITIONS", () => {
 
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.n).toBe(1);
+      expect(parsed.data.n).toBeUndefined();
+      expect(parsed.data.variants).toBeUndefined();
     }
   });
 
@@ -59,6 +60,54 @@ describe("TOOL_DEFINITIONS", () => {
         prompt: "do the thing",
         title: "Test",
         n: 21,
+      }).success
+    ).toBe(false);
+  });
+
+  it("accepts variants when the prompt references ${variant}", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      subagent_type: "explore",
+      prompt: "Review ${variant} for regressions",
+      title: "Split review",
+      variants: ["frontend", "backend"],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.variants).toEqual(["frontend", "backend"]);
+    }
+  });
+
+  it("rejects variants when the prompt does not reference ${variant}", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "Review the codebase for regressions",
+        title: "Split review",
+        variants: ["frontend", "backend"],
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects variants when n is also provided", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "Review ${variant} for regressions",
+        title: "Split review",
+        n: 2,
+        variants: ["frontend", "backend"],
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects duplicate variants after trimming", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "Review ${variant} for regressions",
+        title: "Split review",
+        variants: ["frontend", " frontend "],
       }).success
     ).toBe(false);
   });

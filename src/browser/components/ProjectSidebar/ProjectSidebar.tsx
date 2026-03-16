@@ -62,7 +62,7 @@ import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModa
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 import { AgentListItem, type WorkspaceSelection } from "../AgentListItem/AgentListItem";
-import { BestOfGroupListItem } from "./BestOfGroupListItem";
+import { TaskGroupListItem } from "./TaskGroupListItem";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
@@ -85,6 +85,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
+import { getTaskGroupKindFromMetadata } from "@/common/utils/tools/taskGroups";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -1642,8 +1643,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     skippedWorkspaceIds.add(member.id);
                                   }
 
-                                  const allMembers =
-                                    allMembersByGroupId.get(bestOfGroupId) ?? visibleMembers;
+                                  const sortTaskGroupMembers = (
+                                    members: FrontendWorkspaceMetadata[]
+                                  ): FrontendWorkspaceMetadata[] => {
+                                    return [...members].sort(
+                                      (left, right) =>
+                                        (left.bestOf?.index ?? Number.MAX_SAFE_INTEGER) -
+                                          (right.bestOf?.index ?? Number.MAX_SAFE_INTEGER) ||
+                                        left.id.localeCompare(right.id)
+                                    );
+                                  };
+                                  const allMembers = sortTaskGroupMembers(
+                                    allMembersByGroupId.get(bestOfGroupId) ?? visibleMembers
+                                  );
+                                  const sortedVisibleMembers = sortTaskGroupMembers(visibleMembers);
                                   const depth =
                                     rowMetaByWorkspaceId.get(workspace.id)?.depth ??
                                     depthByWorkspaceId[workspace.id] ??
@@ -1651,6 +1664,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   const totalCount = Math.max(
                                     allMembers[0]?.bestOf?.total ?? allMembers.length,
                                     allMembers.length
+                                  );
+                                  const groupKind = getTaskGroupKindFromMetadata(
+                                    allMembers[0]?.bestOf
                                   );
                                   let completedCount = 0;
                                   let runningCount = 0;
@@ -1682,13 +1698,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   const isExpanded = expandedBestOfGroups[bestOfGroupId] ?? false;
 
                                   renderedRows.push(
-                                    <BestOfGroupListItem
-                                      key={`best-of-group:${bestOfGroupId}`}
+                                    <TaskGroupListItem
+                                      key={`task-group:${bestOfGroupId}`}
                                       groupId={bestOfGroupId}
                                       title={groupTitle}
+                                      kind={groupKind}
                                       depth={depth}
                                       totalCount={totalCount}
-                                      visibleCount={visibleMembers.length}
+                                      visibleCount={sortedVisibleMembers.length}
                                       completedCount={completedCount}
                                       runningCount={runningCount}
                                       queuedCount={queuedCount}
@@ -1704,14 +1721,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   );
 
                                   if (isExpanded) {
-                                    for (const member of visibleMembers) {
+                                    for (const member of sortedVisibleMembers) {
                                       renderedRows.push(
                                         renderWorkspace(
                                           member,
                                           sectionId,
                                           null,
                                           depth + 1,
-                                          `best-of-member:${bestOfGroupId}:${member.id}`
+                                          `task-group-member:${bestOfGroupId}:${member.id}`
                                         )
                                       );
                                     }

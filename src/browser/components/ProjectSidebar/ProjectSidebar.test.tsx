@@ -259,6 +259,11 @@ function installProjectSidebarTestDoubles() {
       (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
       (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
 
+    const displayTitle =
+      props.metadata.bestOf?.kind === "variants" && props.metadata.bestOf.label
+        ? `${props.metadata.bestOf.label} · ${props.metadata.title ?? props.metadata.name}`
+        : (props.metadata.title ?? props.metadata.name);
+
     return (
       <div
         data-testid={agentItemTestId(props.metadata.id)}
@@ -266,7 +271,7 @@ function installProjectSidebarTestDoubles() {
         data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
         data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
       >
-        <span>{props.metadata.title ?? props.metadata.name}</span>
+        <span>{displayTitle}</span>
         {hasCompletedChildren && props.onToggleCompletedChildren ? (
           <button
             type="button"
@@ -494,7 +499,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     );
 
     expect(view.getByTestId(agentItemTestId("parent"))).toBeTruthy();
-    const groupRow = view.getByTestId("best-of-group-best-of-demo");
+    const groupRow = view.getByTestId("task-group-best-of-demo");
     expect(groupRow.textContent).toContain("Best of 3");
     expect(view.queryByTestId(agentItemTestId("child-1"))).toBeNull();
     expect(view.queryByTestId(agentItemTestId("child-2"))).toBeNull();
@@ -506,6 +511,111 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       expect(view.getByTestId(agentItemTestId("child-1"))).toBeTruthy();
       expect(view.getByTestId(agentItemTestId("child-2"))).toBeTruthy();
       expect(view.getByTestId(agentItemTestId("child-3"))).toBeTruthy();
+    });
+  });
+
+  test("renders variants groups with a shared row and labeled members when expanded", async () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const taskGroup = {
+      groupId: "variants-demo",
+      index: 0,
+      total: 2,
+      kind: "variants",
+      label: "frontend",
+    } as const;
+    const childOne = {
+      ...createWorkspace("child-1", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Split review",
+        bestOf: taskGroup,
+      }),
+      projects: singleProjectRefs,
+    };
+    const childTwo = {
+      ...createWorkspace("child-2", {
+        parentWorkspaceId: "parent",
+        taskStatus: "queued",
+        title: "Split review",
+        bestOf: { ...taskGroup, index: 1, label: "backend" },
+      }),
+      projects: singleProjectRefs,
+    };
+
+    const sortedWorkspacesByProject = new Map([
+      ["/projects/demo-project", [parentWorkspace, childOne, childTwo]],
+    ]);
+
+    const projectConfig = { workspaces: [] };
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => ({
+      userProjects: new Map([["/projects/demo-project", projectConfig]]),
+      systemProjectPath: null,
+      resolveProjectPath: () => null,
+      getProjectConfig: () => projectConfig,
+      loading: false,
+      refreshProjects: () => Promise.resolve(),
+      addProject: () => undefined,
+      removeProject: () => Promise.resolve({ success: true }),
+      isProjectCreateModalOpen: false,
+      openProjectCreateModal: () => undefined,
+      closeProjectCreateModal: () => undefined,
+      workspaceModalState: {
+        isOpen: false,
+        projectPath: null,
+        projectName: "",
+        branches: [],
+        defaultTrunkBranch: undefined,
+        loadErrorMessage: null,
+        isLoading: false,
+      },
+      openWorkspaceModal: () => Promise.resolve(),
+      closeWorkspaceModal: () => undefined,
+      getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+      getSecrets: () => Promise.resolve([]),
+      updateSecrets: () => Promise.resolve(),
+      createSection: () =>
+        Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
+      updateSection: () => resolveVoidResult(),
+      removeSection: () => resolveVoidResult(),
+      reorderSections: () => resolveVoidResult(),
+      assignWorkspaceToSection: () => resolveVoidResult(),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    }));
+
+    const workspaceRecency = {
+      parent: Date.now(),
+      "child-1": Date.now(),
+      "child-2": Date.now(),
+    };
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        workspaceRecency={workspaceRecency}
+      />
+    );
+
+    const groupRow = view.getByTestId("task-group-variants-demo");
+    expect(groupRow.textContent).toContain("Variants · Split review");
+    expect(view.queryByTestId(agentItemTestId("child-1"))).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("child-2"))).toBeNull();
+
+    fireEvent.click(groupRow);
+
+    await waitFor(() => {
+      expect(view.getByText("frontend · Split review")).toBeTruthy();
+      expect(view.getByText("backend · Split review")).toBeTruthy();
     });
   });
 
@@ -604,7 +714,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       />
     );
 
-    expect(view.queryByTestId("best-of-group-best-of-non-leaf")).toBeNull();
+    expect(view.queryByTestId("task-group-best-of-non-leaf")).toBeNull();
     expect(view.getByTestId(agentItemTestId("child-1"))).toBeTruthy();
     expect(view.getByTestId(agentItemTestId("child-2"))).toBeTruthy();
     expect(view.queryByTestId(agentItemTestId("grandchild-1"))).toBeNull();

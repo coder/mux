@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { TASK_GROUP_KIND, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 
 export const ProjectRefSchema = z.object({
   projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
@@ -13,13 +14,20 @@ export const ProjectRefSchema = z.object({
 export const BestOfGroupSchema = z.object({
   groupId: z.string().meta({
     description:
-      "Stable identifier shared by sibling task workspaces spawned from the same best-of-n request.",
+      "Stable identifier shared by sibling task workspaces spawned from the same grouped task request.",
   }),
   index: z.number().int().min(0).meta({
-    description: "Zero-based candidate index within the best-of group.",
+    description: "Zero-based sibling index within the grouped task request.",
   }),
   total: z.number().int().min(2).meta({
-    description: "Total number of candidates spawned in the best-of group.",
+    description: "Total number of sibling tasks spawned in the grouped task request.",
+  }),
+  kind: z.enum(TASK_GROUP_KIND_VALUES).default(TASK_GROUP_KIND.BEST_OF).meta({
+    description:
+      'Grouped task mode ("bestOf" for repeated candidates or "variants" for labeled siblings).',
+  }),
+  label: z.string().min(1).optional().meta({
+    description: "Optional per-sibling label for grouped task variants.",
   }),
 });
 
@@ -66,8 +74,7 @@ export const WorkspaceMetadataSchema = z.object({
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
   bestOf: BestOfGroupSchema.optional().meta({
-    description:
-      "Grouping metadata for best-of-n child tasks spawned from the same parent tool call.",
+    description: "Grouping metadata for child tasks spawned from the same parent tool call.",
   }),
   taskStatus: z
     .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])

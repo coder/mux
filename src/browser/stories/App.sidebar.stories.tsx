@@ -284,14 +284,14 @@ export const BestOfSubagents: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     await waitFor(() => {
-      const groupRow = canvasElement.querySelector('[data-testid="best-of-group-best-of-story"]');
+      const groupRow = canvasElement.querySelector('[data-testid="task-group-best-of-story"]');
       if (!groupRow) {
         throw new Error("Best-of sidebar group row not rendered");
       }
     });
 
     const groupRow = canvasElement.querySelector<HTMLElement>(
-      '[data-testid="best-of-group-best-of-story"]'
+      '[data-testid="task-group-best-of-story"]'
     );
     if (!groupRow) {
       throw new Error("Best-of sidebar group row not found");
@@ -302,6 +302,83 @@ export const BestOfSubagents: AppStory = {
       const member = canvasElement.querySelector('[data-workspace-id="ws-best-of-1"]');
       if (!member) {
         throw new Error("Expanded best-of member row not rendered");
+      }
+    });
+  },
+};
+
+/**
+ * Variant sub-agents reuse the grouped sidebar row but show a variants label.
+ */
+export const VariantSubagents: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/variants-demo";
+        const parent = createWorkspace({
+          id: "ws-parent-variants",
+          name: "main",
+          title: "Main workspace",
+          projectName: "variants-demo",
+          projectPath,
+        });
+        const taskGroupBase = {
+          groupId: "variants-story",
+          index: 0,
+          total: 3,
+          kind: "variants",
+          label: "frontend",
+        } as const;
+        const workspaces = [
+          parent,
+          createWorkspace({
+            id: "ws-variant-1",
+            name: "variant-1",
+            title: "Split review",
+            projectName: "variants-demo",
+            projectPath,
+            bestOf: taskGroupBase,
+          }),
+          createWorkspace({
+            id: "ws-variant-2",
+            name: "variant-2",
+            title: "Split review",
+            projectName: "variants-demo",
+            projectPath,
+            bestOf: { ...taskGroupBase, index: 1, label: "backend" },
+          }),
+          createWorkspace({
+            id: "ws-variant-3",
+            name: "variant-3",
+            title: "Split review",
+            projectName: "variants-demo",
+            projectPath,
+            bestOf: { ...taskGroupBase, index: 2, label: "tests" },
+          }),
+        ].map((workspace, index) =>
+          index === 0
+            ? workspace
+            : {
+                ...workspace,
+                parentWorkspaceId: parent.id,
+                taskStatus: index % 2 === 0 ? ("queued" as const) : ("running" as const),
+              }
+        );
+
+        expandProjects([projectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      const groupRow = canvasElement.querySelector('[data-testid="task-group-variants-story"]');
+      if (!groupRow) {
+        throw new Error("Variants sidebar group row not rendered");
       }
     });
   },

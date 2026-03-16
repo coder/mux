@@ -31,6 +31,13 @@ import {
   findWorkspaceEntry,
 } from "@/node/services/taskUtils";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import {
+  TASK_GROUP_KIND,
+  getTaskGroupCount,
+  normalizeTaskGroupKind,
+  normalizeTaskGroupLabel,
+  type TaskGroupKind,
+} from "@/common/utils/tools/taskGroups";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { Ok, Err, type Result } from "@/common/types/result";
 import {
@@ -99,11 +106,13 @@ export interface TaskCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
-  /** Shared best-of grouping metadata when one tool call spawns multiple sibling tasks. */
+  /** Shared grouping metadata when one tool call spawns multiple sibling tasks. */
   bestOf?: {
     groupId: string;
     index: number;
     total: number;
+    kind?: TaskGroupKind;
+    label?: string;
   };
   /** Experiments to inherit to subagent */
   experiments?: {
@@ -1103,10 +1112,22 @@ export class TaskService {
       if (bestOf.index >= bestOf.total) {
         return Err("Task.create: bestOf.index must be less than bestOf.total");
       }
+
+      const kind = normalizeTaskGroupKind(bestOf.kind);
+      const label = normalizeTaskGroupLabel(bestOf.label);
+      if (kind === TASK_GROUP_KIND.VARIANTS && !label) {
+        return Err("Task.create: bestOf.label is required when bestOf.kind is variants");
+      }
+      if (kind !== TASK_GROUP_KIND.VARIANTS && label) {
+        return Err("Task.create: bestOf.label is only allowed when bestOf.kind is variants");
+      }
+
       normalizedBestOf = {
         groupId,
         index: bestOf.index,
         total: bestOf.total,
+        kind,
+        ...(label ? { label } : {}),
       };
     }
 
@@ -3608,7 +3629,7 @@ export class TaskService {
       return null;
     }
 
-    const requestedTotal = parsedInput.data.n ?? 1;
+    const requestedTotal = getTaskGroupCount(parsedInput.data);
     if (requestedTotal <= 1) {
       return null;
     }
@@ -4126,6 +4147,8 @@ export class TaskService {
     index: number;
     agentId?: string;
     agentType?: string;
+    kind: TaskGroupKind;
+    label?: string;
     taskStatus?: WorkspaceConfigEntry["taskStatus"];
   }> {
     const cfg = this.config.loadConfigOrDefault();
@@ -4134,6 +4157,8 @@ export class TaskService {
       index: number;
       agentId?: string;
       agentType?: string;
+      kind: TaskGroupKind;
+      label?: string;
       taskStatus?: WorkspaceConfigEntry["taskStatus"];
     }> = [];
 
@@ -4158,6 +4183,10 @@ export class TaskService {
           index: workspace.bestOf.index,
           agentId: coerceNonEmptyString(workspace.agentId),
           agentType: coerceNonEmptyString(workspace.agentType),
+          kind: normalizeTaskGroupKind(workspace.bestOf.kind),
+          ...(normalizeTaskGroupLabel(workspace.bestOf.label)
+            ? { label: normalizeTaskGroupLabel(workspace.bestOf.label) }
+            : {}),
           taskStatus: workspace.taskStatus,
         });
       }
@@ -4201,6 +4230,8 @@ export class TaskService {
       title?: string;
       agentId?: string;
       agentType?: string;
+      groupKind?: TaskGroupKind;
+      label?: string;
     }> = [];
 
     for (const sibling of siblings) {
@@ -4215,6 +4246,8 @@ export class TaskService {
         title: artifact.title,
         agentId: sibling.agentId,
         agentType: sibling.agentType,
+        groupKind: sibling.kind,
+        label: sibling.label,
       });
     }
 
@@ -4261,7 +4294,7 @@ export class TaskService {
       if (part.state === "input-available") {
         pendingTaskToolCount += 1;
         const parsedInput = TaskToolArgsSchema.safeParse(part.input);
-        if (parsedInput.success && (parsedInput.data.n ?? 1) > 1) {
+        if (parsedInput.success && getTaskGroupCount(parsedInput.data) > 1) {
           pendingBestOfTaskToolCount += 1;
         }
         continue;
@@ -4525,7 +4558,7 @@ export class TaskService {
     }
 
     let finalizedOutput: z.infer<typeof TaskToolResultSchema> = parsedOutput.data;
-    if ((parsedInput.data.n ?? 1) > 1) {
+    if (getTaskGroupCount(parsedInput.data) > 1) {
       const hasGroupedCompletedOutput =
         Array.isArray(parsedOutput.data.taskIds) &&
         "reports" in parsedOutput.data &&

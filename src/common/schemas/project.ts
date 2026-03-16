@@ -69,8 +69,7 @@ export const WorkspaceConfigSchema = z.object({
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
   bestOf: BestOfGroupSchema.optional().meta({
-    description:
-      "Grouping metadata for best-of-n child tasks spawned from the same parent tool call.",
+    description: "Grouping metadata for child tasks spawned from the same parent tool call.",
   }),
   taskStatus: z
     .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])

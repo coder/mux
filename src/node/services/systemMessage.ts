@@ -4,6 +4,11 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { MCPServerMap } from "@/common/types/mcp";
 import type { RuntimeMode } from "@/common/types/runtime";
 import { RUNTIME_MODE } from "@/common/types/runtime";
+import {
+  TASK_GROUP_KIND,
+  getTaskGroupKindFromMetadata,
+  normalizeTaskGroupLabel,
+} from "@/common/utils/tools/taskGroups";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
   readInstructionSet,
@@ -163,13 +168,20 @@ function buildEnvironmentContext(
   }
 
   if (bestOf && bestOf.total > 1) {
-    // Best-of child workspaces need explicit grounding so they produce one candidate attempt
-    // instead of recursively asking their own child to run another best-of batch.
-    lines = [
-      ...lines,
-      `- This workspace is candidate ${bestOf.index + 1} of ${bestOf.total} in a best-of-n batch`,
-      "- Complete only this candidate; do not start another best-of-n batch unless explicitly requested",
-    ];
+    // Grouped child workspaces need explicit grounding so they complete their assigned slice
+    // instead of recursively asking their own child to run another grouped batch.
+    const groupKind = getTaskGroupKindFromMetadata(bestOf);
+    const variantLabel = normalizeTaskGroupLabel(bestOf.label);
+    const workspaceGroupDescription =
+      groupKind === TASK_GROUP_KIND.VARIANTS && variantLabel
+        ? `variant ${JSON.stringify(variantLabel)} (candidate ${bestOf.index + 1} of ${bestOf.total}) in a grouped task batch`
+        : `candidate ${bestOf.index + 1} of ${bestOf.total} in a best-of-n batch`;
+    const completionInstruction =
+      groupKind === TASK_GROUP_KIND.VARIANTS && variantLabel
+        ? "- Complete only this variant; do not start another grouped task batch unless explicitly requested"
+        : "- Complete only this candidate; do not start another best-of-n batch unless explicitly requested";
+
+    lines = [...lines, `- This workspace is ${workspaceGroupDescription}`, completionInstruction];
   }
 
   return `

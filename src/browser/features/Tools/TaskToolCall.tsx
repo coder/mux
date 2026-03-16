@@ -42,6 +42,18 @@ import type {
 } from "@/common/types/tools";
 import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { formatGitPatchArtifactSummary } from "./taskPatchSummary";
+import {
+  formatTaskGroupCreationLabel,
+  formatTaskGroupHeader,
+  formatTaskGroupItemsLabel,
+  formatTaskGroupMemberLabel,
+  formatTaskGroupSummary,
+  getTaskGroupCount,
+  getTaskGroupKindFromArgs,
+  getTaskGroupKindFromMetadata,
+  normalizeTaskGroupLabel,
+  type TaskGroupKind,
+} from "@/common/utils/tools/taskGroups";
 
 /**
  * Clean SVG icon for task tools - represents spawning/branching work
@@ -297,11 +309,15 @@ interface TaskToolDisplayEntry {
   status: string;
   title?: string;
   reportMarkdown?: string;
+  groupKind?: TaskGroupKind;
+  label?: string;
 }
 
 interface TaskToolOwnReport {
   reportMarkdown: string;
   title?: string;
+  groupKind?: TaskGroupKind;
+  label?: string;
 }
 
 function hasNonEmptyText(value: unknown): value is string {
@@ -322,6 +338,8 @@ interface TaskToolWorkspaceEntry {
   status?: string;
   title?: string;
   createdAtMs?: number;
+  groupKind?: TaskGroupKind;
+  label?: string;
 }
 
 function normalizeTaskAgent(value: string | undefined): string | null {
@@ -383,13 +401,14 @@ function mergeTaskIdsInDisplayOrder(taskIdLists: ReadonlyArray<readonly string[]
 }
 
 // task-created events are intentionally ephemeral UI hints. If the parent workspace
-// is opened after those events were missed, recover the current best-of candidates
+// is opened after those events were missed, recover the current grouped child tasks
 // from child workspace metadata when the matching group is unambiguous.
-function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
+function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
   workspaceId: string | undefined;
   requestedAgentType: string;
   requestedTitle: string | undefined;
   requestedCandidateCount: number;
+  requestedGroupKind: TaskGroupKind;
   knownTaskIds: readonly string[];
   toolStartedAt: number | undefined;
   workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
@@ -407,6 +426,9 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
       continue;
     }
     if (metadata.bestOf?.total !== params.requestedCandidateCount) {
+      continue;
+    }
+    if (getTaskGroupKindFromMetadata(metadata.bestOf) !== params.requestedGroupKind) {
       continue;
     }
     if (requestedAgentType) {
@@ -432,6 +454,8 @@ function recoverBestOfTaskIdsFromWorkspaceMetadata(params: {
       status: getTaskToolWorkspaceStatus(metadata.taskStatus),
       title: metadataTitle,
       createdAtMs: parseWorkspaceCreatedAtMs(metadata.createdAt),
+      groupKind: getTaskGroupKindFromMetadata(metadata.bestOf),
+      label: normalizeTaskGroupLabel(metadata.bestOf.label),
     });
     groupedCandidates.set(metadata.bestOf.groupId, candidates);
   }
@@ -490,15 +514,18 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
   taskIds: string[];
   statusByTaskId: Map<string, string>;
   ownReportsByTaskId: Map<string, TaskToolOwnReport>;
+  taskGroupsByTaskId: Map<string, { groupKind?: TaskGroupKind; label?: string }>;
 } {
   const taskIds = new Set<string>();
   const statusByTaskId = new Map<string, string>();
   const ownReportsByTaskId = new Map<string, TaskToolOwnReport>();
+  const taskGroupsByTaskId = new Map<string, { groupKind?: TaskGroupKind; label?: string }>();
   if (!result) {
     return {
       taskIds: [],
       statusByTaskId,
       ownReportsByTaskId,
+      taskGroupsByTaskId,
     };
   }
 
@@ -508,6 +535,20 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
       taskIds.add(normalizedTaskId);
     }
     return normalizedTaskId;
+  };
+
+  const rememberTaskGroup = (
+    taskId: string,
+    details: { groupKind?: TaskGroupKind; label?: string | null }
+  ): void => {
+    const label = normalizeTaskGroupLabel(details.label);
+    if (!details.groupKind && !label) {
+      return;
+    }
+    taskGroupsByTaskId.set(taskId, {
+      groupKind: details.groupKind,
+      ...(label ? { label } : {}),
+    });
   };
 
   const taskStatuses = "tasks" in result && Array.isArray(result.tasks) ? result.tasks : undefined;
@@ -530,6 +571,7 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
       const taskId = rememberTaskId(task.taskId);
       if (taskId) {
         statusByTaskId.set(taskId, task.status);
+        rememberTaskGroup(taskId, { groupKind: task.groupKind, label: task.label });
       }
     }
   }
@@ -541,7 +583,10 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
         ownReportsByTaskId.set(taskId, {
           reportMarkdown: report.reportMarkdown,
           title: report.title,
+          groupKind: report.groupKind,
+          label: normalizeTaskGroupLabel(report.label),
         });
+        rememberTaskGroup(taskId, { groupKind: report.groupKind, label: report.label });
       }
     }
   }
@@ -557,6 +602,7 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
     taskIds: Array.from(taskIds),
     statusByTaskId,
     ownReportsByTaskId,
+    taskGroupsByTaskId,
   };
 }
 
@@ -588,15 +634,21 @@ const TaskToolCandidateCard: React.FC<{
   entry: TaskToolDisplayEntry;
   index: number;
   total: number;
+  groupKind: TaskGroupKind;
   onOpenTranscript: (taskId: string) => void;
-}> = ({ entry, index, total, onOpenTranscript }) => {
+}> = ({ entry, index, total, groupKind, onOpenTranscript }) => {
   const canViewTranscript = entry.status === "completed";
   const hasReport = hasNonEmptyText(entry.reportMarkdown);
+  const memberLabel = formatTaskGroupMemberLabel({
+    kind: entry.groupKind ?? groupKind,
+    index,
+    label: entry.label,
+  });
 
   return (
     <div className="bg-code-bg rounded-sm p-2">
       <div className={cn("flex flex-wrap items-center gap-2", hasReport && "mb-2")}>
-        {total > 1 && <span className="text-muted text-[10px]">candidate {index + 1}</span>}
+        {total > 1 && <span className="text-muted text-[10px]">{memberLabel}</span>}
         <TaskId id={entry.taskId} />
         <TaskStatusBadge status={entry.status} />
         {entry.title && (
@@ -644,21 +696,24 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     taskIds: resultTaskIds,
     statusByTaskId,
     ownReportsByTaskId,
+    taskGroupsByTaskId,
   } = collectTaskToolResultDisplayData(successResult);
 
-  const requestedCandidateCount = args.n ?? 1;
+  const requestedTaskGroupCount = getTaskGroupCount(args);
+  const taskGroupKind = getTaskGroupKindFromArgs(args);
   const title = args.title ?? "Task";
   const prompt = args.prompt ?? "";
   const agentType = args.agentId ?? args.subagent_type ?? "unknown";
   const recoveredTaskIdsRef = useRef<string[]>([]);
-  // Keep the current best-of binding stable once a task call has matched concrete child IDs.
+  // Keep the current grouped-task binding stable once a task call has matched concrete child IDs.
   // This prevents a recovered group from disappearing when the last running child flips to
   // reported before the parent task tool call itself produces a result.
-  const recoveredWorkspaceEntries = recoverBestOfTaskIdsFromWorkspaceMetadata({
+  const recoveredWorkspaceEntries = recoverTaskGroupTaskIdsFromWorkspaceMetadata({
     workspaceId,
     requestedAgentType: agentType,
     requestedTitle: title,
-    requestedCandidateCount,
+    requestedCandidateCount: requestedTaskGroupCount,
+    requestedGroupKind: taskGroupKind,
     knownTaskIds: [...resultTaskIds, ...liveTaskIds, ...recoveredTaskIdsRef.current],
     toolStartedAt: startedAt,
     workspaceMetadata,
@@ -672,14 +727,14 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     liveTaskIds,
   ]);
 
-  const totalCandidateCount = Math.max(
+  const totalTaskGroupCount = Math.max(
     successResult && (resultTaskIds.length > 0 || ownReportsByTaskId.size > 0)
       ? 0
-      : requestedCandidateCount,
+      : requestedTaskGroupCount,
     taskIds.length,
     ownReportsByTaskId.size
   );
-  const isBestOf = totalCandidateCount > 1;
+  const isTaskGroup = totalTaskGroupCount > 1;
 
   const kindBadge = <AgentTypeBadge type={agentType} />;
   const isBackground = args.run_in_background;
@@ -688,6 +743,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     const ownReport = ownReportsByTaskId.get(taskId);
     const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
     const metadata = workspaceMetadata?.get(taskId);
+    const resultTaskGroup = taskGroupsByTaskId.get(taskId);
     const reportMarkdown = hasNonEmptyText(ownReport?.reportMarkdown)
       ? ownReport.reportMarkdown
       : linkedReport?.reportMarkdown;
@@ -703,10 +759,19 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         derivedStatus ?? (status === "executing" ? "running" : (successResult?.status ?? "queued")),
       title: reportTitle ?? getTaskToolWorkspaceTitle(metadata) ?? title,
       reportMarkdown,
+      groupKind:
+        ownReport?.groupKind ??
+        resultTaskGroup?.groupKind ??
+        (metadata?.bestOf ? getTaskGroupKindFromMetadata(metadata.bestOf) : undefined) ??
+        taskGroupKind,
+      label:
+        ownReport?.label ??
+        resultTaskGroup?.label ??
+        normalizeTaskGroupLabel(metadata?.bestOf?.label),
     };
   });
 
-  const completedCandidateCount = displayEntries.filter(
+  const completedTaskGroupCount = displayEntries.filter(
     (entry) => entry.status === "completed"
   ).length;
   const hasAnyReport = displayEntries.some((entry) => hasNonEmptyText(entry.reportMarkdown));
@@ -729,14 +794,16 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
 
   const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
-  const collapsedPreview = isBestOf ? `Best of ${totalCandidateCount} · ${preview}` : preview;
-  const singleEntry = !isBestOf ? displayEntries[0] : undefined;
-  const createdCandidateCount = taskIds.length;
+  const collapsedPreview = isTaskGroup
+    ? formatTaskGroupHeader(taskGroupKind, totalTaskGroupCount, preview)
+    : preview;
+  const singleEntry = !isTaskGroup ? displayEntries[0] : undefined;
+  const createdTaskGroupCount = taskIds.length;
   const shouldShowCreationProgress =
-    isBestOf &&
+    isTaskGroup &&
     !errorResult &&
     status === "executing" &&
-    createdCandidateCount < totalCandidateCount;
+    createdTaskGroupCount < totalTaskGroupCount;
 
   return (
     <ToolContainer expanded={expanded}>
@@ -745,7 +812,11 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         <TaskIcon toolName="task" />
         <ToolName>task</ToolName>
         {kindBadge}
-        {isBestOf && <span className="text-muted text-[10px]">best of {totalCandidateCount}</span>}
+        {isTaskGroup && (
+          <span className="text-muted text-[10px]">
+            {formatTaskGroupSummary(taskGroupKind, totalTaskGroupCount).toLowerCase()}
+          </span>
+        )}
         {isBackground && (
           <span className="text-backgrounded text-[10px] font-medium">background</span>
         )}
@@ -772,19 +843,21 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
           <div className="task-surface mt-1 rounded-md p-3">
             <div className="task-divider mb-2 flex flex-wrap items-center gap-2 border-b pb-2">
               <span className="text-task-mode text-[12px] font-semibold">
-                {isBestOf
-                  ? `Best of ${totalCandidateCount} · ${title}`
+                {isTaskGroup
+                  ? formatTaskGroupHeader(taskGroupKind, totalTaskGroupCount, title)
                   : (singleEntry?.title ?? title)}
               </span>
-              {isBestOf ? (
+              {isTaskGroup ? (
                 <span className="text-muted text-[10px]">
-                  {completedCandidateCount}/{totalCandidateCount} completed
+                  {completedTaskGroupCount}/{totalTaskGroupCount} completed
                 </span>
               ) : (
                 singleEntry?.taskId && <TaskId id={singleEntry.taskId} />
               )}
-              {!isBestOf && singleEntry?.status && <TaskStatusBadge status={singleEntry.status} />}
-              {!isBestOf && singleEntry?.status === "completed" && (
+              {!isTaskGroup && singleEntry?.status && (
+                <TaskStatusBadge status={singleEntry.status} />
+              )}
+              {!isTaskGroup && singleEntry?.status === "completed" && (
                 <button
                   type="button"
                   className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
@@ -804,10 +877,10 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               </div>
             </div>
 
-            {isBestOf ? (
+            {isTaskGroup ? (
               <div className="task-divider border-t pt-2">
                 <div className="text-muted mb-2 text-[10px] tracking-wide uppercase">
-                  Candidates
+                  {formatTaskGroupItemsLabel(taskGroupKind)}
                 </div>
                 <div className="space-y-2">
                   {displayEntries.map((entry, index) => (
@@ -815,7 +888,8 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
                       key={entry.taskId}
                       entry={entry}
                       index={index}
-                      total={totalCandidateCount}
+                      total={totalTaskGroupCount}
+                      groupKind={taskGroupKind}
                       onOpenTranscript={setTranscriptTaskId}
                     />
                   ))}
@@ -834,7 +908,8 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
 
             {shouldShowCreationProgress && (
               <div className="text-muted mt-2 text-[11px] italic">
-                Creating candidates ({createdCandidateCount}/{totalCandidateCount})
+                {formatTaskGroupCreationLabel(taskGroupKind)} ({createdTaskGroupCount}/
+                {totalTaskGroupCount})
                 <LoadingDots />
               </div>
             )}

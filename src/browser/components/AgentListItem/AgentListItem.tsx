@@ -6,6 +6,11 @@ import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
+import {
+  TASK_GROUP_KIND,
+  getTaskGroupKindFromMetadata,
+  normalizeTaskGroupLabel,
+} from "@/common/utils/tools/taskGroups";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -393,7 +398,12 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const [titleError, setTitleError] = useState<string | null>(null);
 
   // Display title (fallback to name for legacy workspaces without title)
-  const displayTitle = metadata.title ?? metadata.name;
+  const workspaceTitle = metadata.title ?? metadata.name;
+  const variantLabel =
+    getTaskGroupKindFromMetadata(metadata.bestOf) === TASK_GROUP_KIND.VARIANTS
+      ? normalizeTaskGroupLabel(metadata.bestOf?.label)
+      : undefined;
+  const displayTitle = variantLabel ? `${variantLabel} · ${workspaceTitle}` : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
 
   const linkSharingEnabled = useLinkSharingEnabled();
@@ -442,11 +452,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     if (isEditing && !wasEditingRef.current) {
       // Initialize draft title exactly once per edit session so metadata refreshes
       // never overwrite what the user has typed in the input.
-      setEditingTitle(displayTitle);
+      setEditingTitle(workspaceTitle);
       setTitleError(null);
     }
     wasEditingRef.current = isEditing;
-  }, [isEditing, displayTitle]);
+  }, [isEditing, workspaceTitle]);
 
   const handleEditInputRef = useCallback((node: HTMLInputElement | null) => {
     if (!node) {
@@ -460,8 +470,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
-    if (requestEdit(workspaceId, displayTitle)) {
-      setEditingTitle(displayTitle);
+    if (requestEdit(workspaceId, workspaceTitle)) {
+      setEditingTitle(workspaceTitle);
       setTitleError(null);
     }
   };
