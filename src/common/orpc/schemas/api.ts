@@ -2077,6 +2077,16 @@ const EditorConfigSchema = z.object({
 
 const LogLevelSchema = z.enum(["error", "warn", "info", "debug"]);
 
+const RestartAppResultSchema = z.discriminatedUnion("supported", [
+  z.object({
+    supported: z.literal(true),
+  }),
+  z.object({
+    supported: z.literal(false),
+    message: z.string(),
+  }),
+]);
+
 // General
 export const general = {
   listDirectory: {
@@ -2105,6 +2115,10 @@ export const general = {
       intervalMs: z.number().int().min(10).max(5000),
     }),
     output: eventIterator(z.object({ tick: z.number(), timestamp: z.number() })),
+  },
+  restartApp: {
+    input: z.void(),
+    output: RestartAppResultSchema,
   },
   /**
    * Open a path in the user's configured code editor.

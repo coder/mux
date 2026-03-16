@@ -1877,6 +1877,12 @@ export const router = (authToken?: string) => {
             queue.end();
           }
         }),
+      restartApp: t
+        .input(schemas.general.restartApp.input)
+        .output(schemas.general.restartApp.output)
+        .handler(({ context }) => {
+          return context.windowService.restartApp();
+        }),
       openInEditor: t
         .input(schemas.general.openInEditor.input)
         .output(schemas.general.openInEditor.output)

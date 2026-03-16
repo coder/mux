@@ -1662,6 +1662,64 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("general.restartApp delegates to the window service restart hook", async () => {
+    const restartApp = mock(() => Promise.resolve({ supported: true as const }));
+    const stubContext: Partial<ORPCContext> = {
+      windowService: {
+        restartApp,
+      } as unknown as ORPCContext["windowService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const client = createHttpClient(server.baseUrl);
+      const result = await Promise.resolve(client.general.restartApp());
+
+      expect(restartApp).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ supported: true });
+    } finally {
+      await server?.close();
+    }
+  });
+
+  test("general.restartApp reports unsupported when no restart handler is registered", async () => {
+    const stubContext: Partial<ORPCContext> = {
+      windowService: {
+        restartApp: mock(() =>
+          Promise.resolve({
+            supported: false as const,
+            message: "Restart is only available in the desktop app.",
+          })
+        ),
+      } as unknown as ORPCContext["windowService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      const client = createHttpClient(server.baseUrl);
+      const result = await Promise.resolve(client.general.restartApp());
+
+      expect(result).toEqual({
+        supported: false,
+        message: "Restart is only available in the desktop app.",
+      });
+    } finally {
+      await server?.close();
+    }
+  });
+
   test("rejects CORS preflight requests from cross-origin callers", async () => {
     const stubContext: Partial<ORPCContext> = {};
 

@@ -1,11 +1,34 @@
 import type { BrowserWindow } from "electron";
 import { log } from "@/node/services/log";
 
+type RestartAppHandler = () => void | Promise<void>;
+
 export class WindowService {
   private mainWindow: BrowserWindow | null = null;
+  private restartAppHandler: RestartAppHandler | null = null;
 
   setMainWindow(window: BrowserWindow) {
     this.mainWindow = window;
+  }
+  setRestartAppHandler(handler: RestartAppHandler | null): void {
+    this.restartAppHandler = handler;
+  }
+
+  async restartApp(): Promise<{ supported: true } | { supported: false; message: string }> {
+    const restartAppHandler = this.restartAppHandler;
+    if (!restartAppHandler) {
+      const message = "Restart is only available in the desktop app.";
+      log.warn("WindowService: restartApp requested without a registered restart handler");
+      return { supported: false, message };
+    }
+
+    try {
+      await restartAppHandler();
+      return { supported: true };
+    } catch (error) {
+      log.error("WindowService: restartApp failed", error);
+      throw error;
+    }
   }
 
   focusMainWindow(): void {

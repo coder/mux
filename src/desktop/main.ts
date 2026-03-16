@@ -640,6 +640,14 @@ async function loadServices(): Promise<void> {
   // Store auth token so the API server can be restarted via Settings.
   services.serverService.setApiAuthToken(authToken);
 
+  // Keep PATH-related recovery honest: Settings can re-check the current process view, but
+  // shell/profile changes made after launch still need a full app relaunch to rerun startup PATH setup.
+  services.windowService.setRestartAppHandler(() => {
+    assert(app, "Electron app must be available to restart mux");
+    app.relaunch();
+    app.quit();
+  });
+
   // Single router instance with auth middleware - used for both MessagePort and HTTP/WS
   const orpcRouter = router(authToken);
 

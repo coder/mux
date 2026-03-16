@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
-import type { ApiServerStatus } from "@/common/orpc/types";
+import type { ApiServerStatus, DesktopPrereqStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
@@ -85,41 +85,83 @@ function ExperimentRow(props: ExperimentRowProps) {
 export function PortableDesktopExperimentWarning() {
   const enabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const { api } = useAPI();
-  const [isBinaryMissing, setIsBinaryMissing] = useState(false);
+  const [prereqStatus, setPrereqStatus] = useState<DesktopPrereqStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
-  useEffect(() => {
+  const loadPrereqStatus = useCallback(async () => {
     if (!enabled || !api) {
-      setIsBinaryMissing(false);
       return;
     }
 
-    let cancelled = false;
-    setIsBinaryMissing(false);
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
 
-    // This warning lives on /settings/experiments, where selectedWorkspace is intentionally
-    // URL-derived and null. Probe the machine-level desktop prerequisite instead of a
-    // workspace-scoped capability so the warning still renders on settings routes.
-    void api.desktop
-      .getPrereqStatus()
-      .then((prereqStatus) => {
-        if (cancelled) {
-          return;
-        }
+    setLoading(true);
+    setError(null);
 
-        setIsBinaryMissing(!prereqStatus.available && prereqStatus.reason === "binary_not_found");
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
+    try {
+      // This warning lives on /settings/experiments, where selectedWorkspace is intentionally
+      // URL-derived and null. Probe the machine-level desktop prerequisite instead of a
+      // workspace-scoped capability so the warning still renders on settings routes.
+      const nextStatus = await api.desktop.getPrereqStatus();
+      if (requestIdRef.current !== requestId) {
+        return;
+      }
 
-        setIsBinaryMissing(false);
-      });
+      setPrereqStatus(nextStatus);
+    } catch (e) {
+      if (requestIdRef.current !== requestId) {
+        return;
+      }
 
-    return () => {
-      cancelled = true;
-    };
+      setError(getErrorMessage(e));
+    } finally {
+      if (requestIdRef.current === requestId) {
+        setLoading(false);
+      }
+    }
   }, [api, enabled]);
+
+  useEffect(() => {
+    if (!enabled || !api) {
+      requestIdRef.current += 1;
+      setPrereqStatus(null);
+      setLoading(false);
+      setRestarting(false);
+      setError(null);
+      return;
+    }
+
+    loadPrereqStatus().catch(() => {
+      // loadPrereqStatus handles error state.
+    });
+  }, [api, enabled, loadPrereqStatus]);
+
+  const handleRestart = useCallback(async () => {
+    if (!api) {
+      return;
+    }
+
+    setError(null);
+    setRestarting(true);
+
+    try {
+      const restartResult = await api.general.restartApp();
+      if (!restartResult.supported) {
+        setError(restartResult.message);
+        return;
+      }
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setRestarting(false);
+    }
+  }, [api]);
+
+  const isBinaryMissing = !prereqStatus?.available && prereqStatus?.reason === "binary_not_found";
 
   if (!enabled || !isBinaryMissing) {
     return null;
@@ -129,19 +171,45 @@ export function PortableDesktopExperimentWarning() {
     <div className="pb-3">
       <div className="bg-warning/10 border-warning/30 text-warning flex items-start gap-2 rounded-md border px-3 py-2 text-xs">
         <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>
-          The <code className="font-mono">portabledesktop</code> binary was not found in PATH, so
-          Portable Desktop is currently disabled. Install it from{" "}
-          <a
-            href={PORTABLE_DESKTOP_INSTALL_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline hover:no-underline"
-          >
-            {PORTABLE_DESKTOP_INSTALL_URL}
-          </a>{" "}
-          to enable this feature.
-        </span>
+        <div className="space-y-2">
+          <div>
+            The <code className="font-mono">portabledesktop</code> binary was not found in PATH, so
+            Portable Desktop is currently disabled. Install it from{" "}
+            <a
+              href={PORTABLE_DESKTOP_INSTALL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:no-underline"
+            >
+              {PORTABLE_DESKTOP_INSTALL_URL}
+            </a>{" "}
+            to enable this feature. If you installed it into a location that mux can already see,
+            choose Check again. If you changed PATH after mux launched, restart mux to pick it up.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={() => {
+                void loadPrereqStatus();
+              }}
+              disabled={restarting}
+            >
+              {loading ? "Checking…" : "Check again"}
+            </Button>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={() => {
+                void handleRestart();
+              }}
+              disabled={loading || restarting}
+            >
+              {restarting ? "Restarting…" : "Restart Mux"}
+            </Button>
+          </div>
+          {error && <div className="text-[11px]">{error}</div>}
+        </div>
       </div>
     </div>
   );

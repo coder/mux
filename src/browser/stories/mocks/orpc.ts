@@ -1022,6 +1022,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     general: {
       listDirectory: () => Promise.resolve({ entries: [], hasMore: false }),
+      restartApp: () => Promise.resolve({ supported: true as const }),
       ping: (input: string) => Promise.resolve(`Pong: ${input}`),
       tick: async function* () {
         // No ticks in the mock, but keep the subscription open.
