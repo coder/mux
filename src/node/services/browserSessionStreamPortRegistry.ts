@@ -3,6 +3,7 @@ import { assert } from "@/common/utils/assert";
 
 export class BrowserSessionStreamPortRegistry {
   private readonly reservations = new Map<string, number>();
+  private readonly inFlight = new Map<string, Promise<number>>();
 
   /** Reserve (or return existing) free port for a workspace */
   async reservePort(workspaceId: string): Promise<number> {
@@ -16,17 +17,45 @@ export class BrowserSessionStreamPortRegistry {
       return existing;
     }
 
-    const port = await findFreePort();
-    assert(Number.isFinite(port) && port > 0, `Invalid port allocated: ${port}`);
-    for (const [reservedWorkspaceId, reservedPort] of this.reservations) {
-      assert(
-        reservedPort !== port,
-        `Port ${port} already reserved for workspace ${reservedWorkspaceId}`
-      );
+    const pending = this.inFlight.get(workspaceId);
+    if (pending != null) {
+      return pending;
     }
 
-    this.reservations.set(workspaceId, port);
-    return port;
+    const promise = this.reservePortInternal(workspaceId);
+    this.inFlight.set(workspaceId, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.inFlight.get(workspaceId) === promise) {
+        this.inFlight.delete(workspaceId);
+      }
+    }
+  }
+
+  private async reservePortInternal(workspaceId: string): Promise<number> {
+    const maxRetries = 5;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const port = await findFreePort();
+      assert(Number.isFinite(port) && port > 0, `Invalid port allocated: ${port}`);
+
+      let collision = false;
+      for (const reservedPort of this.reservations.values()) {
+        if (reservedPort === port) {
+          collision = true;
+          break;
+        }
+      }
+
+      if (!collision) {
+        this.reservations.set(workspaceId, port);
+        return port;
+      }
+    }
+
+    throw new Error(
+      `Failed to reserve a unique port for workspace ${workspaceId} after ${maxRetries} attempts`
+    );
   }
 
   /** Get the reserved port without allocating */
@@ -56,6 +85,7 @@ export class BrowserSessionStreamPortRegistry {
   }
 
   dispose(): void {
+    this.inFlight.clear();
     this.reservations.clear();
   }
 }
