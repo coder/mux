@@ -3,7 +3,14 @@ import {
   type NormalizeLocalhostProxyUrlOptions,
 } from "@/common/utils/localhostProxyUrl";
 
-const ALLOWED_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set(["http:", "https:"]);
+// Editor deep links hand off to OS-registered app handlers, so allow their protocols too.
+const ALLOWED_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
+  "http:",
+  "https:",
+  "vscode:",
+  "cursor:",
+  "zed:",
+]);
 
 export function normalizeAndValidateExternalUrl(
   options: NormalizeLocalhostProxyUrlOptions
