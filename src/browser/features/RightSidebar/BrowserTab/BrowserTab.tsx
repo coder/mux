@@ -390,6 +390,10 @@ function BrowserActionRow(props: { action: BrowserAction }) {
   const Icon = ACTION_ICONS[props.action.type];
   const actionTimestamp = Date.parse(props.action.timestamp);
   const hasValidTimestamp = Number.isFinite(actionTimestamp);
+  const relativeTimestampLabel = hasValidTimestamp
+    ? formatRelativeTime(actionTimestamp)
+    : "Unknown time";
+  const absoluteTimestampLabel = hasValidTimestamp ? formatTimestamp(actionTimestamp) : null;
 
   return (
     <div className="border-border-light bg-background-secondary flex items-start gap-2 rounded border px-2 py-1.5">
@@ -398,12 +402,20 @@ function BrowserActionRow(props: { action: BrowserAction }) {
         <p className="text-foreground truncate text-xs">{props.action.description}</p>
         <div className="text-muted flex items-center gap-2 text-[10px]">
           <span className="capitalize">{props.action.type}</span>
-          <span
-            className="counter-nums"
-            title={hasValidTimestamp ? formatTimestamp(actionTimestamp) : undefined}
-          >
-            {hasValidTimestamp ? formatRelativeTime(actionTimestamp) : "Unknown time"}
-          </span>
+          {absoluteTimestampLabel == null ? (
+            <span className="counter-nums">{relativeTimestampLabel}</span>
+          ) : (
+            <Tooltip>
+              {/* Use the shared portal-backed tooltip so the embedded browser surface does not
+                  stack a native title tooltip on top of the app tooltip. */}
+              <TooltipTrigger asChild>
+                <span className="counter-nums cursor-default">{relativeTimestampLabel}</span>
+              </TooltipTrigger>
+              <TooltipContent align="center" side="top">
+                {absoluteTimestampLabel}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
     </div>
