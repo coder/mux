@@ -137,11 +137,14 @@ describe("generateAgentBrowserWrapper", () => {
   test("windows wrapper strips user --session flags before forcing the workspace session", () => {
     const wrapper = generateAgentBrowserWrapper();
 
-    expect(wrapper.windowsContent).toContain('set "MUX_SKIP_NEXT=0"');
-    expect(wrapper.windowsContent).toContain('if /I "!MUX_CURRENT_ARG!"=="--session" (');
-    expect(wrapper.windowsContent).toContain('set "MUX_SKIP_NEXT=1"');
-    expect(wrapper.windowsContent).toContain('if /I "!MUX_CURRENT_ARG:~0,10!"=="--session=" (');
-    expect(wrapper.windowsContent).toContain('set "MUX_FILTERED_ARGS=!MUX_FILTERED_ARGS! %%A"');
+    expect(wrapper.windowsContent).toContain(":mux_loop");
+    expect(wrapper.windowsContent).toContain('if "%~1"=="" goto mux_done');
+    expect(wrapper.windowsContent).toContain('if /I "%MUX_CUR%"=="--session" (');
+    expect(wrapper.windowsContent).toContain('set "MUX_TEST=%MUX_CUR:~0,10%"');
+    expect(wrapper.windowsContent).toContain('if /I "%MUX_TEST%"=="--session=" (');
+    expect(wrapper.windowsContent).toContain("set MUX_ARGS=!MUX_ARGS! %1");
+    expect(wrapper.windowsContent).not.toContain("for %%A in (%*) do (");
+    expect(wrapper.windowsContent).not.toContain("MUX_FILTERED_ARGS");
   });
 
   test("wrapper still resolves the vendored binary path", () => {
