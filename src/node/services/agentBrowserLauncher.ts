@@ -236,10 +236,10 @@ export function generateAgentBrowserWrapper(): {
     ].join("\n"),
     windowsContent: [
       "@echo off",
-      "setlocal EnableDelayedExpansion",
+      "setlocal",
       "if not defined AGENT_BROWSER_SESSION (",
       `  ${quotedWindowsBinaryPath} %*`,
-      "  exit /B !ERRORLEVEL!",
+      "  exit /B",
       ")",
       'set "MUX_ARGS="',
       ":mux_loop",
@@ -260,7 +260,7 @@ export function generateAgentBrowserWrapper(): {
       "goto mux_loop",
       ":mux_done",
       `${quotedWindowsBinaryPath} --session "%AGENT_BROWSER_SESSION%" %MUX_ARGS%`,
-      "exit /B %ERRORLEVEL%",
+      "exit /B",
       "",
     ].join("\r\n"),
   };

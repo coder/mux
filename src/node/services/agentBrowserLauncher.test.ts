@@ -131,7 +131,9 @@ describe("generateAgentBrowserWrapper", () => {
 
     expect(wrapper.windowsContent).toContain("AGENT_BROWSER_SESSION");
     expect(wrapper.windowsContent).toContain('--session "%AGENT_BROWSER_SESSION%"');
-    expect(wrapper.windowsContent).toContain("setlocal EnableDelayedExpansion");
+    expect(wrapper.windowsContent).toContain("setlocal");
+    expect(wrapper.windowsContent).not.toContain("EnableDelayedExpansion");
+    expect(wrapper.windowsContent).not.toContain("!ERRORLEVEL!");
   });
 
   test("windows wrapper strips user --session flags before forcing the workspace session", () => {
@@ -144,7 +146,8 @@ describe("generateAgentBrowserWrapper", () => {
     expect(wrapper.windowsContent).toContain('if /I "%MUX_TEST%"=="--session=" (');
     expect(wrapper.windowsContent).toContain('set "MUX_ARGS=%MUX_ARGS% %1"');
     expect(wrapper.windowsContent).toContain('--session "%AGENT_BROWSER_SESSION%" %MUX_ARGS%');
-    expect(wrapper.windowsContent).toContain("exit /B %ERRORLEVEL%");
+    expect(wrapper.windowsContent).toContain("exit /B");
+    expect(wrapper.windowsContent).not.toContain("%ERRORLEVEL%");
     expect(wrapper.windowsContent).not.toContain("for %%A in (%*) do (");
     expect(wrapper.windowsContent).not.toContain("MUX_FILTERED_ARGS");
   });
