@@ -637,6 +637,9 @@ export class BrowserSessionBackend {
     this.options.onAction(action);
   }
 
+  // The browser viewport sends DOM-relative coordinates after mapping against the latest stream
+  // metadata. Clamp again here before forwarding to agent-browser so transient layout races or
+  // stale frames never push pointer events outside the daemon's current device bounds.
   private mapInputToProtocol(input: BrowserInputEvent): Record<string, unknown> {
     switch (input.kind) {
       case "mouse": {
@@ -705,6 +708,10 @@ export class BrowserSessionBackend {
       }
     }
 
+    // Stream transport path A: the daemon was launched with AGENT_BROWSER_STREAM_PORT but
+    // the WebSocket never connected (port conflict, daemon too old, etc.). New sessions can
+    // fall back to screenshot polling, but attached sessions must require a restart because
+    // we cannot prove the already-running daemon supports the streaming protocol.
     if (this.startedFromExistingSession) {
       this.transitionToRestartRequired(lastError);
       return "restart_required";
@@ -847,6 +854,9 @@ export class BrowserSessionBackend {
     this.handleUnexpectedStreamClose(result.error);
   }
 
+  // Stream transport path B: streaming worked at least once, then the live socket died later.
+  // New sessions degrade to screenshot polling so preview keeps updating, but attached sessions
+  // are marked restart_required because we cannot safely relaunch a daemon we did not create.
   private degradeAfterStreamFailure(error: string): void {
     if (this.startedFromExistingSession) {
       this.transitionToRestartRequired(error);
@@ -868,6 +878,8 @@ export class BrowserSessionBackend {
     });
   }
 
+  // restart_required is intentionally stricter than fallback: the user still has a browser window,
+  // but interactive streaming is blocked until we relaunch a daemon we know was started with stream support.
   private transitionToRestartRequired(error: string): void {
     this.clearStreamRetryTimer();
     this.closeCurrentStreamSocket();
@@ -1059,6 +1071,9 @@ export class BrowserSessionBackend {
     }
   }
 
+  // The agent-browser stream protocol delivers JPEG frames as base64 in payload.data plus
+  // viewport metadata (deviceWidth/deviceHeight/pageScaleFactor/etc.). The frontend reuses that
+  // metadata when mapping human input back into browser-space coordinates for interactive control.
   private handleFramePayload(payload: Record<string, unknown>): void {
     const base64Data =
       typeof payload.data === "string" && payload.data.trim().length > 0 ? payload.data : null;

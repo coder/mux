@@ -49,14 +49,18 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
   };
 }
 
-function renderViewport(session: BrowserSession) {
+function renderViewport(
+  session: BrowserSession,
+  overrides?: { onRestart?: () => void; visibleError?: string | null }
+) {
   return render(
     <BrowserViewport
       workspaceId="workspace-1"
       session={session}
       screenshotSrc="data:image/jpeg;base64,frame-data"
-      visibleError={null}
+      visibleError={overrides?.visibleError ?? null}
       placeholder={<div>placeholder</div>}
+      onRestart={overrides?.onRestart}
     />
   );
 }
@@ -234,6 +238,61 @@ describe("BrowserViewport", () => {
         modifiers: 0,
       },
     });
+  });
+
+  test("differentiates restart-required and fallback stream overlays", () => {
+    const restartMock = mock(() => undefined);
+    const restartView = renderViewport(
+      createSession({
+        streamState: "restart_required",
+        lastFrameMetadata: null,
+      }),
+      { onRestart: restartMock }
+    );
+
+    expect(restartView.getByText("Restart browser to enable live control")).toBeTruthy();
+    fireEvent.click(restartView.getByRole("button", { name: "Restart" }));
+    expect(restartMock).toHaveBeenCalledTimes(1);
+    restartView.unmount();
+
+    const fallbackView = renderViewport(
+      createSession({
+        streamState: "fallback",
+        lastFrameMetadata: null,
+      })
+    );
+
+    expect(fallbackView.getByText("Screenshots only — streaming unavailable")).toBeTruthy();
+    expect(fallbackView.queryByRole("button", { name: "Restart" })).toBeNull();
+  });
+
+  test("shows stream-specific non-interactive messages while the stream is unavailable", () => {
+    const connectingView = renderViewport(
+      createSession({
+        streamState: "connecting",
+        lastFrameMetadata: null,
+      })
+    );
+    expect(connectingView.getByText("Connecting to browser stream...")).toBeTruthy();
+    connectingView.unmount();
+
+    const errorView = renderViewport(
+      createSession({
+        streamState: "error",
+        streamErrorMessage: "socket closed",
+        lastFrameMetadata: null,
+      })
+    );
+    expect(errorView.getByText("Stream error: socket closed")).toBeTruthy();
+    errorView.unmount();
+
+    const waitingView = renderViewport(
+      createSession({
+        streamState: "live",
+        lastFrameMetadata: null,
+      })
+    );
+    expect(waitingView.getByText("Waiting for first frame...")).toBeTruthy();
   });
 
   test("shows a view-only overlay and suppresses input for agent-owned sessions", () => {

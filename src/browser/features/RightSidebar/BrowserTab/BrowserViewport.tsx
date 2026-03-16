@@ -26,12 +26,14 @@ interface BrowserViewportProps {
   screenshotSrc: string | null;
   visibleError: string | null;
   placeholder: ReactNode;
+  onRestart?: () => void;
 }
 
 interface ViewportInteractionState {
   canInteract: boolean;
   blockingMessage: string | null;
   sharedControlLabel: string | null;
+  showRestartCta?: boolean;
 }
 
 interface MeasuredViewportRect {
@@ -508,11 +510,20 @@ export function BrowserViewport(props: BrowserViewportProps) {
           </div>
         )}
         {interactionState.blockingMessage != null && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-            <div className="border-border-light bg-background/90 max-w-xs rounded-md border px-4 py-3 text-center shadow-lg backdrop-blur-sm">
+          <div className="absolute inset-0 flex items-center justify-center p-6">
+            <div className="border-border-light bg-background/90 flex max-w-xs flex-col items-center gap-3 rounded-md border px-4 py-3 text-center shadow-lg backdrop-blur-sm">
               <p className="text-foreground text-xs font-medium">
                 {interactionState.blockingMessage}
               </p>
+              {interactionState.showRestartCta && props.onRestart != null && (
+                <button
+                  type="button"
+                  onClick={props.onRestart}
+                  className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                >
+                  Restart
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -553,23 +564,62 @@ function getViewportInteractionState(session: BrowserSession | null): ViewportIn
     };
   }
 
-  if (
-    session.status !== "live" ||
-    session.streamState !== "live" ||
-    session.lastFrameMetadata == null
-  ) {
+  if (session.status !== "live") {
     return {
       canInteract: false,
-      blockingMessage: "Restart browser to enable live control",
+      blockingMessage: null,
       sharedControlLabel: null,
     };
   }
 
-  return {
-    canInteract: true,
-    blockingMessage: null,
-    sharedControlLabel: session.ownership === "shared" ? "Shared control" : null,
-  };
+  switch (session.streamState) {
+    case "restart_required":
+      return {
+        canInteract: false,
+        blockingMessage: "Restart browser to enable live control",
+        sharedControlLabel: null,
+        showRestartCta: true,
+      };
+    case "fallback":
+      return {
+        canInteract: false,
+        blockingMessage: "Screenshots only — streaming unavailable",
+        sharedControlLabel: null,
+      };
+    case "connecting":
+      return {
+        canInteract: false,
+        blockingMessage: "Connecting to browser stream...",
+        sharedControlLabel: null,
+      };
+    case "error":
+      return {
+        canInteract: false,
+        blockingMessage: `Stream error: ${session.streamErrorMessage ?? "unknown"}`,
+        sharedControlLabel: null,
+      };
+    case "disconnected":
+    case null:
+      return {
+        canInteract: false,
+        blockingMessage: null,
+        sharedControlLabel: null,
+      };
+    case "live":
+      if (session.lastFrameMetadata == null) {
+        return {
+          canInteract: false,
+          blockingMessage: "Waiting for first frame...",
+          sharedControlLabel: null,
+        };
+      }
+
+      return {
+        canInteract: true,
+        blockingMessage: null,
+        sharedControlLabel: session.ownership === "shared" ? "Shared control" : null,
+      };
+  }
 }
 
 function shouldHandleKeyboardEvent(event: KeyboardEvent<HTMLDivElement>): boolean {

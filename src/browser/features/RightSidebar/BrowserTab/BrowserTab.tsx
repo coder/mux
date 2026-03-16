@@ -297,6 +297,41 @@ export function BrowserTab(props: BrowserTabProps) {
       });
   };
 
+  const handleRestartSession = () => {
+    const currentAutoStartState = autoStartStateByWorkspace.get(props.workspaceId);
+    if (
+      browserSessionApi == null ||
+      startingSession ||
+      stoppingSession ||
+      currentAutoStartState?.autoStartPending
+    ) {
+      return;
+    }
+
+    // restart_required means the daemon session is still alive but the live stream transport is not,
+    // so the recovery path must tear down the existing browser process before starting a fresh one.
+    autoStartState.manuallyStopped = false;
+    setStartingSession(true);
+    setStoppingSession(true);
+    setStartError(null);
+
+    browserSessionApi
+      .stop({ workspaceId: props.workspaceId })
+      .then(() =>
+        browserSessionApi.start({
+          workspaceId: props.workspaceId,
+          ownership: "user",
+        })
+      )
+      .catch((sessionError: unknown) => {
+        setStartError(getSessionErrorMessage(sessionError, "Failed to restart session"));
+      })
+      .finally(() => {
+        setStoppingSession(false);
+        setStartingSession(false);
+      });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border-light flex items-start justify-between gap-3 border-b px-3 py-2">
@@ -363,6 +398,7 @@ export function BrowserTab(props: BrowserTabProps) {
           session={session}
           screenshotSrc={screenshotSrc}
           visibleError={visibleError}
+          onRestart={handleRestartSession}
           placeholder={
             <BrowserViewerState session={session} isStarting={isStarting} error={visibleError} />
           }
