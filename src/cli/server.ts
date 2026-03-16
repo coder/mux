@@ -9,6 +9,7 @@ import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import { log } from "@/node/services/log";
+import { materializeVendoredAgentBrowserWrapper } from "@/node/services/agentBrowserLauncher";
 import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
@@ -110,6 +111,13 @@ const mockWindow: BrowserWindow = {
     console.error(`Error: mux API server is already running at ${existing.baseUrl}`);
     console.error(`Use 'mux api' commands to interact with the running instance.`);
     process.exit(1);
+  }
+
+  try {
+    materializeVendoredAgentBrowserWrapper();
+  } catch (error) {
+    // Server startup must stay resilient even if the optional browser wrapper cannot be created.
+    log.debug("[vendored-bin] Failed to materialize agent-browser wrapper", error);
   }
 
   const config = new Config();

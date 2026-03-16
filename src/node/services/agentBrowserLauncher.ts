@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { accessSync, chmodSync, constants, existsSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { getMuxHome } from "@/common/constants/paths";
 
@@ -137,6 +137,45 @@ export function resolveAgentBrowserBinary(options?: ResolveAgentBrowserBinaryOpt
 
   ensureExecutablePermission(binaryPath, runtimePlatform);
   return binaryPath;
+}
+
+function prependPathOnce(dir: string, env: NodeJS.ProcessEnv): void {
+  const existingPath = env.PATH ?? "";
+  const pathEntries = existingPath
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (pathEntries.includes(dir)) {
+    return;
+  }
+
+  env.PATH = existingPath.length > 0 ? `${dir}${path.delimiter}${existingPath}` : dir;
+}
+
+/**
+ * Install the vendored agent-browser wrapper into mux-managed bin dir and ensure
+ * the current process PATH can discover it. Server-mode mux needs this too so
+ * bash tools resolve `agent-browser` instead of falling back to `bunx`, which
+ * bypasses MUX_BROWSER_SESSION and leaves the Browser tab disconnected.
+ */
+export function materializeVendoredAgentBrowserWrapper(): void {
+  const { dir, posixContent, windowsContent } = generateAgentBrowserWrapper();
+
+  mkdirSync(dir, { recursive: true });
+
+  const wrapperPath =
+    process.platform === "win32"
+      ? path.join(dir, "agent-browser.cmd")
+      : path.join(dir, "agent-browser");
+  writeFileSync(wrapperPath, process.platform === "win32" ? windowsContent : posixContent);
+
+  if (process.platform !== "win32") {
+    chmodSync(wrapperPath, 0o755);
+  }
+
+  process.env.MUX_VENDORED_BIN_DIR = dir;
+  prependPathOnce(dir, process.env);
 }
 
 export function generateAgentBrowserWrapper(): {
