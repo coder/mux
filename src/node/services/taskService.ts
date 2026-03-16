@@ -76,6 +76,7 @@ import {
 } from "@/node/services/subagentReportArtifacts";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 
 export type TaskKind = "agent";
@@ -3321,6 +3322,20 @@ export class TaskService {
     }
 
     if (this.hasActiveDescendantAgentTasks(cfg, workspaceId)) {
+      return;
+    }
+
+    if (event.errorType && isNonRetryableStreamError({ type: event.errorType })) {
+      log.error(
+        "Task awaiting required completion tool hit a non-retryable stream error; interrupting task",
+        {
+          workspaceId,
+          errorType: event.errorType,
+          error: event.error,
+        }
+      );
+      await this.setTaskStatus(workspaceId, "interrupted");
+      await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null);
       return;
     }
 
