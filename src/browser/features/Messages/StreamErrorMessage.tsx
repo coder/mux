@@ -80,6 +80,7 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
     provider === "anthropic" &&
     message.errorType === "server_error" &&
     /\bHTTP\s*529\b|overloaded/i.test(message.error);
+  const isEmptyOutputError = message.errorType === "empty_output";
   // Gateway quota failures need explicit attribution so users know mux gateway credits,
   // not a provider quota, are blocking the request.
   const isMuxGatewayQuotaError =
@@ -89,7 +90,9 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
     ? "Mux Gateway credits depleted"
     : isAnthropicOverloaded
       ? "Service overloaded"
-      : "Stream Error";
+      : isEmptyOutputError
+        ? "No assistant output"
+        : "Stream Error";
   const pill = isAnthropicOverloaded ? "overloaded" : message.errorType;
   const body = isMuxGatewayQuotaError
     ? "Your Mux Gateway credits have been depleted. Add credits or configure another provider to continue."

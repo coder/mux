@@ -611,6 +611,18 @@ describe("Foreground to Background Migration", () => {
 
     expect(result.backgroundProcessId).toBe(testId);
 
+    // Windows can briefly report the backgrounded process as still running even
+    // after the initial output is readable. Poll for terminal state instead of
+    // assuming the first status snapshot is already exited.
+    let processStatus = (await manager.getProcess(testId))?.status;
+    const exitDeadline = Date.now() + 5000;
+    while (processStatus === "running" && Date.now() < exitDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      processStatus = (await manager.getProcess(testId))?.status;
+    }
+
+    expect(processStatus).toBe("exited");
+
     const persistedOutput = await manager.getOutput(testId, undefined, undefined, 1);
     expect(persistedOutput.success).toBe(true);
     if (persistedOutput.success) {

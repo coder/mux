@@ -37,6 +37,7 @@ export const StreamErrorTypeSchema = z.enum([
   "model_not_found", // Model does not exist
   "runtime_not_ready", // Container/runtime doesn't exist or failed to start (permanent)
   "runtime_start_failed", // Runtime is starting or temporarily unavailable (retryable)
+  "empty_output", // Provider ended the stream without any assistant-visible output
   "unknown", // Catch-all
 ]);
 

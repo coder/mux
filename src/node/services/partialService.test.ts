@@ -218,6 +218,50 @@ describe("HistoryService partial persistence - Error Recovery", () => {
     const deletePartial = partialService.deletePartial as ReturnType<typeof mock>;
     expect(deletePartial).toHaveBeenCalledWith(workspaceId);
   });
+
+  test("commitPartial deletes a blank assistant placeholder after an empty errored partial", async () => {
+    const workspaceId = "test-workspace";
+    const historySequence = 1;
+
+    await partialService.appendToHistory(
+      workspaceId,
+      createMuxMessage("msg-1", "assistant", "", {
+        historySequence,
+        timestamp: Date.now(),
+        model: "test-model",
+        partial: true,
+      })
+    );
+
+    partialService.readPartial = mock(() =>
+      Promise.resolve({
+        id: "msg-1",
+        role: "assistant",
+        metadata: {
+          historySequence,
+          timestamp: Date.now(),
+          model: "test-model",
+          partial: true,
+          error: "Network error",
+          errorType: "empty_output",
+        },
+        parts: [],
+      } satisfies MuxMessage)
+    );
+
+    const deleteMessageSpy = spyOn(partialService, "deleteMessage");
+
+    const result = await partialService.commitPartial(workspaceId);
+    expect(result.success).toBe(true);
+    expect(deleteMessageSpy).toHaveBeenCalledWith(workspaceId, "msg-1");
+
+    const historyResult = await partialService.getHistoryFromLatestBoundary(workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(historyResult.error);
+    }
+    expect(historyResult.data).toEqual([]);
+  });
 });
 
 describe("HistoryService partial persistence - Legacy compatibility", () => {

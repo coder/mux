@@ -1319,7 +1319,7 @@ describe("StreamManager - Unavailable Tool Handling", () => {
 describe("StreamManager - empty stream completions", () => {
   const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
-  test("persists a retryable error when the provider ends without any output", async () => {
+  test("retries one empty stream internally before persisting a retryable empty-output error", async () => {
     const streamManager = new StreamManager(historyService);
     const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
     const streamEndEvents: unknown[] = [];
@@ -1362,6 +1362,22 @@ describe("StreamManager - empty stream completions", () => {
     ) => Promise<void>;
     expect(typeof processStreamWithCleanup).toBe("function");
 
+    const createStreamResult = mock(() => ({
+      fullStream: (async function* () {
+        // Retry path also returns no output so the empty-output error still surfaces.
+      })(),
+      totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
+      usage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
+      providerMetadata: Promise.resolve(undefined),
+      steps: Promise.resolve([]),
+    }));
+    const replaceCreateStreamResult = Reflect.set(
+      streamManager,
+      "createStreamResult",
+      createStreamResult
+    );
+    expect(replaceCreateStreamResult).toBe(true);
+
     const streamInfo = {
       state: "streaming",
       streamResult: {
@@ -1394,25 +1410,31 @@ describe("StreamManager - empty stream completions", () => {
       softInterrupt: { pending: false as const },
       runtimeTempDir: "",
       runtime,
-      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      cumulativeProviderMetadata: undefined,
-      lastStepUsage: undefined,
-      lastStepProviderMetadata: undefined,
+      cumulativeUsage: { inputTokens: 7, outputTokens: 0, totalTokens: 7 },
+      cumulativeProviderMetadata: { openai: { cached_tokens: 2 } },
+      lastStepUsage: { inputTokens: 7, outputTokens: 0, totalTokens: 7 },
+      lastStepProviderMetadata: { openai: { cached_tokens: 2 } },
     };
 
     await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
 
+    expect(createStreamResult).toHaveBeenCalledTimes(1);
     expect(streamEndEvents).toHaveLength(0);
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0]).toMatchObject({
       messageId,
-      errorType: "unknown",
+      errorType: "empty_output",
     });
-    expect(errorEvents[0]?.error).toContain("before any assistant output arrived");
+    expect(errorEvents[0]?.error).toContain("before producing any assistant-visible output");
+
+    expect(streamInfo.cumulativeUsage).toEqual({ inputTokens: 7, outputTokens: 0, totalTokens: 7 });
+    expect(streamInfo.lastStepUsage).toEqual({ inputTokens: 7, outputTokens: 0, totalTokens: 7 });
+    expect(streamInfo.cumulativeProviderMetadata).toEqual({ openai: { cached_tokens: 2 } });
+    expect(streamInfo.lastStepProviderMetadata).toEqual({ openai: { cached_tokens: 2 } });
 
     const partial = await historyService.readPartial(workspaceId);
-    expect(partial?.metadata?.errorType).toBe("unknown");
-    expect(partial?.metadata?.error).toContain("before any assistant output arrived");
+    expect(partial?.metadata?.errorType).toBe("empty_output");
+    expect(partial?.metadata?.error).toContain("before producing any assistant-visible output");
     expect(partial?.parts).toEqual([]);
   });
 });
@@ -1917,6 +1939,27 @@ describe("StreamManager - previousResponseId recovery", () => {
     const result = resolveMethod.call(
       streamManager,
       { didRetryPreviousResponseIdAtStep: true, cumulativeUsage },
+      totalUsage
+    );
+
+    expect(result).toEqual(cumulativeUsage);
+  });
+
+  test("resolveTotalUsageForStreamEnd prefers cumulative usage after empty-output retry", () => {
+    const streamManager = new StreamManager(historyService);
+
+    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
+      streamInfo: unknown,
+      totalUsage: unknown
+    ) => unknown;
+    expect(typeof resolveMethod).toBe("function");
+
+    const cumulativeUsage = { inputTokens: 6, outputTokens: 5, totalTokens: 11 };
+    const totalUsage = { inputTokens: 2, outputTokens: 2, totalTokens: 4 };
+
+    const result = resolveMethod.call(
+      streamManager,
+      { didRetryPreviousResponseIdAtStep: false, didRetryAfterEmptyOutput: true, cumulativeUsage },
       totalUsage
     );
 

@@ -911,6 +911,8 @@ export class HistoryService {
         return Ok(undefined);
       }
 
+      const hadErrorMetadata = partial.metadata?.error != null;
+
       // Strip transient error metadata, but persist accumulated content.
       if (partial.metadata?.error) {
         const { error, errorType, ...cleanMetadata } = partial.metadata;
@@ -954,6 +956,12 @@ export class HistoryService {
         (!existingMessage || (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0)) &&
         hasCommitWorthyParts;
 
+      const shouldDeleteErroredPlaceholder =
+        hadErrorMetadata &&
+        !hasCommitWorthyParts &&
+        existingMessage?.id === partial.id &&
+        (existingMessage.parts?.length ?? 0) === 0;
+
       if (shouldCommit) {
         if (existingMessage) {
           const updateResult = await this.updateHistory(workspaceId, partial);
@@ -965,6 +973,14 @@ export class HistoryService {
           if (!appendResult.success) {
             return appendResult;
           }
+        }
+      } else if (shouldDeleteErroredPlaceholder) {
+        const deleteMessageResult = await this.deleteMessage(workspaceId, partial.id);
+        if (
+          !deleteMessageResult.success &&
+          !deleteMessageResult.error.includes("not found in history")
+        ) {
+          return deleteMessageResult;
         }
       }
 

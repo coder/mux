@@ -10,7 +10,10 @@ import {
   getSubagentGitPatchMboxPath,
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
-import { upsertSubagentReportArtifact } from "@/node/services/subagentReportArtifacts";
+import {
+  readSubagentReportArtifact,
+  upsertSubagentReportArtifact,
+} from "@/node/services/subagentReportArtifacts";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -23,7 +26,7 @@ import { Ok, Err, type Result } from "@/common/types/result";
 import { defaultModel } from "@/common/utils/ai/models";
 import type { PlanSubagentExecutorRouting } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { StreamEndEvent } from "@/common/types/stream";
+import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
 import {
   PLAN_AUTO_ROUTING_STATUS_EMOJI,
   PLAN_AUTO_ROUTING_STATUS_MESSAGE,
@@ -7508,6 +7511,97 @@ describe("TaskService", () => {
       .flatMap((project) => project.workspaces)
       .find((workspace) => workspace.id === childId);
     expect(updatedTask?.taskStatus).toBe("awaiting_report");
+  });
+
+  test("awaiting_report tasks fall back with a clear error report after repeated recovery failures", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-5.4-pro",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { historyService, taskService } = createTaskServiceHarness(config);
+
+    await historyService.appendToHistory(childId, {
+      id: "assistant-history",
+      role: "assistant",
+      metadata: {
+        historySequence: 0,
+        timestamp: Date.now() - 1000,
+        model: "openai:gpt-5.4-pro",
+      },
+      parts: [{ type: "text", text: "Recovered assistant output from the earlier attempt." }],
+    });
+
+    await historyService.writePartial(childId, {
+      id: "assistant-partial",
+      role: "assistant",
+      metadata: {
+        historySequence: 1,
+        timestamp: Date.now(),
+        partial: true,
+        error: "The model ended the stream before producing any assistant-visible output.",
+        errorType: "empty_output",
+      },
+      // History replay loads raw JSON; malformed entries must not break fallback reporting.
+      parts: [null as unknown as MuxMessage["parts"][number]],
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child",
+      metadata: { model: "openai:gpt-5.4-pro" },
+      parts: [],
+    });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await internal.handleTaskStreamError({
+        type: "error",
+        workspaceId: childId,
+        messageId: `assistant-error-${attempt}`,
+        error: "The model ended the stream before producing any assistant-visible output.",
+        errorType: "empty_output",
+      });
+    }
+
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.title).toBe("Subagent (explore) report (error fallback)");
+    expect(report?.reportMarkdown).toContain("Mux auto-recovery note");
+    expect(report?.reportMarkdown).toContain("Last error type: `empty_output`");
+    expect(report?.reportMarkdown).toContain(
+      "Recovered assistant output from the earlier attempt."
+    );
+    expect(report?.reportMarkdown).not.toContain("(No final assistant text was recovered.)");
   });
 
   test("stream-end with propose_plan success in auto routing falls back to exec when plan content is unavailable", async () => {

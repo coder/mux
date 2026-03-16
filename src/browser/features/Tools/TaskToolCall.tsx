@@ -83,8 +83,9 @@ const TaskStatusBadge: React.FC<{
       case "reported":
         return "bg-success/20 text-success";
       case "running":
-      case "awaiting_report":
         return "bg-pending/20 text-pending";
+      case "awaiting_report":
+        return "bg-warning/20 text-warning";
       case "queued":
         return "bg-muted/20 text-muted";
       case "terminated":
@@ -98,6 +99,8 @@ const TaskStatusBadge: React.FC<{
     }
   };
 
+  const label = status === "awaiting_report" ? "finalizing" : status;
+
   return (
     <span
       className={cn(
@@ -106,7 +109,7 @@ const TaskStatusBadge: React.FC<{
         className
       )}
     >
-      {status}
+      {label}
     </span>
   );
 };
