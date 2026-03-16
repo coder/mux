@@ -20,7 +20,7 @@ describe("BrowserSessionBackend", () => {
   test("reuses the deterministic mux session id", () => {
     const backend = createBackend();
 
-    expect(backend.getSession().id).toBe("mux-workspace-123");
+    expect(backend.getSession().id).toMatch(/^mux-workspace-123-[a-f0-9]{8}$/);
   });
 
   test("attaches to an existing daemon session without reopening the initial URL", async () => {
@@ -45,7 +45,7 @@ describe("BrowserSessionBackend", () => {
 
     expect(runCliCommand).not.toHaveBeenCalled();
     expect(refreshMetadata).toHaveBeenCalledTimes(1);
-    expect(session.id).toBe("mux-workspace-123");
+    expect(session.id).toMatch(/^mux-workspace-123-[a-f0-9]{8}$/);
     expect(session.status).toBe("live");
     expect(session.currentUrl).toBe("https://attached.example.com");
   });
