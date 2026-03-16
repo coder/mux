@@ -171,19 +171,14 @@ export function generateAgentBrowserWrapper(): {
       `@echo off\r\n` +
       `setlocal EnableDelayedExpansion\r\n` +
       `set "MUX_HAS_SESSION_ARG=0"\r\n` +
-      `:mux_scan_args\r\n` +
-      `if "%~1"=="" goto mux_after_scan\r\n` +
-      `set "MUX_CURRENT_ARG=%~1"\r\n` +
-      `if /I "!MUX_CURRENT_ARG!"=="--session" set "MUX_HAS_SESSION_ARG=1"\r\n` +
-      `echo(!MUX_CURRENT_ARG!| findstr /B /I /C:"--session=" >nul && set "MUX_HAS_SESSION_ARG=1"\r\n` +
-      `shift\r\n` +
-      `goto mux_scan_args\r\n` +
-      `:mux_after_scan\r\n` +
+      `for %%A in (%*) do (\r\n` +
+      `  if /I "%%~A"=="--session" set "MUX_HAS_SESSION_ARG=1"\r\n` +
+      `)\r\n` +
       `if not "%MUX_BROWSER_SESSION%"=="" if "!MUX_HAS_SESSION_ARG!"=="0" (\r\n` +
       `  "${binaryPath.replaceAll('"', '""')}" --session "%MUX_BROWSER_SESSION%" %*\r\n` +
-      `) else (\r\n` +
-      `  "${binaryPath.replaceAll('"', '""')}" %*\r\n` +
+      `  exit /B !ERRORLEVEL!\r\n` +
       `)\r\n` +
-      `endlocal\r\n`,
+      `"${binaryPath.replaceAll('"', '""')}" %*\r\n` +
+      `exit /B !ERRORLEVEL!\r\n`,
   };
 }
