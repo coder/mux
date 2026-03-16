@@ -13,6 +13,56 @@ export interface BrowserAction {
   metadata?: Record<string, unknown>;
 }
 
+// Transport state for the streaming WebSocket bridge
+export type BrowserStreamState =
+  | "disconnected"
+  | "connecting"
+  | "live"
+  | "fallback"
+  | "restart_required"
+  | "error";
+
+// Frame metadata from the agent-browser streaming protocol
+export interface BrowserFrameMetadata {
+  deviceWidth: number;
+  deviceHeight: number;
+  pageScaleFactor: number;
+  offsetTop: number;
+  scrollOffsetX: number;
+  scrollOffsetY: number;
+}
+
+// Input event union for human interaction injection
+export type BrowserInputEvent = BrowserMouseInput | BrowserKeyboardInput | BrowserTouchInput;
+
+export interface BrowserMouseInput {
+  kind: "mouse";
+  eventType: "mousePressed" | "mouseReleased" | "mouseMoved" | "mouseWheel";
+  x: number;
+  y: number;
+  button?: "left" | "right" | "middle" | "none";
+  clickCount?: number;
+  deltaX?: number;
+  deltaY?: number;
+  modifiers?: number;
+}
+
+export interface BrowserKeyboardInput {
+  kind: "keyboard";
+  eventType: "keyDown" | "keyUp" | "char";
+  key?: string;
+  code?: string;
+  text?: string;
+  modifiers?: number;
+}
+
+export interface BrowserTouchInput {
+  kind: "touch";
+  eventType: "touchStart" | "touchEnd" | "touchMove" | "touchCancel";
+  touchPoints: Array<{ x: number; y: number; id?: number }>;
+  modifiers?: number;
+}
+
 // The full session state snapshot
 export interface BrowserSession {
   id: string;
@@ -23,6 +73,9 @@ export interface BrowserSession {
   title: string | null;
   lastScreenshotBase64: string | null; // JPEG base64
   lastError: string | null;
+  streamState: BrowserStreamState | null;
+  lastFrameMetadata: BrowserFrameMetadata | null;
+  streamErrorMessage: string | null;
   startedAt: string; // ISO
   updatedAt: string; // ISO
 }

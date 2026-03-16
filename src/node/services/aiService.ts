@@ -55,6 +55,7 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
+import type { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
@@ -251,6 +252,7 @@ export class AIService extends EventEmitter {
   private extraTools?: Record<string, Tool>;
   private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
   private desktopSessionManager?: DesktopSessionManager;
+  private browserSessionStreamPortRegistry?: BrowserSessionStreamPortRegistry;
 
   constructor(
     config: Config,
@@ -322,6 +324,12 @@ export class AIService extends EventEmitter {
 
   setDesktopSessionManager(desktopSessionManager: DesktopSessionManager): void {
     this.desktopSessionManager = desktopSessionManager;
+  }
+
+  setBrowserSessionStreamPortRegistry(
+    browserSessionStreamPortRegistry: BrowserSessionStreamPortRegistry
+  ): void {
+    this.browserSessionStreamPortRegistry = browserSessionStreamPortRegistry;
   }
 
   getProvidersConfig(): ProvidersConfigMap | null {
@@ -1162,6 +1170,14 @@ export class AIService extends EventEmitter {
 
       // Get model-specific tools with workspace path (correct for local or remote)
       const getToolsForModelStartedAt = Date.now();
+      assert(
+        workspaceId.trim().length > 0,
+        "AIService.streamMessage requires a non-empty workspaceId"
+      );
+      const streamPort =
+        this.browserSessionStreamPortRegistry != null
+          ? await this.browserSessionStreamPortRegistry.reservePort(workspaceId)
+          : undefined;
       const allTools = await getToolsForModel(
         modelString,
         {
@@ -1178,6 +1194,7 @@ export class AIService extends EventEmitter {
               thinkingLevel: thinkingLevel ?? "off",
               costsUsd: sessionCostsUsd,
               workspaceId,
+              streamPort,
             }
           ),
           runtimeTempDir,

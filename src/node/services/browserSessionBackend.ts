@@ -375,6 +375,9 @@ export class BrowserSessionBackend {
       title: null,
       lastScreenshotBase64: null,
       lastError: null,
+      streamState: null,
+      lastFrameMetadata: null,
+      streamErrorMessage: null,
       startedAt: now,
       updatedAt: now,
     };

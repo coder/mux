@@ -39,6 +39,7 @@ import type {
   ToolCallStartEvent,
 } from "@/common/types/stream";
 import { BrowserSessionService } from "@/node/services/browserSessionService";
+import { BrowserSessionStreamPortRegistry } from "@/node/services/browserSessionStreamPortRegistry";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { AnalyticsService } from "@/node/services/analytics/analyticsService";
@@ -122,6 +123,7 @@ export class ServiceContainer {
   public readonly sessionTimingService: SessionTimingService;
   public readonly devToolsService: DevToolsService;
   public readonly browserSessionService: BrowserSessionService;
+  public readonly streamPortRegistry: BrowserSessionStreamPortRegistry;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
   public readonly signingService: SigningService;
@@ -150,6 +152,7 @@ export class ServiceContainer {
     this.analyticsService = new AnalyticsService(config);
     this.devToolsService = new DevToolsService(config);
     this.browserSessionService = new BrowserSessionService();
+    this.streamPortRegistry = new BrowserSessionStreamPortRegistry();
 
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
@@ -182,6 +185,7 @@ export class ServiceContainer {
     this.historyService = core.historyService;
     this.aiService = core.aiService;
     this.aiService.setAnalyticsService(this.analyticsService);
+    this.aiService.setBrowserSessionStreamPortRegistry(this.streamPortRegistry);
     this.workspaceService = core.workspaceService;
     this.taskService = core.taskService;
     this.providerService = core.providerService;
@@ -586,6 +590,7 @@ export class ServiceContainer {
     await this.desktopSessionManager.closeAll();
     this.idleCompactionService.stop();
     this.browserSessionService.dispose();
+    this.streamPortRegistry.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
@@ -608,6 +613,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     this.browserSessionService.dispose();
+    this.streamPortRegistry.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();
