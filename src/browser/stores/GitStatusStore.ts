@@ -434,6 +434,22 @@ export class GitStatusStore {
         }
       }
     }
+
+    // Clear stale status for devcontainer workspaces whose runtime is no longer eligible.
+    // This ensures git indicators disappear when a runtime stops, rather than
+    // showing stale data indefinitely.
+    for (const [workspaceId, metadata] of this.workspaceMetadata) {
+      if (
+        !canRunPassiveRuntimeCommand(
+          metadata.runtimeConfig,
+          this.runtimeStatusStore.getStatus(workspaceId)
+        ) &&
+        this.statusCache.has(workspaceId)
+      ) {
+        this.statusCache.delete(workspaceId);
+        this.statuses.bump(workspaceId);
+      }
+    }
   }
 
   private getBaseRef(metadata: FrontendWorkspaceMetadata): string {
@@ -547,6 +563,32 @@ export class GitStatusStore {
       return { kind: "single", workspaceId: metadata.id, status: null };
     }
 
+    // Passive git status is skipped for devcontainer workspaces whose runtime is
+    // not already running, matching the same contract as passive fetch.
+    if (
+      !canRunPassiveRuntimeCommand(
+        metadata.runtimeConfig,
+        this.runtimeStatusStore.getStatus(metadata.id)
+      )
+    ) {
+      // Arm a one-shot retry so status repopulates when the runtime starts.
+      if (!this.runtimeRetryUnsubscribers.has(metadata.id)) {
+        this.runtimeRetryUnsubscribers.set(
+          metadata.id,
+          onPassiveRuntimeEligible(
+            metadata.id,
+            metadata.runtimeConfig,
+            this.runtimeStatusStore,
+            () => {
+              this.runtimeRetryUnsubscribers.delete(metadata.id);
+              this.refreshController.requestImmediate();
+            }
+          )
+        );
+      }
+      return [metadata.id, null];
+    }
+
     try {
       const baseRef = this.getBaseRef(metadata);
 
@@ -556,11 +598,6 @@ export class GitStatusStore {
       const result = await this.client.workspace.executeBash({
         workspaceId: metadata.id,
         script,
-        // Local git metadata (status, diff) uses the host worktree directly —
-        // devcontainer workspaces bind-mount the repo from the host, so local-only
-        // git operations work without the container. Remote-auth operations
-        // (fetch, ls-remote) use the runtime path instead.
-        executionTarget: "host-workspace",
         options: repoRootBashOptions(5),
       });
 
