@@ -20,7 +20,6 @@ import type {
   BrowserAction,
   BrowserSession,
   BrowserSessionStatus,
-  BrowserStreamState,
 } from "@/common/types/browserSession";
 import { BrowserViewport } from "./BrowserViewport";
 import { useBrowserSessionSubscription } from "./useBrowserSessionSubscription";
@@ -49,33 +48,6 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
   ended: {
     label: "Ended",
     className: "border-border-light bg-background-secondary text-muted",
-  },
-};
-
-const STREAM_STATE_BADGES: Record<BrowserStreamState, { label: string; className: string }> = {
-  disconnected: {
-    label: "Disconnected",
-    className: "border-border-light bg-background-secondary text-muted",
-  },
-  connecting: {
-    label: "Connecting",
-    className: "border-accent/30 bg-accent/10 text-accent",
-  },
-  live: {
-    label: "Stream live",
-    className: "bg-success/20 text-success",
-  },
-  fallback: {
-    label: "Fallback",
-    className: "border-warning/30 bg-warning/10 text-warning",
-  },
-  restart_required: {
-    label: "Restart required",
-    className: "border-destructive/20 bg-destructive/10 text-destructive",
-  },
-  error: {
-    label: "Stream error",
-    className: "border-destructive/20 bg-destructive/10 text-destructive",
   },
 };
 
@@ -167,22 +139,49 @@ export function BrowserTab(props: BrowserTabProps) {
     startError ?? error ?? session?.lastError ?? session?.streamErrorMessage ?? null;
   const sessionIsActive =
     session?.status === "live" || session?.status === "starting" || session?.status === "paused";
-  const streamStateBadge = session?.streamState ? STREAM_STATE_BADGES[session.streamState] : null;
+  const headerBadge = (() => {
+    if (!session && isStarting) {
+      return STATUS_BADGES.starting;
+    }
+    if (!session) {
+      return null;
+    }
+
+    if (session.status === "live") {
+      switch (session.streamState) {
+        case "live":
+          return STATUS_BADGES.live;
+        case "connecting":
+          return { label: "Connecting", className: "border-accent/30 bg-accent/10 text-accent" };
+        case "fallback":
+          return { label: "Fallback", className: "border-warning/30 bg-warning/10 text-warning" };
+        case "restart_required":
+          return {
+            label: "Restart required",
+            className: "border-destructive/20 bg-destructive/10 text-destructive",
+          };
+        case "error":
+          return {
+            label: "Stream error",
+            className: "border-destructive/20 bg-destructive/10 text-destructive",
+          };
+        default:
+          return STATUS_BADGES.live;
+      }
+    }
+
+    return STATUS_BADGES[session.status];
+  })();
   const showStopButton = stoppingSession || sessionIsActive;
   const showStartButton =
     !showStopButton &&
     (session == null || session.status === "ended" || session.status === "error");
   const headerTitle = session?.title ?? session?.currentUrl ?? "Browser session";
   const headerSubtitle = session
-    ? session.currentUrl ?? "No page loaded yet"
+    ? (session.currentUrl ?? "No page loaded yet")
     : isStarting
       ? "Starting browser session…"
       : "Start a browser session to see the live frame and recent actions.";
-  const statusBadge = session
-    ? STATUS_BADGES[session.status]
-    : isStarting
-      ? STATUS_BADGES.starting
-      : null;
 
   // This effect syncs the Browser tab with the external browser-session service by
   // issuing a single attach/start request when no session exists yet.
@@ -307,8 +306,7 @@ export function BrowserTab(props: BrowserTabProps) {
             <h3 className="text-foreground min-w-0 flex-1 truncate text-xs font-semibold">
               {headerTitle}
             </h3>
-            {statusBadge && <BrowserHeaderBadge badge={statusBadge} />}
-            {streamStateBadge && <BrowserHeaderBadge badge={streamStateBadge} />}
+            {headerBadge && <BrowserHeaderBadge badge={headerBadge} />}
           </div>
           {/* Use a portal-backed tooltip to avoid clipping inside overflow-hidden sidebar panels. */}
           <Tooltip>
