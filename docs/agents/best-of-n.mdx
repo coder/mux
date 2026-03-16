@@ -29,9 +29,8 @@ It tends to help most when the first plausible answer is often incomplete.
 
 Best of N is for **multiple attempts at the same task**.
 
-If you want sibling sub-agents to cover **different named slices** — for example `frontend`,
-`backend`, `tests`, or a list of specific commits — use the task tool's `variants` parameter instead.
-When you do, include `${variant}` in the prompt so each child receives its own substituted label.
+Use **variants** when the work should be split into a few distinct parallel lanes instead of retried N times.
+Best-of explores alternative answers; variants divide the job into labeled slices.
 
 <Note>
   Start with `best of 3` or `best of 5`. Larger batches cost more and take longer, but can pay off
