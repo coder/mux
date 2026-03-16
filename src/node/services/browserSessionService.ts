@@ -131,12 +131,16 @@ export class BrowserSessionService extends EventEmitter {
     const backend = this.activeBackends.get(workspaceId);
     if (backend) {
       await backend.stop();
-    }
-
-    const sessionId = getMuxBrowserSessionId(workspaceId);
-    const result = await closeAgentBrowserSession(sessionId);
-    if (!result.success) {
-      log.warn(`Failed to close browser session ${sessionId}: ${result.error ?? "unknown"}`);
+    } else {
+      // Only attempt standalone close for untracked CLI-started sessions.
+      // When a tracked backend exists, backend.stop() already closes the session
+      // via the same CLI command, so a second close would be redundant and would
+      // double the timeout window in failure cases.
+      const sessionId = getMuxBrowserSessionId(workspaceId);
+      const result = await closeAgentBrowserSession(sessionId);
+      if (!result.success) {
+        log.warn(`Failed to close browser session ${sessionId}: ${result.error ?? "unknown"}`);
+      }
     }
 
     this.recentActions.delete(workspaceId);

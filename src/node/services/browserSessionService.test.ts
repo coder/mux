@@ -48,7 +48,7 @@ describe("BrowserSessionService.stopSession", () => {
     mock.restore();
   });
 
-  test("stops a tracked backend and closes the deterministic mux session", async () => {
+  test("stops a tracked backend without issuing a redundant standalone close", async () => {
     const service = new BrowserSessionService();
     const workspaceId = "workspace-123";
     const backend = attachMockBackend(workspaceId, service);
@@ -56,8 +56,7 @@ describe("BrowserSessionService.stopSession", () => {
     await service.stopSession(workspaceId);
 
     expect(backend.stop).toHaveBeenCalledTimes(1);
-    expect(mockCloseAgentBrowserSession).toHaveBeenCalledTimes(1);
-    expect(mockCloseAgentBrowserSession).toHaveBeenCalledWith(getMuxBrowserSessionId(workspaceId));
+    expect(mockCloseAgentBrowserSession).not.toHaveBeenCalled();
   });
 
   test("closes raw CLI sessions even when no tracked backend exists", async () => {
