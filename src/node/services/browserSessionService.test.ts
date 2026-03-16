@@ -25,7 +25,7 @@ void mock.module("@/node/services/browserSessionBackend", () => ({
 import { BrowserSessionService } from "@/node/services/browserSessionService";
 
 function getPrivateMap<T>(service: BrowserSessionService, fieldName: string): Map<string, T> {
-  const value = (service as Record<string, unknown>)[fieldName];
+  const value = (service as unknown as Record<string, unknown>)[fieldName];
   expect(value).toBeInstanceOf(Map);
   return value as Map<string, T>;
 }
