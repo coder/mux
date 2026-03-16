@@ -530,7 +530,6 @@ export class BrowserSessionBackend {
       };
     }
 
-
     if (this.streamSocket == null || this.streamSocket.readyState !== WebSocket.OPEN) {
       return { success: false, error: "Stream socket is not connected" };
     }
