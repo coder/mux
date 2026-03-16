@@ -21,6 +21,7 @@ import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/type
 import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { TerminalService } from "@/node/services/terminalService";
+import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { BashToolResult } from "@/common/types/tools";
 import { createMuxMessage } from "@/common/types/message";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -2635,6 +2636,82 @@ describe("WorkspaceService remove timing rollup", () => {
   });
 });
 
+describe("WorkspaceService remove desktop session cleanup", () => {
+  const workspaceId = "ws-remove-desktop";
+
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let workspaceService: WorkspaceService;
+  let removeWorkspaceMock: ReturnType<typeof mock>;
+  let tempRoot: string;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+    tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-remove-desktop-"));
+    removeWorkspaceMock = mock(() => Promise.resolve());
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Err("not found"))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      getSessionDir: mock((id: string) => path.join(tempRoot, "sessions", id)),
+      removeWorkspace: removeWorkspaceMock,
+      findWorkspace: mock(() => null),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  afterEach(async () => {
+    await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    await cleanupHistory();
+  });
+
+  test("remove() closes desktop sessions on success", async () => {
+    const close = mock(() => Promise.resolve(undefined));
+    const desktopSessionManager = {
+      close,
+    } as unknown as DesktopSessionManager;
+    workspaceService.setDesktopSessionManager(desktopSessionManager);
+
+    const result = await workspaceService.remove(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledWith(workspaceId);
+  });
+
+  test("remove() continues when desktop session cleanup fails", async () => {
+    const close = mock(() => Promise.reject(new Error("close failed")));
+    const desktopSessionManager = {
+      close,
+    } as unknown as DesktopSessionManager;
+    workspaceService.setDesktopSessionManager(desktopSessionManager);
+
+    const result = await workspaceService.remove(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledWith(workspaceId);
+    expect(removeWorkspaceMock).toHaveBeenCalledWith(workspaceId);
+  });
+});
+
 describe("WorkspaceService metadata listeners", () => {
   let historyService: HistoryService;
   let cleanupHistory: () => Promise<void>;
@@ -2843,6 +2920,37 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     expect(result.success).toBe(false);
     expect(closeWorkspaceSessions).not.toHaveBeenCalled();
+  });
+
+  test("archive() closes desktop sessions on success", async () => {
+    const close = mock(() => Promise.resolve(undefined));
+    const desktopSessionManager = {
+      close,
+    } as unknown as DesktopSessionManager;
+    workspaceService.setDesktopSessionManager(desktopSessionManager);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledWith(workspaceId);
+  });
+
+  test("archive() does not close desktop sessions when beforeArchive hook fails", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+    hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    const close = mock(() => Promise.resolve(undefined));
+    const desktopSessionManager = {
+      close,
+    } as unknown as DesktopSessionManager;
+    workspaceService.setDesktopSessionManager(desktopSessionManager);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(false);
+    expect(close).not.toHaveBeenCalled();
   });
 
   test("persists archivedAt when beforeArchive hooks succeed", async () => {

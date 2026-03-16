@@ -103,6 +103,7 @@ import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { StreamEndEvent, StreamAbortEvent, ToolCallEndEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
+import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
@@ -1096,8 +1097,9 @@ export class WorkspaceService extends EventEmitter {
   private readonly telemetryService?: TelemetryService;
   private readonly experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
-  // Optional terminal service for cleanup on workspace removal
+  // Optional services for workspace cleanup during archive/remove lifecycle operations.
   private terminalService?: TerminalService;
+  private desktopSessionManager?: DesktopSessionManager;
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private taskService?: TaskService;
@@ -1115,6 +1117,23 @@ export class WorkspaceService extends EventEmitter {
    */
   setTerminalService(terminalService: TerminalService): void {
     this.terminalService = terminalService;
+  }
+
+  setDesktopSessionManager(manager: DesktopSessionManager): void {
+    this.desktopSessionManager = manager;
+  }
+
+  private async closeDesktopSessionBestEffort(
+    workspaceId: string,
+    reason: "archive" | "remove"
+  ): Promise<void> {
+    try {
+      await this.desktopSessionManager?.close(workspaceId);
+    } catch (error) {
+      log.debug(
+        `Failed to close desktop session during ${reason} for workspace ${workspaceId}: ${getErrorMessage(error)}`
+      );
+    }
   }
 
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
@@ -2734,6 +2753,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Close any terminal sessions for this workspace
       this.terminalService?.closeWorkspaceSessions(workspaceId);
+      await this.closeDesktopSessionBestEffort(workspaceId, "remove");
 
       // Remove from config
       await this.config.removeWorkspace(workspaceId);
@@ -3397,6 +3417,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Archiving hides workspace UI; do not leave terminal PTYs running headless.
       this.terminalService?.closeWorkspaceSessions(workspaceId);
+      await this.closeDesktopSessionBestEffort(workspaceId, "archive");
 
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);

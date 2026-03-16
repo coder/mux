@@ -242,6 +242,7 @@ export class ServiceContainer {
     this.terminalService = new TerminalService(config, this.ptyService, opResolver);
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
+    this.workspaceService.setDesktopSessionManager(this.desktopSessionManager);
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService(this.config);
