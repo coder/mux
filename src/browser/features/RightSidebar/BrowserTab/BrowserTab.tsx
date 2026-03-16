@@ -20,7 +20,9 @@ import type {
   BrowserAction,
   BrowserSession,
   BrowserSessionStatus,
+  BrowserStreamState,
 } from "@/common/types/browserSession";
+import { BrowserViewport } from "./BrowserViewport";
 import { useBrowserSessionSubscription } from "./useBrowserSessionSubscription";
 
 interface BrowserTabProps {
@@ -47,6 +49,51 @@ const STATUS_BADGES: Record<BrowserSessionStatus, { label: string; className: st
   ended: {
     label: "Ended",
     className: "border-border-light bg-background-secondary text-muted",
+  },
+};
+
+const STREAM_STATE_BADGES: Record<BrowserStreamState, { label: string; className: string }> = {
+  disconnected: {
+    label: "Disconnected",
+    className: "border-border-light bg-background-secondary text-muted",
+  },
+  connecting: {
+    label: "Connecting",
+    className: "border-accent/30 bg-accent/10 text-accent",
+  },
+  live: {
+    label: "Stream live",
+    className: "bg-success/20 text-success",
+  },
+  fallback: {
+    label: "Fallback",
+    className: "border-warning/30 bg-warning/10 text-warning",
+  },
+  restart_required: {
+    label: "Restart required",
+    className: "border-destructive/20 bg-destructive/10 text-destructive",
+  },
+  error: {
+    label: "Stream error",
+    className: "border-destructive/20 bg-destructive/10 text-destructive",
+  },
+};
+
+const CONTROL_MODE_BADGES: Record<
+  BrowserSession["ownership"],
+  { label: string; className: string }
+> = {
+  agent: {
+    label: "View only",
+    className: "border-border-light bg-background-secondary text-muted",
+  },
+  user: {
+    label: "Interactive",
+    className: "border-success/30 bg-success/10 text-success",
+  },
+  shared: {
+    label: "Shared control",
+    className: "border-accent/30 bg-accent/10 text-accent",
   },
 };
 
@@ -142,9 +189,12 @@ export function BrowserTab(props: BrowserTabProps) {
   const screenshotSrc = session?.lastScreenshotBase64
     ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
     : null;
-  const visibleError = startError ?? error ?? session?.lastError ?? null;
+  const visibleError =
+    startError ?? error ?? session?.lastError ?? session?.streamErrorMessage ?? null;
   const sessionIsActive =
     session?.status === "live" || session?.status === "starting" || session?.status === "paused";
+  const streamStateBadge = session?.streamState ? STREAM_STATE_BADGES[session.streamState] : null;
+  const controlModeBadge = session ? CONTROL_MODE_BADGES[session.ownership] : null;
   const showStopButton = stoppingSession || sessionIsActive;
   const showStartButton =
     !showStopButton &&
@@ -251,18 +301,13 @@ export function BrowserTab(props: BrowserTabProps) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border-light flex items-start justify-between gap-3 border-b px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="text-foreground truncate text-xs font-semibold">{headerTitle}</h3>
-            {statusBadge && (
-              <span
-                className={cn(
-                  "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                  statusBadge.className
-                )}
-              >
-                {statusBadge.label}
-              </span>
-            )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="text-foreground min-w-0 flex-1 truncate text-xs font-semibold">
+              {headerTitle}
+            </h3>
+            {statusBadge && <BrowserHeaderBadge badge={statusBadge} />}
+            {streamStateBadge && <BrowserHeaderBadge badge={streamStateBadge} />}
+            {controlModeBadge && <BrowserHeaderBadge badge={controlModeBadge} />}
           </div>
           {/* Use a portal-backed tooltip to avoid clipping inside overflow-hidden sidebar panels. */}
           <Tooltip>
@@ -313,26 +358,15 @@ export function BrowserTab(props: BrowserTabProps) {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="bg-background-secondary relative min-h-0 flex-1">
-          {screenshotSrc ? (
-            <img
-              src={screenshotSrc}
-              alt={session?.title ?? session?.currentUrl ?? "Browser session screenshot"}
-              className="h-full w-full object-contain"
-            />
-          ) : (
+        <BrowserViewport
+          workspaceId={props.workspaceId}
+          session={session}
+          screenshotSrc={screenshotSrc}
+          visibleError={visibleError}
+          placeholder={
             <BrowserViewerState session={session} isStarting={isStarting} error={visibleError} />
-          )}
-
-          {visibleError && screenshotSrc && (
-            <div className="pointer-events-none absolute inset-x-3 top-3">
-              <div className="bg-background-secondary border-destructive/20 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-md">
-                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{visibleError}</span>
-              </div>
-            </div>
-          )}
-        </div>
+          }
+        />
 
         <div className="border-border-light flex max-h-56 min-h-[12rem] flex-col border-t">
           <div className="border-border-light bg-background-secondary flex items-center justify-between border-b px-3 py-2">
@@ -361,6 +395,19 @@ export function BrowserTab(props: BrowserTabProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+function BrowserHeaderBadge(props: { badge: { label: string; className: string } }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
+        props.badge.className
+      )}
+    >
+      {props.badge.label}
+    </span>
   );
 }
 

@@ -38,6 +38,32 @@ void mock.module("./useBrowserSessionSubscription", () => ({
 
 import { BrowserTab } from "./BrowserTab";
 
+function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession {
+  return {
+    id: "session-1",
+    workspaceId: "workspace-1",
+    status: "live",
+    ownership: "shared",
+    currentUrl: "https://example.com",
+    title: "Example page",
+    lastScreenshotBase64: null,
+    lastError: null,
+    streamState: "live",
+    lastFrameMetadata: {
+      deviceWidth: 1280,
+      deviceHeight: 720,
+      pageScaleFactor: 1,
+      offsetTop: 0,
+      scrollOffsetX: 0,
+      scrollOffsetY: 0,
+    },
+    streamErrorMessage: null,
+    startedAt: "2026-03-16T00:00:00.000Z",
+    updatedAt: "2026-03-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function renderBrowserTab() {
   return render(<BrowserTab workspaceId="workspace-1" />);
 }
@@ -64,6 +90,16 @@ describe("BrowserTab recent action timestamps", () => {
     mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+  });
+
+  test("shows session status, stream status, and control mode badges for live shared sessions", () => {
+    mockSession = createSession();
+
+    const view = renderBrowserTab();
+
+    expect(view.getByText("Live")).toBeTruthy();
+    expect(view.getByText("Stream live")).toBeTruthy();
+    expect(view.getByText("Shared control")).toBeTruthy();
   });
 
   test("uses the custom tooltip instead of a native title attribute for valid timestamps", () => {
