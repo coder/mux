@@ -122,7 +122,9 @@ describe("generateAgentBrowserWrapper", () => {
     expect(wrapper.windowsContent).toContain("EnableDelayedExpansion");
     expect(wrapper.windowsContent).toContain("MUX_BROWSER_SESSION");
     expect(wrapper.windowsContent).toContain("for %%A in (%*) do");
-    expect(wrapper.windowsContent).toContain('if /I "%%~A"=="--session"');
+    expect(wrapper.windowsContent).toContain('set "MUX_CURRENT_ARG=%%~A"');
+    expect(wrapper.windowsContent).toContain('if /I "!MUX_CURRENT_ARG!"=="--session"');
+    expect(wrapper.windowsContent).toContain('if /I "!MUX_CURRENT_ARG:~0,10!"=="--session="');
     expect(wrapper.windowsContent).not.toContain("findstr");
     expect(wrapper.windowsContent).not.toContain("echo(");
     expect(wrapper.windowsContent).toContain('--session "%MUX_BROWSER_SESSION%"');

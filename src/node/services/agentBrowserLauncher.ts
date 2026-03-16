@@ -172,7 +172,9 @@ export function generateAgentBrowserWrapper(): {
       `setlocal EnableDelayedExpansion\r\n` +
       `set "MUX_HAS_SESSION_ARG=0"\r\n` +
       `for %%A in (%*) do (\r\n` +
-      `  if /I "%%~A"=="--session" set "MUX_HAS_SESSION_ARG=1"\r\n` +
+      `  set "MUX_CURRENT_ARG=%%~A"\r\n` +
+      `  if /I "!MUX_CURRENT_ARG!"=="--session" set "MUX_HAS_SESSION_ARG=1"\r\n` +
+      `  if /I "!MUX_CURRENT_ARG:~0,10!"=="--session=" set "MUX_HAS_SESSION_ARG=1"\r\n` +
       `)\r\n` +
       `if not "%MUX_BROWSER_SESSION%"=="" if "!MUX_HAS_SESSION_ARG!"=="0" (\r\n` +
       `  "${binaryPath.replaceAll('"', '""')}" --session "%MUX_BROWSER_SESSION%" %*\r\n` +

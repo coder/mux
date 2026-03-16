@@ -66,6 +66,7 @@ const ACTION_ICONS: Record<BrowserAction["type"], LucideIcon> = {
 
 interface AutoStartGateState {
   attempted: boolean;
+  autoStartPending: boolean;
   manuallyStopped: boolean;
 }
 
@@ -81,6 +82,7 @@ function getAutoStartState(workspaceId: string): AutoStartGateState {
 
   const initialState: AutoStartGateState = {
     attempted: false,
+    autoStartPending: false,
     manuallyStopped: false,
   };
   autoStartStateByWorkspace.set(workspaceId, initialState);
@@ -181,12 +183,14 @@ export function BrowserTab(props: BrowserTabProps) {
       startingSession ||
       stoppingSession ||
       autoStartState.attempted ||
+      autoStartState.autoStartPending ||
       autoStartState.manuallyStopped
     ) {
       return;
     }
 
     autoStartState.attempted = true;
+    autoStartState.autoStartPending = true;
 
     let ignore = false;
     startBrowserSession({
@@ -202,6 +206,10 @@ export function BrowserTab(props: BrowserTabProps) {
 
     return () => {
       ignore = true;
+      const state = autoStartStateByWorkspace.get(props.workspaceId);
+      if (state != null) {
+        state.autoStartPending = false;
+      }
     };
   }, [
     autoStartState,
