@@ -9,7 +9,6 @@ import type {
   BrowserSessionOwnership,
 } from "@/common/types/browserSession";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
-import { isDaemonRunning } from "agent-browser/dist/daemon.js";
 import {
   AgentBrowserBinaryNotFoundError,
   AgentBrowserUnsupportedPlatformError,
@@ -207,8 +206,9 @@ export class BrowserSessionBackend {
 
   private createSession(status: BrowserSession["status"]): BrowserSession {
     const now = new Date().toISOString();
+    const runId = `${this.sessionId}-${randomUUID().slice(0, 8)}`;
     return {
-      id: this.sessionId,
+      id: runId,
       workspaceId: this.options.workspaceId,
       status,
       ownership: this.options.ownership,
@@ -227,9 +227,14 @@ export class BrowserSessionBackend {
 
   private hasExistingSession(): boolean {
     try {
-      // agent-browser lazily auto-launches blank browsers for metadata commands, so checking
-      // the daemon PID is the least destructive way to detect whether we can attach instead.
-      return isDaemonRunning(this.sessionId);
+      // Lazy-load to avoid startup crashes when the optional agent-browser package is missing
+      // or corrupt. agent-browser also auto-launches blank browsers for metadata commands,
+      // so checking the daemon PID is the least destructive way to detect attachable sessions.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { isDaemonRunning: isDaemonRunningFn } = require("agent-browser/dist/daemon.js") as {
+        isDaemonRunning: (sessionId: string) => boolean;
+      };
+      return isDaemonRunningFn(this.sessionId);
     } catch {
       return false;
     }
