@@ -111,6 +111,8 @@ describe("createLineBufferedLoggers", () => {
   });
 });
 
+const legacyBrowserSessionEnvVar = ["MUX", "BROWSER", "SESSION"].join("_");
+
 describe("getMuxEnv", () => {
   it("should include base MUX_ environment variables", () => {
     const env = getMuxEnv("/path/to/project", "worktree", "feature-branch");
@@ -119,7 +121,8 @@ describe("getMuxEnv", () => {
     expect(env.MUX_RUNTIME).toBe("worktree");
     expect(env.MUX_WORKSPACE_NAME).toBe("feature-branch");
     expect(env.MUX_WORKSPACE_ID).toBeUndefined();
-    expect(env.MUX_BROWSER_SESSION).toBeUndefined();
+    expect(env.AGENT_BROWSER_SESSION).toBeUndefined();
+    expect(legacyBrowserSessionEnvVar in env).toBe(false);
     expect(env.MUX_MODEL_STRING).toBeUndefined();
     expect(env.MUX_THINKING_LEVEL).toBeUndefined();
     expect(env.MUX_COSTS_USD).toBeUndefined();
@@ -131,7 +134,8 @@ describe("getMuxEnv", () => {
     });
 
     expect(env.MUX_WORKSPACE_ID).toBe("workspace-id");
-    expect(env.MUX_BROWSER_SESSION).toBe("mux-workspace-id");
+    expect(env.AGENT_BROWSER_SESSION).toBe("mux-workspace-id");
+    expect(legacyBrowserSessionEnvVar in env).toBe(false);
   });
 
   it("should include model + thinking env vars when provided", () => {

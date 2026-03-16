@@ -98,7 +98,9 @@ export function getMuxEnv(
 
   if (options?.workspaceId != null) {
     env.MUX_WORKSPACE_ID = options.workspaceId;
-    env.MUX_BROWSER_SESSION = getMuxBrowserSessionId(options.workspaceId);
+    // The vendored agent-browser CLI natively reads AGENT_BROWSER_SESSION,
+    // so Mux can export the upstream env var directly without wrapper indirection.
+    env.AGENT_BROWSER_SESSION = getMuxBrowserSessionId(options.workspaceId);
   }
 
   if (options?.modelString) {
