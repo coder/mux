@@ -538,7 +538,11 @@ export class BrowserSessionBackend {
       return { success: false, error: "No frame metadata available" };
     }
 
-    this.streamSocket.send(JSON.stringify(this.mapInputToProtocol(input)));
+    try {
+      this.streamSocket.send(JSON.stringify(this.mapInputToProtocol(input)));
+    } catch (error) {
+      return { success: false, error: `Failed to send input: ${getErrorMessage(error)}` };
+    }
     return { success: true };
   }
 

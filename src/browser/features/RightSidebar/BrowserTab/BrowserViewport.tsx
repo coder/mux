@@ -460,6 +460,24 @@ export function BrowserViewport(props: BrowserViewportProps) {
     );
   };
 
+  const blockingOverlay =
+    interactionState.blockingMessage != null ? (
+      <div className="absolute inset-0 flex items-center justify-center p-6">
+        <div className="border-border-light bg-background/90 flex max-w-xs flex-col items-center gap-3 rounded-md border px-4 py-3 text-center shadow-lg backdrop-blur-sm">
+          <p className="text-foreground text-xs font-medium">{interactionState.blockingMessage}</p>
+          {interactionState.showRestartCta && props.onRestart != null && (
+            <button
+              type="button"
+              onClick={props.onRestart}
+              className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+            >
+              Restart
+            </button>
+          )}
+        </div>
+      </div>
+    ) : null;
+
   const interactiveSurface =
     props.screenshotSrc != null ? (
       <>
@@ -501,24 +519,6 @@ export function BrowserViewport(props: BrowserViewportProps) {
             hasFocus && "ring-accent ring-2 ring-inset"
           )}
         />
-        {interactionState.blockingMessage != null && (
-          <div className="absolute inset-0 flex items-center justify-center p-6">
-            <div className="border-border-light bg-background/90 flex max-w-xs flex-col items-center gap-3 rounded-md border px-4 py-3 text-center shadow-lg backdrop-blur-sm">
-              <p className="text-foreground text-xs font-medium">
-                {interactionState.blockingMessage}
-              </p>
-              {interactionState.showRestartCta && props.onRestart != null && (
-                <button
-                  type="button"
-                  onClick={props.onRestart}
-                  className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-                >
-                  Restart
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </>
     ) : (
       props.placeholder
@@ -527,6 +527,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
   return (
     <div className="bg-background-secondary relative min-h-0 flex-1 overflow-hidden">
       {interactiveSurface}
+      {blockingOverlay}
       {props.visibleError && props.screenshotSrc && (
         <div className="pointer-events-none absolute inset-x-3 top-3">
           <div className="bg-background-secondary border-destructive/20 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-md">

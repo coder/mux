@@ -4,6 +4,7 @@ import { assert } from "@/common/utils/assert";
 export class BrowserSessionStreamPortRegistry {
   private readonly reservations = new Map<string, number>();
   private readonly inFlight = new Map<string, Promise<number>>();
+  private readonly reserveEpoch = new Map<string, number>();
 
   /** Reserve (or return existing) free port for a workspace */
   async reservePort(workspaceId: string): Promise<number> {
@@ -22,7 +23,9 @@ export class BrowserSessionStreamPortRegistry {
       return pending;
     }
 
-    const promise = this.reservePortInternal(workspaceId);
+    const epoch = (this.reserveEpoch.get(workspaceId) ?? 0) + 1;
+    this.reserveEpoch.set(workspaceId, epoch);
+    const promise = this.reservePortInternal(workspaceId, epoch);
     this.inFlight.set(workspaceId, promise);
     try {
       return await promise;
@@ -33,7 +36,7 @@ export class BrowserSessionStreamPortRegistry {
     }
   }
 
-  private async reservePortInternal(workspaceId: string): Promise<number> {
+  private async reservePortInternal(workspaceId: string, epoch: number): Promise<number> {
     const maxRetries = 5;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const port = await findFreePort();
@@ -48,6 +51,9 @@ export class BrowserSessionStreamPortRegistry {
       }
 
       if (!collision) {
+        if (this.reserveEpoch.get(workspaceId) !== epoch) {
+          throw new Error(`Port reservation for workspace ${workspaceId} was cancelled`);
+        }
         this.reservations.set(workspaceId, port);
         return port;
       }
@@ -74,6 +80,7 @@ export class BrowserSessionStreamPortRegistry {
   /** Release the port reservation for a workspace */
   releasePort(workspaceId: string): void {
     assert(workspaceId.trim().length > 0, "workspaceId must not be empty");
+    this.reserveEpoch.set(workspaceId, (this.reserveEpoch.get(workspaceId) ?? 0) + 1);
     this.inFlight.delete(workspaceId);
     this.reservations.delete(workspaceId);
   }
@@ -88,6 +95,7 @@ export class BrowserSessionStreamPortRegistry {
   dispose(): void {
     this.inFlight.clear();
     this.reservations.clear();
+    this.reserveEpoch.clear();
   }
 }
 

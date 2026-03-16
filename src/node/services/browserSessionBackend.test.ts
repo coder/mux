@@ -419,6 +419,24 @@ describe("BrowserSessionBackend", () => {
     });
   });
 
+  test("returns an input error when the stream socket closes during send", () => {
+    const backend = createBackend();
+    const send = mock(() => {
+      throw new Error("socket closed");
+    });
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput(mouseClickInput);
+
+    expect(result).toEqual({ success: false, error: "Failed to send input: socket closed" });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   test("clamps mouse coordinates to the viewport before sending", () => {
     const backend = createBackend();
     const send = mock(() => undefined);

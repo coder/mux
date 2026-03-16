@@ -50,13 +50,21 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
 
 function renderViewport(
   session: BrowserSession,
-  overrides?: { onRestart?: () => void; visibleError?: string | null }
+  overrides?: {
+    onRestart?: () => void;
+    screenshotSrc?: string | null;
+    visibleError?: string | null;
+  }
 ) {
   return render(
     <BrowserViewport
       workspaceId="workspace-1"
       session={session}
-      screenshotSrc="data:image/jpeg;base64,frame-data"
+      screenshotSrc={
+        overrides?.screenshotSrc === undefined
+          ? "data:image/jpeg;base64,frame-data"
+          : overrides.screenshotSrc
+      }
       visibleError={overrides?.visibleError ?? null}
       placeholder={<div>placeholder</div>}
       onRestart={overrides?.onRestart}
@@ -263,6 +271,26 @@ describe("BrowserViewport", () => {
 
     expect(fallbackView.getByText("Screenshots only — streaming unavailable")).toBeTruthy();
     expect(fallbackView.queryByRole("button", { name: "Restart" })).toBeNull();
+  });
+
+  test("shows restart controls before the first screenshot arrives", () => {
+    const restartMock = mock(() => undefined);
+    const view = renderViewport(
+      createSession({
+        streamState: "restart_required",
+        lastScreenshotBase64: null,
+        lastFrameMetadata: null,
+      }),
+      {
+        onRestart: restartMock,
+        screenshotSrc: null,
+      }
+    );
+
+    expect(view.getByText("placeholder")).toBeTruthy();
+    expect(view.getByText("Restart browser to enable live control")).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: "Restart" }));
+    expect(restartMock).toHaveBeenCalledTimes(1);
   });
 
   test("shows stream-specific non-interactive messages while the stream is unavailable", () => {
