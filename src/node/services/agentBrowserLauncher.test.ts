@@ -138,7 +138,7 @@ describe("generateAgentBrowserWrapper", () => {
     const wrapper = generateAgentBrowserWrapper();
 
     expect(wrapper.windowsContent).toContain(":mux_loop");
-    expect(wrapper.windowsContent).toContain('if "%~1"=="" goto mux_done');
+    expect(wrapper.windowsContent).toContain('if "%1"=="" goto mux_done');
     expect(wrapper.windowsContent).toContain('if /I "%MUX_CUR%"=="--session" (');
     expect(wrapper.windowsContent).toContain('set "MUX_TEST=%MUX_CUR:~0,10%"');
     expect(wrapper.windowsContent).toContain('if /I "%MUX_TEST%"=="--session=" (');

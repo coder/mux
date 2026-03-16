@@ -243,7 +243,7 @@ export function generateAgentBrowserWrapper(): {
       ")",
       'set "MUX_ARGS="',
       ":mux_loop",
-      'if "%~1"=="" goto mux_done',
+      'if "%1"=="" goto mux_done',
       'set "MUX_CUR=%~1"',
       'if /I "%MUX_CUR%"=="--session" (',
       "  shift",
