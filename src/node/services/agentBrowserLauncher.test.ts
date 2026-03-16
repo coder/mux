@@ -142,7 +142,9 @@ describe("generateAgentBrowserWrapper", () => {
     expect(wrapper.windowsContent).toContain('if /I "%MUX_CUR%"=="--session" (');
     expect(wrapper.windowsContent).toContain('set "MUX_TEST=%MUX_CUR:~0,10%"');
     expect(wrapper.windowsContent).toContain('if /I "%MUX_TEST%"=="--session=" (');
-    expect(wrapper.windowsContent).toContain("set MUX_ARGS=!MUX_ARGS! %1");
+    expect(wrapper.windowsContent).toContain('set "MUX_ARGS=%MUX_ARGS% %1"');
+    expect(wrapper.windowsContent).toContain('--session "%AGENT_BROWSER_SESSION%" %MUX_ARGS%');
+    expect(wrapper.windowsContent).toContain("exit /B %ERRORLEVEL%");
     expect(wrapper.windowsContent).not.toContain("for %%A in (%*) do (");
     expect(wrapper.windowsContent).not.toContain("MUX_FILTERED_ARGS");
   });
