@@ -227,11 +227,33 @@ export async function closeAgentBrowserSession(
       spawnFn: options?.spawnFn,
       resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
     });
-    if (result.ok || isMissingBrowserSessionError(result.error)) {
+    if (!result.ok) {
+      if (isMissingBrowserSessionError(result.error)) {
+        return { success: true };
+      }
+
+      return { success: false, error: result.error };
+    }
+
+    const trimmedStdout = result.stdout.trim();
+    if (trimmedStdout.length === 0) {
       return { success: true };
     }
 
-    return { success: false, error: result.error };
+    try {
+      const parsedOutput: unknown = JSON.parse(trimmedStdout);
+      if (isRecord(parsedOutput) && parsedOutput.success === false) {
+        return {
+          success: false,
+          error:
+            typeof parsedOutput.error === "string" ? parsedOutput.error : "close reported failure",
+        };
+      }
+    } catch {
+      // Treat non-JSON close output as success; close may emit plain text on success.
+    }
+
+    return { success: true };
   } catch (error) {
     return {
       success: false,

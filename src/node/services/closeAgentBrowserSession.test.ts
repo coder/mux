@@ -137,6 +137,25 @@ describe("closeAgentBrowserSession", () => {
     expect(result).toEqual({ success: false, error: "permission denied" });
   });
 
+  test("returns an error when the close command reports a logical failure in JSON", async () => {
+    const mockChildProcess = createMockChildProcess(
+      0,
+      '{"success":false,"error":"close failed after daemon shutdown timeout"}'
+    );
+    mockSpawn.mockReturnValue(mockChildProcess);
+
+    const result = await closeAgentBrowserSession(
+      "mux-workspace-123",
+      undefined,
+      createCloseSessionOptions()
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: "close failed after daemon shutdown timeout",
+    });
+  });
+
   test("returns an error when the close command times out", async () => {
     const mockChildProcess = createMockChildProcess(0, "", "", { autoClose: false });
     mockSpawn.mockReturnValue(mockChildProcess);
