@@ -50,6 +50,17 @@ export function getTaskGroupCount(args: TaskGroupArgsLike | null | undefined): n
   return args?.n ?? 1;
 }
 
+export function getTaskGroupLabelAtIndex(
+  args: TaskGroupArgsLike | null | undefined,
+  index: number
+): string | undefined {
+  const variants = args?.variants;
+  if (!variants || index < 0 || index >= variants.length) {
+    return undefined;
+  }
+  return normalizeTaskGroupLabel(variants[index]);
+}
+
 export function getTaskGroupKindFromArgs(
   args: TaskGroupArgsLike | null | undefined
 ): TaskGroupKind {

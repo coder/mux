@@ -410,6 +410,53 @@ export const VariantTaskGroup: Story = {
 };
 
 /**
+ * Variants task card during execution: labels come from the parent task args before reports arrive.
+ */
+export const VariantTaskGroupWhileRunning: Story = {
+  render: () => {
+    const client = createMockORPCClient();
+
+    return (
+      <TaskStoryFrame client={client}>
+        <TaskToolCall
+          workspaceId="ws-variants-running"
+          args={{
+            subagent_type: "explore",
+            prompt: "Review ${variant} for regressions",
+            title: "Split review",
+            run_in_background: true,
+            variants: ["frontend", "backend", "tests"],
+          }}
+          result={{
+            status: "running",
+            taskIds: ["task-variant-live-1", "task-variant-live-2", "task-variant-live-3"],
+            tasks: [
+              { taskId: "task-variant-live-1", status: "running" },
+              { taskId: "task-variant-live-2", status: "queued" },
+              { taskId: "task-variant-live-3", status: "queued" },
+            ],
+            note: "Use task_await to monitor progress.",
+          }}
+          status="completed"
+        />
+      </TaskStoryFrame>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toolHeader = await canvas.findByText("task", { selector: "span" });
+    await userEvent.click(toolHeader);
+
+    await waitFor(() => {
+      const text = canvasElement.textContent ?? "";
+      if (!text.includes("frontend") || !text.includes("backend") || !text.includes("tests")) {
+        throw new Error("Expected live variant labels to be rendered from task args");
+      }
+    });
+  },
+};
+
+/**
  * Completed task with transcript viewer support.
  */
 export const TaskTranscriptViewer: Story = {

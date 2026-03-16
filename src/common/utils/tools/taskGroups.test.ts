@@ -11,6 +11,7 @@ import {
   getTaskGroupCount,
   getTaskGroupKindFromArgs,
   getTaskGroupKindFromMetadata,
+  getTaskGroupLabelAtIndex,
   normalizeTaskGroupKind,
   normalizeTaskGroupLabel,
   replaceTaskVariantPlaceholder,
@@ -60,6 +61,13 @@ describe("taskGroups", () => {
     expect(normalizeTaskGroupLabel("  frontend  ")).toBe("frontend");
     expect(normalizeTaskGroupLabel("   ")).toBeUndefined();
     expect(replaceTaskVariantPlaceholder("Check ${variant}", "docs")).toBe("Check docs");
+  });
+
+  it("can recover variant labels from args by sibling index", () => {
+    expect(getTaskGroupLabelAtIndex({ variants: ["frontend", "backend"] }, 0)).toBe("frontend");
+    expect(getTaskGroupLabelAtIndex({ variants: ["frontend", "backend"] }, 1)).toBe("backend");
+    expect(getTaskGroupLabelAtIndex({ variants: ["frontend", "backend"] }, 2)).toBeUndefined();
+    expect(getTaskGroupLabelAtIndex({ n: 3 }, 0)).toBeUndefined();
   });
 
   it("formats task-group copy for best-of and variants", () => {

@@ -51,6 +51,7 @@ import {
   getTaskGroupCount,
   getTaskGroupKindFromArgs,
   getTaskGroupKindFromMetadata,
+  getTaskGroupLabelAtIndex,
   normalizeTaskGroupLabel,
   type TaskGroupKind,
 } from "@/common/utils/tools/taskGroups";
@@ -739,7 +740,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const kindBadge = <AgentTypeBadge type={agentType} />;
   const isBackground = args.run_in_background;
 
-  const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId) => {
+  const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId, index) => {
     const ownReport = ownReportsByTaskId.get(taskId);
     const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
     const metadata = workspaceMetadata?.get(taskId);
@@ -767,7 +768,8 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
       label:
         ownReport?.label ??
         resultTaskGroup?.label ??
-        normalizeTaskGroupLabel(metadata?.bestOf?.label),
+        normalizeTaskGroupLabel(metadata?.bestOf?.label) ??
+        getTaskGroupLabelAtIndex(args, index),
     };
   });
 
