@@ -108,29 +108,32 @@ describe("getVendoredBinDir", () => {
 });
 
 describe("generateAgentBrowserWrapper", () => {
-  test("generates wrapper scripts that invoke the resolved absolute binary path", () => {
+  test("generates pure wrapper shims that pass all args through to the vendored binary", () => {
     const resolvedBinaryPath = resolveAgentBrowserBinary();
     const wrapper = generateAgentBrowserWrapper();
+    const expectedPosixContent =
+      `#!/bin/sh\n` + `exec '${resolvedBinaryPath.replaceAll("'", `'\\''`)}' "$@"\n`;
+    const expectedWindowsContent =
+      `@echo off\r\n` +
+      `"${resolvedBinaryPath.replaceAll('"', '""')}" %*\r\n` +
+      `exit /B %ERRORLEVEL%\r\n`;
 
     expect(wrapper.dir).toBe(getVendoredBinDir());
-    expect(wrapper.posixContent.startsWith("#!/bin/sh\n")).toBe(true);
-    expect(wrapper.posixContent).toContain("mux_has_session_arg=0");
-    expect(wrapper.posixContent).toContain("MUX_BROWSER_SESSION");
-    expect(wrapper.posixContent).toContain('--session "$MUX_BROWSER_SESSION"');
-    expect(wrapper.posixContent).toContain(resolvedBinaryPath);
+    expect(wrapper.posixContent).toBe(expectedPosixContent);
+    expect(wrapper.posixContent).not.toContain("MUX_BROWSER_SESSION");
+    expect(wrapper.posixContent).not.toContain("--session");
+    expect(wrapper.posixContent).not.toContain("mux_has_session_arg");
+    expect(wrapper.posixContent).toContain("exec ");
     expect(wrapper.posixContent).toContain('"$@"');
-    expect(wrapper.windowsContent).toContain("EnableDelayedExpansion");
-    expect(wrapper.windowsContent).toContain("MUX_BROWSER_SESSION");
-    expect(wrapper.windowsContent).toContain("for %%A in (%*) do");
-    expect(wrapper.windowsContent).toContain('set "MUX_CURRENT_ARG=%%~A"');
-    expect(wrapper.windowsContent).toContain('if /I "!MUX_CURRENT_ARG!"=="--session"');
-    expect(wrapper.windowsContent).toContain('if /I "!MUX_CURRENT_ARG:~0,10!"=="--session="');
-    expect(wrapper.windowsContent).not.toContain("findstr");
-    expect(wrapper.windowsContent).not.toContain("echo(");
-    expect(wrapper.windowsContent).toContain('--session "%MUX_BROWSER_SESSION%"');
-    expect(wrapper.windowsContent).toContain("exit /B !ERRORLEVEL!");
-    expect(wrapper.windowsContent).toContain(resolvedBinaryPath);
-    expect(wrapper.windowsContent).toContain("%*");
+
+    expect(wrapper.windowsContent).toBe(expectedWindowsContent);
+    expect(wrapper.windowsContent).not.toContain("MUX_BROWSER_SESSION");
+    expect(wrapper.windowsContent).not.toContain("--session");
+    expect(wrapper.windowsContent).not.toContain("MUX_HAS_SESSION_ARG");
+    expect(wrapper.windowsContent).not.toContain("EnableDelayedExpansion");
+    expect(wrapper.windowsContent).toContain(`"${resolvedBinaryPath.replaceAll('"', '""')}" %*`);
+    expect(wrapper.windowsContent).toContain("exit /B %ERRORLEVEL%");
+
     expect(path.isAbsolute(resolvedBinaryPath)).toBe(true);
   });
 });

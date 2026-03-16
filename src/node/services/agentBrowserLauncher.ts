@@ -156,8 +156,8 @@ function prependPathOnce(dir: string, env: NodeJS.ProcessEnv): void {
 /**
  * Install the vendored agent-browser wrapper into mux-managed bin dir and ensure
  * the current process PATH can discover it. Server-mode mux needs this too so
- * bash tools resolve `agent-browser` instead of falling back to `bunx`, which
- * bypasses MUX_BROWSER_SESSION and leaves the Browser tab disconnected.
+ * bash tools resolve the vendored `agent-browser` binary instead of falling back
+ * to a global install or `bunx`.
  */
 export function materializeVendoredAgentBrowserWrapper(): void {
   const { dir, posixContent, windowsContent } = generateAgentBrowserWrapper();
@@ -189,37 +189,12 @@ export function generateAgentBrowserWrapper(): {
     "Vendored agent-browser wrapper target must be an absolute path"
   );
 
+  // These wrappers are pure shims that force PATH resolution to the vendored
+  // agent-browser binary while leaving every user-supplied argument untouched.
   return {
     dir: getVendoredBinDir(),
-    posixContent:
-      `#!/bin/sh\n` +
-      `mux_has_session_arg=0\n` +
-      `for mux_arg in "$@"; do\n` +
-      `  case "$mux_arg" in\n` +
-      `    --session|--session=*)\n` +
-      `      mux_has_session_arg=1\n` +
-      `      break\n` +
-      `      ;;\n` +
-      `  esac\n` +
-      `done\n` +
-      `if [ "$mux_has_session_arg" -eq 0 ] && [ -n "\${MUX_BROWSER_SESSION:-}" ]; then\n` +
-      `  exec ${shellQuotePosix(binaryPath)} --session "$MUX_BROWSER_SESSION" "$@"\n` +
-      `fi\n` +
-      `exec ${shellQuotePosix(binaryPath)} "$@"\n`,
+    posixContent: `#!/bin/sh\n` + `exec ${shellQuotePosix(binaryPath)} "$@"\n`,
     windowsContent:
-      `@echo off\r\n` +
-      `setlocal EnableDelayedExpansion\r\n` +
-      `set "MUX_HAS_SESSION_ARG=0"\r\n` +
-      `for %%A in (%*) do (\r\n` +
-      `  set "MUX_CURRENT_ARG=%%~A"\r\n` +
-      `  if /I "!MUX_CURRENT_ARG!"=="--session" set "MUX_HAS_SESSION_ARG=1"\r\n` +
-      `  if /I "!MUX_CURRENT_ARG:~0,10!"=="--session=" set "MUX_HAS_SESSION_ARG=1"\r\n` +
-      `)\r\n` +
-      `if not "%MUX_BROWSER_SESSION%"=="" if "!MUX_HAS_SESSION_ARG!"=="0" (\r\n` +
-      `  "${binaryPath.replaceAll('"', '""')}" --session "%MUX_BROWSER_SESSION%" %*\r\n` +
-      `  exit /B !ERRORLEVEL!\r\n` +
-      `)\r\n` +
-      `"${binaryPath.replaceAll('"', '""')}" %*\r\n` +
-      `exit /B !ERRORLEVEL!\r\n`,
+      `@echo off\r\n` + `"${binaryPath.replaceAll('"', '""')}" %*\r\n` + `exit /B %ERRORLEVEL%\r\n`,
   };
 }
