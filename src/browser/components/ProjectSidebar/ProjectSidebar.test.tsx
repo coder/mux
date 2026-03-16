@@ -516,6 +516,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
+      updateDisplayName: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
@@ -732,6 +733,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
       getSecrets: () => Promise.resolve([]),
       updateSecrets: () => Promise.resolve(),
+      updateDisplayName: () => resolveVoidResult(),
       createSection: () =>
         Promise.resolve({ success: true, data: { id: "section-1", name: "Section" } }),
       updateSection: () => resolveVoidResult(),
