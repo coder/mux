@@ -338,7 +338,7 @@ export function buildProviderOptions(
     // the same project to share OpenAI's server-side KV cache, improving
     // hit rates for shared prefixes (system prompts, tool schemas, AGENTS.md).
     // Falls back to workspaceId when projectName is unavailable.
-    const cacheScope = projectName || workspaceId;
+    const cacheScope = projectName ?? workspaceId;
     const promptCacheKey = cacheScope ? `mux-v1-${cacheScope}` : undefined;
 
     const serviceTier = muxProviderOptions?.openai?.serviceTier ?? "auto";
