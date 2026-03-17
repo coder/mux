@@ -4,30 +4,38 @@
  * Uses wide viewport (1600px) to ensure RightSidebar tabs are visible.
  */
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mockFactory";
+import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
+import { blurActiveElement } from "@/browser/stories/storyPlayHelpers";
 import {
-  setupSimpleChatStory,
-  setupStreamingChatStory,
   expandRightSidebar,
   setHunkFirstSeen,
   setReviewSortOrder,
-} from "./storyHelpers";
-import { createUserMessage, createAssistantMessage } from "./mockFactory";
-import { within, userEvent, waitFor, expect } from "@storybook/test";
-import { blurActiveElement } from "./storyPlayHelpers.js";
+  setupSimpleChatStory,
+  setupStreamingChatStory,
+} from "@/browser/stories/storyHelpers";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
-  getRightSidebarLayoutKey,
+  SELECTED_WORKSPACE_KEY,
+  UI_THEME_KEY,
   getAutoCompactionThresholdKey,
+  getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import type { ComponentType } from "react";
-import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, userEvent, waitFor, within } from "@storybook/test";
+import type { ComponentType, ReactNode } from "react";
+import { useRef } from "react";
+import { RightSidebar } from "./RightSidebar.js";
 
-export default {
-  ...appMeta,
-  title: "App/RightSidebar",
+const meta = {
+  title: "Features/RightSidebar/RightSidebar",
+  component: RightSidebar,
   decorators: [
     (Story: ComponentType) => (
       <div style={{ width: 1600, height: "100dvh" }}>
@@ -36,16 +44,91 @@ export default {
     ),
   ],
   parameters: {
-    ...appMeta.parameters,
+    layout: "fullscreen",
+    backgrounds: {
+      default: "dark",
+      values: [
+        { name: "dark", value: "#1e1e1e" },
+        { name: "light", value: "#f5f6f8" },
+      ],
+    },
     chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
+      delay: 500,
       modes: {
         dark: { theme: "dark", viewport: 1600 },
         light: { theme: "light", viewport: 1600 },
       },
     },
   },
-};
+} satisfies Meta<typeof RightSidebar>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+const STORY_PROJECT_PATH = "/home/user/projects/my-app";
+
+function getWorkspacePath(workspaceId: string): string {
+  return `/home/user/.mux/src/my-app/${workspaceId}`;
+}
+
+function resetStorybookPersistedStateForStory(): void {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+
+  localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+  localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
+}
+
+function getStorybookRenderKey(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const storyId = params.get("id") ?? params.get("path");
+  const viewportBucket = window.innerWidth <= 768 ? "narrow" : "wide";
+  return storyId ? `${storyId}:${viewportBucket}` : viewportBucket;
+}
+
+function RightSidebarStoryShell(props: { setup: () => APIClient; children: ReactNode }) {
+  const lastRenderKeyRef = useRef<string | null>(null);
+  const clientRef = useRef<APIClient | null>(null);
+
+  const renderKey = getStorybookRenderKey();
+  const shouldReset = clientRef.current === null || lastRenderKeyRef.current !== renderKey;
+
+  if (shouldReset) {
+    resetStorybookPersistedStateForStory();
+    lastRenderKeyRef.current = renderKey;
+    clientRef.current = null;
+  }
+
+  clientRef.current ??= props.setup();
+
+  return (
+    <ThemeProvider>
+      <TooltipProvider>
+        <APIProvider key={renderKey ?? "right-sidebar-story"} client={clientRef.current}>
+          <ExperimentsProvider>{props.children}</ExperimentsProvider>
+        </APIProvider>
+      </TooltipProvider>
+    </ThemeProvider>
+  );
+}
+
+function RightSidebarStoryContent(props: { workspaceId: string }) {
+  const width = readPersistedState<number>(RIGHT_SIDEBAR_WIDTH_KEY, 400);
+
+  return (
+    <RightSidebar
+      workspaceId={props.workspaceId}
+      workspacePath={getWorkspacePath(props.workspaceId)}
+      projectPath={STORY_PROJECT_PATH}
+      width={width}
+    />
+  );
+}
 
 /**
  * Helper to create session usage data with costs
@@ -74,9 +157,9 @@ function createSessionUsage(cost: number): MockSessionUsage {
 /**
  * Costs tab with session cost displayed in tab label ($0.56)
  */
-export const CostsTab: AppStory = {
+export const CostsTab: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
@@ -99,7 +182,9 @@ export const CostsTab: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-costs" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -116,9 +201,9 @@ export const CostsTab: AppStory = {
  * Cache create is more expensive than cache read; both render in grey tones.
  * This story uses realistic Anthropic-style usage where most input is cached.
  */
-export const CostsTabWithCacheCreate: AppStory = {
+export const CostsTabWithCacheCreate: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
@@ -161,7 +246,9 @@ export const CostsTabWithCacheCreate: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-cache-create" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -185,9 +272,9 @@ export const CostsTabWithCacheCreate: AppStory = {
  * Review tab selected - click switches from Costs to Review tab
  * Verifies per-tab width persistence: starts at Costs width (350px), switches to Review width (700px)
  */
-export const ReviewTab: AppStory = {
+export const ReviewTab: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -206,7 +293,9 @@ export const ReviewTab: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-review" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -229,9 +318,9 @@ export const ReviewTab: AppStory = {
 /**
  * Explorer tab showing workspace file tree with folders and files
  */
-export const ExplorerTab: AppStory = {
+export const ExplorerTab: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
@@ -251,7 +340,9 @@ export const ExplorerTab: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-explorer" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -276,9 +367,9 @@ export const ExplorerTab: AppStory = {
 /**
  * Explorer tab with expanded directory showing Collapse All button
  */
-export const ExplorerTabExpanded: AppStory = {
+export const ExplorerTabExpanded: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
@@ -298,7 +389,9 @@ export const ExplorerTabExpanded: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-explorer-expanded" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -335,9 +428,9 @@ export const ExplorerTabExpanded: AppStory = {
 /**
  * Explorer tab with selected item showing blue background
  */
-export const ExplorerTabSelected: AppStory = {
+export const ExplorerTabSelected: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("explorer"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "350");
@@ -357,7 +450,9 @@ export const ExplorerTabSelected: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-explorer-selected" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -383,9 +478,9 @@ export const ExplorerTabSelected: AppStory = {
 /**
  * Stats tab (Timing sub-tab) when idle (no timing data) - shows placeholder message
  */
-export const StatsTabIdle: AppStory = {
+export const StatsTabIdle: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
@@ -406,7 +501,9 @@ export const StatsTabIdle: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-stats-idle" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -424,9 +521,9 @@ export const StatsTabIdle: AppStory = {
 /**
  * Stats tab (Timing sub-tab) during active streaming - shows timing statistics
  */
-export const StatsTabStreaming: AppStory = {
+export const StatsTabStreaming: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
@@ -448,7 +545,9 @@ export const StatsTabStreaming: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-stats-streaming" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -550,9 +649,9 @@ const HUNK_IDS = {
  * Review tab with hunks sorted by "Last edit" (LIFO order).
  * Shows timestamps in hunk headers indicating when each change was first seen.
  */
-export const ReviewTabSortByLastEdit: AppStory = {
+export const ReviewTabSortByLastEdit: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -593,18 +692,15 @@ export const ReviewTabSortByLastEdit: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-review-sort" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Ensure the Review tab is active. Storybook can reuse a long-lived AppLoader
-    // instance between stories, so persisted state might not apply until interaction.
-    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
-    }
-
+    // Ensure the Review tab is active. Storybook can preserve prior sidebar state
+    // between captures, so persisted tab selection might not apply until interaction.
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
     await userEvent.click(reviewTab);
 
@@ -642,9 +738,9 @@ export const ReviewTabSortByLastEdit: AppStory = {
  * Review tab with hunks sorted by file order (default).
  * Demonstrates switching between sort modes.
  */
-export const ReviewTabSortByFileOrder: AppStory = {
+export const ReviewTabSortByFileOrder: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -670,17 +766,14 @@ export const ReviewTabSortByFileOrder: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-review-file-order" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    // Ensure Review tab is active (Storybook may reuse the same App instance).
-    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
-    }
-
+    // Ensure Review tab is active (Storybook may preserve prior tab state).
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
     await userEvent.click(reviewTab);
 
@@ -747,9 +840,9 @@ const ALIGNMENT_TEST_NUMSTAT = `8\t0\tsrc/test.ts`;
  * the top/bottom padding strips. The indicator column (+/-) should have
  * the less saturated code background.
  */
-export const DiffPaddingAlignment: AppStory = {
+export const DiffPaddingAlignment: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -771,17 +864,14 @@ export const DiffPaddingAlignment: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-diff-alignment" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Ensure Review tab is active.
-    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
-    }
-
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
     await userEvent.click(reviewTab);
 
@@ -831,9 +921,9 @@ const MODIFICATION_NUMSTAT = `4\t2\tsrc/config.ts`;
  * Tests padding alignment when the first line is context (neutral) and
  * the diff contains mixed line types.
  */
-export const DiffPaddingAlignmentModification: AppStory = {
+export const DiffPaddingAlignmentModification: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -855,17 +945,14 @@ export const DiffPaddingAlignmentModification: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-diff-modification" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Ensure Review tab is active.
-    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
-    }
-
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
     await userEvent.click(reviewTab);
 
@@ -949,9 +1036,9 @@ const READ_MORE_NUMSTAT_OUTPUT = `10\t3\tsrc/components/Button.tsx`;
  * Review tab with read-more feature to expand context above/below hunks.
  * Click ▲ to show more context above, ▼ to show more context below.
  */
-export const ReviewTabReadMore: AppStory = {
+export const ReviewTabReadMore: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -977,7 +1064,9 @@ export const ReviewTabReadMore: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-read-more" />
+    </RightSidebarStoryShell>
   ),
   // No play function - interaction testing covered by tests/ui/readMore.integration.test.ts
 };
@@ -1008,9 +1097,9 @@ const SMALL_FILE_NUMSTAT_OUTPUT = `1\t0\tsrc/utils/math.ts`;
  * Review tab with file filter active - shows the filter indicator prominently
  * User has clicked on a file in the tree to filter hunks to just that file.
  */
-export const ReviewTabWithFileFilter: AppStory = {
+export const ReviewTabWithFileFilter: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -1041,17 +1130,14 @@ export const ReviewTabWithFileFilter: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-review-file-filter" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Ensure Review tab is active.
-    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
-    }
-
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
     await userEvent.click(reviewTab);
 
@@ -1076,9 +1162,9 @@ export const ReviewTabWithFileFilter: AppStory = {
   },
 };
 
-export const ReviewTabReadMoreBoundaries: AppStory = {
+export const ReviewTabReadMoreBoundaries: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -1104,7 +1190,9 @@ export const ReviewTabReadMoreBoundaries: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-read-more-boundaries" />
+    </RightSidebarStoryShell>
   ),
   // No play function - interaction testing covered by tests/ui/readMore.integration.test.ts
 };
@@ -1113,9 +1201,9 @@ export const ReviewTabReadMoreBoundaries: AppStory = {
  * Review tab with untracked files banner shown prominently above hunks.
  * The banner is collapsible and shows a "Track All Files" button when expanded.
  */
-export const ReviewTabWithUntrackedFiles: AppStory = {
+export const ReviewTabWithUntrackedFiles: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
@@ -1145,17 +1233,14 @@ export const ReviewTabWithUntrackedFiles: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-untracked" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
     // Ensure Review tab is active
-    const expandButtons = canvas.queryAllByRole("button", { name: "Expand sidebar" });
-    if (expandButtons.length > 0) {
-      await userEvent.click(expandButtons[expandButtons.length - 1]);
-    }
-
     const reviewTab = await canvas.findByRole("tab", { name: /^review/i }, { timeout: 10_000 });
     await userEvent.click(reviewTab);
 
@@ -1192,9 +1277,9 @@ export const ReviewTabWithUntrackedFiles: AppStory = {
 /**
  * Many tabs at a narrow sidebar width should wrap into multiple rows.
  */
-export const ManyTabsWrap: AppStory = {
+export const ManyTabsWrap: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         const workspaceId = "ws-many-tabs";
         updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, 280);
@@ -1230,7 +1315,9 @@ export const ManyTabsWrap: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-many-tabs" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1255,9 +1342,9 @@ export const ManyTabsWrap: AppStory = {
  * When the compaction model (gpt-4o, 128k) has a smaller context window
  * than the auto-compact threshold (80% of 200k = 160k), a warning appears.
  */
-export const CostsTabCompactionModelWarning: AppStory = {
+export const CostsTabCompactionModelWarning: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
         localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
@@ -1301,7 +1388,9 @@ export const CostsTabCompactionModelWarning: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-compact-warning" />
+    </RightSidebarStoryShell>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -1389,9 +1478,9 @@ function createOutputLogEntries() {
 /**
  * Output tab selected with an empty log feed.
  */
-export const OutputTabEmpty: AppStory = {
+export const OutputTabEmpty: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("output"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
@@ -1408,16 +1497,18 @@ export const OutputTabEmpty: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-output-empty" />
+    </RightSidebarStoryShell>
   ),
 };
 
 /**
  * Output tab selected with mixed log entries.
  */
-export const OutputTabWithLogs: AppStory = {
+export const OutputTabWithLogs: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("output"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
@@ -1434,16 +1525,18 @@ export const OutputTabWithLogs: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-output-logs" />
+    </RightSidebarStoryShell>
   ),
 };
 
 /**
  * Output tab with persisted level filter set to "error".
  */
-export const OutputTabErrorsOnly: AppStory = {
+export const OutputTabErrorsOnly: Story = {
   render: () => (
-    <AppWithMocks
+    <RightSidebarStoryShell
       setup={() => {
         localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("output"));
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
@@ -1461,6 +1554,8 @@ export const OutputTabErrorsOnly: AppStory = {
         expandRightSidebar();
         return client;
       }}
-    />
+    >
+      <RightSidebarStoryContent workspaceId="ws-output-errors" />
+    </RightSidebarStoryShell>
   ),
 };
