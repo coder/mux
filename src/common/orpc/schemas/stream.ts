@@ -236,6 +236,7 @@ export const StreamEndEventSchema = z.object({
       providerMetadata: z.record(z.string(), z.unknown()).optional(),
       // Last step's provider metadata (for context window cache display)
       contextProviderMetadata: z.record(z.string(), z.unknown()).optional(),
+      finishReason: z.string().optional(),
       duration: z.number().optional(),
       ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),

@@ -679,6 +679,7 @@ export class StreamManager extends EventEmitter {
     totalUsage?: LanguageModelV2Usage;
     contextUsage?: LanguageModelV2Usage;
     contextProviderMetadata?: Record<string, unknown>;
+    finishReason?: string;
     duration: number;
   }> {
     // Helper: wrap promise with independent timeout + error handling
@@ -693,16 +694,23 @@ export class StreamManager extends EventEmitter {
     // - totalUsage: sum of all steps (for cost calculation)
     // - contextUsage: last step only (for context window display)
     // - contextProviderMetadata: last step (for context window cache display)
-    const [totalUsage, contextUsage, contextProviderMetadata] = await Promise.all([
+    const streamResultWithFinishReason = streamInfo.streamResult as {
+      finishReason?: PromiseLike<string>;
+    };
+    const [totalUsage, contextUsage, contextProviderMetadata, finishReason] = await Promise.all([
       withTimeout(streamInfo.streamResult.totalUsage),
       withTimeout(streamInfo.streamResult.usage),
       withTimeout(streamInfo.streamResult.providerMetadata),
+      streamResultWithFinishReason.finishReason
+        ? withTimeout(streamResultWithFinishReason.finishReason)
+        : Promise.resolve(undefined),
     ]);
 
     return {
       totalUsage,
       contextUsage,
       contextProviderMetadata,
+      finishReason,
       duration: Date.now() - streamInfo.startTime,
     };
   }
@@ -2137,6 +2145,7 @@ export class StreamManager extends EventEmitter {
             const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
             const contextProviderMetadata =
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
+            const finishReason = streamMeta.finishReason;
             const duration = streamMeta.duration;
             const ttftMs = this.resolveTtftMsForStreamEnd(streamInfo);
             // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
@@ -2168,6 +2177,7 @@ export class StreamManager extends EventEmitter {
                 contextUsage, // Last step only (for context window display)
                 providerMetadata, // Aggregated (for cost calculation)
                 contextProviderMetadata, // Last step (for context window display)
+                ...(finishReason !== undefined && { finishReason }),
                 duration,
                 ...(ttftMs !== undefined && { ttftMs }),
               },

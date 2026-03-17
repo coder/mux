@@ -6178,7 +6178,7 @@ describe("TaskService", () => {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
-      metadata: { model: "openai:gpt-4o-mini" },
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
       parts: [{ type: "text", text: "## Final answer\n\nImplicit report content from the child." }],
     });
 
@@ -6224,6 +6224,73 @@ describe("TaskService", () => {
       const msg = call[1] as string;
       expect(msg).not.toContain("agent_report");
     }
+  });
+
+  test("length-truncated final assistant text still requires explicit agent_report", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "length" },
+      parts: [{ type: "text", text: "Partial final-looking text that was cut off" }],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Your stream ended without calling agent_report"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("awaiting_report");
   });
 
   test("missing agent_report keeps the task awaiting_report and retries with agent_report-only prompts", async () => {
@@ -7591,7 +7658,7 @@ describe("TaskService", () => {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-plan-output",
-      metadata: { model: "openai:gpt-4o-mini" },
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
       parts: [{ type: "text", text: "Here is the final plan in prose, but no propose_plan call." }],
     });
 

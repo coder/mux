@@ -3302,7 +3302,10 @@ export class TaskService {
       return;
     }
 
-    if (!isPlanLike && status !== "awaiting_report") {
+    // Only infer an implicit report from a clean natural stop. Length-truncated or other
+    // provider finish reasons still go through explicit completion-tool recovery so partial
+    // assistant text cannot prematurely finalize the task.
+    if (!isPlanLike && status !== "awaiting_report" && event.metadata.finishReason === "stop") {
       const implicitReportArgs = this.findImplicitAgentReportArgsInParts(event.parts);
       if (implicitReportArgs) {
         await this.finalizeAgentTaskReport(workspaceId, entry, implicitReportArgs);
