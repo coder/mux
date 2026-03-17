@@ -778,6 +778,307 @@ describe("WorkspaceService sendMessage status clearing", () => {
   });
 });
 
+describe("WorkspaceService pending auto-title", () => {
+  let workspaceService: WorkspaceService;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let config: Config;
+  let tempDir: string;
+  let workspaceId: string;
+  let projectPath: string;
+  let workspacePath: string;
+  let fakeSession: {
+    isBusy: ReturnType<typeof mock>;
+    queueMessage: ReturnType<typeof mock>;
+    sendMessage: ReturnType<typeof mock>;
+    resumeStream: ReturnType<typeof mock>;
+  };
+
+  beforeEach(async () => {
+    ({
+      config,
+      tempDir,
+      historyService,
+      cleanup: cleanupHistory,
+    } = await createTestHistoryService());
+
+    workspaceId = "pending-auto-title-workspace";
+    projectPath = path.join(tempDir, "project");
+    workspacePath = path.join(projectPath, "fork-branch");
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    await config.addWorkspace(projectPath, {
+      id: workspaceId,
+      name: "fork-branch",
+      title: "Parent title (1)",
+      pendingAutoTitle: true,
+      projectName: "project",
+      projectPath,
+      createdAt: new Date().toISOString(),
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: workspacePath,
+    });
+
+    const metadata: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: "fork-branch",
+      title: "Parent title (1)",
+      pendingAutoTitle: true,
+      projectName: "project",
+      projectPath,
+      createdAt: new Date().toISOString(),
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: workspacePath,
+    };
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(metadata))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockExtensionMetadata: Partial<ExtensionMetadataService> = {
+      updateRecency: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+      setStreaming: mock(() =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          agentStatus: null,
+        })
+      ),
+    };
+
+    workspaceService = new WorkspaceService(
+      config,
+      historyService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadata as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    fakeSession = {
+      isBusy: mock(() => false),
+      queueMessage: mock(() => "tool-end" as const),
+      sendMessage: mock(() => Promise.resolve(Ok(undefined))),
+      resumeStream: mock(() => Promise.resolve(Ok({ started: true }))),
+    };
+
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = mock(() => fakeSession as unknown as AgentSession);
+
+    (
+      workspaceService as unknown as {
+        maybePersistAISettingsFromOptions: (
+          workspaceId: string,
+          options: unknown,
+          source: "send" | "resume"
+        ) => Promise<void>;
+      }
+    ).maybePersistAISettingsFromOptions = mock(() => Promise.resolve());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("sendMessage triggers fork auto-title after the first accepted continue message", async () => {
+    const autoTitleSpy = spyOn(
+      workspaceService as unknown as {
+        maybeRunPendingAutoTitleFromMessage: (
+          workspaceId: string,
+          message: string
+        ) => Promise<void>;
+      },
+      "maybeRunPendingAutoTitleFromMessage"
+    ).mockResolvedValue(undefined);
+
+    const result = await workspaceService.sendMessage(workspaceId, "Continue with auth hardening", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(autoTitleSpy).toHaveBeenCalledWith(workspaceId, "Continue with auth hardening");
+  });
+
+  test("concurrent sends only claim one pending auto-title generation", async () => {
+    const releaseSend = createDeferred<Result<void, SendMessageError>>();
+    fakeSession.sendMessage.mockImplementation(() => releaseSend.promise);
+    const autoTitleSpy = spyOn(
+      workspaceService as unknown as {
+        maybeRunPendingAutoTitleFromMessage: (
+          workspaceId: string,
+          message: string
+        ) => Promise<void>;
+      },
+      "maybeRunPendingAutoTitleFromMessage"
+    ).mockResolvedValue(undefined);
+
+    try {
+      const firstSend = workspaceService.sendMessage(workspaceId, "First continue message", {
+        model: "openai:gpt-4o-mini",
+        agentId: "exec",
+      });
+      const secondSend = workspaceService.sendMessage(workspaceId, "Second continue message", {
+        model: "openai:gpt-4o-mini",
+        agentId: "exec",
+      });
+
+      releaseSend.resolve(Ok(undefined));
+      const [firstResult, secondResult] = await Promise.all([firstSend, secondSend]);
+
+      expect(firstResult.success).toBe(true);
+      expect(secondResult.success).toBe(true);
+      expect(autoTitleSpy).toHaveBeenCalledTimes(1);
+      expect(autoTitleSpy).toHaveBeenCalledWith(workspaceId, "First continue message");
+    } finally {
+      autoTitleSpy.mockRestore();
+    }
+  });
+
+  test("sendMessage only launches one pending auto-title generation at a time", async () => {
+    const generationStarted = createDeferred<void>();
+    const releaseGeneration = createDeferred<void>();
+    const autoTitleSpy = spyOn(
+      workspaceService as unknown as {
+        maybeRunPendingAutoTitleFromMessage: (
+          workspaceId: string,
+          message: string
+        ) => Promise<void>;
+      },
+      "maybeRunPendingAutoTitleFromMessage"
+    ).mockImplementation(async () => {
+      generationStarted.resolve();
+      await releaseGeneration.promise;
+    });
+
+    try {
+      const firstResult = await workspaceService.sendMessage(
+        workspaceId,
+        "First continue message",
+        {
+          model: "openai:gpt-4o-mini",
+          agentId: "exec",
+        }
+      );
+      expect(firstResult.success).toBe(true);
+      await generationStarted.promise;
+
+      const secondResult = await workspaceService.sendMessage(
+        workspaceId,
+        "Second continue message",
+        {
+          model: "openai:gpt-4o-mini",
+          agentId: "exec",
+        }
+      );
+      expect(secondResult.success).toBe(true);
+      expect(autoTitleSpy).toHaveBeenCalledTimes(1);
+
+      releaseGeneration.resolve();
+      await Promise.resolve();
+    } finally {
+      autoTitleSpy.mockRestore();
+    }
+  });
+
+  test("completing a pending auto-title replaces the fallback title and clears the state", async () => {
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockResolvedValue(
+      Ok({
+        name: "auth-hardening-a1b2",
+        title: "Harden auth flow",
+        modelUsed: "openai:gpt-4o-mini",
+      })
+    );
+
+    try {
+      await (
+        workspaceService as unknown as {
+          maybeRunPendingAutoTitleFromMessage: (
+            workspaceId: string,
+            message: string
+          ) => Promise<void>;
+        }
+      ).maybeRunPendingAutoTitleFromMessage(workspaceId, "Continue with auth hardening");
+
+      const metadata = (await config.getAllWorkspaceMetadata()).find(
+        (entry) => entry.id === workspaceId
+      );
+      expect(metadata?.title).toBe("Harden auth flow");
+      expect(metadata?.pendingAutoTitle).toBeUndefined();
+      expect(generateIdentitySpy.mock.calls[0]?.[0]).toBe("Continue with auth hardening");
+    } finally {
+      generateIdentitySpy.mockRestore();
+    }
+  });
+
+  test("manual title edits cancel an in-flight auto-title before it can overwrite the title", async () => {
+    const generationStarted = createDeferred<void>();
+    const autoTitleResult =
+      createDeferred<
+        Awaited<ReturnType<typeof workspaceTitleGenerator.generateWorkspaceIdentity>>
+      >();
+    const generateIdentitySpy = spyOn(
+      workspaceTitleGenerator,
+      "generateWorkspaceIdentity"
+    ).mockImplementation((_message, _candidates, _aiService) => {
+      generationStarted.resolve();
+      return autoTitleResult.promise;
+    });
+
+    try {
+      const autoTitlePromise = (
+        workspaceService as unknown as {
+          maybeRunPendingAutoTitleFromMessage: (
+            workspaceId: string,
+            message: string
+          ) => Promise<void>;
+        }
+      ).maybeRunPendingAutoTitleFromMessage(workspaceId, "Continue with auth hardening");
+
+      await generationStarted.promise;
+
+      const updateTitleResult = await workspaceService.updateTitle(workspaceId, "Manual title");
+      expect(updateTitleResult.success).toBe(true);
+
+      autoTitleResult.resolve(
+        Ok({
+          name: "auth-hardening-a1b2",
+          title: "Harden auth flow",
+          modelUsed: "openai:gpt-4o-mini",
+        })
+      );
+      await autoTitlePromise;
+
+      const metadata = (await config.getAllWorkspaceMetadata()).find(
+        (entry) => entry.id === workspaceId
+      );
+      expect(metadata?.title).toBe("Manual title");
+      expect(metadata?.pendingAutoTitle).toBeUndefined();
+    } finally {
+      generateIdentitySpy.mockRestore();
+    }
+  });
+});
+
 describe("WorkspaceService idle compaction dispatch", () => {
   let workspaceService: WorkspaceService;
   let historyService: HistoryService;
@@ -4771,6 +5072,109 @@ describe("WorkspaceService fork", () => {
       expect(result.data.metadata.name).toBe("source-branch-fork-3");
       expect(result.data.metadata.title).toBe("Source branch (3)");
       expect(result.data.metadata.namedWorkspacePath).toBe(forkedWorkspacePath);
+    } finally {
+      orchestrateForkSpy.mockRestore();
+      copyPlanSpy.mockRestore();
+      runBackgroundInitSpy.mockRestore();
+      createRuntimeSpy.mockRestore();
+      getOrCreateSessionSpy.mockRestore();
+      generateStableIdSpy.mockRestore();
+    }
+  });
+  test("fork marks the new workspace as pending auto-title when a continue message is queued", async () => {
+    const sourceWorkspaceId = "source-workspace";
+    const newWorkspaceId = "forked-workspace";
+    const sourceProjectPath = path.join(tempDir, "project");
+    const sourceMetadata: FrontendWorkspaceMetadata = {
+      id: sourceWorkspaceId,
+      name: "source-branch",
+      title: "Source branch",
+      projectPath: sourceProjectPath,
+      projectName: "project",
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: path.join(sourceProjectPath, "source-branch"),
+    };
+    const forkedWorkspacePath = path.join(sourceProjectPath, "source-branch-fork-1");
+
+    await fsPromises.mkdir(sourceProjectPath, { recursive: true });
+    await config.addWorkspace(sourceProjectPath, sourceMetadata);
+    await config.editConfig((current) => {
+      const project = current.projects.get(sourceProjectPath);
+      if (!project) {
+        throw new Error("Expected test project config to exist");
+      }
+      project.trusted = true;
+      return current;
+    });
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(sourceMetadata))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => ({ status: "running" }) as unknown as InitStatus),
+      startInit: mock(() => undefined),
+      endInit: mock(() => Promise.resolve()),
+      appendOutput: mock(() => undefined),
+      enterHookPhase: mock(() => undefined),
+    };
+
+    const workspaceService = new WorkspaceService(
+      config,
+      historyService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const targetRuntime = {
+      getWorkspacePath: mock(() => forkedWorkspacePath),
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
+
+    const generateStableIdSpy = spyOn(config, "generateStableId").mockReturnValue(newWorkspaceId);
+    const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue({
+      emitMetadata: mock(() => undefined),
+    } as unknown as AgentSession);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
+      {} as ReturnType<typeof runtimeFactory.createRuntime>
+    );
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
+      undefined
+    );
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockResolvedValue(
+      Ok({
+        workspacePath: forkedWorkspacePath,
+        trunkBranch: "main",
+        forkedRuntimeConfig: { type: "local" },
+        targetRuntime,
+        forkedFromSource: true,
+        sourceRuntimeConfigUpdated: false,
+      })
+    );
+
+    try {
+      const result = await workspaceService.fork(sourceWorkspaceId, undefined, undefined, true);
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        throw new Error(`Expected success result, got error: ${result.error}`);
+      }
+
+      expect(result.data.metadata.pendingAutoTitle).toBe(true);
+      const persistedMetadata = (await config.getAllWorkspaceMetadata()).find(
+        (metadata) => metadata.id === newWorkspaceId
+      );
+      expect(persistedMetadata?.pendingAutoTitle).toBe(true);
     } finally {
       orchestrateForkSpy.mockRestore();
       copyPlanSpy.mockRestore();

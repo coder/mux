@@ -3082,7 +3082,8 @@ export const router = (authToken?: string) => {
           const result = await context.workspaceService.fork(
             input.sourceWorkspaceId,
             input.newName,
-            input.sourceMessageId
+            input.sourceMessageId,
+            input.pendingAutoTitle
           );
           if (!result.success) {
             return { success: false, error: result.error };

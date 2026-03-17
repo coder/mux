@@ -972,6 +972,7 @@ export class Config {
     attributionProjectPath?: string;
     workspaceName?: string;
     parentWorkspaceId?: string;
+    pendingAutoTitle?: boolean;
   } | null {
     const config = this.loadConfigOrDefault();
 
@@ -989,6 +990,7 @@ export class Config {
             attributionProjectPath,
             workspaceName: workspace.name,
             parentWorkspaceId: workspace.parentWorkspaceId,
+            pendingAutoTitle: workspace.pendingAutoTitle,
           };
         }
 
@@ -1113,6 +1115,7 @@ export class Config {
               id: workspace.id,
               name: workspace.name,
               title: workspace.title,
+              pendingAutoTitle: workspace.pendingAutoTitle,
               projectName: resolvedProjectName,
               projectPath: resolvedProjectPath,
               // GUARANTEE: All workspaces must have createdAt (assign now if missing)
@@ -1387,6 +1390,7 @@ export class Config {
         id: metadata.id,
         name: metadata.name,
         title: metadata.title,
+        pendingAutoTitle: metadata.pendingAutoTitle,
         createdAt: metadata.createdAt,
         aiSettingsByAgent: metadata.aiSettingsByAgent,
         runtimeConfig: metadata.runtimeConfig,

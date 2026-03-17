@@ -44,6 +44,10 @@ export const WorkspaceConfigSchema = z.object({
     description:
       'Human-readable workspace title (e.g., "Fix plan mode over SSH") - optional for legacy',
   }),
+  pendingAutoTitle: z.boolean().optional().meta({
+    description:
+      "True when a forked workspace is waiting to generate a title from its first accepted continue message.",
+  }),
   createdAt: z
     .string()
     .optional()

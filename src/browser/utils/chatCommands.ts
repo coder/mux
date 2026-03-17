@@ -85,6 +85,7 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
     sourceWorkspaceId: options.sourceWorkspaceId,
     newName: options.newName,
     sourceMessageId: options.sourceMessageId,
+    pendingAutoTitle: Boolean(options.startMessage && options.sendMessageOptions),
   });
 
   if (!result.success) {

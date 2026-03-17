@@ -1000,6 +1000,7 @@ export const workspace = {
       sourceWorkspaceId: z.string(),
       newName: z.string().optional(),
       sourceMessageId: z.string().optional(),
+      pendingAutoTitle: z.boolean().optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({

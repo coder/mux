@@ -43,6 +43,10 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       'Human-readable workspace title (e.g., "Fix plan mode over SSH") - optional for legacy workspaces',
   }),
+  pendingAutoTitle: z.boolean().optional().meta({
+    description:
+      "True when a forked workspace is waiting to generate a title from its first accepted continue message.",
+  }),
   projectName: z
     .string()
     .meta({ description: "Project name extracted from project path (for display)" }),

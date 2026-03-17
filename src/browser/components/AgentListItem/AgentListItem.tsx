@@ -423,6 +423,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     wrapGenerateTitle,
   } = useTitleEdit();
   const isGeneratingTitle = generatingTitleWorkspaceIds.has(workspaceId);
+  const isPendingAutoTitle = metadata.pendingAutoTitle === true;
   const { api } = useAPI();
 
   // Local state for title editing
@@ -944,7 +945,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   className={cn(
                     "min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
                     !isDisabled && "cursor-pointer",
-                    isGeneratingTitle && "italic",
+                    (isGeneratingTitle || isPendingAutoTitle) && "italic",
                     titleColorClass
                   )}
                 >

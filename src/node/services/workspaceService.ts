@@ -1062,6 +1062,10 @@ export class WorkspaceService extends EventEmitter {
   // can tag the stream, letting the frontend suppress notifications for maintenance work.
   private readonly idleCompactingWorkspaces = new Set<string>();
 
+  // Tracks in-flight fork auto-title generations so only the first accepted continue
+  // message can claim the workspace title.
+  private readonly autoTitlingWorkspaces = new Set<string>();
+
   // Monotonic per-workspace stream generations prevent delayed stop-side metadata writes
   // from older streams from clobbering a newer streaming=true snapshot after async awaits.
   private readonly streamingGenerations = new Map<string, number>();
@@ -2719,6 +2723,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Remove from config
       await this.config.removeWorkspace(workspaceId);
+      this.autoTitlingWorkspaces.delete(workspaceId);
 
       this.emit("metadata", { workspaceId, metadata: null });
 
@@ -3161,11 +3166,30 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  /**
-   * Update workspace title without affecting the filesystem name.
-   * Unlike rename(), this can be called even while streaming is active.
-   */
-  async updateTitle(workspaceId: string, title: string): Promise<Result<void>> {
+  private async emitCurrentWorkspaceMetadata(workspaceId: string): Promise<void> {
+    const allMetadata = await this.config.getAllWorkspaceMetadata();
+    const updatedMetadata = allMetadata.find((metadata) => metadata.id === workspaceId) ?? null;
+    const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
+    const session = this.sessions.get(workspaceId);
+    if (session) {
+      session.emitMetadata(enrichedMetadata);
+    } else {
+      this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+    }
+  }
+
+  private hasPendingAutoTitle(workspaceId: string): boolean {
+    return this.config.findWorkspace(workspaceId)?.pendingAutoTitle === true;
+  }
+
+  private async updateWorkspaceTitleState(
+    workspaceId: string,
+    options: {
+      title?: string;
+      clearPendingAutoTitle?: boolean;
+      requirePendingAutoTitle?: boolean;
+    }
+  ): Promise<Result<{ updated: boolean }>> {
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -3173,37 +3197,133 @@ export class WorkspaceService extends EventEmitter {
       }
       const { projectPath, workspacePath } = workspace;
 
+      let updated = false;
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
-        if (projectConfig) {
-          const workspaceEntry =
-            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
-            projectConfig.workspaces.find((w) => w.path === workspacePath);
-          if (workspaceEntry) {
-            workspaceEntry.title = title;
-          }
+        if (!projectConfig) {
+          return config;
         }
+
+        const workspaceEntry =
+          projectConfig.workspaces.find((entry) => entry.id === workspaceId) ??
+          projectConfig.workspaces.find((entry) => entry.path === workspacePath);
+        if (!workspaceEntry) {
+          return config;
+        }
+
+        if (options.requirePendingAutoTitle && workspaceEntry.pendingAutoTitle !== true) {
+          return config;
+        }
+
+        if (options.title !== undefined) {
+          workspaceEntry.title = options.title;
+          updated = true;
+        }
+
+        if (options.clearPendingAutoTitle && workspaceEntry.pendingAutoTitle) {
+          delete workspaceEntry.pendingAutoTitle;
+          updated = true;
+        }
+
         return config;
       });
 
-      // Emit updated metadata
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
-      if (updatedMetadata) {
-        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
-        const session = this.sessions.get(workspaceId);
-        if (session) {
-          session.emitMetadata(enrichedMetadata);
-        } else {
-          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
-        }
+      if (updated) {
+        await this.emitCurrentWorkspaceMetadata(workspaceId);
       }
 
-      return Ok(undefined);
+      return Ok({ updated });
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to update workspace title: ${message}`);
     }
+  }
+
+  private async getWorkspaceTitleModelCandidates(workspaceId: string): Promise<string[]> {
+    const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return candidates;
+    }
+
+    const fallbackModels = [
+      metadataResult.data.aiSettings?.model,
+      ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map(
+        (settings) => settings.model
+      ),
+    ];
+    for (const model of fallbackModels) {
+      if (model && !candidates.includes(model)) {
+        candidates.push(model);
+      }
+    }
+
+    return candidates;
+  }
+
+  private async maybeRunPendingAutoTitleFromMessage(
+    workspaceId: string,
+    message: string
+  ): Promise<void> {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage || !this.hasPendingAutoTitle(workspaceId)) {
+      return;
+    }
+
+    try {
+      const candidates = await this.getWorkspaceTitleModelCandidates(workspaceId);
+      const result = await generateWorkspaceIdentity(trimmedMessage, candidates, this.aiService);
+      if (result.success) {
+        const persistResult = await this.updateWorkspaceTitleState(workspaceId, {
+          title: result.data.title,
+          clearPendingAutoTitle: true,
+          requirePendingAutoTitle: true,
+        });
+        if (!persistResult.success) {
+          log.warn("Failed to persist fork auto-title", {
+            workspaceId,
+            error: persistResult.error,
+          });
+        }
+        return;
+      }
+
+      log.warn("Failed to generate fork auto-title", {
+        workspaceId,
+        error: result.error,
+      });
+    } catch (error) {
+      log.error("Unexpected error generating fork auto-title", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+
+    const clearPendingResult = await this.updateWorkspaceTitleState(workspaceId, {
+      clearPendingAutoTitle: true,
+      requirePendingAutoTitle: true,
+    });
+    if (!clearPendingResult.success) {
+      log.warn("Failed to clear pending fork auto-title state", {
+        workspaceId,
+        error: clearPendingResult.error,
+      });
+    }
+  }
+
+  /**
+   * Update workspace title without affecting the filesystem name.
+   * Unlike rename(), this can be called even while streaming is active.
+   */
+  async updateTitle(workspaceId: string, title: string): Promise<Result<void>> {
+    const result = await this.updateWorkspaceTitleState(workspaceId, {
+      title,
+      clearPendingAutoTitle: true,
+    });
+    if (!result.success) {
+      return Err(result.error);
+    }
+    return Ok(undefined);
   }
 
   /**
@@ -3253,21 +3373,7 @@ export class WorkspaceService extends EventEmitter {
     const { conversationContext, latestUserText } =
       buildWorkspaceTitleConversationContext(contextTurns);
 
-    const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
-    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
-    if (metadataResult.success) {
-      const fallbackModels = [
-        metadataResult.data.aiSettings?.model,
-        ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map(
-          (settings) => settings.model
-        ),
-      ];
-      for (const model of fallbackModels) {
-        if (model && !candidates.includes(model)) {
-          candidates.push(model);
-        }
-      }
-    }
+    const candidates = await this.getWorkspaceTitleModelCandidates(workspaceId);
 
     const result = await generateWorkspaceIdentity(
       firstUserText,
@@ -4074,7 +4180,8 @@ export class WorkspaceService extends EventEmitter {
   async fork(
     sourceWorkspaceId: string,
     newName?: string,
-    sourceMessageId?: string
+    sourceMessageId?: string,
+    pendingAutoTitle?: boolean
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
       if (sourceWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
@@ -4378,6 +4485,9 @@ export class WorkspaceService extends EventEmitter {
         namedWorkspacePath,
         // Preserve workspace organization when forking via /fork.
         sectionId: sourceMetadata.sectionId,
+        // Forks with a continue message stay pending until the first accepted user send
+        // can generate a more specific title, unless the user edits the title first.
+        pendingAutoTitle: pendingAutoTitle === true ? true : undefined,
         // Seamless fork: generate a numbered title like "Parent Title (1)".
         ...(isAutoName
           ? {
@@ -4427,6 +4537,7 @@ export class WorkspaceService extends EventEmitter {
     });
 
     let resumedInterruptedTask = false;
+    let claimedAutoTitle = false;
     try {
       // Block streaming while workspace is being renamed to prevent path conflicts
       if (this.renamingWorkspaces.has(workspaceId)) {
@@ -4447,7 +4558,8 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Guard: avoid creating sessions for workspaces that don't exist anymore.
-      if (!this.config.findWorkspace(workspaceId)) {
+      const workspaceConfig = this.config.findWorkspace(workspaceId);
+      if (!workspaceConfig) {
         return Err({
           type: "unknown",
           raw: "Workspace not found. It may have been deleted.",
@@ -4619,6 +4731,16 @@ export class WorkspaceService extends EventEmitter {
             }
           : undefined;
 
+      const shouldRunPendingAutoTitle =
+        internal?.synthetic !== true &&
+        normalizedOptions.editMessageId == null &&
+        workspaceConfig.pendingAutoTitle === true &&
+        !this.autoTitlingWorkspaces.has(workspaceId);
+      if (shouldRunPendingAutoTitle) {
+        this.autoTitlingWorkspaces.add(workspaceId);
+        claimedAutoTitle = true;
+      }
+
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
         agentInitiated: internal?.agentInitiated,
@@ -4629,6 +4751,11 @@ export class WorkspaceService extends EventEmitter {
           workspaceId,
           error: result.error,
         });
+
+        if (claimedAutoTitle) {
+          this.autoTitlingWorkspaces.delete(workspaceId);
+          claimedAutoTitle = false;
+        }
 
         if (resumedInterruptedTask) {
           try {
@@ -4644,8 +4771,27 @@ export class WorkspaceService extends EventEmitter {
         return result;
       }
 
+      if (claimedAutoTitle) {
+        const autoTitlePromise = this.maybeRunPendingAutoTitleFromMessage(workspaceId, message);
+        autoTitlePromise
+          .catch((error: unknown) => {
+            log.error("Unexpected rejection while running fork auto-title", {
+              workspaceId,
+              error: getErrorMessage(error),
+            });
+          })
+          .finally(() => {
+            this.autoTitlingWorkspaces.delete(workspaceId);
+          });
+      }
+
       return result;
     } catch (error) {
+      if (claimedAutoTitle) {
+        this.autoTitlingWorkspaces.delete(workspaceId);
+        claimedAutoTitle = false;
+      }
+
       if (resumedInterruptedTask) {
         try {
           await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);

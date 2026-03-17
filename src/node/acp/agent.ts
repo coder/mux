@@ -861,6 +861,8 @@ export class MuxAgent implements Agent {
       case "fork": {
         const forkResult = await this.server.client.workspace.fork({
           sourceWorkspaceId: workspaceId,
+          pendingAutoTitle:
+            parsedCommand.startMessage != null && parsedCommand.startMessage.trim().length > 0,
         });
         if (!forkResult.success) {
           return this.respondToCommand(
