@@ -7,7 +7,12 @@
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
+import { ProjectProvider } from "@/browser/contexts/ProjectContext";
+import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
+import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { TutorialProvider } from "@/browser/contexts/TutorialContext";
+import { WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mockFactory";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
@@ -108,11 +113,21 @@ function RightSidebarStoryShell(props: { setup: () => APIClient; children: React
 
   return (
     <ThemeProvider>
-      <TooltipProvider>
-        <APIProvider key={renderKey ?? "right-sidebar-story"} client={clientRef.current}>
-          <ExperimentsProvider>{props.children}</ExperimentsProvider>
-        </APIProvider>
-      </TooltipProvider>
+      <APIProvider key={renderKey ?? "right-sidebar-story"} client={clientRef.current}>
+        <RouterProvider>
+          <ProjectProvider>
+            <WorkspaceProvider>
+              <ExperimentsProvider>
+                <TooltipProvider>
+                  <ProviderOptionsProvider>
+                    <TutorialProvider>{props.children}</TutorialProvider>
+                  </ProviderOptionsProvider>
+                </TooltipProvider>
+              </ExperimentsProvider>
+            </WorkspaceProvider>
+          </ProjectProvider>
+        </RouterProvider>
+      </APIProvider>
     </ThemeProvider>
   );
 }
