@@ -25,13 +25,16 @@ It tends to help most when the first plausible answer is often incomplete.
 - **Code review**: broader coverage of correctness, tests, design, and edge cases
 - **Production metrics**: several competing explanations for an anomaly
 
-## When to use variants instead
+## Best-of vs variants
 
-Best of N is for **multiple attempts at the same task**.
+**Best-of retries the same ask; variants reuse the same ask with a labeled focus or scope change.**
 
-Use **variants** when the work should be split into a few distinct parallel lanes instead of retried N times.
-Best-of explores alternative answers; variants divide the job into labeled slices.
-For example, if you ask Mux to "Solve GitHub issues 23, 32, 45," it can spin up one sub-agent per issue as parallel variants instead of making three passes at the same task.
+Use Best of N when you want multiple independent attempts at one question.
+Use variants when the same prompt template should be reused across a few parallel lanes instead.
+
+- **Issue lists**: "Solve GitHub issues 23, 32, 45" → one issue-solving template, one variant per issue
+- **Commit-range investigation**: "Find the source of this week's regression" → one investigation template, one variant per commit window such as `A..B` and `B..C`
+- **Review lanes**: "Review the changes" → one review template, one variant per lane such as `frontend`, `backend`, `tests`, and `docs`
 
 <Note>
   Start with `best of 3` or `best of 5`. Larger batches cost more and take longer, but can pay off

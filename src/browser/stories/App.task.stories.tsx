@@ -337,7 +337,7 @@ export const BestOfTaskGroup: Story = {
 };
 
 /**
- * Variants task card: grouped siblings show labels instead of candidate numbers.
+ * Variants task card: the same review prompt template is reused across frontend/backend/tests lanes by substituting `${variant}`.
  */
 export const VariantTaskGroup: Story = {
   render: () => {
@@ -349,8 +349,8 @@ export const VariantTaskGroup: Story = {
           workspaceId="ws-variants"
           args={{
             subagent_type: "explore",
-            prompt: "Review ${variant} for regressions",
-            title: "Split review",
+            prompt: "Review ${variant} changes for regressions",
+            title: "Review by lane",
             run_in_background: false,
             variants: ["frontend", "backend", "tests"],
           }}
@@ -360,7 +360,7 @@ export const VariantTaskGroup: Story = {
             reports: [
               {
                 taskId: "task-variant-1",
-                title: "Split review",
+                title: "Review by lane",
                 agentId: "explore",
                 agentType: "explore",
                 groupKind: "variants",
@@ -369,7 +369,7 @@ export const VariantTaskGroup: Story = {
               },
               {
                 taskId: "task-variant-2",
-                title: "Split review",
+                title: "Review by lane",
                 agentId: "explore",
                 agentType: "explore",
                 groupKind: "variants",
@@ -378,7 +378,7 @@ export const VariantTaskGroup: Story = {
               },
               {
                 taskId: "task-variant-3",
-                title: "Split review",
+                title: "Review by lane",
                 agentId: "explore",
                 agentType: "explore",
                 groupKind: "variants",
@@ -399,7 +399,7 @@ export const VariantTaskGroup: Story = {
 
     await waitFor(() => {
       const text = canvasElement.textContent ?? "";
-      if (!text.includes("Variants · Split review")) {
+      if (!text.includes("Variants · Review by lane")) {
         throw new Error("Expected grouped variants task header to be rendered");
       }
       if (!text.includes("frontend") || !text.includes("tests")) {
@@ -410,7 +410,7 @@ export const VariantTaskGroup: Story = {
 };
 
 /**
- * Variants task card during execution: labels come from the parent task args before reports arrive.
+ * Variants task card during execution: the same regression-investigation template is reused across commit windows, so labels come from the parent args before reports arrive.
  */
 export const VariantTaskGroupWhileRunning: Story = {
   render: () => {
@@ -422,10 +422,10 @@ export const VariantTaskGroupWhileRunning: Story = {
           workspaceId="ws-variants-running"
           args={{
             subagent_type: "explore",
-            prompt: "Review ${variant} for regressions",
-            title: "Split review",
+            prompt: "Investigate regressions introduced in ${variant}",
+            title: "Split regression search",
             run_in_background: true,
-            variants: ["frontend", "backend", "tests"],
+            variants: ["9f1e..a3c2", "a3c2..b4d5", "b4d5..c6e7"],
           }}
           result={{
             status: "running",
@@ -449,7 +449,11 @@ export const VariantTaskGroupWhileRunning: Story = {
 
     await waitFor(() => {
       const text = canvasElement.textContent ?? "";
-      if (!text.includes("frontend") || !text.includes("backend") || !text.includes("tests")) {
+      if (
+        !text.includes("9f1e..a3c2") ||
+        !text.includes("a3c2..b4d5") ||
+        !text.includes("b4d5..c6e7")
+      ) {
         throw new Error("Expected live variant labels to be rendered from task args");
       }
     });

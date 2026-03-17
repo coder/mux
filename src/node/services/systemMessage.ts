@@ -82,6 +82,13 @@ Each spawned child should handle one independent candidate; do not ask a child t
 If you are inside a best-of-n child workspace, complete only your candidate.
 </best-of-n>
 
+<task-variants>
+When the user gives a few items, scopes, ranges, or review lanes and the same prompt template applies to each, prefer the \`task\` tool's \`variants\` parameter instead of \`n\`.
+Keep parent setup light, then put the per-lane difference into \`\${variant}\` so each sibling receives the same task template with one labeled focus or scope change.
+Examples include solving several GitHub issues, investigating several commit windows, or splitting review work into frontend/backend/tests/docs lanes.
+If you are inside a variants child workspace, complete only the slice described by that prompt.
+</task-variants>
+
 <subagent-reports>
 Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust report findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
 </subagent-reports>
