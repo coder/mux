@@ -1396,6 +1396,7 @@ describe("StreamManager - empty stream completions", () => {
       lastPartTimestamp: Date.now() - 250,
       toolCompletionTimestamps: new Map<string, number>(),
       model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
       historySequence,
       initialMetadata: { agentId: "plan" },
       request: { model: "ignored-model", messages: [], providerOptions: undefined },
@@ -1435,6 +1436,7 @@ describe("StreamManager - empty stream completions", () => {
     const partial = await historyService.readPartial(workspaceId);
     expect(partial?.metadata?.errorType).toBe("empty_output");
     expect(partial?.metadata?.error).toContain("before producing any assistant-visible output");
+    expect(partial?.metadata?.metadataModel).toBe(KNOWN_MODELS.SONNET.id);
     expect(partial?.parts).toEqual([]);
   });
 });
@@ -1458,6 +1460,8 @@ describe("StreamManager - TTFT metadata persistence", () => {
       totalTokens: number;
       reasoningTokens?: number;
     };
+    model?: string;
+    metadataModel?: string;
   }) {
     const streamManager = new StreamManager(historyService);
     // Suppress error events from bubbling up as uncaught exceptions during tests
@@ -1518,7 +1522,8 @@ describe("StreamManager - TTFT metadata persistence", () => {
       startTime: params.startTime,
       lastPartTimestamp: params.startTime,
       toolCompletionTimestamps: new Map<string, number>(),
-      model: KNOWN_MODELS.SONNET.id,
+      model: params.model ?? KNOWN_MODELS.SONNET.id,
+      metadataModel: params.metadataModel ?? params.model ?? KNOWN_MODELS.SONNET.id,
       historySequence: params.historySequence,
       initialMetadata: params.initialMetadata,
       parts: params.parts,
@@ -1611,6 +1616,27 @@ describe("StreamManager - TTFT metadata persistence", () => {
     expect(Object.prototype.hasOwnProperty.call(updatedMessage.metadata ?? {}, "ttftMs")).toBe(
       false
     );
+  });
+
+  test("persists metadataModel alongside the raw model for analytics pricing", async () => {
+    const updatedMessage = await finalizeStreamAndReadMessage({
+      workspaceId: "metadata-model-workspace",
+      messageId: "metadata-model-message",
+      historySequence: 1,
+      startTime: Date.now() - 1000,
+      model: "openai:my-gpt4",
+      metadataModel: "openai:gpt-4",
+      parts: [
+        {
+          type: "text",
+          text: "hello",
+          timestamp: Date.now(),
+        },
+      ],
+    });
+
+    expect(updatedMessage.metadata?.model).toBe("openai:my-gpt4");
+    expect(updatedMessage.metadata?.metadataModel).toBe("openai:gpt-4");
   });
 
   test("emits and persists routeProvider from initial stream metadata", async () => {

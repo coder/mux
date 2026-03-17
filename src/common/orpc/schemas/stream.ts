@@ -224,6 +224,7 @@ export const StreamEndEventSchema = z.object({
   metadata: z
     .object({
       model: z.string(),
+      metadataModel: z.string().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
       thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),

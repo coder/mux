@@ -492,11 +492,17 @@ function extractIngestEvent(params: {
   const sequence = toFiniteInteger(metadata.historySequence) ?? params.lineNumber;
 
   const model = toOptionalString(metadata.model);
+  const metadataModel = toOptionalString(metadata.metadataModel);
   const providerMetadata = isRecord(metadata.providerMetadata)
     ? metadata.providerMetadata
     : undefined;
 
-  const displayUsage = createDisplayUsage(usage, model ?? "unknown", providerMetadata);
+  const displayUsage = createDisplayUsage(
+    usage,
+    model ?? "unknown",
+    providerMetadata,
+    metadataModel
+  );
   assert(displayUsage, "createDisplayUsage should return data for parsed usage payloads");
 
   const timestamp =

@@ -56,6 +56,7 @@ function getSqlStatements(runMock: ReturnType<typeof mock>): string[] {
 function makeAssistantLine(
   opts: {
     model?: string;
+    metadataModel?: string;
     sequence?: number;
     timestamp?: number;
     inputTokens?: number;
@@ -67,6 +68,7 @@ function makeAssistantLine(
     content: "response",
     metadata: {
       model: opts.model ?? "anthropic:claude-sonnet-4-20250514",
+      ...(opts.metadataModel ? { metadataModel: opts.metadataModel } : {}),
       usage: {
         inputTokens: opts.inputTokens ?? 100,
         outputTokens: opts.outputTokens ?? 50,
@@ -279,6 +281,38 @@ describe("appendEvents", () => {
     expect(parseInteger(rows[0].input_tokens, "input_tokens")).toBe(200);
     expect(parseInteger(rows[0].output_tokens, "output_tokens")).toBe(75);
     expect(rows[0].project_path).toBe("/proj");
+  });
+
+  test("uses metadataModel for pricing while keeping the raw model in analytics rows", async () => {
+    const conn = await createTestConn();
+    const sessionDir = await createTempSessionDir();
+
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      makeAssistantLine({
+        model: "openai:my-gpt4",
+        metadataModel: "openai:gpt-4",
+        inputTokens: 200,
+        outputTokens: 75,
+      }),
+    ]);
+
+    const parsed = await parseWorkspaceFromDisk("ws-priced-model", sessionDir, {});
+    expect(parsed).not.toBeNull();
+    assert(parsed, "priced model test expected parseWorkspaceFromDisk to parse workspace");
+
+    await appendEvents(conn, parsed.events);
+
+    const rows = await queryRows(
+      conn,
+      "SELECT model, input_cost_usd, output_cost_usd, total_cost_usd FROM events WHERE workspace_id = ?",
+      ["ws-priced-model"]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].model).toBe("openai:my-gpt4");
+    expect(Number(rows[0].input_cost_usd)).toBeGreaterThan(0);
+    expect(Number(rows[0].output_cost_usd)).toBeGreaterThan(0);
+    expect(Number(rows[0].total_cost_usd)).toBeGreaterThan(0);
   });
 
   test("is a no-op when events is empty", async () => {

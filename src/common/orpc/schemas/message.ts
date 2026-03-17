@@ -113,6 +113,7 @@ export const MuxMessageSchema = z.object({
       historySequence: z.number().optional(),
       timestamp: z.number().optional(),
       model: z.string().optional(),
+      metadataModel: z.string().optional(),
       thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       routeProvider: z.string().optional(), // Preserve replayed/non-stream route attribution.

@@ -522,6 +522,8 @@ export class StreamManager extends EventEmitter {
             timestamp: streamInfo.startTime,
             ...streamInfo.initialMetadata,
             model: canonicalModel,
+            // Persist the resolved pricing model so analytics can keep honoring Treat as mappings.
+            metadataModel: streamInfo.metadataModel,
             routedThroughGateway,
             ...(streamInfo.thinkingLevel && {
               thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
@@ -2169,6 +2171,7 @@ export class StreamManager extends EventEmitter {
               metadata: {
                 ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
                 model: canonicalModel,
+                metadataModel: streamInfo.metadataModel,
                 routedThroughGateway,
                 ...(streamInfo.thinkingLevel && {
                   thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
@@ -2433,6 +2436,7 @@ export class StreamManager extends EventEmitter {
         timestamp: streamInfo.startTime,
         ...streamInfo.initialMetadata,
         model: canonicalModel,
+        metadataModel: streamInfo.metadataModel,
         routedThroughGateway,
         ...(streamInfo.thinkingLevel && {
           thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
