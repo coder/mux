@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { AlertCircle, Loader2, MonitorOff } from "lucide-react";
 import { Button } from "@/browser/components/Button/Button";
+import { assertNever } from "@/common/utils/assertNever";
 import { useDesktopConnection, type UseDesktopConnectionResult } from "./useDesktopConnection";
 
 interface StatusPresentation {
@@ -8,10 +9,6 @@ interface StatusPresentation {
   title: string;
   description: string;
   action?: ReactNode;
-}
-
-function assertNever(_value: never): never {
-  throw new Error("Unhandled desktop state.");
 }
 
 function getStatusPresentation(desktop: UseDesktopConnectionResult): StatusPresentation {
