@@ -1783,32 +1783,42 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                             >
                               {review.status}
                             </span>
-
-                            {props.reviewActions?.onDelete && (
-                              <button
-                                type="button"
-                                className="text-muted hover:text-error ml-0.5 hidden cursor-pointer items-center rounded p-0.5 transition-colors group-hover/review-item:inline-flex"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  props.reviewActions?.onDelete?.(review.id);
-                                }}
-                                aria-label="Delete review note"
-                              >
-                                <Trash2 className="size-3" />
-                              </button>
-                            )}
                           </div>
 
-                          <p
-                            className="text-foreground mt-1 overflow-hidden text-[11px] leading-[1.4] break-words whitespace-pre-wrap"
-                            style={{
-                              display: "-webkit-box",
-                              WebkitBoxOrient: "vertical",
-                              WebkitLineClamp: 2,
-                            }}
-                          >
-                            {review.data.userNote || "(No note text)"}
-                          </p>
+                          <div className="mt-1 flex flex-col">
+                            <p
+                              className="text-foreground overflow-hidden text-[11px] leading-[1.4] break-words whitespace-pre-wrap"
+                              style={{
+                                display: "-webkit-box",
+                                WebkitBoxOrient: "vertical",
+                                WebkitLineClamp: 2,
+                              }}
+                            >
+                              {review.data.userNote || "(No note text)"}
+                            </p>
+
+                            {/* Keep preview actions in a reserved footer so hover reveals do not shift note content. */}
+                            {props.reviewActions?.onDelete && (
+                              <div className="mt-1 flex min-h-4 items-center justify-end">
+                                <button
+                                  type="button"
+                                  className="text-muted hover:text-error invisible cursor-pointer rounded p-0.5 opacity-0 transition-colors transition-opacity group-focus-within/review-item:visible group-focus-within/review-item:opacity-100 group-hover/review-item:visible group-hover/review-item:opacity-100"
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      stopKeyboardPropagation(event);
+                                    }
+                                  }}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    props.reviewActions?.onDelete?.(review.id);
+                                  }}
+                                  aria-label="Delete review note"
+                                >
+                                  <Trash2 className="size-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
