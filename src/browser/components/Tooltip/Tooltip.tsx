@@ -24,6 +24,32 @@ const TOOLTIP_SURFACE_CLASSNAME = [
   "border border-separator-light shadow-[0_2px_8px_rgba(0,0,0,0.4)]",
 ].join(" ");
 
+function getTextContent(node: React.ReactNode): string {
+  let text = "";
+
+  React.Children.forEach(node, (child) => {
+    if (typeof child === "string" || typeof child === "number") {
+      text += String(child);
+      return;
+    }
+
+    if (
+      React.isValidElement<{
+        children?: React.ReactNode;
+        "aria-hidden"?: boolean | "true" | "false";
+      }>(child)
+    ) {
+      if (child.props["aria-hidden"] === true || child.props["aria-hidden"] === "true") {
+        return;
+      }
+
+      text += getTextContent(child.props.children);
+    }
+  });
+
+  return text;
+}
+
 const TooltipArrow = React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Arrow>,
   React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Arrow>
@@ -121,4 +147,5 @@ export {
   TooltipArrow,
   TooltipIfPresent,
   HelpIndicator,
+  getTextContent,
 };

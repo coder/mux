@@ -1,5 +1,5 @@
 import * as React from "react";
-import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
+import { getTextContent, TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
 interface SwitchProps {
@@ -12,6 +12,7 @@ interface SwitchProps {
   title?: React.ReactNode;
   tooltip?: React.ReactNode;
   "aria-label"?: string;
+  "aria-labelledby"?: string;
 }
 
 /**
@@ -29,18 +30,23 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
       title,
       tooltip,
       "aria-label": ariaLabel,
+      "aria-labelledby": ariaLabelledBy,
     },
     ref
   ) => {
     const isSmall = size === "sm";
     const resolvedTooltip = tooltip ?? title;
+    const tooltipLabel = getTextContent(resolvedTooltip).trim();
+    const resolvedAriaLabel =
+      ariaLabel != null || ariaLabelledBy != null || tooltipLabel === "" ? ariaLabel : tooltipLabel;
     const button = (
       <button
         ref={ref}
         type="button"
         role="switch"
         aria-checked={checked}
-        aria-label={ariaLabel}
+        aria-label={resolvedAriaLabel}
+        aria-labelledby={ariaLabelledBy}
         disabled={disabled}
         onClick={() => onCheckedChange(!checked)}
         className={cn(

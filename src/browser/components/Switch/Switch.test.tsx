@@ -23,16 +23,11 @@ describe("Switch", () => {
     globalThis.document = originalDocument;
   });
 
-  test("treats title as custom tooltip content instead of forwarding a native title attribute", async () => {
+  test("uses title as the tooltip source while preserving the accessible name", async () => {
     const onCheckedChange = mock((_checked: boolean) => null);
     const view = render(
       <TooltipProvider delayDuration={0}>
-        <Switch
-          checked={false}
-          onCheckedChange={onCheckedChange}
-          aria-label="Toggle feature"
-          title="Toggle feature"
-        />
+        <Switch checked={false} onCheckedChange={onCheckedChange} title="Toggle feature" />
       </TooltipProvider>
     );
 

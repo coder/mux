@@ -23,14 +23,16 @@ describe("Button", () => {
     globalThis.document = originalDocument;
   });
 
-  test("treats title as custom tooltip content instead of forwarding a native title attribute", async () => {
+  test("uses title as the tooltip source while preserving the accessible name for icon-only buttons", async () => {
     const view = render(
       <TooltipProvider delayDuration={0}>
-        <Button title="Open sidebar">Open</Button>
+        <Button title="Save changes (Enter)" size="icon">
+          <span aria-hidden="true">*</span>
+        </Button>
       </TooltipProvider>
     );
 
-    const button = view.getByRole("button", { name: "Open" });
+    const button = view.getByRole("button", { name: "Save changes (Enter)" });
     expect(button.getAttribute("title")).toBeNull();
     expect(button.getAttribute("data-state")).toBe("closed");
 
