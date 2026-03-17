@@ -599,7 +599,7 @@ describe("Unread indicator (mock AI router)", () => {
         if (!titleElement) {
           throw new Error("Workspace title element not found");
         }
-        expect(titleElement.className).toContain("text-foreground");
+        expect(titleElement.className).toContain("text-content-primary");
         expect(titleElement.className).not.toContain("text-secondary");
       });
     });
