@@ -32,17 +32,25 @@ type BrowserSessionSubscribe = (
   options: { signal: AbortSignal }
 ) => Promise<AsyncIterableIterator<BrowserSessionEvent>>;
 
-let currentApi: {
+const uninitializedSubscribeMock: BrowserSessionSubscribe = () => {
+  throw new Error("Expected subscribe mock to be initialized before use");
+};
+
+let currentSubscribeMock: BrowserSessionSubscribe = uninitializedSubscribeMock;
+
+const mockedApi = {
   browserSession: {
-    subscribe: BrowserSessionSubscribe;
-  };
-} | null = null;
+    subscribe(input: { workspaceId: string }, options: { signal: AbortSignal }) {
+      return currentSubscribeMock(input, options);
+    },
+  },
+};
 
 function installApiMock() {
   void mock.module("@/browser/contexts/API", () => ({
     useAPI: () => ({
-      api: currentApi,
-      status: currentApi ? ("connected" as const) : ("error" as const),
+      api: mockedApi,
+      status: "connected" as const,
       error: null,
       authenticate: () => undefined,
       retry: () => undefined,
@@ -54,7 +62,7 @@ installApiMock();
 
 import { useBrowserSessionSubscription as untypedUseBrowserSessionSubscription } from "./useBrowserSessionSubscription.ts?test-isolation=static";
 
-const useBrowserSessionSubscription: typeof UseBrowserSessionSubscription =
+const useBrowserSessionSubscription =
   untypedUseBrowserSessionSubscription as unknown as typeof UseBrowserSessionSubscription;
 
 function isTimeoutCallback(handler: TimerHandler): handler is TimeoutCallback {
@@ -335,14 +343,10 @@ describe("useBrowserSessionSubscription", () => {
       subscriptions.push(subscription);
       return Promise.resolve(subscription.iterator);
     });
-    currentApi = {
-      browserSession: {
-        subscribe: subscribeMock,
-      },
-    };
+    currentSubscribeMock = subscribeMock;
 
     // Neighboring BrowserTab tests mock the API context globally.
-    // Re-install this file's API mock before each test so the statically imported hook
+    // Re-install this file's API mock before each test so the isolated hook import
     // always reads this test's fake client and timer controls.
     installApiMock();
 
@@ -354,7 +358,7 @@ describe("useBrowserSessionSubscription", () => {
 
   afterEach(() => {
     cleanup();
-    currentApi = null;
+    currentSubscribeMock = uninitializedSubscribeMock;
     timerControls.restore();
     mock.restore();
     globalThis.window = originalWindow;
