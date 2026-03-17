@@ -327,7 +327,6 @@ describe("BrowserSessionBackend", () => {
     });
   });
 
-
   test("marks new sessions restart_required when stream transport is unavailable", async () => {
     const backend = createBackend({ initialUrl: "https://restart.example.com" });
 
