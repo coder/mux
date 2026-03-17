@@ -33,7 +33,7 @@ import type { ComponentType, ReactNode } from "react";
 import { useRef } from "react";
 import { RightSidebar } from "./RightSidebar.js";
 
-const meta = {
+const meta: Meta = {
   title: "Features/RightSidebar/RightSidebar",
   component: RightSidebar,
   decorators: [
@@ -60,7 +60,7 @@ const meta = {
       },
     },
   },
-} satisfies Meta<typeof RightSidebar>;
+};
 
 export default meta;
 type Story = StoryObj<typeof meta>;
