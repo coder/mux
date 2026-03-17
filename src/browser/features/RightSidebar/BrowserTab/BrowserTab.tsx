@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Camera,
   Globe,
+  Info,
   Keyboard,
   Loader2,
   MousePointerClick,
@@ -91,6 +92,21 @@ function getSessionErrorMessage(sessionError: unknown, fallbackMessage: string):
   return sessionError instanceof Error ? sessionError.message : fallbackMessage;
 }
 
+function getEndedSessionNotice(session: BrowserSession | null): string | null {
+  if (session?.status !== "ended") {
+    return null;
+  }
+
+  switch (session.endReason) {
+    case "agent_closed":
+      return "Browser session was closed";
+    case "external_closed":
+      return "Browser session was closed outside Mux";
+    default:
+      return null;
+  }
+}
+
 function startBrowserSession(args: {
   browserSessionApi: BrowserSessionClient | null;
   workspaceId: string;
@@ -146,6 +162,7 @@ export function BrowserTab(props: BrowserTabProps) {
       : null;
   const visibleError =
     startError ?? error ?? session?.lastError ?? session?.streamErrorMessage ?? null;
+  const visibleClosedNotice = visibleError == null ? getEndedSessionNotice(session) : null;
   const sessionIsActive =
     session?.status === "live" || session?.status === "starting" || session?.status === "paused";
   const headerBadge = (() => {
@@ -500,6 +517,7 @@ export function BrowserTab(props: BrowserTabProps) {
           session={session}
           screenshotSrc={screenshotSrc}
           visibleError={visibleError}
+          visibleInfoNotice={visibleClosedNotice}
           onRestart={handleRestartSession}
           placeholder={
             <BrowserViewerState session={session} isStarting={isStarting} error={visibleError} />
@@ -662,6 +680,26 @@ function getViewerContent(
   }
 
   if (session?.status === "ended") {
+    if (session.endReason === "external_closed") {
+      return {
+        Icon: Info,
+        iconClassName: "text-muted",
+        title: "Browser window closed",
+        description:
+          "The browser window was closed outside Mux. Restart the browser session to resume live browser updates.",
+      };
+    }
+
+    if (session.endReason === "agent_closed") {
+      return {
+        Icon: Info,
+        iconClassName: "text-muted",
+        title: "Browser session closed",
+        description:
+          "The browser session was closed. Restart the browser session to resume live browser updates.",
+      };
+    }
+
     return {
       Icon: RefreshCw,
       iconClassName: "text-muted",

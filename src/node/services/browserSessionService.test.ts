@@ -64,6 +64,7 @@ function createLiveSession(workspaceId: string): BrowserSession {
     streamState: "connecting",
     lastFrameMetadata: null,
     streamErrorMessage: null,
+    endReason: null,
     startedAt: now,
     updatedAt: now,
   };
@@ -190,6 +191,7 @@ describe("BrowserSessionService.stopSession", () => {
               streamState: null,
               lastFrameMetadata: null,
               streamErrorMessage: null,
+              endReason: "agent_closed",
             });
             options.onEnded(workspaceId);
             return Promise.resolve();
@@ -217,6 +219,7 @@ describe("BrowserSessionService.stopSession", () => {
     expect(events[0].session.streamState).toBeNull();
     expect(events[0].session.lastFrameMetadata).toBeNull();
     expect(events[0].session.streamErrorMessage).toBeNull();
+    expect(events[0].session.endReason).toBe("agent_closed");
     expect(events[1]).toEqual({ type: "session-ended", workspaceId });
   });
 

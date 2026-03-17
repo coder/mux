@@ -18,6 +18,9 @@ export type BrowserStreamState =
   | "restart_required"
   | "error";
 
+// Why an ended browser session stopped publishing updates.
+export type BrowserSessionEndReason = "agent_closed" | "external_closed";
+
 // Frame metadata from the agent-browser streaming protocol
 export interface BrowserFrameMetadata {
   deviceWidth: number;
@@ -71,6 +74,7 @@ export interface BrowserSession {
   streamState: BrowserStreamState | null;
   lastFrameMetadata: BrowserFrameMetadata | null;
   streamErrorMessage: string | null;
+  endReason: BrowserSessionEndReason | null;
   startedAt: string; // ISO
   updatedAt: string; // ISO
 }

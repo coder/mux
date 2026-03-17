@@ -68,6 +68,7 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
       scrollOffsetY: 0,
     },
     streamErrorMessage: null,
+    endReason: null,
     startedAt: "2026-03-16T00:00:00.000Z",
     updatedAt: "2026-03-16T00:00:00.000Z",
     ...overrides,
@@ -152,6 +153,40 @@ describe("BrowserTab recent action timestamps", () => {
     const streamErrorView = renderBrowserTab();
 
     expect(streamErrorView.getAllByText("Stream error")).toHaveLength(1);
+  });
+
+  test("shows a neutral closed notice for agent-closed sessions", () => {
+    mockSession = createSession({
+      status: "ended",
+      streamState: null,
+      endReason: "agent_closed",
+      lastScreenshotBase64: "frame-data",
+      title: "Closed page",
+    });
+
+    const view = renderBrowserTab();
+
+    expect(view.getAllByText("Ended")).toHaveLength(1);
+    expect(view.getByRole("status").textContent).toContain("Browser session was closed");
+    expect(view.queryByRole("alert")).toBeNull();
+    expect(view.queryByText("Error")).toBeNull();
+  });
+
+  test("shows a neutral placeholder for externally closed sessions without a screenshot", () => {
+    mockSession = createSession({
+      status: "ended",
+      streamState: null,
+      endReason: "external_closed",
+      lastScreenshotBase64: null,
+      lastFrameMetadata: null,
+      title: "Closed page",
+    });
+
+    const view = renderBrowserTab();
+
+    expect(view.getByText("Browser window closed")).toBeTruthy();
+    expect(view.getByText(/closed outside Mux/)).toBeTruthy();
+    expect(view.queryByText("Browser session error")).toBeNull();
   });
 
   test("labels custom scroll summaries as scroll actions", () => {

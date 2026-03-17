@@ -8,6 +8,7 @@ import type {
   BrowserFrameMetadata,
   BrowserInputEvent,
   BrowserSession,
+  BrowserSessionEndReason,
   BrowserStreamState,
 } from "@/common/types/browserSession";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
@@ -90,6 +91,13 @@ function extractCliString(data: unknown, field: string): string | null {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function assertSessionInvariants(session: BrowserSession): void {
+  assert(
+    session.status === "ended" || session.endReason === null,
+    "BrowserSession endReason requires ended status"
+  );
 }
 
 function getStreamRetryDelayMs(attemptNumber: number): number {
@@ -509,13 +517,7 @@ export class BrowserSessionBackend {
       // Best-effort shutdown; the session is ending locally regardless.
     }
 
-    this.patchSession({
-      status: "ended",
-      streamState: null,
-      lastFrameMetadata: null,
-      streamErrorMessage: null,
-    });
-    this.options.onEnded(this.options.workspaceId);
+    this.transitionToEnded("agent_closed");
   }
 
   sendInput(input: BrowserInputEvent): { success: boolean; error?: string } {
@@ -584,7 +586,7 @@ export class BrowserSessionBackend {
   private createSession(status: BrowserSession["status"]): BrowserSession {
     const now = new Date().toISOString();
     const runId = `${this.sessionId}-${randomUUID().slice(0, 8)}`;
-    return {
+    const session: BrowserSession = {
       id: runId,
       workspaceId: this.options.workspaceId,
       status,
@@ -595,9 +597,12 @@ export class BrowserSessionBackend {
       streamState: null,
       lastFrameMetadata: null,
       streamErrorMessage: null,
+      endReason: null,
       startedAt: now,
       updatedAt: now,
     };
+    assertSessionInvariants(session);
+    return session;
   }
 
   private createSessionId(): string {
@@ -626,11 +631,13 @@ export class BrowserSessionBackend {
   }
 
   private patchSession(patch: Partial<BrowserSession>): void {
-    this.session = {
+    const nextSession: BrowserSession = {
       ...this.session,
       ...patch,
       updatedAt: new Date().toISOString(),
     };
+    assertSessionInvariants(nextSession);
+    this.session = nextSession;
     this.emitSessionUpdate();
   }
 
@@ -698,6 +705,54 @@ export class BrowserSessionBackend {
           ...(input.modifiers != null ? { modifiers: input.modifiers } : {}),
         };
     }
+  }
+
+  private hasTerminalSessionState(): boolean {
+    return this.session.status === "error" || this.session.status === "ended";
+  }
+
+  private transitionToEnded(endReason: BrowserSessionEndReason): void {
+    if (this.session.status === "ended") {
+      return;
+    }
+
+    this.stopBackgroundWork();
+    this.disposed = true;
+    this.killInFlightProcesses();
+
+    const nextSession: BrowserSession = {
+      ...this.session,
+      status: "ended",
+      lastError: null,
+      streamState: null,
+      lastFrameMetadata: null,
+      streamErrorMessage: null,
+      endReason,
+      updatedAt: new Date().toISOString(),
+    };
+    assertSessionInvariants(nextSession);
+    this.session = nextSession;
+    this.emitSessionUpdate();
+    this.options.onEnded(this.options.workspaceId);
+  }
+
+  private async maybeTransitionToEndedFromDaemonClose(): Promise<boolean> {
+    if (this.disposed || this.hasTerminalSessionState()) {
+      return false;
+    }
+
+    const sessionStillExists = await this.hasExistingSession();
+    if (this.disposed || this.hasTerminalSessionState()) {
+      return false;
+    }
+
+    if (!sessionStillExists) {
+      this.transitionToEnded("agent_closed");
+      return true;
+    }
+
+    await this.refreshNavigationMetadata();
+    return this.session.endReason !== null;
   }
 
   private async startStreamTransport(): Promise<StreamStartupMode> {
@@ -819,13 +874,17 @@ export class BrowserSessionBackend {
           return;
         }
 
-        this.handleUnexpectedStreamClose(closeReason);
+        void this.handleUnexpectedStreamClose(closeReason);
       });
     });
   }
 
-  private handleUnexpectedStreamClose(error: string): void {
-    if (this.disposed || this.session.status === "error") {
+  private async handleUnexpectedStreamClose(error: string): Promise<void> {
+    if (this.disposed || this.session.status === "error" || this.session.status === "ended") {
+      return;
+    }
+
+    if (await this.maybeTransitionToEndedFromDaemonClose()) {
       return;
     }
 
@@ -856,7 +915,7 @@ export class BrowserSessionBackend {
   }
 
   private async retryStreamConnection(): Promise<void> {
-    if (this.disposed || this.session.status === "error") {
+    if (this.disposed || this.session.status === "error" || this.session.status === "ended") {
       return;
     }
 
@@ -866,7 +925,7 @@ export class BrowserSessionBackend {
       return;
     }
 
-    this.handleUnexpectedStreamClose(result.error);
+    await this.handleUnexpectedStreamClose(result.error);
   }
 
   // restart_required keeps the browser window open but blocks interaction until the user relaunches
@@ -878,6 +937,7 @@ export class BrowserSessionBackend {
       streamState: "restart_required",
       streamErrorMessage: error,
       lastError: error,
+      endReason: null,
     });
   }
 
@@ -909,12 +969,20 @@ export class BrowserSessionBackend {
     try {
       const urlResult = await this.runCliCommand(["get", "url"]);
       if (!urlResult.ok) {
+        if (isMissingBrowserSessionError(urlResult.error)) {
+          this.transitionToEnded("agent_closed");
+          return;
+        }
         this.handleMetadataFailure(urlResult.error);
         return;
       }
 
       const titleResult = await this.runCliCommand(["get", "title"]);
       if (!titleResult.ok) {
+        if (isMissingBrowserSessionError(titleResult.error)) {
+          this.transitionToEnded("agent_closed");
+          return;
+        }
         this.handleMetadataFailure(titleResult.error);
         return;
       }
@@ -926,11 +994,12 @@ export class BrowserSessionBackend {
         return;
       }
 
-      // Detect external browser closure: the daemon falls back to about:blank after the
+      // Detect browser-session closure: the daemon falls back to about:blank after the
       // controlled window disappears, so only treat it as valid when we were already blank.
       const previousUrl = this.session.currentUrl;
       if (previousUrl !== null && previousUrl !== "about:blank" && nextUrl === "about:blank") {
-        this.transitionToError("Browser session was closed externally");
+        const sessionStillExists = await this.hasExistingSession();
+        this.transitionToEnded(sessionStillExists ? "external_closed" : "agent_closed");
         return;
       }
 
@@ -1064,7 +1133,7 @@ export class BrowserSessionBackend {
       lastError: errorMessage,
     });
     this.closeCurrentStreamSocket();
-    this.handleUnexpectedStreamClose(errorMessage);
+    void this.handleUnexpectedStreamClose(errorMessage);
   }
 
   private transitionToError(error: string): void {
@@ -1075,14 +1144,17 @@ export class BrowserSessionBackend {
     this.stopBackgroundWork();
     const nextStreamState: BrowserStreamState | null =
       this.session.streamState !== null ? "error" : this.session.streamState;
-    this.session = {
+    const nextSession: BrowserSession = {
       ...this.session,
       status: "error",
       lastError: error,
       streamState: nextStreamState,
       streamErrorMessage: nextStreamState !== null ? error : this.session.streamErrorMessage,
+      endReason: null,
       updatedAt: new Date().toISOString(),
     };
+    assertSessionInvariants(nextSession);
+    this.session = nextSession;
     this.emitSessionUpdate();
     this.options.onError(this.options.workspaceId, error);
   }

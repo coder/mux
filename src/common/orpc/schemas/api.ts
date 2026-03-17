@@ -1932,6 +1932,7 @@ export const devtools = {
 };
 
 const BrowserSessionStatusSchema = z.enum(["starting", "live", "paused", "error", "ended"]);
+const BrowserSessionEndReasonSchema = z.enum(["agent_closed", "external_closed"]);
 const BrowserStreamStateSchema = z.enum([
   "disconnected",
   "connecting",
@@ -2010,6 +2011,7 @@ const BrowserSessionSchema = z.object({
   streamState: BrowserStreamStateSchema.nullable(),
   lastFrameMetadata: BrowserFrameMetadataSchema.nullable(),
   streamErrorMessage: z.string().nullable(),
+  endReason: BrowserSessionEndReasonSchema.nullable(),
   startedAt: z.string(),
   updatedAt: z.string(),
 });

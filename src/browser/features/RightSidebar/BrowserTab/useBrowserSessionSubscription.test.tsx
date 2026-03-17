@@ -269,6 +269,7 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
       scrollOffsetY: 0,
     },
     streamErrorMessage: null,
+    endReason: null,
     startedAt: "2026-03-17T00:00:00.000Z",
     updatedAt: "2026-03-17T00:00:00.000Z",
     ...overrides,

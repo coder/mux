@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type WheelEvent,
 } from "react";
-import { TriangleAlert } from "lucide-react";
+import { Info, TriangleAlert } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
@@ -26,6 +26,7 @@ interface BrowserViewportProps {
   session: BrowserSession | null;
   screenshotSrc: string | null;
   visibleError: string | null;
+  visibleInfoNotice: string | null;
   placeholder: ReactNode;
   onRestart?: () => void;
 }
@@ -531,9 +532,23 @@ export function BrowserViewport(props: BrowserViewportProps) {
       {blockingOverlay}
       {props.visibleError && props.screenshotSrc && (
         <div className="pointer-events-none absolute inset-x-3 top-3">
-          <div className="bg-background-secondary border-destructive/20 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-md">
+          <div
+            role="alert"
+            className="bg-background-secondary border-destructive/20 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-md"
+          >
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{props.visibleError}</span>
+          </div>
+        </div>
+      )}
+      {props.visibleInfoNotice && props.screenshotSrc && (
+        <div className="pointer-events-none absolute inset-x-3 top-3">
+          <div
+            role="status"
+            className="bg-background-secondary border-border-light text-muted flex items-start gap-2 rounded-md border px-3 py-2 text-xs shadow-md"
+          >
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{props.visibleInfoNotice}</span>
           </div>
         </div>
       )}

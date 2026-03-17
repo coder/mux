@@ -42,6 +42,7 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
     streamState: "live",
     lastFrameMetadata: { ...FRAME_METADATA },
     streamErrorMessage: null,
+    endReason: null,
     startedAt: "2026-03-16T00:00:00.000Z",
     updatedAt: "2026-03-16T00:00:00.000Z",
     ...overrides,
@@ -54,6 +55,7 @@ function renderViewport(
     onRestart?: () => void;
     screenshotSrc?: string | null;
     visibleError?: string | null;
+    visibleInfoNotice?: string | null;
   }
 ) {
   return render(
@@ -66,6 +68,7 @@ function renderViewport(
           : overrides.screenshotSrc
       }
       visibleError={overrides?.visibleError ?? null}
+      visibleInfoNotice={overrides?.visibleInfoNotice ?? null}
       placeholder={<div>placeholder</div>}
       onRestart={overrides?.onRestart}
     />
@@ -280,6 +283,38 @@ describe("BrowserViewport", () => {
     expect(view.getByText("Restart browser to enable live control")).toBeTruthy();
     fireEvent.click(view.getByRole("button", { name: "Restart" }));
     expect(restartMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("renders a neutral closed notice over the last screenshot", () => {
+    const view = renderViewport(
+      createSession({
+        status: "ended",
+        streamState: null,
+        endReason: "external_closed",
+        lastFrameMetadata: null,
+      }),
+      { visibleInfoNotice: "Browser session was closed outside Mux" }
+    );
+
+    expect(view.getByRole("status").textContent).toContain(
+      "Browser session was closed outside Mux"
+    );
+    expect(view.queryByRole("alert")).toBeNull();
+  });
+
+  test("renders destructive error banners separately from closed notices", () => {
+    const view = renderViewport(
+      createSession({
+        status: "error",
+        streamState: "error",
+        streamErrorMessage: "socket closed",
+        lastFrameMetadata: null,
+      }),
+      { visibleError: "socket closed" }
+    );
+
+    expect(view.getByRole("alert").textContent).toContain("socket closed");
+    expect(view.queryByRole("status")).toBeNull();
   });
 
   test("shows stream-specific non-interactive messages while the stream is unavailable", () => {

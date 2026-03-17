@@ -270,6 +270,115 @@ describe("BrowserSessionBackend", () => {
     expect(session.streamErrorMessage).toContain("ECONNREFUSED");
   });
 
+  test("treats agent-browser session shutdown as an ended session", async () => {
+    const onSessionUpdate = mock(() => undefined);
+    const onEnded = mock(() => undefined);
+    const backend = createBackend({ onSessionUpdate, onEnded });
+
+    setSession(backend, {
+      status: "live",
+      currentUrl: "https://example.com",
+      title: "Example",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+      lastError: "socket closed",
+      streamErrorMessage: "socket closed",
+    });
+
+    expect(
+      Reflect.set(backend, "runCliCommand", (args: string[]) => {
+        if (args[0] === "get" && args[1] === "url") {
+          return Promise.resolve({ ok: true as const, data: { url: "about:blank" } });
+        }
+        if (args[0] === "get" && args[1] === "title") {
+          return Promise.resolve({ ok: true as const, data: { title: "about:blank" } });
+        }
+        throw new Error(`Unexpected CLI args: ${args.join(" ")}`);
+      })
+    ).toBe(true);
+    expect(Reflect.set(backend, "hasExistingSession", () => Promise.resolve(false))).toBe(true);
+
+    const refreshNavigationMetadata = Reflect.get(backend, "refreshNavigationMetadata") as (
+      this: BrowserSessionBackend
+    ) => Promise<void>;
+    await refreshNavigationMetadata.call(backend);
+
+    const session = getSession(backend);
+    expect(session.status).toBe("ended");
+    expect(session.endReason).toBe("agent_closed");
+    expect(session.lastError).toBeNull();
+    expect(session.streamState).toBeNull();
+    expect(session.streamErrorMessage).toBeNull();
+    expect(onSessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "ended", endReason: "agent_closed" })
+    );
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    expect(onEnded).toHaveBeenCalledWith("workspace-123");
+  });
+
+  test("treats browser-window closure outside Mux as an ended session", async () => {
+    const onSessionUpdate = mock(() => undefined);
+    const onEnded = mock(() => undefined);
+    const backend = createBackend({ onSessionUpdate, onEnded });
+
+    setSession(backend, {
+      status: "live",
+      currentUrl: "https://example.com",
+      title: "Example",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+    });
+
+    expect(
+      Reflect.set(backend, "runCliCommand", (args: string[]) => {
+        if (args[0] === "get" && args[1] === "url") {
+          return Promise.resolve({ ok: true as const, data: { url: "about:blank" } });
+        }
+        if (args[0] === "get" && args[1] === "title") {
+          return Promise.resolve({ ok: true as const, data: { title: "about:blank" } });
+        }
+        throw new Error(`Unexpected CLI args: ${args.join(" ")}`);
+      })
+    ).toBe(true);
+    expect(Reflect.set(backend, "hasExistingSession", () => Promise.resolve(true))).toBe(true);
+
+    const refreshNavigationMetadata = Reflect.get(backend, "refreshNavigationMetadata") as (
+      this: BrowserSessionBackend
+    ) => Promise<void>;
+    await refreshNavigationMetadata.call(backend);
+
+    const session = getSession(backend);
+    expect(session.status).toBe("ended");
+    expect(session.endReason).toBe("external_closed");
+    expect(session.lastError).toBeNull();
+    expect(session.streamState).toBeNull();
+    expect(onSessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "ended", endReason: "external_closed" })
+    );
+    expect(onEnded).toHaveBeenCalledTimes(1);
+    expect(onEnded).toHaveBeenCalledWith("workspace-123");
+  });
+
+  test("keeps launch failures classified as errors", async () => {
+    const onError = mock(() => undefined);
+    const backend = createBackend({ onError, initialUrl: "https://start.example.com" });
+
+    expect(Reflect.set(backend, "hasExistingSession", () => false)).toBe(true);
+    expect(
+      Reflect.set(backend, "runCliCommand", () =>
+        Promise.resolve({ ok: false as const, error: "launch failed" })
+      )
+    ).toBe(true);
+
+    const session = await backend.start();
+
+    expect(session.status).toBe("error");
+    expect(session.lastError).toBe("launch failed");
+    expect(session.endReason).toBeNull();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith("workspace-123", "launch failed");
+  });
+
   describe("navigate", () => {
     test("navigates to a valid URL via CLI open command", async () => {
       const backend = createBackend();
@@ -377,6 +486,7 @@ describe("BrowserSessionBackend", () => {
     expect(session.streamState).toBeNull();
     expect(session.lastFrameMetadata).toBeNull();
     expect(session.streamErrorMessage).toBeNull();
+    expect(session.endReason).toBe("agent_closed");
     expect(onSessionUpdate).toHaveBeenCalledTimes(1);
     expect(onSessionUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -384,6 +494,7 @@ describe("BrowserSessionBackend", () => {
         streamState: null,
         lastFrameMetadata: null,
         streamErrorMessage: null,
+        endReason: "agent_closed",
       })
     );
     expect(onEnded).toHaveBeenCalledTimes(1);
