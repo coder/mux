@@ -24,6 +24,7 @@ import {
   getInputKey,
   getModelKey,
   getReviewsKey,
+  getReviewStateKey,
   getHunkFirstSeenKey,
   REVIEW_SORT_ORDER_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
@@ -33,7 +34,7 @@ import {
 import type { ReviewSortOrder } from "@/common/types/review";
 import type { HunkFirstSeenState } from "@/browser/hooks/useHunkFirstSeen";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import type { Review, ReviewsState } from "@/common/types/review";
+import type { Review, ReviewsState, ReviewState } from "@/common/types/review";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   createWorkspace,
@@ -100,6 +101,26 @@ export function setReviews(workspaceId: string, reviews: Review[]): void {
     lastUpdated: Date.now(),
   };
   updatePersistedState(getReviewsKey(workspaceId), state);
+}
+
+/** Mark specific hunks as reviewed for a workspace */
+export function setReadHunks(workspaceId: string, hunkIds: string[]): void {
+  const timestamp = Date.now();
+  const state: ReviewState = {
+    workspaceId,
+    readState: Object.fromEntries(
+      hunkIds.map((hunkId) => [
+        hunkId,
+        {
+          hunkId,
+          isRead: true,
+          timestamp,
+        },
+      ])
+    ),
+    lastUpdated: timestamp,
+  };
+  updatePersistedState(getReviewStateKey(workspaceId), state);
 }
 
 /** Set hunk first-seen timestamps for a workspace (for storybook) */

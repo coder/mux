@@ -8,10 +8,17 @@ import {
   getReviewImmersiveKey,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
+import { extractAllHunks, parseDiff } from "@/common/utils/git/diffParser";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createAssistantMessage, createUserMessage } from "./mockFactory";
-import { createReview, expandRightSidebar, setReviews, setupSimpleChatStory } from "./storyHelpers";
+import {
+  createReview,
+  expandRightSidebar,
+  setReadHunks,
+  setReviews,
+  setupSimpleChatStory,
+} from "./storyHelpers";
 
 const LINE_HEIGHT_DEBUG_WORKSPACE_ID = "ws-review-immersive-line-height";
 
@@ -42,6 +49,12 @@ index 1111111..2222222 100644
 `;
 
 const IMMERSIVE_LINE_HEIGHT_NUMSTAT = "7\t2\tsrc/utils/formatPrice.ts";
+
+const IMMERSIVE_REVIEW_COMPLETE_WORKSPACE_ID = "ws-review-immersive-complete";
+
+function getDiffHunkIds(diffOutput: string): string[] {
+  return extractAllHunks(parseDiff(diffOutput)).map((hunk) => hunk.id);
+}
 
 const IMMERSIVE_NOTES_PREVIEW_WORKSPACE_ID = "ws-review-immersive-notes-preview";
 const IMMERSIVE_NOTES_PREVIEW_BASE_TIME = 1700000000000;
@@ -174,6 +187,62 @@ export const ReviewTabImmersiveLineHeightDebug: AppStory = {
       () => {
         canvas.getByTestId("immersive-review-view");
         canvas.getByRole("button", { name: /exit immersive review/i });
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+export const ImmersiveReviewComplete: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "760");
+        localStorage.setItem("review-show-read", JSON.stringify(false));
+        localStorage.removeItem(getRightSidebarLayoutKey(IMMERSIVE_REVIEW_COMPLETE_WORKSPACE_ID));
+        updatePersistedState(getReviewImmersiveKey(IMMERSIVE_REVIEW_COMPLETE_WORKSPACE_ID), true);
+        setReadHunks(
+          IMMERSIVE_REVIEW_COMPLETE_WORKSPACE_ID,
+          getDiffHunkIds(IMMERSIVE_LINE_HEIGHT_DIFF)
+        );
+
+        const client = setupSimpleChatStory({
+          workspaceId: IMMERSIVE_REVIEW_COMPLETE_WORKSPACE_ID,
+          workspaceName: "feature/immersive-review-complete",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Finish this immersive review walkthrough.", {
+              historySequence: 1,
+            }),
+            createAssistantMessage("msg-2", "All hunks are already reviewed.", {
+              historySequence: 2,
+            }),
+          ],
+          gitDiff: {
+            diffOutput: IMMERSIVE_LINE_HEIGHT_DIFF,
+            numstatOutput: IMMERSIVE_LINE_HEIGHT_NUMSTAT,
+          },
+        });
+
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-complete");
+        canvas.getByRole("heading", { name: /Review complete/i });
+        canvas.getByRole("button", { name: /Return to chat/i });
+        if (canvas.queryByText(/No hunks for this file/i)) {
+          throw new Error(
+            "Expected the immersive review completion state instead of the empty-file copy."
+          );
+        }
       },
       { timeout: 10_000 }
     );
