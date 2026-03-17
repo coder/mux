@@ -38,6 +38,15 @@ ipcRenderer.on("mux:deep-link", (_event: unknown, payload: MuxDeepLinkPayload) =
   }
 });
 
+function getEnableTutorialsInSandbox(): boolean | undefined {
+  const raw = process.env.MUX_ENABLE_TUTORIALS_IN_SANDBOX;
+  if (raw == null) {
+    return undefined;
+  }
+
+  return raw === "1";
+}
+
 // Forward ORPC MessagePort from renderer to main process
 window.addEventListener("message", (event) => {
   if (event.data === "start-orpc-client" && event.ports?.[0]) {
@@ -55,6 +64,7 @@ contextBridge.exposeInMainWorld("api", {
   isE2E: process.env.MUX_E2E === "1",
   enableReactPerfProfile: process.env.MUX_PROFILE_REACT === "1",
   enableTelemetryInDev: process.env.MUX_ENABLE_TELEMETRY_IN_DEV === "1",
+  enableTutorialsInSandbox: getEnableTutorialsInSandbox(),
   // Note: When debugging LLM requests, we also want to see synthetic/request-only
   // messages in the chat history so the UI matches what was sent to the provider.
   debugLlmRequest: process.env.MUX_DEBUG_LLM_REQUEST === "1",

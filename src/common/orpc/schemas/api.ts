@@ -1936,7 +1936,6 @@ const BrowserStreamStateSchema = z.enum([
   "disconnected",
   "connecting",
   "live",
-  "fallback",
   "restart_required",
   "error",
 ]);
@@ -2030,6 +2029,9 @@ const BrowserSessionEventSchema = z.discriminatedUnion("type", [
     action: BrowserActionSchema,
   }),
   z.object({
+    type: z.literal("heartbeat"),
+  }),
+  z.object({
     type: z.literal("session-ended"),
     workspaceId: z.string(),
   }),
@@ -2087,6 +2089,18 @@ export const browserSession = {
       })
       .strict(),
     output: eventIterator(BrowserSessionEventSchema),
+  },
+  navigate: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        url: z.string(),
+      })
+      .strict(),
+    output: z.object({
+      success: z.boolean(),
+      error: z.string().nullish(),
+    }),
   },
 };
 

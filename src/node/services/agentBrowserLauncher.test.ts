@@ -7,6 +7,7 @@ import {
   AgentBrowserBinaryNotFoundError,
   generateAgentBrowserWrapper,
   getVendoredBinDir,
+  prependVendoredBinDirToPath,
   rewriteAsarPath,
   resolveAgentBrowserBinary,
 } from "./agentBrowserLauncher";
@@ -104,6 +105,20 @@ describe("getVendoredBinDir", () => {
 
     expect(path.isAbsolute(vendoredBinDir)).toBe(true);
     expect(vendoredBinDir.endsWith(path.join("", "bin"))).toBe(true);
+  });
+});
+
+describe("prependVendoredBinDirToPath", () => {
+  test("returns the original PATH when mux has not materialized a vendored bin dir", () => {
+    expect(prependVendoredBinDirToPath("/usr/bin:/bin", {})).toBe("/usr/bin:/bin");
+  });
+
+  test("prepends the vendored bin dir only once", () => {
+    const env: NodeJS.ProcessEnv = { MUX_VENDORED_BIN_DIR: "/tmp/mux/bin" };
+    const withPrependedPath = prependVendoredBinDirToPath(`/usr/bin${path.delimiter}/bin`, env);
+
+    expect(withPrependedPath).toBe(`/tmp/mux/bin${path.delimiter}/usr/bin${path.delimiter}/bin`);
+    expect(prependVendoredBinDirToPath(withPrependedPath, env)).toBe(withPrependedPath);
   });
 });
 

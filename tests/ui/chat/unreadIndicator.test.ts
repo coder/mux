@@ -14,12 +14,14 @@
 import "../dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
+import { generateBranchName } from "../../ipc/helpers";
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness, type AppHarness } from "../harness";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getWorkspaceLastReadKey } from "@/common/constants/storage";
-import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { getWorkspaceLastReadKey } from "@/common/constants/storage";
+import { detectDefaultTrunkBranch } from "@/node/git";
 
 /**
  * Get the unread state for a workspace from the WorkspaceStore.
@@ -409,6 +411,244 @@ describe("Unread indicator (mock AI router)", () => {
       // showUnreadBar has condition: !(isSelected && !isDisabled)
       // Since workspace is selected, unread bar should not show
       expect(indicator?.hasUnreadBar).toBe(false);
+    });
+  });
+
+  describe("manual mark unread", () => {
+    let app: AppHarness;
+    let createdWorkspaceIds: string[];
+
+    function queryMenuItem(label: string): HTMLButtonElement | null {
+      const menuButtons = Array.from(document.querySelectorAll("button")) as HTMLButtonElement[];
+      return menuButtons.find((button) => button.textContent?.includes(label)) ?? null;
+    }
+
+    async function openWorkspaceActionsMenu(displayTitle: string): Promise<void> {
+      const menuButton = await waitFor(
+        () => {
+          const button = app.view.container.querySelector(
+            `button[aria-label="Workspace actions for ${displayTitle}"]`
+          ) as HTMLButtonElement | null;
+          if (!button) {
+            throw new Error(`Workspace actions button not found for ${displayTitle}`);
+          }
+          return button;
+        },
+        { timeout: 10_000 }
+      );
+
+      fireEvent.click(menuButton);
+
+      await waitFor(
+        () => {
+          const generateTitleButton = queryMenuItem("Generate new title");
+          if (!generateTitleButton) {
+            throw new Error("Workspace actions menu did not open");
+          }
+        },
+        { timeout: 10_000 }
+      );
+    }
+
+    async function createNonSelectedWorkspace(branchPrefix: string): Promise<{
+      workspaceId: string;
+      displayTitle: string;
+    }> {
+      const trunkBranch = await detectDefaultTrunkBranch(app.repoPath);
+      const createResult = await app.env.orpc.workspace.create({
+        projectPath: app.repoPath,
+        branchName: generateBranchName(branchPrefix),
+        trunkBranch,
+      });
+      if (!createResult.success) {
+        throw new Error(`Failed to create workspace: ${createResult.error}`);
+      }
+
+      const createdWorkspace = createResult.metadata;
+      createdWorkspaceIds.push(createdWorkspace.id);
+      const displayTitle = createdWorkspace.title ?? createdWorkspace.name;
+
+      await waitFor(
+        () => {
+          const workspaceRow = app.view.container.querySelector(
+            `[data-workspace-id="${createdWorkspace.id}"]`
+          ) as HTMLElement | null;
+          if (!workspaceRow) {
+            throw new Error("Created workspace row not visible yet");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      await waitFor(
+        () => {
+          const { recencyTimestamp } = workspaceStore.getWorkspaceSidebarState(createdWorkspace.id);
+          if (recencyTimestamp === null) {
+            throw new Error("Created workspace has no recency timestamp yet");
+          }
+        },
+        { timeout: 10_000 }
+      );
+
+      return {
+        workspaceId: createdWorkspace.id,
+        displayTitle,
+      };
+    }
+
+    function getWorkspaceTitleElement(
+      workspaceId: string,
+      displayTitle: string
+    ): HTMLSpanElement | null {
+      const workspaceRow = app.view.container.querySelector(
+        `[data-workspace-id="${workspaceId}"]`
+      ) as HTMLElement | null;
+      if (!workspaceRow) {
+        return null;
+      }
+
+      const textSpans = Array.from(workspaceRow.querySelectorAll("span")) as HTMLSpanElement[];
+      return textSpans.find((span) => span.textContent?.trim() === displayTitle) ?? null;
+    }
+
+    beforeEach(async () => {
+      app = await createAppHarness({ branchPrefix: "unread-manual" });
+      createdWorkspaceIds = [];
+    });
+
+    afterEach(async () => {
+      for (const workspaceId of createdWorkspaceIds) {
+        await app.env.orpc.workspace
+          .remove({ workspaceId, options: { force: true } })
+          .catch(() => {});
+      }
+      await app.dispose();
+    });
+
+    test("shows Mark unread for a read, non-selected workspace row", async () => {
+      const otherWorkspace = await createNonSelectedWorkspace("unread-mark-read");
+      updatePersistedState(
+        getWorkspaceLastReadKey(otherWorkspace.workspaceId),
+        Date.now() + 60_000
+      );
+
+      await waitFor(() => {
+        const indicator = getWorkspaceUnreadIndicator(
+          app.view.container,
+          otherWorkspace.workspaceId
+        );
+        if (!indicator) {
+          throw new Error("Expected unread indicator container for created workspace");
+        }
+        expect(indicator.hasUnreadBar).toBe(false);
+      });
+
+      await openWorkspaceActionsMenu(otherWorkspace.displayTitle);
+      await waitFor(() => {
+        expect(queryMenuItem("Mark unread")).not.toBeNull();
+      });
+    });
+
+    test("clicking Mark unread restores unread visuals", async () => {
+      const otherWorkspace = await createNonSelectedWorkspace("unread-mark-click");
+      updatePersistedState(
+        getWorkspaceLastReadKey(otherWorkspace.workspaceId),
+        Date.now() + 60_000
+      );
+
+      await waitFor(() => {
+        const indicator = getWorkspaceUnreadIndicator(
+          app.view.container,
+          otherWorkspace.workspaceId
+        );
+        if (!indicator) {
+          throw new Error("Expected unread indicator container for created workspace");
+        }
+        expect(indicator.hasUnreadBar).toBe(false);
+      });
+
+      await openWorkspaceActionsMenu(otherWorkspace.displayTitle);
+      const markUnreadButton = await waitFor(
+        () => {
+          const button = queryMenuItem("Mark unread");
+          if (!button) {
+            throw new Error("Mark unread menu item not found");
+          }
+          return button;
+        },
+        { timeout: 10_000 }
+      );
+      fireEvent.click(markUnreadButton);
+
+      await waitFor(() => {
+        const indicator = getWorkspaceUnreadIndicator(
+          app.view.container,
+          otherWorkspace.workspaceId
+        );
+        if (!indicator) {
+          throw new Error("Expected unread indicator container for created workspace");
+        }
+        expect(indicator.hasUnreadBar).toBe(true);
+      });
+
+      await waitFor(() => {
+        const titleElement = getWorkspaceTitleElement(
+          otherWorkspace.workspaceId,
+          otherWorkspace.displayTitle
+        );
+        if (!titleElement) {
+          throw new Error("Workspace title element not found");
+        }
+        expect(titleElement.className).toContain("text-foreground");
+        expect(titleElement.className).not.toContain("text-secondary");
+      });
+    });
+
+    test("hides Mark unread for already-unread rows", async () => {
+      const otherWorkspace = await createNonSelectedWorkspace("unread-mark-already");
+      const recencyTimestamp = workspaceStore.getWorkspaceSidebarState(
+        otherWorkspace.workspaceId
+      ).recencyTimestamp;
+      expect(recencyTimestamp).not.toBeNull();
+      updatePersistedState(
+        getWorkspaceLastReadKey(otherWorkspace.workspaceId),
+        (recencyTimestamp ?? Date.now()) - 5_000
+      );
+
+      await waitFor(() => {
+        const indicator = getWorkspaceUnreadIndicator(
+          app.view.container,
+          otherWorkspace.workspaceId
+        );
+        if (!indicator) {
+          throw new Error("Expected unread indicator container for created workspace");
+        }
+        expect(indicator.hasUnreadBar).toBe(true);
+      });
+
+      await openWorkspaceActionsMenu(otherWorkspace.displayTitle);
+      await waitFor(() => {
+        expect(queryMenuItem("Mark unread")).toBeNull();
+      });
+    });
+
+    test("hides Mark unread for selected rows", async () => {
+      const selectedDisplayTitle = app.metadata.title ?? app.metadata.name;
+
+      await waitFor(() => {
+        const selectedRow = app.view.container.querySelector(
+          `[data-workspace-id="${app.workspaceId}"]`
+        ) as HTMLElement | null;
+        if (!selectedRow) {
+          throw new Error("Selected workspace row not found");
+        }
+        expect(selectedRow.getAttribute("aria-current")).toBe("true");
+      });
+
+      await openWorkspaceActionsMenu(selectedDisplayTitle);
+      await waitFor(() => {
+        expect(queryMenuItem("Mark unread")).toBeNull();
+      });
     });
   });
 

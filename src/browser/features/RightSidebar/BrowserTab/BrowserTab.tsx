@@ -21,6 +21,7 @@ import type {
   BrowserSession,
   BrowserSessionStatus,
 } from "@/common/types/browserSession";
+import { normalizeBrowserUrl } from "@/common/utils/browserUrl";
 import { BrowserViewport } from "./BrowserViewport";
 import { useBrowserSessionSubscription } from "./useBrowserSessionSubscription";
 
@@ -127,14 +128,22 @@ export function BrowserTab(props: BrowserTabProps) {
   const [startingSession, setStartingSession] = useState(false);
   const [stoppingSession, setStoppingSession] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [addressValue, setAddressValue] = useState("");
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const autoStartState = getAutoStartState(props.workspaceId);
   const browserSessionApi = api?.browserSession ?? null;
 
   const isStarting =
     startingSession || autoStartState.autoStartPending || session?.status === "starting";
-  const screenshotSrc = session?.lastScreenshotBase64
-    ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
-    : null;
+  // Suppress the blank-page screenshot so the ready-state placeholder renders instead
+  // of an empty white frame. The viewport shows its placeholder prop when screenshotSrc is null.
+  const isBlankPage = session?.currentUrl === "about:blank";
+  const screenshotSrc =
+    session?.lastScreenshotBase64 && !isBlankPage
+      ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
+      : null;
   const visibleError =
     startError ?? error ?? session?.lastError ?? session?.streamErrorMessage ?? null;
   const sessionIsActive =
@@ -153,8 +162,6 @@ export function BrowserTab(props: BrowserTabProps) {
           return STATUS_BADGES.live;
         case "connecting":
           return { label: "Connecting", className: "border-accent/30 bg-accent/10 text-accent" };
-        case "fallback":
-          return { label: "Fallback", className: "border-warning/30 bg-warning/10 text-warning" };
         case "restart_required":
           return {
             label: "Restart required",
@@ -176,12 +183,15 @@ export function BrowserTab(props: BrowserTabProps) {
   const showStartButton =
     !showStopButton &&
     (session == null || session.status === "ended" || session.status === "error");
+  const displayUrl = session?.currentUrl === "about:blank" ? "" : (session?.currentUrl ?? "");
+  const canNavigate = browserSessionApi != null && sessionIsActive && !isNavigating;
+  const canReload =
+    browserSessionApi != null &&
+    !isNavigating &&
+    session?.status === "live" &&
+    session?.streamState === "live" &&
+    session?.lastFrameMetadata != null;
   const headerTitle = session?.title ?? session?.currentUrl ?? "Browser session";
-  const headerSubtitle = session
-    ? (session.currentUrl ?? "No page loaded yet")
-    : isStarting
-      ? "Starting browser session…"
-      : "Start a browser session to see the live frame and recent actions.";
 
   // This effect syncs the Browser tab with the external browser-session service by
   // issuing a single attach/start request when no session exists yet.
@@ -298,61 +308,189 @@ export function BrowserTab(props: BrowserTabProps) {
       });
   };
 
+  const handleNavigate = (rawUrl: string) => {
+    if (browserSessionApi == null || isNavigating || !sessionIsActive) {
+      return;
+    }
+
+    const trimmedUrl = rawUrl.trim();
+    if (trimmedUrl.length === 0) {
+      setAddressError("URL is required");
+      return;
+    }
+
+    const validation = normalizeBrowserUrl(trimmedUrl);
+    if (!validation.ok) {
+      setAddressError(validation.error);
+      return;
+    }
+
+    setAddressError(null);
+    setIsNavigating(true);
+    setIsEditing(false);
+
+    browserSessionApi
+      .navigate({ workspaceId: props.workspaceId, url: trimmedUrl })
+      .then((result) => {
+        if (!result.success) {
+          setAddressError(result.error ?? "Navigation failed");
+        }
+      })
+      .catch((navigationError: unknown) => {
+        setAddressError(getSessionErrorMessage(navigationError, "Navigation failed"));
+      })
+      .finally(() => {
+        setIsNavigating(false);
+      });
+  };
+
+  const handleReload = () => {
+    if (browserSessionApi == null || !canReload) {
+      return;
+    }
+
+    const sendPromise = browserSessionApi.sendInput({
+      workspaceId: props.workspaceId,
+      input: {
+        kind: "keyboard",
+        eventType: "keyDown",
+        key: "F5",
+        code: "F5",
+      },
+    });
+    sendPromise.catch(() => {
+      // Browser sessions can restart while the sidebar stays mounted, so a dropped reload request
+      // should fail closed instead of throwing from the click handler.
+    });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-border-light flex items-start justify-between gap-3 border-b px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="text-foreground min-w-0 flex-1 truncate text-xs font-semibold">
-              {headerTitle}
-            </h3>
-            {headerBadge && <BrowserHeaderBadge badge={headerBadge} />}
+      <div className="flex flex-col">
+        <div className="border-border-light flex items-start justify-between gap-3 border-b px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <h3 className="text-foreground min-w-0 flex-1 truncate text-xs font-semibold">
+                {headerTitle}
+              </h3>
+              {headerBadge && <BrowserHeaderBadge badge={headerBadge} />}
+            </div>
           </div>
-          {/* Use a portal-backed tooltip to avoid clipping inside overflow-hidden sidebar panels. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <p className="text-muted text-[10px] leading-relaxed break-words">{headerSubtitle}</p>
-            </TooltipTrigger>
-            <TooltipContent
-              side="top"
-              align="start"
-              className="max-w-sm break-words whitespace-normal"
+          {showStartButton && (
+            <button
+              type="button"
+              onClick={handleStartSession}
+              disabled={!api || isStarting}
+              className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex max-w-full items-center gap-1.5 self-start rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {headerSubtitle}
-            </TooltipContent>
-          </Tooltip>
+              {isStarting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : session?.status === "ended" || session?.status === "error" ? (
+                <RefreshCw className="h-3.5 w-3.5" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              {session?.status === "ended" || session?.status === "error" ? "Restart" : "Start"}
+            </button>
+          )}
+          {showStopButton && (
+            <button
+              type="button"
+              onClick={handleStopSession}
+              disabled={!api || stoppingSession}
+              className="bg-destructive/10 hover:bg-destructive/20 text-destructive border-destructive/20 inline-flex max-w-full items-center gap-1.5 self-start rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {stoppingSession ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Square className="h-3.5 w-3.5" />
+              )}
+              {stoppingSession ? "Stopping..." : "Stop"}
+            </button>
+          )}
         </div>
-        {showStartButton && (
-          <button
-            type="button"
-            onClick={handleStartSession}
-            disabled={!api || isStarting}
-            className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex max-w-full items-center gap-1.5 self-start rounded-md px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isStarting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : session?.status === "ended" || session?.status === "error" ? (
-              <RefreshCw className="h-3.5 w-3.5" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
+
+        {(sessionIsActive || isStarting) && (
+          <>
+            <div
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5",
+                addressError ? "pb-1" : "border-border-light border-b"
+              )}
+            >
+              <input
+                type="text"
+                value={isEditing ? addressValue : displayUrl}
+                placeholder="Enter a URL…"
+                disabled={!canNavigate}
+                className={cn(
+                  "bg-background-secondary text-foreground placeholder:text-muted w-full rounded-md border px-2 py-1 text-xs transition-colors",
+                  "focus:border-accent focus:outline-none",
+                  addressError
+                    ? "border-destructive/50 focus:border-destructive"
+                    : "border-border-light",
+                  !canNavigate && "cursor-not-allowed opacity-50"
+                )}
+                onFocus={() => {
+                  setIsEditing(true);
+                  setAddressValue(displayUrl);
+                  setAddressError(null);
+                }}
+                onChange={(event) => {
+                  setAddressValue(event.target.value);
+                  if (addressError != null) {
+                    setAddressError(null);
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleNavigate(event.currentTarget.value);
+                    return;
+                  }
+
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setIsEditing(false);
+                    setAddressValue("");
+                    setAddressError(null);
+                    event.currentTarget.blur();
+                  }
+                }}
+                onBlur={() => {
+                  if (isNavigating) {
+                    return;
+                  }
+
+                  setIsEditing(false);
+                  setAddressValue("");
+                  setAddressError(null);
+                }}
+              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Reload page"
+                    disabled={!canReload}
+                    onClick={handleReload}
+                    className={cn(
+                      "text-muted hover:text-foreground hover:bg-background-secondary shrink-0 rounded-md p-1 transition-colors",
+                      "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
+                    )}
+                  >
+                    <RefreshCw className={cn("h-3.5 w-3.5", isNavigating && "animate-spin")} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Reload page</TooltipContent>
+              </Tooltip>
+            </div>
+            {addressError && (
+              <div className="border-border-light border-b px-3 pb-1.5">
+                <p className="text-destructive text-[10px]">{addressError}</p>
+              </div>
             )}
-            {session?.status === "ended" || session?.status === "error" ? "Restart" : "Start"}
-          </button>
-        )}
-        {showStopButton && (
-          <button
-            type="button"
-            onClick={handleStopSession}
-            disabled={!api || stoppingSession}
-            className="bg-destructive/10 hover:bg-destructive/20 text-destructive border-destructive/20 inline-flex max-w-full items-center gap-1.5 self-start rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {stoppingSession ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Square className="h-3.5 w-3.5" />
-            )}
-            {stoppingSession ? "Stopping..." : "Stop"}
-          </button>
+          </>
         )}
       </div>
 
@@ -448,7 +586,7 @@ function BrowserActionRow(props: { action: BrowserAction }) {
       <div className="min-w-0 flex-1">
         <p className="text-foreground truncate text-xs">{props.action.description}</p>
         <div className="text-muted flex items-center gap-2 text-[10px]">
-          <span className="capitalize">{props.action.type}</span>
+          <span className="capitalize">{getBrowserActionTypeLabel(props.action)}</span>
           {absoluteTimestampLabel == null ? (
             <span className="counter-nums">{relativeTimestampLabel}</span>
           ) : (
@@ -469,6 +607,13 @@ function BrowserActionRow(props: { action: BrowserAction }) {
   );
 }
 
+function getBrowserActionTypeLabel(action: BrowserAction): BrowserAction["type"] | "scroll" {
+  if (action.type !== "custom" || action.metadata?.inputKind !== "scroll") {
+    return action.type;
+  }
+
+  return "scroll";
+}
 function getViewerContent(
   session: BrowserSession | null,
   isStarting: boolean,
@@ -494,6 +639,16 @@ function getViewerContent(
       iconClassName: "text-accent animate-spin",
       title: "Starting browser session…",
       description: "Waiting for the browser backend to establish the session.",
+    };
+  }
+
+  // Live session at about:blank — show a friendly ready state instead of the raw blank page.
+  if (session?.status === "live" && session.currentUrl === "about:blank") {
+    return {
+      Icon: Globe,
+      iconClassName: "text-accent",
+      title: "Browser ready",
+      description: "Enter a URL above or ask the agent to browse.",
     };
   }
 

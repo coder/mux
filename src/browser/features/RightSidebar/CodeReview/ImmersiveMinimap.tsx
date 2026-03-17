@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef } from "react";
 
+import { clamp } from "@/common/utils/clamp";
 import {
   getThumbMetrics,
   parseDiffLines,
@@ -22,10 +23,6 @@ const DEFAULT_ACTIVE_LINE_COLOR = "rgba(255, 255, 255, 0.9)";
 const DEFAULT_COMMENT_COLOR = "rgba(234, 179, 8, 0.85)";
 const THUMB_FILL_COLOR = "rgba(255, 255, 255, 0.15)";
 const THUMB_BORDER_COLOR = "rgba(255, 255, 255, 0.3)";
-
-const clamp = (value: number, min: number, max: number): number => {
-  return Math.min(Math.max(value, min), max);
-};
 
 const readThemeColor = (cssVariableName: string, fallback: string): string => {
   const rootStyles = getComputedStyle(document.documentElement);

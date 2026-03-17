@@ -689,9 +689,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       .map(([workspaceId]) => workspaceId)
   );
 
-  const [expandedBestOfGroups, setExpandedBestOfGroups] = useState<Record<string, boolean>>({});
-  const toggleBestOfGroupExpansion = (groupId: string) => {
-    setExpandedBestOfGroups((prev) => ({
+  const [expandedTaskGroups, setExpandedTaskGroups] = useState<Record<string, boolean>>({});
+  const toggleTaskGroupExpansion = (groupId: string) => {
+    setExpandedTaskGroups((prev) => ({
       ...prev,
       [groupId]: !prev[groupId],
     }));
@@ -1692,7 +1692,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 );
                               };
 
-                              const renderWorkspaceRowsWithBestOfCoalescing = ({
+                              const renderWorkspaceRowsWithTaskGroupCoalescing = ({
                                 rows,
                                 allRows,
                                 sectionId,
@@ -1721,7 +1721,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   childrenByParentId.set(parentId, children);
                                 }
 
-                                const getBestOfGroupId = (
+                                const getTaskGroupId = (
                                   workspace: FrontendWorkspaceMetadata
                                 ): string | null => {
                                   const groupId = workspace.bestOf?.groupId;
@@ -1740,7 +1740,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   FrontendWorkspaceMetadata[]
                                 >();
                                 for (const workspace of allRows) {
-                                  const groupId = getBestOfGroupId(workspace);
+                                  const groupId = getTaskGroupId(workspace);
                                   if (!groupId) {
                                     continue;
                                   }
@@ -1754,7 +1754,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   FrontendWorkspaceMetadata[]
                                 >();
                                 for (const workspace of rows) {
-                                  const groupId = getBestOfGroupId(workspace);
+                                  const groupId = getTaskGroupId(workspace);
                                   if (!groupId) {
                                     continue;
                                   }
@@ -1794,8 +1794,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     continue;
                                   }
 
-                                  const bestOfGroupId = getBestOfGroupId(workspace);
-                                  if (!bestOfGroupId || !validGroupIds.has(bestOfGroupId)) {
+                                  const taskGroupId = getTaskGroupId(workspace);
+                                  if (!taskGroupId || !validGroupIds.has(taskGroupId)) {
                                     renderedRows.push(
                                       renderWorkspace(
                                         workspace,
@@ -1807,7 +1807,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   }
 
                                   const visibleMembers =
-                                    visibleMembersByGroupId.get(bestOfGroupId) ?? [];
+                                    visibleMembersByGroupId.get(taskGroupId) ?? [];
                                   if (visibleMembers[0]?.id !== workspace.id) {
                                     continue;
                                   }
@@ -1827,7 +1827,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     );
                                   };
                                   const allMembers = sortTaskGroupMembers(
-                                    allMembersByGroupId.get(bestOfGroupId) ?? visibleMembers
+                                    allMembersByGroupId.get(taskGroupId) ?? visibleMembers
                                   );
                                   const sortedVisibleMembers = sortTaskGroupMembers(visibleMembers);
                                   const depth =
@@ -1868,12 +1868,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   }
                                   const groupTitle =
                                     allMembers[0]?.title ?? allMembers[0]?.name ?? "Task group";
-                                  const isExpanded = expandedBestOfGroups[bestOfGroupId] ?? false;
+                                  const isExpanded = expandedTaskGroups[taskGroupId] ?? false;
 
                                   renderedRows.push(
                                     <TaskGroupListItem
-                                      key={`task-group:${bestOfGroupId}`}
-                                      groupId={bestOfGroupId}
+                                      key={`task-group:${taskGroupId}`}
+                                      groupId={taskGroupId}
                                       title={groupTitle}
                                       kind={groupKind}
                                       depth={depth}
@@ -1888,7 +1888,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         (member) => member.id === selectedWorkspace?.workspaceId
                                       )}
                                       onToggle={() => {
-                                        toggleBestOfGroupExpansion(bestOfGroupId);
+                                        toggleTaskGroupExpansion(taskGroupId);
                                       }}
                                     />
                                   );
@@ -1901,7 +1901,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           sectionId,
                                           null,
                                           depth + 1,
-                                          `task-group-member:${bestOfGroupId}:${member.id}`
+                                          `task-group-member:${taskGroupId}:${member.id}`
                                         )
                                       );
                                     }
@@ -1977,7 +1977,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 workspaces: FrontendWorkspaceMetadata[],
                                 tierKeyPrefix: string,
                                 sectionId?: string,
-                                allRowsForBestOfCoalescing: FrontendWorkspaceMetadata[] = workspaces
+                                allRowsForTaskGroupCoalescing: FrontendWorkspaceMetadata[] = workspaces
                               ): React.ReactNode => {
                                 const { recent: topVisibleRows, buckets } =
                                   partitionWorkspacesByAge(workspaces, workspaceRecency);
@@ -2182,9 +2182,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       </button>
                                       {isTierExpanded && (
                                         <>
-                                          {renderWorkspaceRowsWithBestOfCoalescing({
+                                          {renderWorkspaceRowsWithTaskGroupCoalescing({
                                             rows: bucket,
-                                            allRows: allRowsForBestOfCoalescing,
+                                            allRows: allRowsForTaskGroupCoalescing,
                                             sectionId,
                                             rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
                                           })}
@@ -2203,9 +2203,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                 return (
                                   <>
-                                    {renderWorkspaceRowsWithBestOfCoalescing({
+                                    {renderWorkspaceRowsWithTaskGroupCoalescing({
                                       rows: topVisibleRows,
-                                      allRows: allRowsForBestOfCoalescing,
+                                      allRows: allRowsForTaskGroupCoalescing,
                                       sectionId,
                                       rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
                                     })}

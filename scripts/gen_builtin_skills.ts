@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import assert from "node:assert/strict";
 /**
  * Generate built-in agent skills content.
  *
@@ -93,6 +94,45 @@ function routeForDocsPage(page: string): string {
 }
 function posixPath(input: string): string {
   return input.split(path.sep).join(path.posix.sep);
+}
+
+function directoryExists(dirPath: string): boolean {
+  return fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory();
+}
+
+function walkRelativeFiles(rootDir: string): string[] {
+  const discovered = new Set<string>();
+  const output: string[] = [];
+
+  function walk(currentDir: string): void {
+    const entries = fs
+      .readdirSync(currentDir, { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+
+      assert(entry.isFile(), `Built-in skill support trees only allow regular files: ${fullPath}`);
+      const relPath = posixPath(path.relative(rootDir, fullPath));
+      const segments = relPath.split(path.posix.sep);
+      assert(relPath !== "", `Built-in skill support file must have a relative path: ${fullPath}`);
+      assert(
+        !path.posix.isAbsolute(relPath),
+        `Built-in skill support file must be relative: ${relPath}`
+      );
+      assert(!segments.includes(".."), `Path traversal in built-in skill support file: ${relPath}`);
+      assert(!discovered.has(relPath), `Duplicate built-in skill support file: ${relPath}`);
+      discovered.add(relPath);
+      output.push(relPath);
+    }
+  }
+
+  walk(rootDir);
+  return output.sort((a, b) => a.localeCompare(b));
 }
 
 function extractDocsPagesFromNav(node: unknown, out: string[], seen: Set<string>): void {
@@ -281,6 +321,20 @@ function generate(): GenerateResult {
       "SKILL.md": skillContent.split("\n"),
     };
 
+    const supportDir = path.join(BUILTIN_SKILLS_DIR, skillName);
+    if (directoryExists(supportDir)) {
+      assert(
+        skillName !== "mux-docs",
+        "mux-docs embeds docs via special handling; do not add src/node/builtinSkills/mux-docs/"
+      );
+
+      for (const relPath of walkRelativeFiles(supportDir)) {
+        assert(!(relPath in files), `Duplicate path in built-in skill '${skillName}': ${relPath}`);
+        const supportFilePath = path.join(supportDir, relPath);
+        files[relPath] = readFileLines(supportFilePath);
+      }
+    }
+
     // mux-docs: embed docs site content as progressive-disclosure reference files.
     if (skillName === "mux-docs") {
       const docsConfigPath = path.join(DOCS_DIR, "docs.json");
@@ -334,7 +388,7 @@ function generate(): GenerateResult {
   let output = "";
   output += "// AUTO-GENERATED - DO NOT EDIT\n";
   output += "// Run: bun scripts/gen_builtin_skills.ts\n";
-  output += "// Source: src/node/builtinSkills/*.md and docs/\n\n";
+  output += "// Source: src/node/builtinSkills/ and docs/\n\n";
   output += "export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {\n";
 
   const sortedSkillNames = Object.keys(fileMaps).sort((a, b) => a.localeCompare(b));

@@ -1,6 +1,7 @@
 import type { IPty } from "node-pty";
 import { log } from "@/node/services/log";
 import { getErrorMessage } from "@/common/utils/errors";
+import { prependVendoredBinDirToPath } from "@/node/services/agentBrowserLauncher";
 
 interface PtySpawnRequest {
   runtimeLabel: string;
@@ -44,16 +45,17 @@ function loadNodePty(runtimeType: string, preferElectronBuild: boolean): typeof 
   }
 }
 
-function resolvePathEnv(env: NodeJS.ProcessEnv, pathEnvOverride?: string): string | undefined {
-  if (pathEnvOverride) {
-    return pathEnvOverride;
-  }
-
-  return (
+export function resolvePathEnv(
+  env: NodeJS.ProcessEnv,
+  pathEnvOverride?: string
+): string | undefined {
+  const basePath =
+    pathEnvOverride ??
     env.PATH ??
     env.Path ??
-    (process.platform === "win32" ? undefined : "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
-  );
+    (process.platform === "win32" ? undefined : "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin");
+
+  return prependVendoredBinDirToPath(basePath, env);
 }
 
 export function spawnPtyProcess(request: PtySpawnRequest): IPty {

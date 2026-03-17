@@ -11,11 +11,9 @@ import { AIService, resolveMuxProjectRootForHostFs } from "./aiService";
 import { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 import {
   normalizeAnthropicBaseURL,
-  buildAnthropicHeaders,
   buildAppAttributionHeaders,
   type ProviderModelFactory,
 } from "./providerModelFactory";
-import { ANTHROPIC_1M_CONTEXT_HEADER } from "@/common/utils/ai/providerOptions";
 import { HistoryService } from "./historyService";
 import { InitStateManager } from "./initStateManager";
 import { ProviderService } from "./providerService";
@@ -2770,42 +2768,6 @@ describe("normalizeAnthropicBaseURL", () => {
     expect(normalizeAnthropicBaseURL("https://proxy.com/api/v1-beta")).toBe(
       "https://proxy.com/api/v1-beta/v1"
     );
-  });
-});
-
-describe("buildAnthropicHeaders", () => {
-  it("returns undefined when use1MContext is false and no existing headers", () => {
-    expect(buildAnthropicHeaders(undefined, false)).toBeUndefined();
-  });
-
-  it("returns existing headers unchanged when use1MContext is false", () => {
-    const existing = { "x-custom": "value" };
-    expect(buildAnthropicHeaders(existing, false)).toBe(existing);
-  });
-
-  it("returns existing headers unchanged when use1MContext is undefined", () => {
-    const existing = { "x-custom": "value" };
-    expect(buildAnthropicHeaders(existing, undefined)).toBe(existing);
-  });
-
-  it("adds 1M context header when use1MContext is true and no existing headers", () => {
-    const result = buildAnthropicHeaders(undefined, true);
-    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
-  });
-
-  it("merges 1M context header with existing headers when use1MContext is true", () => {
-    const existing = { "x-custom": "value" };
-    const result = buildAnthropicHeaders(existing, true);
-    expect(result).toEqual({
-      "x-custom": "value",
-      "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER,
-    });
-  });
-
-  it("overwrites existing anthropic-beta header when use1MContext is true", () => {
-    const existing = { "anthropic-beta": "other-beta" };
-    const result = buildAnthropicHeaders(existing, true);
-    expect(result).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
   });
 });
 

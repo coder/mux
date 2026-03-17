@@ -49,6 +49,15 @@ const devServerAllowedHosts = (() => {
 
 const previewPort = Number(process.env.MUX_VITE_PREVIEW_PORT ?? "4173");
 
+const enableTutorialsInSandboxDefine = (() => {
+  const raw = process.env.MUX_ENABLE_TUTORIALS_IN_SANDBOX;
+  if (raw == null) {
+    return "null";
+  }
+
+  return JSON.stringify(raw === "1");
+})();
+
 function formatHostForUrl(host: string): string {
   const trimmed = host.trim();
   const unbracketed =
@@ -118,6 +127,7 @@ export default defineConfig(({ mode }) => {
     },
     define: {
       "globalThis.__MUX_MD_URL_OVERRIDE__": JSON.stringify(process.env.MUX_MD_URL_OVERRIDE ?? ""),
+      "globalThis.__MUX_ENABLE_TUTORIALS_IN_SANDBOX__": enableTutorialsInSandboxDefine,
       ...(isProfiling ? { __PROFILE__: "true" } : {}),
     },
     base: "./",

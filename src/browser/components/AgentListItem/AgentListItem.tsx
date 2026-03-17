@@ -3,6 +3,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
@@ -13,6 +14,7 @@ import {
 } from "@/common/utils/tools/taskGroups";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
+import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
@@ -565,9 +567,12 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const showsVisibleStatusDot = isStatusDotVisible(visualState, false, isSubAgentRow);
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
+  // Keep archiving feedback inline with the title so the row doesn't jump to a
+  // two-line layout right before it disappears from the sidebar.
+  const shouldShowInlineArchivingStatus = isArchiving === true && !isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
   // initializing so users can see early streaming/status information immediately.
-  const hasSecondaryRow = isArchiving === true || hasStatusText;
+  const hasSecondaryRow = !shouldShowInlineArchivingStatus && hasStatusText;
   const hasCompletedChildren =
     (rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
     (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
@@ -856,6 +861,17 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     linkSharingEnabled={linkSharingEnabled === true}
                     isMuxHelpChat={isMuxHelpChat}
                   />
+                  {!isSelected && !isUnread && (
+                    <PositionedMenuItem
+                      icon={<EyeOff />}
+                      label="Mark unread"
+                      onClick={() => {
+                        // Reset the read marker to epoch so existing activity is treated as unseen.
+                        updatePersistedState(getWorkspaceLastReadKey(workspaceId), 0);
+                        ctxMenu.close();
+                      }}
+                    />
+                  )}
                   {canToggleCompletedChildren && (
                     <PositionedMenuItem
                       icon={isCompletedChildrenExpanded ? <EyeOff /> : <Eye />}
@@ -939,34 +955,39 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
             {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
-                {terminalActiveCount > 0 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-muted flex items-center gap-0.5">
-                        <WorkspaceTerminalIcon className="h-3 w-3" />
-                        <span className="text-[11px]">{terminalActiveCount}</span>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
-                      commands
-                    </TooltipContent>
-                  </Tooltip>
+                {shouldShowInlineArchivingStatus ? (
+                  <div
+                    className="text-muted flex shrink-0 items-center gap-1 text-xs whitespace-nowrap"
+                    data-testid={`workspace-inline-archiving-status-${workspaceId}`}
+                  >
+                    <ArchiveIcon className="h-3 w-3 shrink-0" />
+                    <span>Archiving...</span>
+                  </div>
+                ) : (
+                  terminalActiveCount > 0 && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="text-muted flex items-center gap-0.5">
+                          <WorkspaceTerminalIcon className="h-3 w-3" />
+                          <span className="text-[11px]">{terminalActiveCount}</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        {terminalActiveCount} terminal{terminalActiveCount !== 1 ? "s" : ""} running
+                        commands
+                      </TooltipContent>
+                    </Tooltip>
+                  )
                 )}
               </div>
             )}
           </div>
           {hasSecondaryRow && (
-            <div className="min-w-0">
+            <div className="min-w-0" data-testid={`workspace-secondary-row-${workspaceId}`}>
               {isRemoving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
                   <span className="min-w-0 truncate">Deleting...</span>
-                </div>
-              ) : isArchiving ? (
-                <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-                  <ArchiveIcon className="h-3 w-3 shrink-0" />
-                  <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : awaitingUserQuestion ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4">

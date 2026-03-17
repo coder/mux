@@ -1104,48 +1104,30 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) => {
           return context.browserSessionService.sendInput(input.workspaceId, input.input);
         }),
+      navigate: t
+        .input(schemas.browserSession.navigate.input)
+        .output(schemas.browserSession.navigate.output)
+        .handler(({ context, input }) => {
+          return context.browserSessionService.navigate(input.workspaceId, input.url);
+        }),
       subscribe: t
         .input(schemas.browserSession.subscribe.input)
         .output(schemas.browserSession.subscribe.output)
         .handler(async function* ({ context, input, signal }) {
           const service = context.browserSessionService;
-          let resolveNext: ((value: BrowserSessionEvent | null) => void) | null = null;
-          const queue: BrowserSessionEvent[] = [];
-          let ended = false;
-
-          const push = (event: BrowserSessionEvent) => {
-            if (ended) {
-              return;
-            }
-
-            if (resolveNext) {
-              const resolve = resolveNext;
-              resolveNext = null;
-              resolve(event);
-              return;
-            }
-
-            queue.push(event);
-          };
+          const queue = withQueueHeartbeat(createAsyncEventQueue<BrowserSessionEvent>(), {
+            type: "heartbeat" as const,
+          });
 
           const eventName = `update:${input.workspaceId}`;
           const onEvent = (event: BrowserSessionEvent) => {
-            push(event);
+            queue.push(event);
           };
 
           service.on(eventName, onEvent);
 
           const onAbort = () => {
-            if (ended) {
-              return;
-            }
-
-            ended = true;
-            if (resolveNext) {
-              const resolve = resolveNext;
-              resolveNext = null;
-              resolve(null);
-            }
+            queue.end();
           };
 
           if (signal) {
@@ -1161,25 +1143,9 @@ export const router = (authToken?: string) => {
             const recentActions = service.getRecentActions(input.workspaceId);
             yield { type: "snapshot" as const, session, recentActions };
 
-            while (!ended) {
-              const queuedEvent = queue.shift();
-              if (queuedEvent) {
-                yield queuedEvent;
-                continue;
-              }
-
-              const event = await new Promise<BrowserSessionEvent | null>((resolve) => {
-                resolveNext = resolve;
-              });
-
-              if (event == null || ended) {
-                break;
-              }
-
-              yield event;
-            }
+            yield* queue.iterate();
           } finally {
-            ended = true;
+            queue.end();
             signal?.removeEventListener("abort", onAbort);
             service.off(eventName, onEvent);
           }

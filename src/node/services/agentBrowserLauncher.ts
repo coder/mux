@@ -143,18 +143,33 @@ export function resolveAgentBrowserBinary(options?: ResolveAgentBrowserBinaryOpt
   return binaryPath;
 }
 
-function prependPathOnce(dir: string, env: NodeJS.ProcessEnv): void {
-  const existingPath = env.PATH ?? "";
-  const pathEntries = existingPath
+function prependDirToPathOnce(dir: string, existingPath: string | undefined): string {
+  const pathEntries = (existingPath ?? "")
     .split(path.delimiter)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
 
   if (pathEntries.includes(dir)) {
-    return;
+    return existingPath ?? dir;
   }
 
-  env.PATH = existingPath.length > 0 ? `${dir}${path.delimiter}${existingPath}` : dir;
+  return existingPath && existingPath.length > 0 ? `${dir}${path.delimiter}${existingPath}` : dir;
+}
+
+export function prependVendoredBinDirToPath(
+  existingPath: string | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): string | undefined {
+  const vendoredBinDir = env.MUX_VENDORED_BIN_DIR?.trim();
+  if (!vendoredBinDir || !path.isAbsolute(vendoredBinDir)) {
+    return existingPath;
+  }
+
+  return prependDirToPathOnce(vendoredBinDir, existingPath);
+}
+
+function prependPathOnce(dir: string, env: NodeJS.ProcessEnv): void {
+  env.PATH = prependDirToPathOnce(dir, env.PATH);
 }
 
 /**

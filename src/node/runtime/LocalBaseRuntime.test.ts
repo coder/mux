@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
@@ -52,6 +53,21 @@ class TestLocalRuntime extends LocalBaseRuntime {
   }
 }
 
+async function readStreamAsString(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      return output;
+    }
+
+    output += decoder.decode(value, { stream: true });
+  }
+}
+
 describe("LocalBaseRuntime.resolvePath", () => {
   it("should expand tilde to home directory", async () => {
     const runtime = new TestLocalRuntime();
@@ -84,6 +100,41 @@ describe("LocalBaseRuntime.resolvePath", () => {
     const resolved = await runtime.resolvePath(".");
     // Should resolve to absolute path
     expect(path.isAbsolute(resolved)).toBe(true);
+  });
+});
+
+describe("LocalBaseRuntime.exec PATH handling", () => {
+  it("prepends mux's vendored bin dir even when the caller supplies PATH", async () => {
+    const runtime = new TestLocalRuntime();
+    const vendoredBinDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-vendored-bin-"));
+    const vendoredCommandPath = path.join(vendoredBinDir, "mux-vendored-probe");
+    const originalVendoredBinDir = process.env.MUX_VENDORED_BIN_DIR;
+
+    try {
+      await fs.writeFile(vendoredCommandPath, "#!/bin/sh\necho vendored-path\n", "utf8");
+      await fs.chmod(vendoredCommandPath, 0o755);
+      process.env.MUX_VENDORED_BIN_DIR = vendoredBinDir;
+
+      const stream = await runtime.exec("mux-vendored-probe", {
+        cwd: os.tmpdir(),
+        timeout: 5,
+        env: { PATH: "/usr/bin:/bin" },
+      });
+      const [stdout, exitCode] = await Promise.all([
+        readStreamAsString(stream.stdout),
+        stream.exitCode,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stdout.trim()).toBe("vendored-path");
+    } finally {
+      if (originalVendoredBinDir == null) {
+        delete process.env.MUX_VENDORED_BIN_DIR;
+      } else {
+        process.env.MUX_VENDORED_BIN_DIR = originalVendoredBinDir;
+      }
+      await fs.rm(vendoredBinDir, { recursive: true, force: true });
+    }
   });
 });
 

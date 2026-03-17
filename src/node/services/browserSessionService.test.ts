@@ -25,6 +25,7 @@ function attachMockBackend(
   service: BrowserSessionService,
   overrides?: {
     sendInput?: (input: BrowserInputEvent) => { success: boolean; error?: string };
+    navigate?: (url: string) => Promise<{ success: boolean; error?: string }>;
   }
 ) {
   const backend = {
@@ -35,11 +36,18 @@ function attachMockBackend(
           return { success: true };
         })
     ),
+    navigate: mock(
+      overrides?.navigate ??
+        (() => {
+          return Promise.resolve({ success: true });
+        })
+    ),
   };
-  getPrivateMap<{ stop: typeof backend.stop; sendInput: typeof backend.sendInput }>(
-    service,
-    "activeBackends"
-  ).set(workspaceId, backend);
+  getPrivateMap<{
+    stop: typeof backend.stop;
+    sendInput: typeof backend.sendInput;
+    navigate: typeof backend.navigate;
+  }>(service, "activeBackends").set(workspaceId, backend);
   return backend;
 }
 
@@ -288,6 +296,17 @@ describe("BrowserSessionService.sendInput", () => {
     button: "left",
     clickCount: 1,
   };
+  const createMouseWheelInput = (
+    overrides: Partial<Extract<BrowserInputEvent, { kind: "mouse" }>> = {}
+  ): BrowserInputEvent => ({
+    kind: "mouse",
+    eventType: "mouseWheel",
+    x: 64,
+    y: 96,
+    deltaX: 0,
+    deltaY: 24,
+    ...overrides,
+  });
 
   test("returns an error when no backend is active", () => {
     const service = new BrowserSessionService();
@@ -348,6 +367,51 @@ describe("BrowserSessionService.sendInput", () => {
     });
   });
 
+  test("coalesces repeated scroll ticks into a single readable action", () => {
+    const service = new BrowserSessionService();
+    attachMockBackend(workspaceId, service);
+    const actionEvents: BrowserSessionEvent[] = [];
+    service.on(`update:${workspaceId}`, (event: BrowserSessionEvent) => {
+      actionEvents.push(event);
+    });
+
+    const firstResult = service.sendInput(workspaceId, createMouseWheelInput({ deltaY: 18 }));
+    const secondResult = service.sendInput(workspaceId, createMouseWheelInput({ deltaY: 32 }));
+    const recentActions = service.getRecentActions(workspaceId);
+
+    expect(firstResult).toEqual({ success: true });
+    expect(secondResult).toEqual({ success: true });
+    expect(recentActions).toHaveLength(1);
+    expect(recentActions[0]).toMatchObject({
+      type: "custom",
+      description: "Scrolled down ×2",
+      metadata: {
+        source: "user-input",
+        inputKind: "scroll",
+        scrollDirection: "down",
+        scrollCount: 2,
+      },
+    });
+
+    const scrollActionEvents = actionEvents.filter(
+      (event): event is Extract<BrowserSessionEvent, { type: "action" }> => event.type === "action"
+    );
+    expect(scrollActionEvents).toHaveLength(2);
+    expect(scrollActionEvents[0]?.action.description).toBe("Scrolled down");
+    expect(scrollActionEvents[1]?.action.description).toBe("Scrolled down ×2");
+    expect(scrollActionEvents[1]?.action.id).toBe(scrollActionEvents[0]?.action.id);
+  });
+
+  test("ignores tiny scroll jitter so it does not crowd out meaningful actions", () => {
+    const service = new BrowserSessionService();
+    attachMockBackend(workspaceId, service);
+
+    const result = service.sendInput(workspaceId, createMouseWheelInput({ deltaX: 1, deltaY: -1 }));
+
+    expect(result).toEqual({ success: true });
+    expect(service.getRecentActions(workspaceId)).toEqual([]);
+  });
+
   test("does not log keyboard inputs", () => {
     const service = new BrowserSessionService();
     attachMockBackend(workspaceId, service);
@@ -362,5 +426,33 @@ describe("BrowserSessionService.sendInput", () => {
 
     expect(result).toEqual({ success: true });
     expect(service.getRecentActions(workspaceId)).toEqual([]);
+  });
+});
+
+describe("BrowserSessionService.navigate", () => {
+  const workspaceId = "workspace-navigate";
+
+  test("returns an error when no backend is active", async () => {
+    const service = new BrowserSessionService();
+
+    const result = await service.navigate(workspaceId, "https://example.com");
+
+    expect(result).toEqual({
+      success: false,
+      error: "No active session for workspace",
+    });
+  });
+
+  test("delegates navigation to the active backend", async () => {
+    const service = new BrowserSessionService();
+    const backend = attachMockBackend(workspaceId, service, {
+      navigate: (url) => Promise.resolve({ success: false, error: `failed to open ${url}` }),
+    });
+
+    const result = await service.navigate(workspaceId, "example.com");
+
+    expect(backend.navigate).toHaveBeenCalledTimes(1);
+    expect(backend.navigate).toHaveBeenCalledWith("example.com");
+    expect(result).toEqual({ success: false, error: "failed to open example.com" });
   });
 });

@@ -247,7 +247,7 @@ describe("BrowserViewport", () => {
     });
   });
 
-  test("differentiates restart-required and fallback stream overlays", () => {
+  test("shows restart-required stream overlay", () => {
     const restartMock = mock(() => undefined);
     const restartView = renderViewport(
       createSession({
@@ -260,17 +260,6 @@ describe("BrowserViewport", () => {
     expect(restartView.getByText("Restart browser to enable live control")).toBeTruthy();
     fireEvent.click(restartView.getByRole("button", { name: "Restart" }));
     expect(restartMock).toHaveBeenCalledTimes(1);
-    restartView.unmount();
-
-    const fallbackView = renderViewport(
-      createSession({
-        streamState: "fallback",
-        lastFrameMetadata: null,
-      })
-    );
-
-    expect(fallbackView.getByText("Screenshots only — streaming unavailable")).toBeTruthy();
-    expect(fallbackView.queryByRole("button", { name: "Restart" })).toBeNull();
   });
 
   test("shows restart controls before the first screenshot arrives", () => {

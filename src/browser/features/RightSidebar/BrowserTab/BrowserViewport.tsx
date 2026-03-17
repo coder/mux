@@ -11,6 +11,7 @@ import { TriangleAlert } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
+import { clamp } from "@/common/utils/clamp";
 import type {
   BrowserFrameMetadata,
   BrowserInputEvent,
@@ -562,11 +563,6 @@ function getViewportInteractionState(session: BrowserSession | null): ViewportIn
         blockingMessage: "Restart browser to enable live control",
         showRestartCta: true,
       };
-    case "fallback":
-      return {
-        canInteract: false,
-        blockingMessage: "Screenshots only — streaming unavailable",
-      };
     case "connecting":
       return {
         canInteract: false,
@@ -706,8 +702,4 @@ export function mapDomPointToViewport(
     x: Math.round(clamp(normalizedX * metadata.deviceWidth, 0, metadata.deviceWidth)),
     y: Math.round(clamp(normalizedY * metadata.deviceHeight, 0, metadata.deviceHeight)),
   };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }

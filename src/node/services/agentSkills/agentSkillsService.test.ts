@@ -243,7 +243,14 @@ describe("agentSkillsService", () => {
 
     // Should include project/global skills plus built-in skills
     // Note: deep-review skill is a project skill in the Mux repo, not a built-in
-    expect(skills.map((s) => s.name)).toEqual(["bar", "foo", "init", "mux-diagram", "mux-docs"]);
+    expect(skills.map((s) => s.name)).toEqual([
+      "agent-browser",
+      "bar",
+      "foo",
+      "init",
+      "mux-diagram",
+      "mux-docs",
+    ]);
 
     const foo = skills.find((s) => s.name === "foo");
     expect(foo).toBeDefined();
@@ -569,6 +576,60 @@ describe("agentSkillsService", () => {
     expect(resolved.package.scope).toBe("project");
   });
 
+  describe("built-in agent-browser", () => {
+    test("discoverAgentSkills includes agent-browser as a built-in when no override exists", async () => {
+      using project = new DisposableTempDir("agent-browser-built-in-project");
+      using global = new DisposableTempDir("agent-browser-built-in-global");
+
+      const roots = {
+        projectRoot: path.join(project.path, ".mux", "skills"),
+        globalRoot: global.path,
+      };
+      const runtime = new LocalRuntime(project.path);
+
+      const skills = await discoverAgentSkills(runtime, project.path, { roots });
+      const agentBrowser = skills.find((skill) => skill.name === "agent-browser");
+
+      expect(agentBrowser).toBeDefined();
+      expect(agentBrowser).toMatchObject({
+        name: "agent-browser",
+        scope: "built-in",
+      });
+    });
+
+    test("readAgentSkill prefers project overrides for agent-browser and falls back to built-in when removed", async () => {
+      using project = new DisposableTempDir("agent-browser-read-project");
+      using global = new DisposableTempDir("agent-browser-read-global");
+
+      const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+      const roots = {
+        projectRoot: projectSkillsRoot,
+        globalRoot: global.path,
+      };
+      const runtime = new LocalRuntime(project.path);
+      const name = SkillNameSchema.parse("agent-browser");
+
+      const builtInResolved = await readAgentSkill(runtime, project.path, name, { roots });
+      expect(builtInResolved.package.scope).toBe("built-in");
+      expect(builtInResolved.package.frontmatter.name).toBe("agent-browser");
+      expect(builtInResolved.skillDir).toBe("<built-in:agent-browser>");
+
+      await writeSkill(projectSkillsRoot, "agent-browser", "custom browser automation override");
+
+      const overridden = await readAgentSkill(runtime, project.path, name, { roots });
+      expect(overridden.package.scope).toBe("project");
+      expect(overridden.package.frontmatter.description).toBe("custom browser automation override");
+      expect(overridden.skillDir).toBe(path.join(projectSkillsRoot, "agent-browser"));
+
+      await fs.rm(path.join(projectSkillsRoot, "agent-browser"), { recursive: true, force: true });
+
+      const fallbackResolved = await readAgentSkill(runtime, project.path, name, { roots });
+      expect(fallbackResolved.package.scope).toBe("built-in");
+      expect(fallbackResolved.package.frontmatter.name).toBe("agent-browser");
+      expect(fallbackResolved.skillDir).toBe("<built-in:agent-browser>");
+    });
+  });
+
   test("discoverAgentSkillsDiagnostics surfaces invalid skills", async () => {
     using project = new DisposableTempDir("agent-skills-project");
     using global = new DisposableTempDir("agent-skills-global");
@@ -610,6 +671,7 @@ describe("agentSkillsService", () => {
     const diagnostics = await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
 
     expect(diagnostics.skills.map((s) => s.name)).toEqual([
+      "agent-browser",
       "foo",
       "init",
       "mux-diagram",

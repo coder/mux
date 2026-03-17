@@ -28,6 +28,7 @@
  *   - VITE_READY_TIMEOUT_MS=60000      # override Vite readiness timeout
  *   - ELECTRON_DEBUG_PORT=9223         # override picked Electron remote debugging port
  *   - ELECTRON_DEBUG_PORT=0            # disable Electron remote debugging port entirely
+ *   - MUX_ENABLE_TUTORIALS_IN_SANDBOX=1 # re-enable tutorials inside the sandbox
  *   - MAKE=gmake                       # override make binary
  */
 
@@ -77,8 +78,12 @@ Optional CLI flags:
   --clean-providers   Do not copy providers.jsonc into the sandbox
   --clean-projects    Do not import projects from config.json (projects will be empty)
 
-Note: to pass flags via make, use:
-  make dev-desktop-sandbox DEV_DESKTOP_SANDBOX_ARGS="--clean-providers --clean-projects"`);
+Optional env vars:
+  MUX_ENABLE_TUTORIALS_IN_SANDBOX=1  Re-enable tutorials inside the sandbox
+
+Examples:
+  make dev-desktop-sandbox DEV_DESKTOP_SANDBOX_ARGS="--clean-providers --clean-projects"
+  MUX_ENABLE_TUTORIALS_IN_SANDBOX=1 VITE_PORT=5175 ELECTRON_DEBUG_PORT=9223 make dev-desktop-sandbox`);
 }
 
 function parseElectronDebugPort(
@@ -232,6 +237,7 @@ async function main(): Promise<number> {
         NODE_ENV: "development",
         MUX_ROOT: muxRoot,
         MUX_VITE_PORT: String(vitePort),
+        MUX_ENABLE_TUTORIALS_IN_SANDBOX: process.env.MUX_ENABLE_TUTORIALS_IN_SANDBOX ?? "0",
       },
     });
 
@@ -300,6 +306,7 @@ async function main(): Promise<number> {
 
         // Allow multiple dev Electron instances concurrently.
         CMUX_ALLOW_MULTIPLE_INSTANCES: "1",
+        MUX_ENABLE_TUTORIALS_IN_SANDBOX: process.env.MUX_ENABLE_TUTORIALS_IN_SANDBOX ?? "0",
       },
     });
 

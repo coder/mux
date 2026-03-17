@@ -77,6 +77,36 @@ export function useTutorial(): TutorialContextValue {
   return context;
 }
 
+interface TutorialSandboxTransportState {
+  preloadEnableTutorialsInSandbox?: boolean;
+  browserEnableTutorialsInSandbox?: boolean | null | undefined;
+}
+
+export function resolveTutorialSandboxOptIn(
+  transportState: TutorialSandboxTransportState
+): boolean | undefined {
+  if (transportState.preloadEnableTutorialsInSandbox != null) {
+    return transportState.preloadEnableTutorialsInSandbox;
+  }
+
+  if (transportState.browserEnableTutorialsInSandbox != null) {
+    return transportState.browserEnableTutorialsInSandbox;
+  }
+
+  return undefined;
+}
+
+function getTutorialSandboxOptIn(): boolean | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return resolveTutorialSandboxOptIn({
+    preloadEnableTutorialsInSandbox: window.api?.enableTutorialsInSandbox,
+    browserEnableTutorialsInSandbox: globalThis.__MUX_ENABLE_TUTORIALS_IN_SANDBOX__,
+  });
+}
+
 interface TutorialProviderProps {
   children: React.ReactNode;
 }
@@ -88,6 +118,10 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
   const isSplashScreenActive = useIsSplashScreenActive();
   const [activeSequence, setActiveSequence] = useState<TutorialSequence | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const sandboxTutorialOptIn = getTutorialSandboxOptIn();
+  // Keep sandbox suppression runtime-only so a default sandbox launch cannot poison
+  // later opt-in runs that reuse the same browser origin or Electron userData profile.
+  const effectiveTutorialsDisabled = tutorialState.disabled || sandboxTutorialOptIn === false;
 
   // Persist state changes
   useEffect(() => {
@@ -102,13 +136,13 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
   );
 
   const isTutorialDisabled = useCallback((): boolean => {
-    return tutorialState.disabled;
-  }, [tutorialState.disabled]);
+    return effectiveTutorialsDisabled;
+  }, [effectiveTutorialsDisabled]);
 
   const startSequence = useCallback(
     (sequence: TutorialSequence) => {
       // Don't start if disabled or already completed
-      if (tutorialState.disabled || tutorialState.completed[sequence]) {
+      if (effectiveTutorialsDisabled || tutorialState.completed[sequence]) {
         return;
       }
       // Don't start if another sequence is active
@@ -118,7 +152,7 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
       setActiveSequence(sequence);
       setCurrentStepIndex(0);
     },
-    [tutorialState.disabled, tutorialState.completed, activeSequence]
+    [effectiveTutorialsDisabled, tutorialState.completed, activeSequence]
   );
 
   const handleNext = useCallback(() => {
@@ -171,7 +205,7 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
   return (
     <TutorialContext.Provider value={contextValue}>
       {children}
-      {!isSplashScreenActive && currentStep && activeSteps && (
+      {!isSplashScreenActive && !effectiveTutorialsDisabled && currentStep && activeSteps && (
         <TutorialTooltip
           step={currentStep}
           currentStep={currentStepIndex + 1}

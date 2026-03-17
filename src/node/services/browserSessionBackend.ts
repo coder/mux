@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import * as fs from "node:fs/promises";
 import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
 import WebSocket, { type RawData } from "ws";
@@ -12,6 +11,7 @@ import type {
   BrowserStreamState,
 } from "@/common/types/browserSession";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
+import { normalizeBrowserUrl } from "@/common/utils/browserUrl";
 import {
   AgentBrowserBinaryNotFoundError,
   AgentBrowserUnsupportedPlatformError,
@@ -22,7 +22,6 @@ import { log } from "@/node/services/log";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 
 const CLI_TIMEOUT_MS = 30_000;
-const FALLBACK_POLL_INTERVAL_MS = 2_000;
 const METADATA_REFRESH_INTERVAL_MS = 5_000;
 const MAX_CONSECUTIVE_METADATA_FAILURES = 3;
 const MAX_STREAM_RETRY_COUNT = 3;
@@ -33,7 +32,7 @@ const MISSING_BROWSER_BINARY_ERROR =
   "Vendored agent-browser binary disappeared before launch. Reinstall Mux, or run bun install in the repo if you're developing locally.";
 const DEFAULT_STREAM_ERROR_MESSAGE = "Browser preview stream was unavailable.";
 
-type StreamStartupMode = "stream" | "fallback" | "restart_required";
+type StreamStartupMode = "stream" | "restart_required";
 
 type CliResult = { ok: true; data: unknown } | { ok: false; error: string };
 
@@ -43,14 +42,6 @@ type StreamConnectResult =
       ok: false;
       error: string;
     };
-
-interface SharpTransformer {
-  jpeg(options: { quality: number }): { toBuffer(): Promise<Buffer> };
-}
-
-type SharpFactory = (input: Buffer) => SharpTransformer;
-
-let sharpFactoryPromise: Promise<SharpFactory | null> | null = null;
 
 function getAgentBrowserLauncherError(error: unknown): string | null {
   if (error instanceof AgentBrowserUnsupportedPlatformError) {
@@ -65,33 +56,6 @@ function getAgentBrowserLauncherError(error: unknown): string | null {
   }
 
   return null;
-}
-
-function isSharpFactory(value: unknown): value is SharpFactory {
-  return typeof value === "function";
-}
-
-async function getSharpFactory(): Promise<SharpFactory | null> {
-  if (sharpFactoryPromise !== null) {
-    return await sharpFactoryPromise;
-  }
-
-  sharpFactoryPromise = (async () => {
-    try {
-      // Keep this native dependency lazy: Bun test environments import this module transitively,
-      // but should not crash during evaluation when libstdc++ is unavailable for sharp.
-      // eslint-disable-next-line no-restricted-syntax -- sharp is an optional native dependency here.
-      const sharpModule: unknown = await import("sharp");
-      const sharpCandidate =
-        isRecord(sharpModule) && "default" in sharpModule ? sharpModule.default : sharpModule;
-      assert(isSharpFactory(sharpCandidate), "sharp default export must be callable");
-      return sharpCandidate;
-    } catch {
-      return null;
-    }
-  })();
-
-  return await sharpFactoryPromise;
 }
 
 export interface BrowserSessionBackendOptions {
@@ -356,6 +320,47 @@ async function runAgentBrowserCliCommand(
   });
 }
 
+function extractCliSessionNames(data: unknown): string[] | null {
+  const rawSessions = isRecord(data) && isRecord(data.data) ? data.data.sessions : null;
+  if (!Array.isArray(rawSessions)) {
+    return null;
+  }
+
+  const sessions = rawSessions.filter((session): session is string => typeof session === "string");
+  return sessions.length === rawSessions.length ? sessions : null;
+}
+
+export async function hasAgentBrowserSession(
+  sessionId: string,
+  timeoutMs = CLI_TIMEOUT_MS,
+  options?: AgentBrowserCliCommandOptions
+): Promise<boolean> {
+  assert(sessionId.trim().length > 0, "hasAgentBrowserSession requires a non-empty sessionId");
+
+  const result = await runAgentBrowserCliCommand(sessionId, ["session", "list"], timeoutMs, {
+    inFlightProcesses: options?.inFlightProcesses,
+    spawnFn: options?.spawnFn,
+    resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
+    env: options?.env,
+  });
+  if (!result.ok) {
+    return false;
+  }
+
+  const stdout = result.stdout.trim();
+  if (stdout.length === 0) {
+    return false;
+  }
+
+  try {
+    const parsedOutput: unknown = JSON.parse(stdout);
+    const sessions = extractCliSessionNames(parsedOutput);
+    return sessions?.includes(sessionId) ?? false;
+  } catch {
+    return false;
+  }
+}
+
 export async function closeAgentBrowserSession(
   sessionId: string,
   timeoutMs = CLI_TIMEOUT_MS,
@@ -408,7 +413,6 @@ export class BrowserSessionBackend {
   private readonly streamPort: number | null;
   private sessionId: string;
   private session: BrowserSession;
-  private fallbackPollIntervalId: ReturnType<typeof setInterval> | null = null;
   private metadataRefreshIntervalId: ReturnType<typeof setInterval> | null = null;
   private streamRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private streamSocket: WebSocket | null = null;
@@ -416,7 +420,6 @@ export class BrowserSessionBackend {
   private pendingStreamCloseReason: string | null = null;
   private disposed = false;
   private metadataRefreshInFlight = false;
-  private fallbackScreenshotInFlight = false;
   private consecutiveMetadataFailures = 0;
   private streamRetryCount = 0;
   private startedFromExistingSession = false;
@@ -453,7 +456,11 @@ export class BrowserSessionBackend {
     this.resetRuntimeState();
     this.sessionId = this.createSessionId();
     this.session = this.createSession("starting");
-    this.startedFromExistingSession = this.hasExistingSession();
+    this.startedFromExistingSession = await this.hasExistingSession();
+    if (this.disposed) {
+      return this.getSession();
+    }
+
     this.emitSessionUpdate();
 
     if (!this.startedFromExistingSession) {
@@ -476,20 +483,13 @@ export class BrowserSessionBackend {
       return this.getSession();
     }
 
-    const streamStartupMode = await this.startStreamTransport();
+    await this.startStreamTransport();
     if (this.disposed || this.getSession().status === "error") {
       return this.getSession();
     }
 
-    if (streamStartupMode === "fallback") {
-      await this.refreshFallbackScreenshot();
-    }
-
     this.patchSession({ status: "live" });
     this.startMetadataRefreshLoop();
-    if (streamStartupMode === "fallback") {
-      this.startFallbackPolling();
-    }
 
     return this.getSession();
   }
@@ -546,6 +546,31 @@ export class BrowserSessionBackend {
     return { success: true };
   }
 
+  async navigate(rawUrl: string): Promise<{ success: boolean; error?: string }> {
+    assert(rawUrl.trim().length > 0, "BrowserSessionBackend.navigate requires a non-empty url");
+
+    // Navigation is a dedicated RPC instead of a BrowserInputEvent because it must
+    // work in fallback mode (no live stream socket) and keeps navigation semantics
+    // cleanly separate from pointer/keyboard/touch input.
+    const result = normalizeBrowserUrl(rawUrl);
+    if (!result.ok) {
+      return { success: false, error: result.error };
+    }
+
+    if (this.session.status !== "live") {
+      return { success: false, error: "Session is not live" };
+    }
+
+    const cliResult = await this.runCliCommand(["open", result.normalizedUrl]);
+    if (!cliResult.ok) {
+      return { success: false, error: cliResult.error };
+    }
+
+    await this.refreshNavigationMetadata();
+
+    return { success: true };
+  }
+
   dispose(): void {
     if (this.disposed) {
       return;
@@ -586,22 +611,14 @@ export class BrowserSessionBackend {
     this.pendingStreamCloseReason = null;
     this.startedFromExistingSession = false;
     this.metadataRefreshInFlight = false;
-    this.fallbackScreenshotInFlight = false;
   }
 
-  private hasExistingSession(): boolean {
-    try {
-      // Lazy-load to avoid startup crashes when the optional agent-browser package is missing
-      // or corrupt. agent-browser also auto-launches blank browsers for metadata commands,
-      // so checking the daemon PID is the least destructive way to detect attachable sessions.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { isDaemonRunning: isDaemonRunningFn } = require("agent-browser/dist/daemon.js") as {
-        isDaemonRunning: (sessionId: string) => boolean;
-      };
-      return isDaemonRunningFn(this.sessionId);
-    } catch {
-      return false;
-    }
+  private async hasExistingSession(): Promise<boolean> {
+    // agent-browser 0.20+ removed the old JS daemon helper. Query the vendored CLI instead so
+    // Browser tab attach/detach keeps working across package layout changes without launching a page.
+    return await hasAgentBrowserSession(this.sessionId, CLI_TIMEOUT_MS, {
+      inFlightProcesses: this.inFlightProcesses,
+    });
   }
 
   private emitSessionUpdate(): void {
@@ -685,8 +702,10 @@ export class BrowserSessionBackend {
 
   private async startStreamTransport(): Promise<StreamStartupMode> {
     if (this.streamPort === null) {
-      this.transitionToStreamFallback("Streaming unavailable; falling back to CLI polling.");
-      return "fallback";
+      this.transitionToRestartRequired(
+        "Streaming unavailable; restart the browser session to relaunch streaming."
+      );
+      return "restart_required";
     }
 
     this.patchSession({ streamState: "connecting", streamErrorMessage: null });
@@ -701,7 +720,7 @@ export class BrowserSessionBackend {
 
       lastError = connectResult.error;
       if (this.disposed) {
-        return this.startedFromExistingSession ? "restart_required" : "fallback";
+        return "restart_required";
       }
 
       this.patchSession({ streamState: "connecting", streamErrorMessage: lastError });
@@ -711,16 +730,10 @@ export class BrowserSessionBackend {
     }
 
     // Stream transport path A: the daemon was launched with AGENT_BROWSER_STREAM_PORT but
-    // the WebSocket never connected (port conflict, daemon too old, etc.). New sessions can
-    // fall back to screenshot polling, but attached sessions must require a restart because
-    // we cannot prove the already-running daemon supports the streaming protocol.
-    if (this.startedFromExistingSession) {
-      this.transitionToRestartRequired(lastError);
-      return "restart_required";
-    }
-
-    this.transitionToStreamFallback(lastError);
-    return "fallback";
+    // the WebSocket never connected (port conflict, daemon too old, etc.). Require a restart
+    // so the daemon is relaunched with a known-good streaming transport configuration.
+    this.transitionToRestartRequired(lastError);
+    return "restart_required";
   }
 
   private async connectStreamTransport(): Promise<StreamConnectResult> {
@@ -821,7 +834,7 @@ export class BrowserSessionBackend {
     }
 
     if (this.streamRetryCount >= MAX_STREAM_RETRY_COUNT) {
-      this.degradeAfterStreamFailure(error);
+      this.transitionToRestartRequired(error);
       return;
     }
 
@@ -856,36 +869,11 @@ export class BrowserSessionBackend {
     this.handleUnexpectedStreamClose(result.error);
   }
 
-  // Stream transport path B: streaming worked at least once, then the live socket died later.
-  // New sessions degrade to screenshot polling so preview keeps updating, but attached sessions
-  // are marked restart_required because we cannot safely relaunch a daemon we did not create.
-  private degradeAfterStreamFailure(error: string): void {
-    if (this.startedFromExistingSession) {
-      this.transitionToRestartRequired(error);
-      return;
-    }
-
-    this.transitionToStreamFallback(error);
-    this.startFallbackPolling();
-    void this.refreshFallbackScreenshot();
-  }
-
-  private transitionToStreamFallback(error: string): void {
-    this.clearStreamRetryTimer();
-    this.closeCurrentStreamSocket();
-    this.patchSession({
-      streamState: "fallback",
-      streamErrorMessage: error,
-      lastError: error,
-    });
-  }
-
-  // restart_required is intentionally stricter than fallback: the user still has a browser window,
-  // but interactive streaming is blocked until we relaunch a daemon we know was started with stream support.
+  // restart_required keeps the browser window open but blocks interaction until the user relaunches
+  // a daemon that we know advertises the live streaming transport.
   private transitionToRestartRequired(error: string): void {
     this.clearStreamRetryTimer();
     this.closeCurrentStreamSocket();
-    this.stopFallbackPolling();
     this.patchSession({
       streamState: "restart_required",
       streamErrorMessage: error,
@@ -909,30 +897,6 @@ export class BrowserSessionBackend {
     if (this.metadataRefreshIntervalId !== null) {
       clearInterval(this.metadataRefreshIntervalId);
       this.metadataRefreshIntervalId = null;
-    }
-  }
-
-  private startFallbackPolling(): void {
-    if (
-      this.disposed ||
-      this.fallbackPollIntervalId !== null ||
-      this.session.streamState !== "fallback"
-    ) {
-      return;
-    }
-
-    this.fallbackPollIntervalId = setInterval(() => {
-      void this.refreshFallbackScreenshot().catch((error: unknown) => {
-        const errorMessage = getErrorMessage(error);
-        this.patchSession({ lastError: errorMessage });
-      });
-    }, FALLBACK_POLL_INTERVAL_MS);
-  }
-
-  private stopFallbackPolling(): void {
-    if (this.fallbackPollIntervalId !== null) {
-      clearInterval(this.fallbackPollIntervalId);
-      this.fallbackPollIntervalId = null;
     }
   }
 
@@ -971,6 +935,12 @@ export class BrowserSessionBackend {
       }
 
       this.consecutiveMetadataFailures = 0;
+      const metadataChanged =
+        this.session.currentUrl !== nextUrl || this.session.title !== nextTitle;
+      if (!metadataChanged) {
+        return;
+      }
+
       this.emitNavigateAction(nextUrl, nextTitle);
       this.patchSession({
         currentUrl: nextUrl,
@@ -978,43 +948,6 @@ export class BrowserSessionBackend {
       });
     } finally {
       this.metadataRefreshInFlight = false;
-    }
-  }
-
-  private async refreshFallbackScreenshot(): Promise<void> {
-    if (
-      this.disposed ||
-      this.session.streamState !== "fallback" ||
-      this.fallbackScreenshotInFlight
-    ) {
-      return;
-    }
-
-    this.fallbackScreenshotInFlight = true;
-    try {
-      const screenshotResult = await this.runCliCommand(["screenshot"]);
-      if (!screenshotResult.ok) {
-        this.patchSession({ lastError: screenshotResult.error });
-        return;
-      }
-
-      const screenshotPath = extractCliString(screenshotResult.data, "path");
-      if (screenshotPath === null) {
-        this.patchSession({ lastError: "Unexpected CLI output" });
-        return;
-      }
-
-      try {
-        const nextScreenshotBase64 = await this.convertScreenshot(screenshotPath);
-        this.patchSession({
-          lastScreenshotBase64: nextScreenshotBase64,
-          lastError: null,
-        });
-      } catch (error) {
-        this.patchSession({ lastError: getErrorMessage(error) });
-      }
-    } finally {
-      this.fallbackScreenshotInFlight = false;
     }
   }
 
@@ -1156,7 +1089,6 @@ export class BrowserSessionBackend {
 
   private stopBackgroundWork(): void {
     this.stopMetadataRefreshLoop();
-    this.stopFallbackPolling();
     this.clearStreamRetryTimer();
     this.closeCurrentStreamSocket();
   }
@@ -1253,23 +1185,5 @@ export class BrowserSessionBackend {
     }
 
     return { ok: true, data: parsedOutput };
-  }
-
-  private async convertScreenshot(pngPath: string): Promise<string> {
-    assert(pngPath.trim().length > 0, "convertScreenshot requires a non-empty pngPath");
-
-    try {
-      const pngBuffer = await fs.readFile(pngPath);
-      const sharpFactory = await getSharpFactory();
-      if (sharpFactory === null) {
-        // Best-effort fallback when the optional native converter is unavailable.
-        return pngBuffer.toString("base64");
-      }
-
-      const imageBuffer = await sharpFactory(pngBuffer).jpeg({ quality: 70 }).toBuffer();
-      return imageBuffer.toString("base64");
-    } finally {
-      await fs.unlink(pngPath).catch(() => undefined);
-    }
   }
 }
