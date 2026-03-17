@@ -162,8 +162,6 @@ export function BrowserTab(props: BrowserTabProps) {
           return STATUS_BADGES.live;
         case "connecting":
           return { label: "Connecting", className: "border-accent/30 bg-accent/10 text-accent" };
-        case "fallback":
-          return { label: "Fallback", className: "border-warning/30 bg-warning/10 text-warning" };
         case "restart_required":
           return {
             label: "Restart required",

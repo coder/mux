@@ -563,11 +563,6 @@ function getViewportInteractionState(session: BrowserSession | null): ViewportIn
         blockingMessage: "Restart browser to enable live control",
         showRestartCta: true,
       };
-    case "fallback":
-      return {
-        canInteract: false,
-        blockingMessage: "Screenshots only — streaming unavailable",
-      };
     case "connecting":
       return {
         canInteract: false,
