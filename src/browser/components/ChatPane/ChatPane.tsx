@@ -549,16 +549,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   // Auto-scroll when messages or todos update (during streaming)
   useEffect(() => {
-    if (workspaceState && autoScroll) {
+    if (autoScroll) {
       performAutoScroll();
     }
-  }, [
-    workspaceState?.messages,
-    workspaceState?.todos,
-    autoScroll,
-    performAutoScroll,
-    workspaceState,
-  ]);
+  }, [workspaceState?.messages, workspaceState?.todos, autoScroll, performAutoScroll]);
 
   // Scroll to bottom when workspace loads or changes
   // useLayoutEffect ensures scroll happens synchronously after DOM mutations
@@ -597,6 +591,27 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     lastActionableMessage.errorType === "context_exceeded";
   const shouldMountRetryBarrier = !suppressRetryBarrier;
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
+
+  // Keep the transcript bottom pinned before paint when the tail changes.
+  // Sending a message can append a new user row and mount footer UI (streaming/retry/TODO)
+  // in the same turn; synchronizing here avoids a visible jump before the async
+  // ResizeObserver / streaming auto-scroll path runs.
+  useLayoutEffect(() => {
+    if (!autoScroll || !contentRef.current) {
+      return;
+    }
+
+    contentRef.current.scrollTop = contentRef.current.scrollHeight;
+  }, [
+    autoScroll,
+    contentRef,
+    latestMessageId,
+    workspaceState?.todos.length,
+    showRetryBarrierUI,
+    workspaceState?.isStreamStarting,
+    workspaceState?.canInterrupt,
+    shouldShowQueuedAgentTaskPrompt,
+  ]);
 
   const handleLoadOlderHistory = useCallback(() => {
     if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
@@ -844,37 +859,43 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                           </React.Fragment>
                         );
                       })}
-                      {/* Show RetryBarrier after the last message if needed */}
-                      {shouldMountRetryBarrier && (
-                        <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />
-                      )}
                     </>
                   </MessageListProvider>
                 )}
-                <PinnedTodoList workspaceId={workspaceId} />
-                <StreamingBarrier
-                  workspaceId={workspaceId}
-                  vimEnabled={vimEnabled}
-                  onCancelCompaction={handleCancelCompactionFromBarrier}
-                />
-                {shouldShowQueuedAgentTaskPrompt && (
-                  <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
-                    <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
-                      <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
-                      <MarkdownRenderer
-                        content={queuedAgentTaskPrompt ?? ""}
-                        className="user-message-markdown text-foreground"
-                        preserveLineBreaks
-                        style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
-                      />
+                <div style={{ overflowAnchor: "none" }}>
+                  {/*
+                    Keep the dynamic transcript tail out of the browser's scroll-anchoring heuristics.
+                    ChatPane explicitly pins the bottom when auto-scroll is enabled, so anchoring to
+                    the streaming barrier / pinned TODO stack causes a brief visible jump on send.
+                  */}
+                  {shouldMountRetryBarrier && (
+                    <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />
+                  )}
+                  <PinnedTodoList workspaceId={workspaceId} />
+                  <StreamingBarrier
+                    workspaceId={workspaceId}
+                    vimEnabled={vimEnabled}
+                    onCancelCompaction={handleCancelCompactionFromBarrier}
+                  />
+                  {shouldShowQueuedAgentTaskPrompt && (
+                    <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
+                      <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
+                        <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
+                        <MarkdownRenderer
+                          content={queuedAgentTaskPrompt ?? ""}
+                          className="user-message-markdown text-foreground"
+                          preserveLineBreaks
+                          style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+                        />
+                      </div>
                     </div>
-                  </div>
-                )}
-                <ConcurrentLocalWarning
-                  workspaceId={workspaceId}
-                  projectPath={projectPath}
-                  runtimeConfig={runtimeConfig}
-                />
+                  )}
+                  <ConcurrentLocalWarning
+                    workspaceId={workspaceId}
+                    projectPath={projectPath}
+                    runtimeConfig={runtimeConfig}
+                  />
+                </div>
               </div>
             </div>
             {transcriptContextMenu.menu}
