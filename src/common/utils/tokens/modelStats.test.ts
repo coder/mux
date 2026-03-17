@@ -68,6 +68,14 @@ describe("getModelStats", () => {
       expect(stats?.tiered_pricing_threshold_tokens).toBe(272000);
     });
 
+    test("should resolve dated GPT-5.4 mini IDs behind mux-gateway via the family override", () => {
+      const stats = getModelStats("mux-gateway:openai/gpt-5.4-mini-2026-03-11");
+      expect(stats).not.toBeNull();
+      expect(stats?.max_input_tokens).toBe(400000);
+      expect(stats?.max_output_tokens).toBe(128000);
+      expect(stats?.output_cost_per_token).toBe(0.0000045);
+    });
+
     test("should find gpt-5.4-pro with correct 1.05M context and long-context pricing", () => {
       const stats = getModelStats("openai:gpt-5.4-pro");
       expect(stats).not.toBeNull();

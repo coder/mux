@@ -61,6 +61,13 @@ const MODEL_DEFINITIONS = {
     providerModelId: "gpt-5.4-pro",
     aliases: ["gpt-pro"],
   },
+  // GPT Mini alias tracks the latest stable GPT-5 mini tier.
+  GPT_54_MINI: {
+    provider: "openai",
+    providerModelId: "gpt-5.4-mini",
+    aliases: ["gpt-mini"],
+    tokenizerOverride: "openai/gpt-5",
+  },
   // GPT-5.3-Codex is the released API model id.
   GPT_53_CODEX: {
     provider: "openai",

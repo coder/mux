@@ -115,6 +115,24 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-08-31",
   },
 
+  // GPT-5.4 mini - Released March 11, 2026
+  // Smaller/faster GPT-5.4 tier with 400K context, 128K max output, and published
+  // pricing of $0.75/M input, $4.50/M output, and $0.075/M cached input.
+  "gpt-5.4-mini": {
+    max_input_tokens: 400000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00000075, // $0.75 per million input tokens
+    output_cost_per_token: 0.0000045, // $4.50 per million output tokens
+    cache_read_input_token_cost: 0.000000075, // $0.075 per million cached input tokens
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-08-31",
+  },
+
   // GPT-5.4 Pro - Released March 5, 2026
   // Native 1.05M context, 128K max output; same rationale as GPT-5.4 above.
   // Base pricing: $30/M input, $180/M output; OpenAI has not published cached-input pricing.

@@ -18,6 +18,13 @@ describe("normalizeModelInput", () => {
     });
   });
 
+  it("resolves the gpt-mini alias to the canonical GPT-5.4 mini model", () => {
+    expect(normalizeModelInput("gpt-mini")).toEqual({
+      model: "openai:gpt-5.4-mini",
+      isAlias: true,
+    });
+  });
+
   it("keeps direct providers normalized as before", () => {
     expect(normalizeModelInput("openai:gpt-5")).toEqual({
       model: "openai:gpt-5",
