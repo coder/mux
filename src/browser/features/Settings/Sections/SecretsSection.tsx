@@ -890,7 +890,7 @@ export const SecretsSection: React.FC = () => {
                       onCheckedChange={(checked) => updateSecretInjectAll(index, checked)}
                       disabled={saving}
                       aria-label="Inject into all projects"
-                      tooltip="Inject into all projects"
+                      title="Inject into all projects"
                     />
                   </div>
                 )}

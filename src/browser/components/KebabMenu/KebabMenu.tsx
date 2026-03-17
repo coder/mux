@@ -9,6 +9,7 @@ export interface KebabMenuItem {
   active?: boolean;
   disabled?: boolean;
   emoji?: string;
+  title?: React.ReactNode;
   tooltip?: React.ReactNode;
 }
 
@@ -104,6 +105,7 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
             }}
           >
             {items.map((item, index) => {
+              const itemTooltip = item.tooltip ?? item.title;
               const itemButton = (
                 <button
                   key={index}
@@ -128,7 +130,7 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
               return (
                 <TooltipIfPresent
                   key={index}
-                  tooltip={item.tooltip}
+                  tooltip={itemTooltip}
                   side="right"
                   align="center"
                   className="z-[10001]"

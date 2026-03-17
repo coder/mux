@@ -9,6 +9,7 @@ interface SwitchProps {
   /** "default" (h-6 w-11) or "sm" (h-4 w-7) */
   size?: "default" | "sm";
   className?: string;
+  title?: React.ReactNode;
   tooltip?: React.ReactNode;
   "aria-label"?: string;
 }
@@ -25,12 +26,14 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
       disabled = false,
       size = "default",
       className,
+      title,
       tooltip,
       "aria-label": ariaLabel,
     },
     ref
   ) => {
     const isSmall = size === "sm";
+    const resolvedTooltip = tooltip ?? title;
     const button = (
       <button
         ref={ref}
@@ -65,7 +68,7 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
       </button>
     );
 
-    return <TooltipIfPresent tooltip={tooltip}>{button}</TooltipIfPresent>;
+    return <TooltipIfPresent tooltip={resolvedTooltip}>{button}</TooltipIfPresent>;
   }
 );
 Switch.displayName = "Switch";

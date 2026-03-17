@@ -320,7 +320,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
           <Button
             onClick={() => void handleConfirm()}
             disabled={isLoading || !root}
-            tooltip={`Open folder (${shortcutLabel})`}
+            title={`Open folder (${shortcutLabel})`}
           >
             Open ({shortcutLabel})
           </Button>

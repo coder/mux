@@ -278,7 +278,7 @@ export function ModelRow(props: ModelRowProps) {
                 onClick={props.onSaveEdit}
                 disabled={props.saving}
                 className="text-accent hover:text-accent-dark h-6 w-6"
-                tooltip="Save changes (Enter)"
+                title="Save changes (Enter)"
               >
                 <Check className="h-3.5 w-3.5" />
               </Button>
@@ -288,7 +288,7 @@ export function ModelRow(props: ModelRowProps) {
                 onClick={props.onCancelEdit}
                 disabled={props.saving}
                 className="text-muted hover:text-foreground h-6 w-6"
-                tooltip="Cancel (Escape)"
+                title="Cancel (Escape)"
               >
                 <X className="h-3.5 w-3.5" />
               </Button>

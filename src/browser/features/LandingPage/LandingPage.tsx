@@ -111,7 +111,7 @@ function LandingTitlebar(props: {
           variant="ghost"
           size="icon"
           onClick={props.onToggleLeftSidebarCollapsed}
-          tooltip="Open sidebar"
+          title="Open sidebar"
           aria-label="Open sidebar menu"
           className={cn(
             "mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0",

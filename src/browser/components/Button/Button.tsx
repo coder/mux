@@ -37,17 +37,22 @@ export interface ButtonProps
     Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "title">,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  title?: React.ReactNode;
   tooltip?: React.ReactNode;
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, tooltip, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, title, tooltip, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
+    // Shared controls intentionally reinterpret `title` as our custom tooltip surface so callers
+    // can keep using the prop they naturally reach for without falling back to a truncating native
+    // browser tooltip.
+    const resolvedTooltip = tooltip ?? title;
     const button = (
       <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
     );
 
-    return <TooltipIfPresent tooltip={tooltip}>{button}</TooltipIfPresent>;
+    return <TooltipIfPresent tooltip={resolvedTooltip}>{button}</TooltipIfPresent>;
   }
 );
 Button.displayName = "Button";

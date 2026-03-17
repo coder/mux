@@ -201,7 +201,7 @@ const localPlugin = {
         },
         messages: {
           useTooltip:
-            "Native title tooltips on interactive controls truncate easily when the content is long or dynamic. Use the shared Tooltip component (or tooltip prop on Button/Switch) instead.",
+            "Native title tooltips on raw interactive elements truncate easily when the content is long or dynamic. Use the shared Tooltip surface instead, or pass `title` through a shared control that intercepts it.",
         },
       },
       create(context) {

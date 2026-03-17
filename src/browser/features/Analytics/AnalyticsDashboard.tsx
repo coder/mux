@@ -202,7 +202,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
               variant="ghost"
               size="icon"
               onClick={props.onToggleLeftSidebarCollapsed}
-              tooltip="Open sidebar"
+              title="Open sidebar"
               aria-label="Open sidebar"
               className="text-muted hover:text-foreground hidden h-6 w-6 md:inline-flex"
             >
@@ -214,7 +214,7 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
             size="sm"
             onClick={navigateFromAnalytics}
             className="text-muted hover:text-foreground h-6 gap-1 px-2 text-xs"
-            tooltip="Back"
+            title="Back"
             aria-label="Back to previous view"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
