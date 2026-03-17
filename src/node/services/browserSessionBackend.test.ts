@@ -296,7 +296,11 @@ describe("BrowserSessionBackend", () => {
         throw new Error(`Unexpected CLI args: ${args.join(" ")}`);
       })
     ).toBe(true);
-    expect(Reflect.set(backend, "hasExistingSession", () => Promise.resolve(false))).toBe(true);
+    expect(
+      Reflect.set(backend, "inspectExistingSession", () =>
+        Promise.resolve({ ok: true as const, exists: false })
+      )
+    ).toBe(true);
 
     const refreshNavigationMetadata = Reflect.get(backend, "refreshNavigationMetadata") as (
       this: BrowserSessionBackend
@@ -340,7 +344,11 @@ describe("BrowserSessionBackend", () => {
         throw new Error(`Unexpected CLI args: ${args.join(" ")}`);
       })
     ).toBe(true);
-    expect(Reflect.set(backend, "hasExistingSession", () => Promise.resolve(true))).toBe(true);
+    expect(
+      Reflect.set(backend, "inspectExistingSession", () =>
+        Promise.resolve({ ok: true as const, exists: true })
+      )
+    ).toBe(true);
 
     const refreshNavigationMetadata = Reflect.get(backend, "refreshNavigationMetadata") as (
       this: BrowserSessionBackend
@@ -377,6 +385,73 @@ describe("BrowserSessionBackend", () => {
     expect(session.endReason).toBeNull();
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith("workspace-123", "launch failed");
+  });
+
+  test("does not classify unexpected stream close as ended when session probing fails", async () => {
+    const backend = createBackend();
+    setSession(backend, {
+      status: "live",
+      currentUrl: "https://example.com",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+    });
+
+    expect(
+      Reflect.set(backend, "inspectExistingSession", () =>
+        Promise.resolve({ ok: false as const, error: "session list timed out" })
+      )
+    ).toBe(true);
+    expect(Reflect.set(backend, "streamRetryCount", 3)).toBe(true);
+
+    const handleUnexpectedStreamClose = Reflect.get(backend, "handleUnexpectedStreamClose") as (
+      this: BrowserSessionBackend,
+      error: string
+    ) => Promise<void>;
+    await handleUnexpectedStreamClose.call(backend, "socket closed");
+
+    const session = getSession(backend);
+    expect(session.status).toBe("live");
+    expect(session.endReason).toBeNull();
+    expect(session.streamState).toBe("restart_required");
+    expect(session.streamErrorMessage).toBe("socket closed");
+  });
+
+  test("treats about:blank as a metadata failure when session probing fails", async () => {
+    const backend = createBackend();
+    setSession(backend, {
+      status: "live",
+      currentUrl: "https://example.com",
+      title: "Example",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+    });
+
+    expect(
+      Reflect.set(backend, "runCliCommand", (args: string[]) => {
+        if (args[0] === "get" && args[1] === "url") {
+          return Promise.resolve({ ok: true as const, data: { url: "about:blank" } });
+        }
+        if (args[0] === "get" && args[1] === "title") {
+          return Promise.resolve({ ok: true as const, data: { title: "about:blank" } });
+        }
+        throw new Error(`Unexpected CLI args: ${args.join(" ")}`);
+      })
+    ).toBe(true);
+    expect(
+      Reflect.set(backend, "inspectExistingSession", () =>
+        Promise.resolve({ ok: false as const, error: "session list timed out" })
+      )
+    ).toBe(true);
+
+    const refreshNavigationMetadata = Reflect.get(backend, "refreshNavigationMetadata") as (
+      this: BrowserSessionBackend
+    ) => Promise<void>;
+    await refreshNavigationMetadata.call(backend);
+
+    const session = getSession(backend);
+    expect(session.status).toBe("live");
+    expect(session.endReason).toBeNull();
+    expect(session.lastError).toBe("session list timed out");
   });
 
   describe("navigate", () => {

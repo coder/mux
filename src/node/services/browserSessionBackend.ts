@@ -328,6 +328,8 @@ async function runAgentBrowserCliCommand(
   });
 }
 
+type AgentBrowserSessionProbeResult = { ok: true; exists: boolean } | { ok: false; error: string };
+
 function extractCliSessionNames(data: unknown): string[] | null {
   const rawSessions = isRecord(data) && isRecord(data.data) ? data.data.sessions : null;
   if (!Array.isArray(rawSessions)) {
@@ -338,12 +340,12 @@ function extractCliSessionNames(data: unknown): string[] | null {
   return sessions.length === rawSessions.length ? sessions : null;
 }
 
-export async function hasAgentBrowserSession(
+async function probeAgentBrowserSession(
   sessionId: string,
   timeoutMs = CLI_TIMEOUT_MS,
   options?: AgentBrowserCliCommandOptions
-): Promise<boolean> {
-  assert(sessionId.trim().length > 0, "hasAgentBrowserSession requires a non-empty sessionId");
+): Promise<AgentBrowserSessionProbeResult> {
+  assert(sessionId.trim().length > 0, "probeAgentBrowserSession requires a non-empty sessionId");
 
   const result = await runAgentBrowserCliCommand(sessionId, ["session", "list"], timeoutMs, {
     inFlightProcesses: options?.inFlightProcesses,
@@ -352,21 +354,33 @@ export async function hasAgentBrowserSession(
     env: options?.env,
   });
   if (!result.ok) {
-    return false;
+    return { ok: false, error: result.error };
   }
 
   const stdout = result.stdout.trim();
   if (stdout.length === 0) {
-    return false;
+    return { ok: false, error: "Unexpected CLI output" };
   }
 
   try {
     const parsedOutput: unknown = JSON.parse(stdout);
     const sessions = extractCliSessionNames(parsedOutput);
-    return sessions?.includes(sessionId) ?? false;
+    if (sessions === null) {
+      return { ok: false, error: "Unexpected CLI output" };
+    }
+    return { ok: true, exists: sessions.includes(sessionId) };
   } catch {
-    return false;
+    return { ok: false, error: "Unexpected CLI output" };
   }
+}
+
+export async function hasAgentBrowserSession(
+  sessionId: string,
+  timeoutMs = CLI_TIMEOUT_MS,
+  options?: AgentBrowserCliCommandOptions
+): Promise<boolean> {
+  const result = await probeAgentBrowserSession(sessionId, timeoutMs, options);
+  return result.ok ? result.exists : false;
 }
 
 export async function closeAgentBrowserSession(
@@ -618,12 +632,17 @@ export class BrowserSessionBackend {
     this.metadataRefreshInFlight = false;
   }
 
-  private async hasExistingSession(): Promise<boolean> {
+  private async inspectExistingSession(): Promise<AgentBrowserSessionProbeResult> {
     // agent-browser 0.20+ removed the old JS daemon helper. Query the vendored CLI instead so
     // Browser tab attach/detach keeps working across package layout changes without launching a page.
-    return await hasAgentBrowserSession(this.sessionId, CLI_TIMEOUT_MS, {
+    return await probeAgentBrowserSession(this.sessionId, CLI_TIMEOUT_MS, {
       inFlightProcesses: this.inFlightProcesses,
     });
+  }
+
+  private async hasExistingSession(): Promise<boolean> {
+    const result = await this.inspectExistingSession();
+    return result.ok ? result.exists : false;
   }
 
   private emitSessionUpdate(): void {
@@ -741,12 +760,20 @@ export class BrowserSessionBackend {
       return false;
     }
 
-    const sessionStillExists = await this.hasExistingSession();
+    const sessionProbe = await this.inspectExistingSession();
     if (this.disposed || this.hasTerminalSessionState()) {
       return false;
     }
 
-    if (!sessionStillExists) {
+    if (!sessionProbe.ok) {
+      log.debug("BrowserSessionBackend failed to probe session presence during close handling", {
+        workspaceId: this.options.workspaceId,
+        error: sessionProbe.error,
+      });
+      return false;
+    }
+
+    if (!sessionProbe.exists) {
       this.transitionToEnded("agent_closed");
       return true;
     }
@@ -998,8 +1025,12 @@ export class BrowserSessionBackend {
       // controlled window disappears, so only treat it as valid when we were already blank.
       const previousUrl = this.session.currentUrl;
       if (previousUrl !== null && previousUrl !== "about:blank" && nextUrl === "about:blank") {
-        const sessionStillExists = await this.hasExistingSession();
-        this.transitionToEnded(sessionStillExists ? "external_closed" : "agent_closed");
+        const sessionProbe = await this.inspectExistingSession();
+        if (!sessionProbe.ok) {
+          this.handleMetadataFailure(sessionProbe.error);
+          return;
+        }
+        this.transitionToEnded(sessionProbe.exists ? "external_closed" : "agent_closed");
         return;
       }
 
