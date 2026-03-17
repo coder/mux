@@ -72,6 +72,29 @@ function restoreMuxRoot(previousMuxRoot: string | undefined): void {
   process.env.MUX_ROOT = previousMuxRoot;
 }
 
+async function withHomeDir(homeDir: string, callback: () => Promise<void>): Promise<void> {
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+
+  try {
+    await callback();
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+
+    if (previousUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = previousUserProfile;
+    }
+  }
+}
+
 const REMOTE_WORKSPACE_ROOT = "/remote/workspace";
 
 class RemotePathMappedRuntime extends LocalRuntime {
@@ -212,6 +235,123 @@ describe("agent_skill_read_file", () => {
     if (result.success) {
       expect(result.content).toMatch(/name:\s*mux-docs/i);
     }
+  });
+
+  describe("built-in agent-browser", () => {
+    it("reads references/commands.md from the built-in skill", async () => {
+      using tempDir = new TestTempDir("test-agent-browser-read-commands");
+
+      await withHomeDir(tempDir.path, async () => {
+        const baseConfig = createTestToolConfig(tempDir.path, {
+          workspaceId: "regular-workspace",
+          muxScope: {
+            type: "project",
+            muxHome: tempDir.path,
+            projectRoot: tempDir.path,
+            projectStorageAuthority: "host-local",
+          },
+        });
+        const tool = createAgentSkillReadFileTool(baseConfig);
+
+        const raw: unknown = await Promise.resolve(
+          tool.execute!(
+            { name: "agent-browser", filePath: "references/commands.md", offset: 1, limit: 12 },
+            mockToolCallOptions
+          )
+        );
+
+        const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+        expect(parsed.success).toBe(true);
+        if (!parsed.success) {
+          throw new Error(parsed.error.message);
+        }
+
+        const result = parsed.data;
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.content).toContain("# Command Reference");
+          expect(result.content).toContain("agent-browser open <url>");
+        }
+      });
+    });
+
+    it("reads templates/form-automation.sh from the built-in skill", async () => {
+      using tempDir = new TestTempDir("test-agent-browser-read-template");
+
+      await withHomeDir(tempDir.path, async () => {
+        const baseConfig = createTestToolConfig(tempDir.path, {
+          workspaceId: "regular-workspace",
+          muxScope: {
+            type: "project",
+            muxHome: tempDir.path,
+            projectRoot: tempDir.path,
+            projectStorageAuthority: "host-local",
+          },
+        });
+        const tool = createAgentSkillReadFileTool(baseConfig);
+
+        const raw: unknown = await Promise.resolve(
+          tool.execute!(
+            {
+              name: "agent-browser",
+              filePath: "templates/form-automation.sh",
+              offset: 1,
+              limit: 20,
+            },
+            mockToolCallOptions
+          )
+        );
+
+        const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+        expect(parsed.success).toBe(true);
+        if (!parsed.success) {
+          throw new Error(parsed.error.message);
+        }
+
+        const result = parsed.data;
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.content).toContain("#!/bin/bash");
+          expect(result.content).toContain("Form automation:");
+        }
+      });
+    });
+
+    it("rejects path traversal for built-in skill file reads", async () => {
+      using tempDir = new TestTempDir("test-agent-browser-read-path-traversal");
+
+      await withHomeDir(tempDir.path, async () => {
+        const baseConfig = createTestToolConfig(tempDir.path, {
+          workspaceId: "regular-workspace",
+          muxScope: {
+            type: "project",
+            muxHome: tempDir.path,
+            projectRoot: tempDir.path,
+            projectStorageAuthority: "host-local",
+          },
+        });
+        const tool = createAgentSkillReadFileTool(baseConfig);
+
+        const raw: unknown = await Promise.resolve(
+          tool.execute!(
+            { name: "agent-browser", filePath: "../something", offset: 1, limit: 5 },
+            mockToolCallOptions
+          )
+        );
+
+        const parsed = AgentSkillReadFileToolResultSchema.safeParse(raw);
+        expect(parsed.success).toBe(true);
+        if (!parsed.success) {
+          throw new Error(parsed.error.message);
+        }
+
+        const result = parsed.data;
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toMatch(/path traversal/i);
+        }
+      });
+    });
   });
 
   it("allows reading global skill files on disk in Chat with Mux workspace", async () => {

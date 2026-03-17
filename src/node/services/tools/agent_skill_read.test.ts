@@ -58,6 +58,29 @@ function restoreMuxRoot(previousMuxRoot: string | undefined): void {
   process.env.MUX_ROOT = previousMuxRoot;
 }
 
+async function withHomeDir(homeDir: string, callback: () => Promise<void>): Promise<void> {
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+
+  try {
+    await callback();
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+
+    if (previousUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = previousUserProfile;
+    }
+  }
+}
+
 class RemotePathMappedRuntime extends LocalRuntime {
   private readonly localBase: string;
   private readonly remoteBase: string;
@@ -146,6 +169,41 @@ describe("agent_skill_read", () => {
       expect(result.skill.scope).toBe("built-in");
       expect(result.skill.frontmatter.name).toBe("mux-docs");
     }
+  });
+
+  it("returns built-in agent-browser content when no project override exists", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-built-in-agent-browser");
+
+    await withHomeDir(tempDir.path, async () => {
+      const baseConfig = createTestToolConfig(tempDir.path, {
+        workspaceId: "regular-workspace",
+        muxScope: {
+          type: "project",
+          muxHome: tempDir.path,
+          projectRoot: tempDir.path,
+          projectStorageAuthority: "host-local",
+        },
+      });
+      const tool = createAgentSkillReadTool(baseConfig);
+
+      const raw: unknown = await Promise.resolve(
+        tool.execute!({ name: "agent-browser" }, mockToolCallOptions)
+      );
+
+      const parsed = AgentSkillReadToolResultSchema.safeParse(raw);
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) {
+        throw new Error(parsed.error.message);
+      }
+
+      const result = parsed.data;
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.skill.scope).toBe("built-in");
+        expect(result.skill.frontmatter.name).toBe("agent-browser");
+        expect(result.skill.body).toContain("Browser Automation");
+      }
+    });
   });
 
   it("allows reading global skills on disk in Chat with Mux workspace", async () => {
