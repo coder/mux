@@ -996,20 +996,12 @@ export class BrowserSessionBackend {
     try {
       const urlResult = await this.runCliCommand(["get", "url"]);
       if (!urlResult.ok) {
-        if (isMissingBrowserSessionError(urlResult.error)) {
-          this.transitionToEnded("agent_closed");
-          return;
-        }
         this.handleMetadataFailure(urlResult.error);
         return;
       }
 
       const titleResult = await this.runCliCommand(["get", "title"]);
       if (!titleResult.ok) {
-        if (isMissingBrowserSessionError(titleResult.error)) {
-          this.transitionToEnded("agent_closed");
-          return;
-        }
         this.handleMetadataFailure(titleResult.error);
         return;
       }
