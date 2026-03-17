@@ -1,5 +1,5 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, mock, test, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import type {
   BrowserAction,
@@ -11,12 +11,129 @@ import { SUBSCRIPTION_HEARTBEAT_INTERVAL_MS } from "@/common/utils/withQueueHear
 const INITIAL_RESUBSCRIBE_BACKOFF_MS = 1_000;
 const STALE_SUBSCRIPTION_MS = 3 * SUBSCRIPTION_HEARTBEAT_INTERVAL_MS;
 
-const timerControls = vi as typeof vi & {
-  advanceTimersByTime(ms: number): void;
-  runOnlyPendingTimers(): void;
-  clearAllTimers(): void;
-  getTimerCount(): number;
+type TimerRecord = {
+  callback: () => void;
+  runAt: number;
 };
+
+type InstalledTimerGlobals = {
+  clearTimeout: typeof globalThis.clearTimeout;
+  dateNow: typeof Date.now;
+  setTimeout: typeof globalThis.setTimeout;
+  windowClearTimeout: typeof window.clearTimeout;
+  windowSetTimeout: typeof window.setTimeout;
+};
+
+function createTimerControls() {
+  let now = 0;
+  let nextTimerId = 1;
+  let installedGlobals: InstalledTimerGlobals | null = null;
+  const timers = new Map<number, TimerRecord>();
+
+  const syncWindowTimers = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.setTimeout = globalThis.setTimeout;
+    window.clearTimeout = globalThis.clearTimeout;
+  };
+
+  const findNextTimer = (targetTime: number) => {
+    let nextTimerEntry: [number, TimerRecord] | null = null;
+    for (const timerEntry of timers.entries()) {
+      if (timerEntry[1].runAt > targetTime) {
+        continue;
+      }
+      if (nextTimerEntry === null || timerEntry[1].runAt < nextTimerEntry[1].runAt) {
+        nextTimerEntry = timerEntry;
+      }
+    }
+    return nextTimerEntry;
+  };
+
+  return {
+    advanceTimersByTime(ms: number) {
+      if (!Number.isFinite(ms) || ms < 0) {
+        throw new Error(`advanceTimersByTime() requires a non-negative duration, received ${ms}`);
+      }
+
+      const targetTime = now + ms;
+      while (true) {
+        const nextTimerEntry = findNextTimer(targetTime);
+        if (nextTimerEntry === null) {
+          now = targetTime;
+          return;
+        }
+
+        const [timerId, timer] = nextTimerEntry;
+        timers.delete(timerId);
+        now = timer.runAt;
+        timer.callback();
+      }
+    },
+    getTimerCount() {
+      return timers.size;
+    },
+    install() {
+      if (installedGlobals !== null) {
+        throw new Error("Timer controls are already installed");
+      }
+      if (typeof window === "undefined") {
+        throw new Error("Timer controls require a window before install()");
+      }
+
+      now = 0;
+      nextTimerId = 1;
+      timers.clear();
+      installedGlobals = {
+        clearTimeout: globalThis.clearTimeout,
+        dateNow: Date.now,
+        setTimeout: globalThis.setTimeout,
+        windowClearTimeout: window.clearTimeout,
+        windowSetTimeout: window.setTimeout,
+      };
+
+      globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (typeof handler !== "function") {
+          throw new TypeError("Tests only support function callbacks for setTimeout()");
+        }
+
+        const timerId = nextTimerId;
+        nextTimerId += 1;
+        timers.set(timerId, {
+          callback: () => handler(...args),
+          runAt: now + Math.max(delay ?? 0, 0),
+        });
+        return timerId as unknown as ReturnType<typeof setTimeout>;
+      }) as unknown as typeof globalThis.setTimeout;
+
+      globalThis.clearTimeout = ((timerId: ReturnType<typeof setTimeout>) => {
+        timers.delete(Number(timerId));
+      }) as typeof globalThis.clearTimeout;
+
+      Date.now = () => now;
+      syncWindowTimers();
+    },
+    restore() {
+      if (installedGlobals === null) {
+        throw new Error("Timer controls are not installed");
+      }
+
+      globalThis.setTimeout = installedGlobals.setTimeout;
+      globalThis.clearTimeout = installedGlobals.clearTimeout;
+      Date.now = installedGlobals.dateNow;
+      window.setTimeout = installedGlobals.windowSetTimeout;
+      window.clearTimeout = installedGlobals.windowClearTimeout;
+      timers.clear();
+      now = 0;
+      nextTimerId = 1;
+      installedGlobals = null;
+    },
+  };
+}
+
+const timerControls = createTimerControls();
 
 type BrowserSessionSubscribe = (
   input: { workspaceId: string },
@@ -179,14 +296,13 @@ describe("useBrowserSessionSubscription", () => {
   let subscriptions: MockSubscription[];
 
   beforeEach(() => {
-    vi.useFakeTimers();
-
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
 
     globalThis.window = new GlobalWindow({ url: "http://localhost" }) as unknown as Window &
       typeof globalThis;
     globalThis.document = globalThis.window.document;
+    timerControls.install();
 
     subscriptions = [];
     subscribeMock = mock<BrowserSessionSubscribe>((_input, _options) => {
@@ -209,9 +325,7 @@ describe("useBrowserSessionSubscription", () => {
   afterEach(() => {
     cleanup();
     currentApi = null;
-    timerControls.runOnlyPendingTimers();
-    timerControls.clearAllTimers();
-    vi.useRealTimers();
+    timerControls.restore();
     mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
