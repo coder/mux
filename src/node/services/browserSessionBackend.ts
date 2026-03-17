@@ -12,6 +12,7 @@ import type {
   BrowserStreamState,
 } from "@/common/types/browserSession";
 import { getMuxBrowserSessionId } from "@/common/utils/browserSession";
+import { normalizeBrowserUrl } from "@/common/utils/browserUrl";
 import {
   AgentBrowserBinaryNotFoundError,
   AgentBrowserUnsupportedPlatformError,
@@ -543,6 +544,31 @@ export class BrowserSessionBackend {
     } catch (error) {
       return { success: false, error: `Failed to send input: ${getErrorMessage(error)}` };
     }
+    return { success: true };
+  }
+
+  async navigate(rawUrl: string): Promise<{ success: boolean; error?: string }> {
+    assert(rawUrl.trim().length > 0, "BrowserSessionBackend.navigate requires a non-empty url");
+
+    // Navigation is a dedicated RPC instead of a BrowserInputEvent because it must
+    // work in fallback mode (no live stream socket) and keeps navigation semantics
+    // cleanly separate from pointer/keyboard/touch input.
+    const result = normalizeBrowserUrl(rawUrl);
+    if (!result.ok) {
+      return { success: false, error: result.error };
+    }
+
+    if (this.session.status !== "live") {
+      return { success: false, error: "Session is not live" };
+    }
+
+    const cliResult = await this.runCliCommand(["open", result.normalizedUrl]);
+    if (!cliResult.ok) {
+      return { success: false, error: cliResult.error };
+    }
+
+    await this.refreshNavigationMetadata();
+
     return { success: true };
   }
 

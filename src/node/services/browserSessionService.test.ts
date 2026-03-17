@@ -25,6 +25,7 @@ function attachMockBackend(
   service: BrowserSessionService,
   overrides?: {
     sendInput?: (input: BrowserInputEvent) => { success: boolean; error?: string };
+    navigate?: (url: string) => Promise<{ success: boolean; error?: string }>;
   }
 ) {
   const backend = {
@@ -35,11 +36,18 @@ function attachMockBackend(
           return { success: true };
         })
     ),
+    navigate: mock(
+      overrides?.navigate ??
+        (() => {
+          return Promise.resolve({ success: true });
+        })
+    ),
   };
-  getPrivateMap<{ stop: typeof backend.stop; sendInput: typeof backend.sendInput }>(
-    service,
-    "activeBackends"
-  ).set(workspaceId, backend);
+  getPrivateMap<{
+    stop: typeof backend.stop;
+    sendInput: typeof backend.sendInput;
+    navigate: typeof backend.navigate;
+  }>(service, "activeBackends").set(workspaceId, backend);
   return backend;
 }
 
@@ -362,5 +370,33 @@ describe("BrowserSessionService.sendInput", () => {
 
     expect(result).toEqual({ success: true });
     expect(service.getRecentActions(workspaceId)).toEqual([]);
+  });
+});
+
+describe("BrowserSessionService.navigate", () => {
+  const workspaceId = "workspace-navigate";
+
+  test("returns an error when no backend is active", async () => {
+    const service = new BrowserSessionService();
+
+    const result = await service.navigate(workspaceId, "https://example.com");
+
+    expect(result).toEqual({
+      success: false,
+      error: "No active session for workspace",
+    });
+  });
+
+  test("delegates navigation to the active backend", async () => {
+    const service = new BrowserSessionService();
+    const backend = attachMockBackend(workspaceId, service, {
+      navigate: (url) => Promise.resolve({ success: false, error: `failed to open ${url}` }),
+    });
+
+    const result = await service.navigate(workspaceId, "example.com");
+
+    expect(backend.navigate).toHaveBeenCalledTimes(1);
+    expect(backend.navigate).toHaveBeenCalledWith("example.com");
+    expect(result).toEqual({ success: false, error: "failed to open example.com" });
   });
 });

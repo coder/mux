@@ -242,6 +242,63 @@ describe("BrowserSessionBackend", () => {
     expect(session.streamErrorMessage).toContain("ECONNREFUSED");
   });
 
+  describe("navigate", () => {
+    test("navigates to a valid URL via CLI open command", async () => {
+      const backend = createBackend();
+      setSession(backend, { status: "live" });
+
+      const runCliCommand = mock((args: string[]) => {
+        expect(args).toEqual(["open", "https://example.com/"]);
+        return Promise.resolve({ ok: true as const, data: {} });
+      });
+      const refreshNavigationMetadata = mock(() => Promise.resolve());
+
+      Reflect.set(backend, "runCliCommand", runCliCommand);
+      Reflect.set(backend, "refreshNavigationMetadata", refreshNavigationMetadata);
+
+      const result = await backend.navigate("https://example.com");
+      expect(result.success).toBe(true);
+      expect(runCliCommand).toHaveBeenCalledTimes(1);
+      expect(refreshNavigationMetadata).toHaveBeenCalledTimes(1);
+    });
+
+    test("rejects invalid URLs without calling CLI", async () => {
+      const backend = createBackend();
+      setSession(backend, { status: "live" });
+
+      const runCliCommand = mock(() => Promise.resolve({ ok: true as const, data: {} }));
+      Reflect.set(backend, "runCliCommand", runCliCommand);
+
+      const result = await backend.navigate("javascript:alert(1)");
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(runCliCommand).not.toHaveBeenCalled();
+    });
+
+    test("fails when session is not live", async () => {
+      const backend = createBackend();
+      setSession(backend, { status: "ended" });
+
+      const result = await backend.navigate("https://example.com");
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Session is not live");
+    });
+
+    test("normalizes scheme-less URLs", async () => {
+      const backend = createBackend();
+      setSession(backend, { status: "live" });
+
+      const runCliCommand = mock(() => Promise.resolve({ ok: true as const, data: {} }));
+      const refreshNavigationMetadata = mock(() => Promise.resolve());
+      Reflect.set(backend, "runCliCommand", runCliCommand);
+      Reflect.set(backend, "refreshNavigationMetadata", refreshNavigationMetadata);
+
+      const result = await backend.navigate("example.com");
+      expect(result.success).toBe(true);
+      expect(runCliCommand).toHaveBeenCalledWith(["open", "https://example.com/"]);
+    });
+  });
+
   test("only refreshes fallback screenshots when streaming is unavailable", async () => {
     const fallbackBackend = createBackend({ initialUrl: "https://fallback.example.com" });
     const fallbackScreenshotRefresh = mock(() => Promise.resolve());

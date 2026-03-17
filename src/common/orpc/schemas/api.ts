@@ -2079,6 +2079,18 @@ export const browserSession = {
       .strict(),
     output: eventIterator(BrowserSessionEventSchema),
   },
+  navigate: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        url: z.string(),
+      })
+      .strict(),
+    output: z.object({
+      success: z.boolean(),
+      error: z.string().nullish(),
+    }),
+  },
 };
 
 // UI Layouts (global settings)

@@ -185,6 +185,18 @@ export class BrowserSessionService extends EventEmitter {
     return result;
   }
 
+  navigate(workspaceId: string, url: string): Promise<{ success: boolean; error?: string }> {
+    assert(workspaceId.trim().length > 0, "BrowserSessionService.navigate requires a workspaceId");
+    assert(url.trim().length > 0, "BrowserSessionService.navigate requires a url");
+
+    const backend = this.activeBackends.get(workspaceId);
+    if (backend == null) {
+      return Promise.resolve({ success: false, error: "No active session for workspace" });
+    }
+
+    return backend.navigate(url);
+  }
+
   getRecentActions(workspaceId: string): BrowserAction[] {
     assert(
       workspaceId.trim().length > 0,

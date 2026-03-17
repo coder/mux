@@ -1104,6 +1104,12 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) => {
           return context.browserSessionService.sendInput(input.workspaceId, input.input);
         }),
+      navigate: t
+        .input(schemas.browserSession.navigate.input)
+        .output(schemas.browserSession.navigate.output)
+        .handler(({ context, input }) => {
+          return context.browserSessionService.navigate(input.workspaceId, input.url);
+        }),
       subscribe: t
         .input(schemas.browserSession.subscribe.input)
         .output(schemas.browserSession.subscribe.output)
