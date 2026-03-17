@@ -270,10 +270,11 @@ describe("BrowserSessionBackend", () => {
     expect(session.streamErrorMessage).toContain("ECONNREFUSED");
   });
 
-  test("treats agent-browser session shutdown as an ended session", async () => {
+  test("treats disappearing daemon sessions as errors instead of neutral closure", async () => {
     const onSessionUpdate = mock(() => undefined);
+    const onError = mock(() => undefined);
     const onEnded = mock(() => undefined);
-    const backend = createBackend({ onSessionUpdate, onEnded });
+    const backend = createBackend({ onSessionUpdate, onError, onEnded });
 
     setSession(backend, {
       status: "live",
@@ -308,16 +309,20 @@ describe("BrowserSessionBackend", () => {
     await refreshNavigationMetadata.call(backend);
 
     const session = getSession(backend);
-    expect(session.status).toBe("ended");
-    expect(session.endReason).toBe("agent_closed");
-    expect(session.lastError).toBeNull();
-    expect(session.streamState).toBeNull();
-    expect(session.streamErrorMessage).toBeNull();
-    expect(onSessionUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "ended", endReason: "agent_closed" })
+    expect(session.status).toBe("error");
+    expect(session.endReason).toBeNull();
+    expect(session.lastError).toBe("Browser session disappeared unexpectedly.");
+    expect(session.streamState).toBe("error");
+    expect(session.streamErrorMessage).toBe("Browser session disappeared unexpectedly.");
+    expect(onEnded).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(
+      "workspace-123",
+      "Browser session disappeared unexpectedly."
     );
-    expect(onEnded).toHaveBeenCalledTimes(1);
-    expect(onEnded).toHaveBeenCalledWith("workspace-123");
+    expect(onSessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "error", endReason: null })
+    );
   });
 
   test("treats browser-window closure outside Mux as an ended session", async () => {

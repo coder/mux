@@ -774,8 +774,10 @@ export class BrowserSessionBackend {
     }
 
     if (!sessionProbe.exists) {
-      this.transitionToEnded("agent_closed");
-      return true;
+      log.debug("BrowserSessionBackend lost daemon session after unexpected stream close", {
+        workspaceId: this.options.workspaceId,
+      });
+      return false;
     }
 
     await this.refreshNavigationMetadata();
@@ -1022,7 +1024,11 @@ export class BrowserSessionBackend {
           this.handleMetadataFailure(sessionProbe.error);
           return;
         }
-        this.transitionToEnded(sessionProbe.exists ? "external_closed" : "agent_closed");
+        if (!sessionProbe.exists) {
+          this.transitionToError("Browser session disappeared unexpectedly.");
+          return;
+        }
+        this.transitionToEnded("external_closed");
         return;
       }
 
