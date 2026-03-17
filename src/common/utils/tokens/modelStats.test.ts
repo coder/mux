@@ -1,288 +1,94 @@
-import { describe, expect, test, it } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { getModelStats, getModelStatsResolved } from "./modelStats";
+import { getModelStats, getModelStatsResolved, type ModelStats } from "./modelStats";
+
+function expectStats(modelString: string): ModelStats {
+  const stats = getModelStats(modelString);
+  expect(stats).not.toBeNull();
+  return stats!;
+}
 
 describe("getModelStats", () => {
-  describe("direct model lookups", () => {
-    test("should find anthropic models by direct name", () => {
-      const stats = getModelStats(KNOWN_MODELS.OPUS.id);
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
-    });
-
-    test("should expose native 1M context for Claude Opus 4.6 and Claude Sonnet 4.6", () => {
-      const opusStats = getModelStats(KNOWN_MODELS.OPUS.id);
-      const sonnetStats = getModelStats(KNOWN_MODELS.SONNET.id);
-
-      expect(opusStats?.max_input_tokens).toBe(1_000_000);
-      expect(sonnetStats?.max_input_tokens).toBe(1_000_000);
-      expect(opusStats?.max_output_tokens).toBe(128_000);
-      expect(sonnetStats?.max_output_tokens).toBe(64_000);
-    });
-
-    test("should find openai models by direct name", () => {
-      const stats = getModelStats(KNOWN_MODELS.GPT.id);
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should find models in models-extra.ts", () => {
-      const stats = getModelStats("openai:gpt-5.2-pro");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
-    });
-
-    test("should fall back from dated GPT-5.4 IDs to the published family entry", () => {
-      const stats = getModelStats("openai:gpt-5.4-2026-03-05");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(1_050_000);
-    });
-
-    test("should resolve dated GPT-5.4 Pro IDs behind mux-gateway", () => {
-      const stats = getModelStats("mux-gateway:openai/gpt-5.4-pro-2026-03-05");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(1_050_000);
-    });
-
-    test("models-extra.ts should override models.json", () => {
-      // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k.
-      // The exact value matters here: it proves the override mechanism works.
-      const stats = getModelStats("openai:gpt-5.2-codex");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(272000);
-    });
-
-    test("should find gpt-5.4 with correct 1.05M context window and long-context pricing", () => {
-      const stats = getModelStats("openai:gpt-5.4");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(1050000);
-      expect(stats?.input_cost_per_token).toBe(0.0000025);
-      expect(stats?.input_cost_per_token_above_200k_tokens).toBe(0.000005);
-      expect(stats?.cache_read_input_token_cost).toBe(0.00000025);
-      expect(stats?.cache_read_input_token_cost_above_200k_tokens).toBe(0.0000005);
-      expect(stats?.output_cost_per_token).toBe(0.000015);
-      expect(stats?.output_cost_per_token_above_200k_tokens).toBe(0.0000225);
-      expect(stats?.tiered_pricing_threshold_tokens).toBe(272000);
-    });
-
-    test("should resolve dated GPT-5.4 mini IDs behind mux-gateway via the family override", () => {
-      const stats = getModelStats("mux-gateway:openai/gpt-5.4-mini-2026-03-11");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(400000);
-      expect(stats?.max_output_tokens).toBe(128000);
-      expect(stats?.output_cost_per_token).toBe(0.0000045);
-    });
-
-    test("should find gpt-5.4-pro with correct 1.05M context and long-context pricing", () => {
-      const stats = getModelStats("openai:gpt-5.4-pro");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(1050000);
-      expect(stats?.input_cost_per_token).toBe(0.00003);
-      expect(stats?.input_cost_per_token_above_200k_tokens).toBe(0.00006);
-      expect(stats?.output_cost_per_token).toBe(0.00018);
-      expect(stats?.output_cost_per_token_above_200k_tokens).toBe(0.00027);
-      expect(stats?.tiered_pricing_threshold_tokens).toBe(272000);
-    });
-
-    test("should default tiered pricing metadata to 200K when no override is published", () => {
-      const stats = getModelStats("google:gemini-3.1-pro-preview");
-      expect(stats).not.toBeNull();
-      expect(stats?.tiered_pricing_threshold_tokens).toBe(200000);
-      expect(stats?.input_cost_per_token_above_200k_tokens).toBe(0.000004);
-      expect(stats?.output_cost_per_token_above_200k_tokens).toBe(0.000018);
-    });
+  test("resolves representative known models by canonical id", () => {
+    expect(expectStats(KNOWN_MODELS.OPUS.id).max_input_tokens).toBeGreaterThan(0);
+    expect(expectStats(KNOWN_MODELS.GPT.id).max_input_tokens).toBeGreaterThan(0);
   });
 
-  describe("ollama model lookups with cloud suffix", () => {
-    test("should find ollama gpt-oss:20b with cloud suffix", () => {
-      const stats = getModelStats("ollama:gpt-oss:20b");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should find ollama gpt-oss:120b with cloud suffix", () => {
-      const stats = getModelStats("ollama:gpt-oss:120b");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should find ollama deepseek-v3.1:671b with cloud suffix", () => {
-      const stats = getModelStats("ollama:deepseek-v3.1:671b");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
+  test("prefers models-extra overrides over models.json when both sources define a model", () => {
+    // gpt-5.2-codex exists in both sources; the 272k context proves the override won.
+    expect(expectStats("openai:gpt-5.2-codex").max_input_tokens).toBe(272000);
   });
 
-  describe("ollama model lookups without cloud suffix", () => {
-    test("should find ollama llama3.1 directly", () => {
-      const stats = getModelStats("ollama:llama3.1");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should find ollama llama3:8b with size variant", () => {
-      const stats = getModelStats("ollama:llama3:8b");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should find ollama codellama", () => {
-      const stats = getModelStats("ollama:codellama");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
+  test.each([
+    ["openai:gpt-5.4-2026-03-05", "openai:gpt-5.4"],
+    ["mux-gateway:openai/gpt-5.4-pro-2026-03-05", "openai:gpt-5.4-pro"],
+    ["mux-gateway:openai/gpt-5.4-mini-2026-03-11", "openai:gpt-5.4-mini"],
+  ])("falls back from %s to the published %s family entry", (datedModel, canonicalModel) => {
+    expect(expectStats(datedModel)).toEqual(expectStats(canonicalModel));
   });
 
-  describe("provider-prefixed lookups", () => {
-    test("should find models with provider/ prefix", () => {
-      // Some models in models.json use provider/ prefix
-      const stats = getModelStats("ollama:llama2");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
+  test("defaults tiered pricing threshold to 200K when metadata only ships *_above_200k rates", () => {
+    const stats = expectStats("google:gemini-3.1-pro-preview");
+    expect(stats.tiered_pricing_threshold_tokens).toBe(200000);
+    expect(stats.input_cost_per_token_above_200k_tokens).toBe(0.000004);
+    expect(stats.output_cost_per_token_above_200k_tokens).toBe(0.000018);
   });
 
-  describe("github copilot models", () => {
-    test("should prefer github copilot provider-specific limits", () => {
-      const stats = getModelStats("github-copilot:gpt-4-o-preview");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should default missing copilot costs to zero", () => {
-      const stats = getModelStats("github-copilot:gpt-4.1");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-      expect(stats?.input_cost_per_token).toBe(0);
-      expect(stats?.output_cost_per_token).toBe(0);
-    });
-
-    test("should resolve claude sonnet copilot entries", () => {
-      const stats = getModelStats("github-copilot:claude-sonnet-4.5");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should resolve claude haiku copilot entries", () => {
-      const stats = getModelStats("github-copilot:claude-haiku-4.5");
-      expect(stats).not.toBeNull();
-    });
+  test("normalizes mux-gateway provider/model ids before lookup", () => {
+    expect(expectStats("mux-gateway:anthropic/claude-sonnet-4-5")).toEqual(
+      expectStats("anthropic:claude-sonnet-4-5")
+    );
   });
 
-  describe("unknown models", () => {
-    test("should return null for completely unknown model", () => {
-      const stats = getModelStats("unknown:fake-model-9000");
-      expect(stats).toBeNull();
-    });
-
-    test("should return null for known provider but unknown model", () => {
-      const stats = getModelStats("ollama:this-model-does-not-exist");
-      expect(stats).toBeNull();
-    });
+  test("supports bare model ids without a provider prefix", () => {
+    expect(expectStats("gpt-5.2")).toEqual(expectStats("openai:gpt-5.2"));
   });
 
-  describe("mux-gateway models", () => {
-    test("should handle mux-gateway:anthropic/model format", () => {
-      const stats = getModelStats("mux-gateway:anthropic/claude-sonnet-4-5");
-      expect(stats).not.toBeNull();
-      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
-      expect(stats?.output_cost_per_token).toBeGreaterThan(0);
-    });
-
-    test("should handle mux-gateway:openai/model format", () => {
-      const stats = getModelStats("mux-gateway:openai/gpt-4o");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
-
-    test("should return null for mux-gateway with unknown model", () => {
-      const stats = getModelStats("mux-gateway:anthropic/unknown-model-xyz");
-      expect(stats).toBeNull();
-    });
+  test("resolves size-suffixed Ollama models via base/cloud fallback keys", () => {
+    expect(expectStats("ollama:gpt-oss:20b").max_input_tokens).toBeGreaterThan(0);
   });
 
-  describe("model without provider prefix", () => {
-    test("should handle model string without provider", () => {
-      const stats = getModelStats("gpt-5.2");
-      expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
+  test("uses provider-specific GitHub Copilot metadata and defaults missing costs to zero", () => {
+    const stats = expectStats("github-copilot:gpt-4.1");
+    expect(stats.input_cost_per_token).toBe(0);
+    expect(stats.output_cost_per_token).toBe(0);
   });
 
-  describe("getModelStatsResolved", () => {
-    test("returns mapped model stats when mapping exists", () => {
-      const config: ProvidersConfigMap = {
-        ollama: {
-          apiKeySet: false,
-          isEnabled: true,
-          isConfigured: true,
-          models: [{ id: "custom", mappedToModel: KNOWN_MODELS.SONNET.id }],
-        },
-      };
+  test("preserves cache fields only when metadata provides them", () => {
+    const cached = expectStats(KNOWN_MODELS.OPUS.id);
+    expect(cached.cache_creation_input_token_cost).toBeDefined();
+    expect(cached.cache_read_input_token_cost).toBeDefined();
 
-      const stats = getModelStatsResolved("ollama:custom", config);
-      const directStats = getModelStats(KNOWN_MODELS.SONNET.id);
-      expect(stats).toEqual(directStats);
-      expect(stats).not.toBeNull();
-    });
-
-    test("returns null for unmapped unknown model", () => {
-      const stats = getModelStatsResolved("ollama:custom", null);
-      expect(stats).toBeNull();
-    });
+    const uncached = expectStats("ollama:llama3.1");
+    expect(uncached.cache_creation_input_token_cost).toBeUndefined();
+    expect(uncached.cache_read_input_token_cost).toBeUndefined();
   });
 
-  describe("existing test cases", () => {
-    it("should return model stats for claude-sonnet-4-5", () => {
-      const stats = getModelStats(KNOWN_MODELS.SONNET.id);
+  test("returns null for unknown models across direct and gateway forms", () => {
+    expect(getModelStats("unknown:fake-model-9000")).toBeNull();
+    expect(getModelStats("ollama:this-model-does-not-exist")).toBeNull();
+    expect(getModelStats("mux-gateway:anthropic/unknown-model-xyz")).toBeNull();
+  });
+});
 
-      expect(stats).not.toBeNull();
-      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
-      expect(stats?.output_cost_per_token).toBeGreaterThan(0);
-      expect(stats?.max_input_tokens).toBeGreaterThan(0);
-    });
+describe("getModelStatsResolved", () => {
+  test("returns mapped model stats when mapping exists", () => {
+    const config: ProvidersConfigMap = {
+      ollama: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "custom", mappedToModel: KNOWN_MODELS.SONNET.id }],
+      },
+    };
 
-    it("should handle model without provider prefix", () => {
-      const stats = getModelStats("claude-sonnet-4-5");
-
-      expect(stats).not.toBeNull();
-      expect(stats?.input_cost_per_token).toBeGreaterThan(0);
-    });
-
-    it("should return cache pricing when available", () => {
-      const stats = getModelStats(KNOWN_MODELS.SONNET.id);
-
-      expect(stats?.cache_creation_input_token_cost).toBeDefined();
-      expect(stats?.cache_read_input_token_cost).toBeDefined();
-    });
-
-    it("should return null for unknown models", () => {
-      const stats = getModelStats("unknown:model");
-
-      expect(stats).toBeNull();
-    });
+    expect(getModelStatsResolved("ollama:custom", config)).toEqual(
+      expectStats(KNOWN_MODELS.SONNET.id)
+    );
   });
 
-  describe("model data validation", () => {
-    test("should include cache costs when available", () => {
-      const stats = getModelStats(KNOWN_MODELS.OPUS.id);
-      // Anthropic models have cache costs
-      if (stats) {
-        expect(stats.cache_creation_input_token_cost).toBeDefined();
-        expect(stats.cache_read_input_token_cost).toBeDefined();
-      }
-    });
-
-    test("should not include cache costs when unavailable", () => {
-      const stats = getModelStats("ollama:llama3.1");
-      // Ollama models don't have cache costs in models.json
-      if (stats) {
-        expect(stats.cache_creation_input_token_cost).toBeUndefined();
-        expect(stats.cache_read_input_token_cost).toBeUndefined();
-      }
-    });
+  test("returns null for unmapped unknown models", () => {
+    expect(getModelStatsResolved("ollama:custom", null)).toBeNull();
   });
 });

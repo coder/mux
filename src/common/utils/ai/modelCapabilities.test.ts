@@ -28,8 +28,7 @@ describe("getModelCapabilities", () => {
     expect(caps).not.toBeNull();
   });
 
-  it("returns capabilities for models present only in models-extra", () => {
-    // This model is defined in models-extra.ts but not (yet) in upstream models.json.
+  it("resolves gateway-scoped vendor/model ids that stay outside the canonical provider set", () => {
     const caps = getModelCapabilities("openrouter:z-ai/glm-4.6");
     expect(caps).not.toBeNull();
   });

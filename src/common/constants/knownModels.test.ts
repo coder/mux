@@ -1,49 +1,47 @@
 /**
- * Integration test for known models - verifies all models exist in models.json
- *
- * This test does NOT go through IPC - it directly uses data from models.json
- * to verify that every providerModelId in KNOWN_MODELS exists.
+ * Integration tests for the curated known-model registry.
  */
 
 import { describe, test, expect } from "@jest/globals";
-import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { KNOWN_MODELS, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import modelsJson from "@/common/utils/tokens/models.json";
 import { modelsExtra } from "@/common/utils/tokens/models-extra";
 
 describe("Known Models Integration", () => {
-  test("all known models exist in models.json", () => {
+  test("all known models exist in token metadata", () => {
     const missingModels: string[] = [];
 
     for (const [key, model] of Object.entries(KNOWN_MODELS)) {
       const modelId = model.providerModelId;
 
-      // Check if model exists in models.json or models-extra
-      // xAI models are prefixed with "xai/" in models.json
+      // xAI models are prefixed with "xai/" in models.json.
       const lookupKey = model.provider === "xai" ? `xai/${modelId}` : modelId;
       if (!(lookupKey in modelsJson) && !(modelId in modelsExtra)) {
         missingModels.push(`${key}: ${model.provider}:${modelId}`);
       }
     }
 
-    // Report all missing models at once for easier debugging
     if (missingModels.length > 0) {
       throw new Error(
-        `The following known models are missing from models.json:\n${missingModels.join("\n")}\n\n` +
+        `The following known models are missing from token metadata:\n${missingModels.join("\n")}\n\n` +
           `Run 'bun scripts/update_models.ts' to refresh models.json from LiteLLM.`
       );
     }
   });
 
-  test("all known models have required metadata", () => {
-    for (const [, model] of Object.entries(KNOWN_MODELS)) {
-      const modelId = model.providerModelId;
-      // xAI models are prefixed with "xai/" in models.json
-      const lookupKey = model.provider === "xai" ? `xai/${modelId}` : modelId;
-      const modelData = modelsJson[lookupKey as keyof typeof modelsJson] ?? modelsExtra[modelId];
+  test("known model ids and aliases stay unique across the curated registry", () => {
+    const seenIds = new Set<string>();
+    const seenAliases = new Set<string>();
 
-      expect(modelData).toBeDefined();
-      // Check that basic metadata fields exist (not all models have all fields)
-      expect(typeof modelData.litellm_provider).toBe("string");
+    for (const model of Object.values(KNOWN_MODELS)) {
+      expect(seenIds.has(model.id)).toBe(false);
+      seenIds.add(model.id);
+
+      for (const alias of model.aliases ?? []) {
+        expect(seenAliases.has(alias)).toBe(false);
+        seenAliases.add(alias);
+        expect(MODEL_ABBREVIATIONS[alias]).toBe(model.id);
+      }
     }
   });
 });

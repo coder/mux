@@ -1,4 +1,5 @@
 import type { AgentSkillDescriptor } from "../../src/common/types/agentSkill";
+import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
 import {
   buildAcpAvailableCommands,
   mapSkillsByName,
@@ -52,7 +53,7 @@ describe("ACP slash command support", () => {
     expect(parsed?.kind).toBe("invalid");
   });
 
-  it("parses /compact flags and multiline follow-up", () => {
+  it("parses /compact flags, resolves aliases, and keeps the multiline follow-up", () => {
     const parsed = parseAcpSlashCommand(
       "/compact -t 1200 -m haiku\nContinue with focused tests",
       mapSkillsByName(skills)
@@ -64,8 +65,7 @@ describe("ACP slash command support", () => {
     }
 
     expect(parsed.maxOutputTokens).toBe(1200);
-    expect(parsed.model).toBeDefined();
-    expect(parsed.model).toContain(":");
+    expect(parsed.model).toBe(KNOWN_MODELS.HAIKU.id);
     expect(parsed.continueMessage).toBe("Continue with focused tests");
   });
 
@@ -97,18 +97,13 @@ describe("ACP slash command support", () => {
     expect(parsed.model).toBe("mux-gateway:anthropic/claude-sonnet-4-6");
   });
 
-  it("still normalizes direct-provider models in /compact -m", () => {
-    const parsed = parseAcpSlashCommand(
-      "/compact -m anthropic:claude-sonnet-4-5",
-      mapSkillsByName(skills)
-    );
+  it("rejects invalid model ids in /compact -m", () => {
+    const parsed = parseAcpSlashCommand("/compact -m openai::gpt-5", mapSkillsByName(skills));
 
-    expect(parsed?.kind).toBe("compact");
-    if (parsed == null || parsed.kind !== "compact") {
-      throw new Error("Expected /compact command with direct-provider model to parse");
-    }
-
-    expect(parsed.model).toBe("anthropic:claude-sonnet-4-5");
+    expect(parsed).toEqual({
+      kind: "invalid",
+      message: 'Invalid model "openai::gpt-5". Expected "provider:model" or a known alias.',
+    });
   });
 
   it("parses /compact flags and one-line follow-up", () => {

@@ -506,7 +506,18 @@ function normalizeModelForCommand(modelInput: string): string | null {
     ? resolved.trim()
     : normalizeToCanonical(resolved).trim();
 
-  return isValidModelFormat(normalized) ? normalized : null;
+  if (!isValidModelFormat(normalized)) {
+    return null;
+  }
+
+  // Keep ACP slash commands aligned with the rest of model input handling by rejecting
+  // malformed provider::model strings that happen to satisfy the first-colon check.
+  const separatorIndex = normalized.indexOf(":");
+  if (normalized.slice(separatorIndex + 1).startsWith(":")) {
+    return null;
+  }
+
+  return normalized;
 }
 
 function parseMultilineCommand(rawInput: string): ParsedMultilineCommand {

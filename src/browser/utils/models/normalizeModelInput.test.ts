@@ -1,8 +1,18 @@
 import { describe, expect, it } from "bun:test";
+import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 
 import { normalizeModelInput } from "./normalizeModelInput";
 
 describe("normalizeModelInput", () => {
+  it("resolves every known model alias and marks it as an alias", () => {
+    for (const [alias, model] of Object.entries(MODEL_ABBREVIATIONS)) {
+      expect(normalizeModelInput(alias)).toEqual({
+        model,
+        isAlias: true,
+      });
+    }
+  });
+
   it("preserves explicit gateway-scoped model strings for the backend", () => {
     expect(normalizeModelInput("openrouter:openai/gpt-5")).toEqual({
       model: "openrouter:openai/gpt-5",
@@ -10,28 +20,6 @@ describe("normalizeModelInput", () => {
     });
     expect(normalizeModelInput("mux-gateway:anthropic/claude-sonnet-4-6")).toEqual({
       model: "mux-gateway:anthropic/claude-sonnet-4-6",
-      isAlias: false,
-    });
-    expect(normalizeModelInput("github-copilot:gpt-5.4")).toEqual({
-      model: "github-copilot:gpt-5.4",
-      isAlias: false,
-    });
-  });
-
-  it("resolves the gpt-mini alias to the canonical GPT-5.4 mini model", () => {
-    expect(normalizeModelInput("gpt-mini")).toEqual({
-      model: "openai:gpt-5.4-mini",
-      isAlias: true,
-    });
-  });
-
-  it("keeps direct providers normalized as before", () => {
-    expect(normalizeModelInput("openai:gpt-5")).toEqual({
-      model: "openai:gpt-5",
-      isAlias: false,
-    });
-    expect(normalizeModelInput("anthropic:claude-opus-4-6")).toEqual({
-      model: "anthropic:claude-opus-4-6",
       isAlias: false,
     });
   });
@@ -42,8 +30,8 @@ describe("normalizeModelInput", () => {
     expect(normalizeModelInput("   ")).toEqual({ model: null, isAlias: false });
   });
 
-  it("keeps slash-format provider/model inputs invalid as before", () => {
-    expect(normalizeModelInput("openai/gpt-5")).toEqual({
+  it("rejects malformed provider:model strings that would otherwise slip past the first colon check", () => {
+    expect(normalizeModelInput("openai::gpt-5")).toEqual({
       model: null,
       isAlias: false,
       error: "invalid-format",

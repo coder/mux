@@ -21,6 +21,10 @@ let routeOverrides: Record<string, string> = {};
 
 const OPENROUTER_OPENAI_CUSTOM_MODEL = "openrouter:openai/gpt-5";
 
+// Seed a couple of non-built-in OpenAI entries so these tests exercise real filtering logic
+// instead of vacuous "not present because it was never suggested" assertions.
+const SEEDED_OPENAI_CUSTOM_MODELS = ["gpt-5.2-codex", "gpt-5.2-pro"];
+
 interface TestApi {
   config?: {
     updateModelPreferences?: (patch: {
@@ -257,55 +261,83 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("codex oauth only: hides API-key-only OpenAI models", () => {
+  test("codex oauth only: shows OAuth-routable OpenAI models and hides API-key-only ones", () => {
     providersConfig = {
-      openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: true },
+      openai: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        codexOauthSet: true,
+        models: SEEDED_OPENAI_CUSTOM_MODELS,
+      },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT.id);
-    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).not.toContain(KNOWN_MODELS.GPT_PRO.id);
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
     expect(result.current.models).not.toContain("openai:gpt-5.2-pro");
   });
 
-  test("api key only: hides Codex OAuth required OpenAI models", () => {
+  test("api key only: hides only OAuth-required OpenAI models", () => {
     providersConfig = {
-      openai: { apiKeySet: true, isEnabled: true, isConfigured: true, codexOauthSet: false },
+      openai: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        codexOauthSet: false,
+        models: SEEDED_OPENAI_CUSTOM_MODELS,
+      },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
-    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
 
   test("api key + codex oauth: allows all OpenAI models", () => {
     providersConfig = {
-      openai: { apiKeySet: true, isEnabled: true, isConfigured: true, codexOauthSet: true },
+      openai: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        codexOauthSet: true,
+        models: SEEDED_OPENAI_CUSTOM_MODELS,
+      },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
-    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
   });
 
-  test("neither with configured provider: hides Codex OAuth required OpenAI models", () => {
+  test("neither auth mode: still hides only OAuth-required OpenAI models", () => {
     providersConfig = {
-      openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: false },
+      openai: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        codexOauthSet: false,
+        models: SEEDED_OPENAI_CUSTOM_MODELS,
+      },
     };
 
     const { result } = renderHook(() => useModelsFromSettings());
 
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_PRO.id);
-    expect(result.current.models).not.toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-codex");
+    expect(result.current.models).toContain("openai:gpt-5.2-pro");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(result.current.models).not.toContain("openai:gpt-5.3-codex-spark");
   });
