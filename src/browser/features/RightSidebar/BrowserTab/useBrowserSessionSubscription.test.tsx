@@ -7,22 +7,59 @@ import type {
   BrowserSessionEvent,
 } from "@/common/types/browserSession";
 import { SUBSCRIPTION_HEARTBEAT_INTERVAL_MS } from "@/common/utils/withQueueHeartbeat";
+import type { useBrowserSessionSubscription as UseBrowserSessionSubscription } from "./useBrowserSessionSubscription";
 
 const INITIAL_RESUBSCRIBE_BACKOFF_MS = 1_000;
 const STALE_SUBSCRIPTION_MS = 3 * SUBSCRIPTION_HEARTBEAT_INTERVAL_MS;
 
-type TimerRecord = {
+interface TimerRecord {
   callback: () => void;
   runAt: number;
-};
+}
 
-type InstalledTimerGlobals = {
+interface InstalledTimerGlobals {
   clearTimeout: typeof globalThis.clearTimeout;
   dateNow: typeof Date.now;
   setTimeout: typeof globalThis.setTimeout;
   windowClearTimeout: typeof window.clearTimeout;
   windowSetTimeout: typeof window.setTimeout;
-};
+}
+
+type TimeoutCallback = (...args: unknown[]) => void;
+
+type BrowserSessionSubscribe = (
+  input: { workspaceId: string },
+  options: { signal: AbortSignal }
+) => Promise<AsyncIterableIterator<BrowserSessionEvent>>;
+
+let currentApi: {
+  browserSession: {
+    subscribe: BrowserSessionSubscribe;
+  };
+} | null = null;
+
+function installApiMock() {
+  void mock.module("@/browser/contexts/API", () => ({
+    useAPI: () => ({
+      api: currentApi,
+      status: currentApi ? ("connected" as const) : ("error" as const),
+      error: null,
+      authenticate: () => undefined,
+      retry: () => undefined,
+    }),
+  }));
+}
+
+installApiMock();
+
+import { useBrowserSessionSubscription as untypedUseBrowserSessionSubscription } from "./useBrowserSessionSubscription.ts?test-isolation=static";
+
+const useBrowserSessionSubscription: typeof UseBrowserSessionSubscription =
+  untypedUseBrowserSessionSubscription as unknown as typeof UseBrowserSessionSubscription;
+
+function isTimeoutCallback(handler: TimerHandler): handler is TimeoutCallback {
+  return typeof handler === "function";
+}
 
 function createTimerControls() {
   let now = 0;
@@ -95,14 +132,17 @@ function createTimerControls() {
       };
 
       globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
-        if (typeof handler !== "function") {
+        if (!isTimeoutCallback(handler)) {
           throw new TypeError("Tests only support function callbacks for setTimeout()");
         }
 
         const timerId = nextTimerId;
         nextTimerId += 1;
+        const callback = handler;
         timers.set(timerId, {
-          callback: () => handler(...args),
+          callback: () => {
+            callback(...args);
+          },
           runAt: now + Math.max(delay ?? 0, 0),
         });
         return timerId as unknown as ReturnType<typeof setTimeout>;
@@ -135,33 +175,11 @@ function createTimerControls() {
 
 const timerControls = createTimerControls();
 
-type BrowserSessionSubscribe = (
-  input: { workspaceId: string },
-  options: { signal: AbortSignal }
-) => Promise<AsyncIterableIterator<BrowserSessionEvent>>;
-
 type MockSubscription = ReturnType<typeof createMockSubscription>;
-
-type BrowserSessionHookModule = typeof import("./useBrowserSessionSubscription");
-
-let currentApi: {
-  browserSession: {
-    subscribe: BrowserSessionSubscribe;
-  };
-} | null = null;
-let hookImportCounter = 0;
-let useBrowserSessionSubscription: BrowserSessionHookModule["useBrowserSessionSubscription"];
-
-async function loadUseBrowserSessionSubscription() {
-  hookImportCounter += 1;
-  return (await import(
-    `./useBrowserSessionSubscription.ts?test-isolation=${hookImportCounter}`
-  )) as BrowserSessionHookModule;
-}
 
 function createMockSubscription() {
   let pendingResolve: ((value: IteratorResult<BrowserSessionEvent>) => void) | null = null;
-  const queuedResults: IteratorResult<BrowserSessionEvent>[] = [];
+  const queuedResults: Array<IteratorResult<BrowserSessionEvent>> = [];
   let closed = false;
 
   const getDoneResult = (): IteratorReturnResult<undefined> => ({
@@ -181,10 +199,11 @@ function createMockSubscription() {
   };
 
   const returnMock = mock<(value?: unknown) => Promise<IteratorResult<BrowserSessionEvent>>>(
-    async (_value?: unknown) => {
+    (_value?: unknown) => {
       closed = true;
-      resolveNext(getDoneResult());
-      return getDoneResult();
+      const doneResult = getDoneResult();
+      resolveNext(doneResult);
+      return Promise.resolve(doneResult);
     }
   );
 
@@ -296,9 +315,10 @@ describe("useBrowserSessionSubscription", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
   let subscribeMock: ReturnType<typeof mock<BrowserSessionSubscribe>>;
+  let subscribeCalls: Array<Parameters<BrowserSessionSubscribe>>;
   let subscriptions: MockSubscription[];
 
-  beforeEach(async () => {
+  beforeEach(() => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
 
@@ -308,7 +328,9 @@ describe("useBrowserSessionSubscription", () => {
     timerControls.install();
 
     subscriptions = [];
-    subscribeMock = mock<BrowserSessionSubscribe>((_input, _options) => {
+    subscribeCalls = [];
+    subscribeMock = mock<BrowserSessionSubscribe>((input, options) => {
+      subscribeCalls.push([input, options]);
       const subscription = createMockSubscription();
       subscriptions.push(subscription);
       return Promise.resolve(subscription.iterator);
@@ -319,19 +341,10 @@ describe("useBrowserSessionSubscription", () => {
       },
     };
 
-    // Neighboring BrowserTab tests mock both the hook module and the API context globally.
-    // Re-install this file's API mock and import a cache-busted copy of the real hook so each
-    // test observes its own fake client and timer controls, even after those other files run.
-    void mock.module("@/browser/contexts/API", () => ({
-      useAPI: () => ({
-        api: currentApi,
-        status: currentApi ? ("connected" as const) : ("error" as const),
-        error: null,
-        authenticate: () => undefined,
-        retry: () => undefined,
-      }),
-    }));
-    ({ useBrowserSessionSubscription } = await loadUseBrowserSessionSubscription());
+    // Neighboring BrowserTab tests mock the API context globally.
+    // Re-install this file's API mock before each test so the statically imported hook
+    // always reads this test's fake client and timer controls.
+    installApiMock();
 
     Object.defineProperty(document, "hidden", {
       configurable: true,
@@ -353,10 +366,14 @@ describe("useBrowserSessionSubscription", () => {
     await flushEffects();
 
     expect(subscribeMock).toHaveBeenCalledTimes(1);
-    expect(subscribeMock.mock.calls[0]?.[0]).toEqual({ workspaceId: "workspace-1" });
-    expect(subscribeMock.mock.calls[0]?.[1]).toMatchObject({
-      signal: expect.any(AbortSignal),
-    });
+    expect(subscribeCalls).toHaveLength(1);
+    const firstSubscribeCall = subscribeCalls[0];
+    if (!firstSubscribeCall) {
+      throw new Error("Expected the hook to subscribe on mount");
+    }
+    const [subscribeInput, subscribeOptions] = firstSubscribeCall;
+    expect(subscribeInput).toEqual({ workspaceId: "workspace-1" });
+    expect(subscribeOptions.signal).toBeInstanceOf(AbortSignal);
   });
 
   test("processes snapshot events", async () => {
