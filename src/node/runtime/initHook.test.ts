@@ -1,6 +1,9 @@
 import { describe, it, expect } from "bun:test";
-import { LineBuffer, createLineBufferedLoggers, getMuxEnv } from "./initHook";
-import type { InitLogger } from "./Runtime";
+import * as fsPromises from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+import { LineBuffer, createLineBufferedLoggers, getMuxEnv, runWorkspaceInitHook } from "./initHook";
+import type { InitLogger, WorkspaceInitParams } from "./Runtime";
 
 describe("LineBuffer", () => {
   it("should buffer incomplete lines", () => {
@@ -108,6 +111,116 @@ describe("createLineBufferedLoggers", () => {
 
     loggers.stderr.flush();
     expect(stderrLines).toEqual(["also incomplete"]);
+  });
+});
+
+function createMockInitLogger() {
+  const steps: string[] = [];
+  const stderr: string[] = [];
+  const completions: number[] = [];
+
+  const logger: InitLogger = {
+    logStep: (message) => steps.push(message),
+    logStdout: () => undefined,
+    logStderr: (line) => stderr.push(line),
+    logComplete: (exitCode) => completions.push(exitCode),
+  };
+
+  return { logger, steps, stderr, completions };
+}
+
+function createWorkspaceInitParams(
+  initLogger: InitLogger,
+  overrides?: Partial<WorkspaceInitParams>
+): WorkspaceInitParams {
+  return {
+    projectPath: "/project",
+    branchName: "feature/runtime-cleanup",
+    trunkBranch: "main",
+    workspacePath: "/workspace",
+    initLogger,
+    trusted: true,
+    ...overrides,
+  };
+}
+
+describe("runWorkspaceInitHook", () => {
+  it("runs beforeHook even when skipInitHook disables the repo hook", async () => {
+    const { logger, steps, completions } = createMockInitLogger();
+    const order: string[] = [];
+
+    const result = await runWorkspaceInitHook({
+      params: createWorkspaceInitParams(logger, { skipInitHook: true }),
+      runtimeType: "ssh",
+      hookCheckPath: "/project",
+      beforeHook: () => {
+        order.push("beforeHook");
+        return Promise.resolve();
+      },
+      runHook: () => {
+        order.push("runHook");
+        return Promise.resolve();
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(order).toEqual(["beforeHook"]);
+    expect(steps).toContain("Skipping .mux/init hook (disabled for this task)");
+    expect(completions).toEqual([0]);
+  });
+
+  it("runs the hook with MUX env when .mux/init exists", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-init-hook-"));
+    const hookRoot = path.join(tempRoot, "repo");
+    await fsPromises.mkdir(path.join(hookRoot, ".mux"), { recursive: true });
+    await fsPromises.writeFile(path.join(hookRoot, ".mux", "init"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const { logger, completions } = createMockInitLogger();
+    const calls: Array<{ muxEnv: Record<string, string>; abortSignal?: AbortSignal }> = [];
+
+    try {
+      const result = await runWorkspaceInitHook({
+        params: createWorkspaceInitParams(logger, {
+          projectPath: hookRoot,
+          workspacePath: "/workspace/review-slot",
+          env: { TEST_SECRET: "1" },
+        }),
+        runtimeType: "worktree",
+        hookCheckPath: hookRoot,
+        runHook: ({ muxEnv, abortSignal }) => {
+          calls.push({ muxEnv, abortSignal });
+          return Promise.resolve();
+        },
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.muxEnv.MUX_PROJECT_PATH).toBe(hookRoot);
+      expect(calls[0]?.muxEnv.MUX_RUNTIME).toBe("worktree");
+      expect(calls[0]?.muxEnv.MUX_WORKSPACE_NAME).toBe("feature/runtime-cleanup");
+      expect(calls[0]?.muxEnv.TEST_SECRET).toBe("1");
+      expect(completions).toEqual([]);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports initialization failure when beforeHook throws", async () => {
+    const { logger, stderr, completions } = createMockInitLogger();
+
+    const result = await runWorkspaceInitHook({
+      params: createWorkspaceInitParams(logger),
+      runtimeType: "docker",
+      hookCheckPath: "/project",
+      beforeHook: () => Promise.reject(new Error("prep failed")),
+      runHook: () => Promise.resolve(),
+    });
+
+    expect(result).toEqual({ success: false, error: "prep failed" });
+    expect(stderr).toEqual(["Initialization failed: prep failed"]);
+    expect(completions).toEqual([-1]);
   });
 });
 

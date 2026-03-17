@@ -89,6 +89,7 @@ describe("workspace checkout orchestration", () => {
         expect(createSpy).toHaveBeenCalledWith({
           projectPath: "/project",
           branchName: "feature",
+          directoryName: "feature",
           trunkBranch: "main",
           initLogger,
           abortSignal: abortController.signal,

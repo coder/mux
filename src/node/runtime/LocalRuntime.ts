@@ -8,7 +8,7 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
 } from "./Runtime";
-import { checkInitHookExists, getMuxEnv, shouldSkipInitHook } from "./initHook";
+import { runWorkspaceInitHook } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 
@@ -86,34 +86,14 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
-
-    try {
-      if (shouldSkipInitHook(params, initLogger)) {
-        initLogger.logComplete(0);
-        return { success: true };
-      }
-
-      // Run .mux/init hook if it exists
-      const hookExists = await checkInitHookExists(projectPath);
-      if (hookExists) {
-        initLogger.enterHookPhase?.();
-        const muxEnv = { ...env, ...getMuxEnv(projectPath, "local", branchName) };
-        await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
-      } else {
-        // No hook - signal completion immediately
-        initLogger.logComplete(0);
-      }
-      return { success: true };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      initLogger.logComplete(-1);
-      return {
-        success: false,
-        error: errorMsg,
-      };
-    }
+    return runWorkspaceInitHook({
+      params,
+      runtimeType: "local",
+      hookCheckPath: params.projectPath,
+      runHook: async ({ muxEnv, initLogger, abortSignal }) => {
+        await this.runInitHook(params.workspacePath, muxEnv, initLogger, abortSignal);
+      },
+    });
   }
 
   /**

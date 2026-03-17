@@ -28,16 +28,26 @@ function createNullInitLogger(): InitLogger {
   };
 }
 
-async function createCreateWorkspaceFixture(existingBranchName?: string) {
+async function createWorktreeManagerFixture(options?: {
+  existingBranchName?: string;
+  currentBranchName?: string;
+  tempDirPrefix?: string;
+}) {
   const rootDir = await fsPromises.realpath(
-    await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-create-"))
+    await fsPromises.mkdtemp(
+      path.join(os.tmpdir(), options?.tempDirPrefix ?? "worktree-manager-create-")
+    )
   );
   const projectPath = path.join(rootDir, "repo");
   await fsPromises.mkdir(projectPath, { recursive: true });
   initGitRepo(projectPath);
 
-  if (existingBranchName) {
-    execSync(`git branch ${existingBranchName}`, { cwd: projectPath, stdio: "ignore" });
+  if (options?.currentBranchName) {
+    execSync(`git checkout -b ${options.currentBranchName}`, { cwd: projectPath, stdio: "ignore" });
+  }
+
+  if (options?.existingBranchName) {
+    execSync(`git branch ${options.existingBranchName}`, { cwd: projectPath, stdio: "ignore" });
   }
 
   const srcBaseDir = path.join(rootDir, "src");
@@ -99,7 +109,9 @@ describe("WorktreeManager.createWorkspace", () => {
     it(
       testCase.name,
       async () => {
-        const fixture = await createCreateWorkspaceFixture(testCase.existingBranchName);
+        const fixture = await createWorktreeManagerFixture({
+          existingBranchName: testCase.existingBranchName,
+        });
 
         try {
           const workspacePath = fixture.manager.getWorkspacePath(
@@ -150,24 +162,104 @@ describe("WorktreeManager.createWorkspace", () => {
       20_000
     );
   }
+  it("uses directoryName for the workspace path while checking out the requested branch", async () => {
+    const fixture = await createWorktreeManagerFixture();
+    const branchName = "feature-branch";
+    const directoryName = "review-slot";
+
+    try {
+      const result = await fixture.manager.createWorkspace({
+        projectPath: fixture.projectPath,
+        branchName,
+        directoryName,
+        trunkBranch: "main",
+        initLogger: fixture.initLogger,
+        trusted: true,
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success || !result.workspacePath) {
+        throw new Error("Expected createWorkspace to return a workspace path");
+      }
+
+      expect(result.workspacePath).toBe(
+        fixture.manager.getWorkspacePath(fixture.projectPath, directoryName)
+      );
+      const checkedOutBranch = execSync("git branch --show-current", {
+        cwd: result.workspacePath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(checkedOutBranch).toBe(branchName);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 20_000);
+});
+
+describe("WorktreeManager.renameWorkspace", () => {
+  it("does not rename unrelated branches when the workspace tracks a different branch", async () => {
+    const fixture = await createWorktreeManagerFixture();
+
+    try {
+      const { projectPath, manager, initLogger } = fixture;
+      const branchName = "feature-branch";
+      const oldName = "review-slot";
+      const newName = "renamed-slot";
+      const createResult = await manager.createWorkspace({
+        projectPath,
+        branchName,
+        directoryName: oldName,
+        trunkBranch: "main",
+        initLogger,
+        trusted: true,
+      });
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) return;
+
+      execSync(`git branch ${oldName}`, { cwd: projectPath, stdio: "ignore" });
+
+      const renameResult = await manager.renameWorkspace(projectPath, oldName, newName, true);
+      expect(renameResult.success).toBe(true);
+
+      const trackedBranchAfter = execSync(`git branch --list "${branchName}"`, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(trackedBranchAfter).toContain(branchName);
+
+      const unrelatedBranchAfter = execSync(`git branch --list "${oldName}"`, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(unrelatedBranchAfter).toContain(oldName);
+
+      const newNameBranchAfter = execSync(`git branch --list "${newName}"`, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(newNameBranchAfter).toBe("");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 20_000);
 });
 
 describe("WorktreeManager.deleteWorkspace", () => {
   it("deletes non-agent branches when removing worktrees (force)", async () => {
-    const rootDir = await fsPromises.realpath(
-      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
-    );
+    const fixture = await createWorktreeManagerFixture({
+      tempDirPrefix: "worktree-manager-delete-",
+    });
 
     try {
-      const projectPath = path.join(rootDir, "repo");
-      await fsPromises.mkdir(projectPath, { recursive: true });
-      initGitRepo(projectPath);
-
-      const srcBaseDir = path.join(rootDir, "src");
-      await fsPromises.mkdir(srcBaseDir, { recursive: true });
-
-      const manager = new WorktreeManager(srcBaseDir);
-      const initLogger = createNullInitLogger();
+      const { projectPath, manager, initLogger } = fixture;
 
       const branchName = "feature_aaaaaaaaaa";
       const createResult = await manager.createWorkspace({
@@ -202,14 +294,14 @@ describe("WorktreeManager.deleteWorkspace", () => {
         .trim();
       expect(after).toBe("");
     } finally {
-      await fsPromises.rm(rootDir, { recursive: true, force: true });
+      await fixture.cleanup();
     }
   }, 20_000);
 
   it("force-delete fallback does not execute shell payloads embedded in branch names", async () => {
-    const rootDir = await fsPromises.realpath(
-      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
-    );
+    const fixture = await createWorktreeManagerFixture({
+      tempDirPrefix: "worktree-manager-delete-",
+    });
     const sentinelPath = path.join(
       os.tmpdir(),
       `mux_injection_test_${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -219,15 +311,7 @@ describe("WorktreeManager.deleteWorkspace", () => {
     let execFileAsyncSpy: { mockRestore: () => void } | null = null;
 
     try {
-      const projectPath = path.join(rootDir, "repo");
-      await fsPromises.mkdir(projectPath, { recursive: true });
-      initGitRepo(projectPath);
-
-      const srcBaseDir = path.join(rootDir, "src");
-      await fsPromises.mkdir(srcBaseDir, { recursive: true });
-
-      const manager = new WorktreeManager(srcBaseDir);
-      const initLogger = createNullInitLogger();
+      const { projectPath, manager, initLogger } = fixture;
 
       const createResult = await manager.createWorkspace({
         projectPath,
@@ -274,25 +358,184 @@ describe("WorktreeManager.deleteWorkspace", () => {
     } finally {
       execFileAsyncSpy?.mockRestore();
       await fsPromises.rm(sentinelPath, { force: true });
-      await fsPromises.rm(rootDir, { recursive: true, force: true });
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
+  it("deletes the checked-out branch instead of the workspace directory name", async () => {
+    const fixture = await createWorktreeManagerFixture({
+      tempDirPrefix: "worktree-manager-delete-",
+    });
+
+    try {
+      const { projectPath, manager, initLogger } = fixture;
+
+      const branchName = "feature-dir-split";
+      const directoryName = "review-slot";
+      const createResult = await manager.createWorkspace({
+        projectPath,
+        branchName,
+        directoryName,
+        trunkBranch: "main",
+        initLogger,
+        trusted: true,
+      });
+      expect(createResult.success).toBe(true);
+      if (!createResult.success) return;
+
+      execSync(`git branch ${directoryName}`, { cwd: projectPath, stdio: "ignore" });
+      execSync("git checkout -b temp-checkout", {
+        cwd: createResult.workspacePath,
+        stdio: "ignore",
+      });
+
+      const deleteResult = await manager.deleteWorkspace(projectPath, directoryName, true);
+      expect(deleteResult.success).toBe(true);
+
+      const featureBranchAfter = execSync(`git branch --list "${branchName}"`, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(featureBranchAfter).toBe("");
+
+      const directoryBranchAfter = execSync(`git branch --list "${directoryName}"`, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(directoryBranchAfter).toBe(directoryName);
+
+      const tempBranchAfter = execSync('git branch --list "temp-checkout"', {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(tempBranchAfter).toBe("temp-checkout");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
+  it("uses the persisted workspace branch when branch lookup is unavailable", async () => {
+    const fixture = await createWorktreeManagerFixture({
+      tempDirPrefix: "worktree-manager-delete-",
+    });
+
+    try {
+      const { rootDir, projectPath: mainProjectPath, manager, initLogger } = fixture;
+      const linkedProjectPath = path.join(rootDir, "source-worktree");
+      execSync(`git worktree add -b source-worktree "${linkedProjectPath}"`, {
+        cwd: mainProjectPath,
+        stdio: "ignore",
+      });
+
+      const branchName = "feature-missing-branch";
+      const directoryName = "review-slot-missing";
+      const createResult = await manager.createWorkspace({
+        projectPath: linkedProjectPath,
+        branchName,
+        directoryName,
+        trunkBranch: "main",
+        initLogger,
+        trusted: true,
+      });
+      expect(createResult.success).toBe(true);
+      if (!createResult.success || !createResult.workspacePath) {
+        throw new Error("Expected workspacePath from createWorkspace");
+      }
+
+      execSync(`git branch ${directoryName}`, { cwd: linkedProjectPath, stdio: "ignore" });
+      await fsPromises.rm(createResult.workspacePath, { recursive: true, force: true });
+      execSync("git worktree prune", { cwd: linkedProjectPath, stdio: "ignore" });
+
+      const deleteResult = await manager.deleteWorkspace(linkedProjectPath, directoryName, true);
+      expect(deleteResult.success).toBe(true);
+
+      const featureBranchAfter = execSync(`git branch --list "${branchName}"`, {
+        cwd: linkedProjectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(featureBranchAfter).toBe("");
+
+      const directoryBranchAfter = execSync(`git branch --list "${directoryName}"`, {
+        cwd: linkedProjectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(directoryBranchAfter).toBe(directoryName);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
+  it("falls back to the workspace name when this workspace has no branch map entry", async () => {
+    const fixture = await createWorktreeManagerFixture({
+      tempDirPrefix: "worktree-manager-delete-",
+    });
+
+    try {
+      const { projectPath, manager, initLogger } = fixture;
+      const workspaceName = "feature-legacy-workspace";
+      const createResult = await manager.createWorkspace({
+        projectPath,
+        branchName: workspaceName,
+        trunkBranch: "main",
+        initLogger,
+        trusted: true,
+      });
+      expect(createResult.success).toBe(true);
+      if (!createResult.success || !createResult.workspacePath) {
+        throw new Error("Expected workspacePath from createWorkspace");
+      }
+
+      const survivingWorkspace = await manager.createWorkspace({
+        projectPath,
+        branchName: "feature-mapped-workspace",
+        trunkBranch: "main",
+        initLogger,
+        trusted: true,
+      });
+      expect(survivingWorkspace.success).toBe(true);
+      const branchMapPath = path.join(projectPath, ".git", "mux-workspace-branches.json");
+      const branchMap = JSON.parse(await fsPromises.readFile(branchMapPath, "utf8")) as Record<
+        string,
+        string
+      >;
+      delete branchMap[workspaceName];
+      await fsPromises.writeFile(branchMapPath, `${JSON.stringify(branchMap, null, 2)}\n`);
+
+      await fsPromises.rm(createResult.workspacePath, { recursive: true, force: true });
+      execSync("git worktree prune", { cwd: projectPath, stdio: "ignore" });
+
+      const deleteResult = await manager.deleteWorkspace(projectPath, workspaceName, true);
+      expect(deleteResult.success).toBe(true);
+
+      const branchAfter = execSync(`git branch --list "${workspaceName}"`, {
+        cwd: projectPath,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      expect(branchAfter).toBe("");
+    } finally {
+      await fixture.cleanup();
     }
   }, 20_000);
 
   it("deletes merged branches when removing worktrees (safe delete)", async () => {
-    const rootDir = await fsPromises.realpath(
-      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
-    );
+    const fixture = await createWorktreeManagerFixture({
+      tempDirPrefix: "worktree-manager-delete-",
+    });
 
     try {
-      const projectPath = path.join(rootDir, "repo");
-      await fsPromises.mkdir(projectPath, { recursive: true });
-      initGitRepo(projectPath);
-
-      const srcBaseDir = path.join(rootDir, "src");
-      await fsPromises.mkdir(srcBaseDir, { recursive: true });
-
-      const manager = new WorktreeManager(srcBaseDir);
-      const initLogger = createNullInitLogger();
+      const { projectPath, manager, initLogger } = fixture;
 
       const branchName = "feature_merge_aaaaaaaaaa";
       const createResult = await manager.createWorkspace({
@@ -333,28 +576,18 @@ describe("WorktreeManager.deleteWorkspace", () => {
         .trim();
       expect(after).toBe("");
     } finally {
-      await fsPromises.rm(rootDir, { recursive: true, force: true });
+      await fixture.cleanup();
     }
   }, 20_000);
 
   it("does not delete protected branches", async () => {
-    const rootDir = await fsPromises.realpath(
-      await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-delete-"))
-    );
+    const fixture = await createWorktreeManagerFixture({
+      currentBranchName: "other",
+      tempDirPrefix: "worktree-manager-delete-",
+    });
 
     try {
-      const projectPath = path.join(rootDir, "repo");
-      await fsPromises.mkdir(projectPath, { recursive: true });
-      initGitRepo(projectPath);
-
-      // Move the main worktree off main so we can add a separate worktree on main.
-      execSync("git checkout -b other", { cwd: projectPath, stdio: "ignore" });
-
-      const srcBaseDir = path.join(rootDir, "src");
-      await fsPromises.mkdir(srcBaseDir, { recursive: true });
-
-      const manager = new WorktreeManager(srcBaseDir);
-      const initLogger = createNullInitLogger();
+      const { projectPath, manager, initLogger } = fixture;
 
       const branchName = "main";
       const createResult = await manager.createWorkspace({
@@ -391,7 +624,7 @@ describe("WorktreeManager.deleteWorkspace", () => {
         .trim();
       expect(after).toBe("main");
     } finally {
-      await fsPromises.rm(rootDir, { recursive: true, force: true });
+      await fixture.cleanup();
     }
   }, 20_000);
 });

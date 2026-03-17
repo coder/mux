@@ -64,6 +64,7 @@ export class WorktreeManager {
   async createWorkspace(params: {
     projectPath: string;
     branchName: string;
+    directoryName?: string;
     trunkBranch: string;
     initLogger: InitLogger;
     abortSignal?: AbortSignal;
@@ -73,7 +74,8 @@ export class WorktreeManager {
     const { projectPath, branchName, trunkBranch, initLogger } = params;
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
     const noHooksEnv = this.getGitExecOptions(params.trusted);
-    const workspacePath = this.getWorkspacePath(projectPath, branchName);
+    const workspaceName = params.directoryName ?? branchName;
+    const workspacePath = this.getWorkspacePath(projectPath, workspaceName);
     let worktreeCreated = false;
     let createdBranch = false;
 
@@ -168,6 +170,7 @@ export class WorktreeManager {
         trusted: params.trusted,
       });
 
+      await this.persistWorkspaceBranchMapping(projectPath, workspaceName, branchName);
       return { success: true, workspacePath };
     } catch (error) {
       const errorMessage = getErrorMessage(error);
@@ -361,22 +364,26 @@ export class WorktreeManager {
       );
       await moveProc.result;
 
-      // Rename the git branch to match the new workspace name
-      // In mux, branch name and workspace name are always kept in sync.
-      // Run from the new worktree path since that's where the branch is checked out.
-      // Best-effort: ignore errors (e.g., branch might have a different name in test scenarios).
-      try {
-        using branchProc = execFileAsync(
-          "git",
-          ["-C", newPath, "branch", "-m", oldName, newName],
-          noHooksEnv
-        );
-        await branchProc.result;
-      } catch {
-        // Branch rename failed - this is fine, the directory was still moved
-        // This can happen if the branch name doesn't match the old directory name
+      // Rename the tracked branch only when workspace identity still follows the old workspace
+      // name. Diverged workspaces keep their original branch and must not rename unrelated refs.
+      const originalBranchName =
+        (await this.getPersistedWorkspaceBranchName(projectPath, oldName)) ?? oldName;
+      let renamedBranchName = originalBranchName;
+      if (originalBranchName === oldName) {
+        try {
+          using branchProc = execFileAsync(
+            "git",
+            ["-C", newPath, "branch", "-m", oldName, newName],
+            noHooksEnv
+          );
+          await branchProc.result;
+          renamedBranchName = newName;
+        } catch {
+          // Branch rename failed - this is fine, the directory was still moved.
+        }
       }
 
+      await this.updateWorkspaceBranchMapping(projectPath, oldName, newName, renamedBranchName);
       return { success: true, oldPath, newPath };
     } catch (error) {
       return { success: false, error: `Failed to rename workspace: ${getErrorMessage(error)}` };
@@ -405,23 +412,11 @@ export class WorktreeManager {
       return { success: true };
     }
 
-    const resolvedWorkspacePath = path.resolve(workspacePath);
-
     try {
-      using worktreeListProc = execFileAsync(
-        "git",
-        ["-C", projectPath, "worktree", "list", "--porcelain"],
-        noHooksEnv
+      const workspaceBlock = this.findWorktreeBlockByPath(
+        await this.listWorktreeBlocks(projectPath, noHooksEnv),
+        workspacePath
       );
-      const { stdout } = await worktreeListProc.result;
-      const workspaceBlock = stdout.split("\n\n").find((block) => {
-        return block.split("\n").some((line) => {
-          if (!line.startsWith("worktree ")) {
-            return false;
-          }
-          return path.resolve(line.slice("worktree ".length).trim()) === resolvedWorkspacePath;
-        });
-      });
 
       if (!workspaceBlock) {
         return {
@@ -486,23 +481,35 @@ export class WorktreeManager {
     // These are direct workspace directories (e.g., CLI/benchmark sessions), not git worktrees.
     const isInPlace = projectPath === workspaceName;
     const deletedPath = this.getWorkspacePath(projectPath, workspaceName);
+    const branchName = isInPlace
+      ? null
+      : await this.getPersistedWorkspaceBranchName(projectPath, workspaceName);
+    // Preserve legacy cleanup semantics for workspaces that predate branch-map persistence.
+    // Those older workspaces always used workspaceName === branchName, so if this specific
+    // workspace has no stored mapping we can safely fall back to the workspace name.
+    const allowWorkspaceNameFallback = !branchName && !isInPlace;
     const branchDeleteArgs = {
       projectPath,
       workspaceName,
+      branchName,
       force,
       isInPlace,
       noHooksEnv,
+      allowWorkspaceNameFallback,
+    };
+    const deleteBranchAndSucceed = async (pruneWorktrees = false) => {
+      if (pruneWorktrees) {
+        await this.pruneWorktreesBestEffort(projectPath, noHooksEnv);
+      }
+      await this.deleteWorkspaceBranchIfSafe(branchDeleteArgs);
+      await this.deletePersistedWorkspaceBranchMapping(projectPath, workspaceName);
+      return { success: true as const, deletedPath };
     };
 
     try {
       await fsPromises.access(deletedPath);
     } catch {
-      if (!isInPlace) {
-        await this.pruneWorktreesBestEffort(projectPath, noHooksEnv);
-      }
-
-      await this.deleteWorkspaceBranchIfSafe(branchDeleteArgs);
-      return { success: true, deletedPath };
+      return deleteBranchAndSucceed(!isInPlace);
     }
 
     // For in-place workspaces, there's no worktree to remove.
@@ -513,15 +520,12 @@ export class WorktreeManager {
 
     try {
       await this.removeGitWorktree(projectPath, deletedPath, force, noHooksEnv);
-      await this.deleteWorkspaceBranchIfSafe(branchDeleteArgs);
-      return { success: true, deletedPath };
+      return deleteBranchAndSucceed();
     } catch (error) {
       const message = getErrorMessage(error);
 
       if (this.isMissingWorktreeError(message)) {
-        await this.pruneWorktreesBestEffort(projectPath, noHooksEnv);
-        await this.deleteWorkspaceBranchIfSafe(branchDeleteArgs);
-        return { success: true, deletedPath };
+        return deleteBranchAndSucceed(true);
       }
 
       if (!force) {
@@ -531,8 +535,7 @@ export class WorktreeManager {
       try {
         await this.pruneWorktreesBestEffort(projectPath, noHooksEnv);
         await this.forceRemoveWorkspaceDirectory(deletedPath);
-        await this.deleteWorkspaceBranchIfSafe(branchDeleteArgs);
-        return { success: true, deletedPath };
+        return deleteBranchAndSucceed();
       } catch (rmError) {
         return {
           success: false,
@@ -542,12 +545,167 @@ export class WorktreeManager {
     }
   }
 
+  private async listWorktreeBlocks(
+    projectPath: string,
+    noHooksEnv: GitExecOptions
+  ): Promise<string[]> {
+    using worktreeProc = execFileAsync(
+      "git",
+      ["-C", projectPath, "worktree", "list", "--porcelain"],
+      noHooksEnv
+    );
+    const { stdout } = await worktreeProc.result;
+    return stdout.split("\n\n").filter((block) => block.trim().length > 0);
+  }
+
+  private findWorktreeBlockByPath(
+    worktreeBlocks: string[],
+    workspacePath: string
+  ): string | undefined {
+    const resolvedWorkspacePath = path.resolve(workspacePath);
+    return worktreeBlocks.find((block) => {
+      return block.split("\n").some((line) => {
+        if (!line.startsWith("worktree ")) {
+          return false;
+        }
+        return path.resolve(line.slice("worktree ".length).trim()) === resolvedWorkspacePath;
+      });
+    });
+  }
+
+  private getWorktreeBranchName(worktreeBlock: string): string | null {
+    const branchLine = worktreeBlock
+      .split("\n")
+      .find((line) => line.startsWith("branch refs/heads/"));
+    return branchLine ? branchLine.slice("branch refs/heads/".length).trim() || null : null;
+  }
+
+  private async persistWorkspaceBranchMapping(
+    projectPath: string,
+    workspaceName: string,
+    branchName: string
+  ): Promise<void> {
+    // Divergent workspace and branch names rely on this mapping for safe stale-worktree
+    // cleanup, so callers must see persistence failures instead of silently proceeding.
+    const branchMap = await this.readWorkspaceBranchMap(projectPath);
+    branchMap[workspaceName] = branchName;
+    await this.writeWorkspaceBranchMap(projectPath, branchMap);
+  }
+
+  private async updateWorkspaceBranchMapping(
+    projectPath: string,
+    oldWorkspaceName: string,
+    newWorkspaceName: string,
+    branchName: string | null
+  ): Promise<void> {
+    // Rename can leave the branch name different from the workspace directory, so keep the
+    // mapping update on the main control path rather than silently ignoring write failures.
+    const branchMap = await this.readWorkspaceBranchMap(projectPath);
+    const resolvedBranchName = branchName?.trim() ?? branchMap[oldWorkspaceName]?.trim();
+    delete branchMap[oldWorkspaceName];
+    if (resolvedBranchName) {
+      branchMap[newWorkspaceName] = resolvedBranchName;
+    }
+    await this.writeWorkspaceBranchMap(projectPath, branchMap);
+  }
+
+  private async getPersistedWorkspaceBranchName(
+    projectPath: string,
+    workspaceName: string
+  ): Promise<string | null> {
+    const branchName = (await this.readWorkspaceBranchMap(projectPath))[workspaceName]?.trim();
+    return branchName || null;
+  }
+
+  private async deletePersistedWorkspaceBranchMapping(
+    projectPath: string,
+    workspaceName: string
+  ): Promise<void> {
+    try {
+      const branchMap = await this.readWorkspaceBranchMap(projectPath);
+      if (!(workspaceName in branchMap)) {
+        return;
+      }
+      delete branchMap[workspaceName];
+      await this.writeWorkspaceBranchMap(projectPath, branchMap);
+    } catch (error) {
+      log.debug("Failed to delete workspace branch mapping", {
+        projectPath,
+        workspaceName,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async readWorkspaceBranchMap(projectPath: string): Promise<Record<string, string>> {
+    try {
+      const contents = await fsPromises.readFile(
+        await this.getWorkspaceBranchMapPath(projectPath),
+        "utf8"
+      );
+      const parsed: unknown = JSON.parse(contents);
+      if (typeof parsed !== "object" || parsed === null) {
+        return {};
+      }
+      return Object.fromEntries(
+        Object.entries(parsed).filter(([workspaceName, branchName]) => {
+          return (
+            workspaceName.trim().length > 0 &&
+            typeof branchName === "string" &&
+            branchName.trim().length > 0
+          );
+        })
+      );
+    } catch {
+      return {};
+    }
+  }
+
+  private async writeWorkspaceBranchMap(
+    projectPath: string,
+    branchMap: Record<string, string>
+  ): Promise<void> {
+    const branchMapPath = await this.getWorkspaceBranchMapPath(projectPath);
+    if (Object.keys(branchMap).length === 0) {
+      await fsPromises.rm(branchMapPath, { force: true });
+      return;
+    }
+    await fsPromises.writeFile(branchMapPath, `${JSON.stringify(branchMap, null, 2)}\n`);
+  }
+
+  private async getWorkspaceBranchMapPath(projectPath: string): Promise<string> {
+    const gitPath = path.join(projectPath, ".git");
+
+    try {
+      const gitPathStat = await fsPromises.stat(gitPath);
+      if (gitPathStat.isDirectory()) {
+        return path.join(gitPath, "mux-workspace-branches.json");
+      }
+
+      const gitDirRef = await fsPromises.readFile(gitPath, "utf8");
+      const gitDirPrefix = "gitdir:";
+      const gitDirLine = gitDirRef.trim();
+      if (gitDirLine.startsWith(gitDirPrefix)) {
+        return path.join(
+          path.resolve(projectPath, gitDirLine.slice(gitDirPrefix.length).trim()),
+          "mux-workspace-branches.json"
+        );
+      }
+    } catch {
+      // Fall through to the default .git path when git metadata is unavailable.
+    }
+
+    return path.join(gitPath, "mux-workspace-branches.json");
+  }
+
   private async deleteWorkspaceBranchIfSafe(args: {
     projectPath: string;
     workspaceName: string;
+    branchName: string | null;
     force: boolean;
     isInPlace: boolean;
     noHooksEnv: GitExecOptions;
+    allowWorkspaceNameFallback: boolean;
   }): Promise<void> {
     // For git worktree workspaces, workspaceName is the branch name.
     // Now that archiving exists, deleting a workspace should also delete its local branch by default.
@@ -555,9 +713,10 @@ export class WorktreeManager {
       return;
     }
 
-    const branchToDelete = args.workspaceName.trim();
+    const branchToDelete =
+      args.branchName?.trim() ?? (args.allowWorkspaceNameFallback ? args.workspaceName.trim() : "");
     if (!branchToDelete) {
-      log.debug("Skipping git branch deletion: empty workspace name", {
+      log.debug("Skipping git branch deletion: workspace branch is unknown", {
         projectPath: args.projectPath,
         workspaceName: args.workspaceName,
       });
@@ -668,14 +827,8 @@ export class WorktreeManager {
     noHooksEnv: GitExecOptions
   ): Promise<boolean> {
     try {
-      using worktreeProc = execFileAsync(
-        "git",
-        ["-C", projectPath, "worktree", "list", "--porcelain"],
-        noHooksEnv
-      );
-      const { stdout } = await worktreeProc.result;
-      const needle = `branch refs/heads/${branchName}`;
-      return stdout.split("\n").some((line) => line.trim() === needle);
+      const worktreeBlocks = await this.listWorktreeBlocks(projectPath, noHooksEnv);
+      return worktreeBlocks.some((block) => this.getWorktreeBranchName(block) === branchName);
     } catch (error) {
       // If the worktree list fails, proceed anyway - git itself will refuse to delete a checked-out branch.
       log.debug("Failed to check worktree list before branch deletion; proceeding", {
@@ -731,6 +884,7 @@ export class WorktreeManager {
       const createResult = await this.createWorkspace({
         projectPath,
         branchName: newWorkspaceName,
+        directoryName: newWorkspaceName,
         trunkBranch: sourceBranch, // Fork from source branch instead of main/master
         initLogger,
         abortSignal: params.abortSignal,

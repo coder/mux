@@ -32,12 +32,8 @@ import type {
 import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
-import {
-  checkInitHookExists,
-  getMuxEnv,
-  runInitHookOnRuntime,
-  shouldSkipInitHook,
-} from "./initHook";
+import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
+import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -486,6 +482,137 @@ export class SSHRuntime extends RemoteRuntime {
     return result.exitCode === 0;
   }
 
+  private async resolveCheckedOutBranch(
+    workspacePath: string,
+    abortSignal?: AbortSignal,
+    timeout = 10
+  ): Promise<string | null> {
+    try {
+      const branchResult = await execBuffered(
+        this,
+        `git -C ${this.quoteForRemote(workspacePath)} branch --show-current`,
+        {
+          cwd: "/tmp",
+          timeout,
+          abortSignal,
+        }
+      );
+      const branchName = branchResult.stdout.trim();
+      return branchResult.exitCode === 0 && branchName.length > 0 ? branchName : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async persistWorkspaceBranchMapping(
+    projectPath: string,
+    workspaceName: string,
+    branchName: string
+  ): Promise<void> {
+    const branchMap = await this.readWorkspaceBranchMap(projectPath);
+    branchMap[workspaceName] = branchName;
+    await this.writeWorkspaceBranchMap(projectPath, branchMap);
+  }
+
+  private async updateWorkspaceBranchMapping(
+    projectPath: string,
+    oldWorkspaceName: string,
+    newWorkspaceName: string
+  ): Promise<void> {
+    const branchMap = await this.readWorkspaceBranchMap(projectPath);
+    const branchName = branchMap[oldWorkspaceName]?.trim() || oldWorkspaceName;
+    delete branchMap[oldWorkspaceName];
+    branchMap[newWorkspaceName] = branchName;
+    await this.writeWorkspaceBranchMap(projectPath, branchMap);
+  }
+
+  private async getPersistedWorkspaceBranchName(
+    projectPath: string,
+    workspaceName: string
+  ): Promise<string | null> {
+    const branchName = (await this.readWorkspaceBranchMap(projectPath))[workspaceName]?.trim();
+    return branchName || null;
+  }
+
+  private async deletePersistedWorkspaceBranchMapping(
+    projectPath: string,
+    workspaceName: string
+  ): Promise<void> {
+    try {
+      const branchMap = await this.readWorkspaceBranchMap(projectPath);
+      if (!(workspaceName in branchMap)) {
+        return;
+      }
+      delete branchMap[workspaceName];
+      await this.writeWorkspaceBranchMap(projectPath, branchMap);
+    } catch {
+      // Best-effort cleanup after delete; future creates overwrite any stale entry.
+    }
+  }
+
+  private async readWorkspaceBranchMap(projectPath: string): Promise<Record<string, string>> {
+    try {
+      const contents = await streamToString(
+        this.readFile(this.getWorkspaceBranchMapPath(projectPath))
+      );
+      const parsed: unknown = JSON.parse(contents);
+      if (typeof parsed !== "object" || parsed === null) {
+        return {};
+      }
+      return Object.fromEntries(
+        Object.entries(parsed).filter(([workspaceName, branchName]) => {
+          return (
+            workspaceName.trim().length > 0 &&
+            typeof branchName === "string" &&
+            branchName.trim().length > 0
+          );
+        })
+      );
+    } catch {
+      return {};
+    }
+  }
+
+  private async writeWorkspaceBranchMap(
+    projectPath: string,
+    branchMap: Record<string, string>
+  ): Promise<void> {
+    const branchMapPath = this.getWorkspaceBranchMapPath(projectPath);
+    if (Object.keys(branchMap).length === 0) {
+      await execBuffered(this, `rm -f ${this.quoteForRemote(branchMapPath)}`, {
+        cwd: "/tmp",
+        timeout: 10,
+      }).catch(() => undefined);
+      return;
+    }
+
+    const parentDir = path.posix.dirname(branchMapPath);
+    const mkdirResult = await execBuffered(this, `mkdir -p ${this.quoteForRemote(parentDir)}`, {
+      cwd: "/tmp",
+      timeout: 10,
+    });
+    if (mkdirResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to prepare remote workspace branch map: ${mkdirResult.stderr || mkdirResult.stdout}`
+      );
+    }
+
+    const writer = this.writeFile(branchMapPath).getWriter();
+    try {
+      await writer.write(new TextEncoder().encode(`${JSON.stringify(branchMap, null, 2)}\n`));
+    } finally {
+      await writer.close();
+    }
+  }
+
+  private getWorkspaceBranchMapPath(projectPath: string): string {
+    return path.posix.join(
+      this.config.srcBaseDir,
+      getProjectName(projectPath),
+      ".mux-workspace-branches.json"
+    );
+  }
+
   /**
    * Resolve the bundle staging ref for the trunk branch.
    * Returns refs/mux-bundle/<trunkBranch> if it exists, otherwise falls back
@@ -882,9 +1009,9 @@ export class SSHRuntime extends RemoteRuntime {
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
     try {
-      const { projectPath, branchName, initLogger, abortSignal } = params;
-      // Compute workspace path using canonical method
-      const workspacePath = this.getWorkspacePath(projectPath, branchName);
+      const { projectPath, directoryName, initLogger, abortSignal } = params;
+      // Workspace directories follow the persisted workspace name; branch checkout happens later.
+      const workspacePath = this.getWorkspacePath(projectPath, directoryName);
 
       // Prepare parent directory for git clone (fast - returns immediately)
       // Note: git clone will create the workspace directory itself during initWorkspace,
@@ -920,6 +1047,7 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
+      await this.persistWorkspaceBranchMapping(projectPath, directoryName, params.branchName);
       initLogger.logStep("Remote workspace prepared");
 
       return {
@@ -935,49 +1063,29 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
-
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
     const nhp = gitNoHooksPrefix(params.trusted);
 
-    try {
-      await this.prepareWorkspaceCheckout(params, nhp);
-
-      // 3. Run .mux/init hook if it exists
-      // Note: runInitHookOnRuntime calls logComplete() internally
-      if (shouldSkipInitHook(params, initLogger)) {
-        initLogger.logComplete(0);
-      } else {
-        const hookExists = await checkInitHookExists(projectPath);
-        if (hookExists) {
-          initLogger.enterHookPhase?.();
-          const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
-          // Expand tilde in hook path (quoted paths don't auto-expand on remote)
-          const hookPath = expandTildeForSSH(`${workspacePath}/.mux/init`);
-          await runInitHookOnRuntime(
-            this,
-            hookPath,
-            workspacePath,
-            muxEnv,
-            initLogger,
-            abortSignal
-          );
-        } else {
-          // No hook - signal completion immediately
-          initLogger.logComplete(0);
-        }
-      }
-
-      return { success: true };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      initLogger.logComplete(-1);
-      return {
-        success: false,
-        error: errorMsg,
-      };
-    }
+    return runWorkspaceInitHook({
+      params,
+      runtimeType: "ssh",
+      hookCheckPath: params.projectPath,
+      beforeHook: async () => {
+        await this.prepareWorkspaceCheckout(params, nhp);
+      },
+      runHook: async ({ muxEnv, initLogger, abortSignal }) => {
+        // Expand tilde in hook path (quoted paths don't auto-expand on remote).
+        const hookPath = expandHookPath(`${params.workspacePath}/.mux/init`);
+        await runInitHookOnRuntime(
+          this,
+          hookPath,
+          params.workspacePath,
+          muxEnv,
+          initLogger,
+          abortSignal
+        );
+      },
+    });
   }
 
   private async prepareWorkspaceCheckout(params: WorkspaceInitParams, nhp: string): Promise<void> {
@@ -1327,6 +1435,7 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
+      await this.updateWorkspaceBranchMapping(projectPath, oldName, newName);
       return { success: true, oldPath, newPath };
     } catch (error) {
       return {
@@ -1451,7 +1560,8 @@ export class SSHRuntime extends RemoteRuntime {
 
       // Handle check results
       if (checkExitCode === 3) {
-        // Directory doesn't exist - deletion is idempotent (success)
+        // Directory doesn't exist - deletion is idempotent (success).
+        await this.deletePersistedWorkspaceBranchMapping(projectPath, workspaceName);
         return { success: true, deletedPath };
       }
 
@@ -1484,6 +1594,9 @@ export class SSHRuntime extends RemoteRuntime {
           error: `Failed to check workspace state: ${stderr.trim() || `exit code ${checkExitCode}`}`,
         };
       }
+
+      const branchToDelete =
+        (await this.getPersistedWorkspaceBranchName(projectPath, workspaceName)) ?? workspaceName;
 
       // Detect if workspace is a worktree (.git is a file) vs a legacy full clone (.git is a directory).
       const isWorktree = await this.isWorktreeWorkspace(deletedPath, abortSignal);
@@ -1529,10 +1642,10 @@ export class SSHRuntime extends RemoteRuntime {
         // path (git worktree add -b fails if the branch already exists).
         // Skip protected trunk branch names to avoid accidental deletion.
         const PROTECTED_BRANCHES = ["main", "master", "trunk", "develop", "default"];
-        if (!PROTECTED_BRANCHES.includes(workspaceName)) {
+        if (branchToDelete && !PROTECTED_BRANCHES.includes(branchToDelete)) {
           await execBuffered(
             this,
-            `${nhp}git -C ${baseRepoPathArg} branch -D ${shescape.quote(workspaceName)} 2>/dev/null || true`,
+            `${nhp}git -C ${baseRepoPathArg} branch -D ${shescape.quote(branchToDelete)} 2>/dev/null || true`,
             { cwd: "/tmp", timeout: 10 }
           ).catch(() => undefined);
         }
@@ -1556,6 +1669,7 @@ export class SSHRuntime extends RemoteRuntime {
         }
       }
 
+      await this.deletePersistedWorkspaceBranchMapping(projectPath, workspaceName);
       return { success: true, deletedPath };
     } catch (error) {
       return { success: false, error: `Failed to delete directory: ${getErrorMessage(error)}` };
@@ -1588,18 +1702,8 @@ export class SSHRuntime extends RemoteRuntime {
 
       // Detect current branch from the source workspace.
       initLogger.logStep("Detecting source workspace branch...");
-      const branchResult = await execBuffered(
-        this,
-        `git -C ${sourceWorkspacePathArg} branch --show-current`,
-        {
-          cwd: "/tmp",
-          timeout: 30,
-          abortSignal,
-        }
-      );
-      const sourceBranch = branchResult.stdout.trim();
-
-      if (branchResult.exitCode !== 0 || sourceBranch.length === 0) {
+      const sourceBranch = await this.resolveCheckedOutBranch(sourceWorkspacePath, abortSignal, 30);
+      if (!sourceBranch) {
         return {
           success: false,
           error: "Failed to detect branch in source workspace",

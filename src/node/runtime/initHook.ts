@@ -1,7 +1,13 @@
 import * as fs from "fs";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
-import type { ExecOptions, ExecStream, InitLogger } from "./Runtime";
+import type {
+  ExecOptions,
+  ExecStream,
+  InitLogger,
+  WorkspaceInitParams,
+  WorkspaceInitResult,
+} from "./Runtime";
 import {
   isWorktreeRuntime,
   isSSHRuntime,
@@ -190,6 +196,59 @@ export function createLineBufferedLoggers(initLogger: InitLogger) {
  */
 export interface InitHookRuntime {
   exec(command: string, options: ExecOptions): Promise<ExecStream>;
+}
+
+export interface WorkspaceInitHookOptions {
+  params: WorkspaceInitParams;
+  runtimeType: RuntimeMode;
+  hookCheckPath: string;
+  beforeHook?: () => Promise<void>;
+  runHook: (args: {
+    muxEnv: Record<string, string>;
+    initLogger: InitLogger;
+    abortSignal?: AbortSignal;
+  }) => Promise<void>;
+}
+
+/**
+ * Shared initWorkspace flow for runtimes whose init phase is "optional .mux/init hook"
+ * plus any runtime-specific preparation that must happen before hook gating.
+ */
+export async function runWorkspaceInitHook(
+  options: WorkspaceInitHookOptions
+): Promise<WorkspaceInitResult> {
+  const { params, runtimeType, hookCheckPath, beforeHook, runHook } = options;
+  const { projectPath, branchName, initLogger, abortSignal, env } = params;
+
+  try {
+    // skipInitHook only disables repo-controlled hook execution; provisioning/materialization
+    // that makes the workspace usable still belongs in beforeHook().
+    await beforeHook?.();
+
+    if (shouldSkipInitHook(params, initLogger)) {
+      initLogger.logComplete(0);
+      return { success: true };
+    }
+
+    const hookExists = await checkInitHookExists(hookCheckPath);
+    if (!hookExists) {
+      initLogger.logComplete(0);
+      return { success: true };
+    }
+
+    initLogger.enterHookPhase?.();
+    const muxEnv = { ...env, ...getMuxEnv(projectPath, runtimeType, branchName) };
+    await runHook({ muxEnv, initLogger, abortSignal });
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    initLogger.logStderr(`Initialization failed: ${errorMsg}`);
+    initLogger.logComplete(-1);
+    return {
+      success: false,
+      error: errorMsg,
+    };
+  }
 }
 
 /**

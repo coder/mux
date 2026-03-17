@@ -29,12 +29,7 @@ import type {
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
-import {
-  checkInitHookExists,
-  getMuxEnv,
-  runInitHookOnRuntime,
-  shouldSkipInitHook,
-} from "./initHook";
+import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
@@ -423,10 +418,11 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
-    const { projectPath, branchName } = params;
+    const { projectPath, directoryName } = params;
 
-    // Generate container name and check for collisions before persisting metadata
-    const containerName = getContainerName(projectPath, branchName);
+    // Container identity should follow the workspace entry name rather than the git branch.
+    // The two are usually equal today, but the runtime contract keeps them distinct.
+    const containerName = getContainerName(projectPath, directoryName);
 
     // Check if container already exists (collision detection)
     const checkResult = await runDockerCommand(`docker inspect ${containerName}`, 10000);
@@ -528,43 +524,30 @@ export class DockerRuntime extends RemoteRuntime {
    * is handled by postCreateSetup().
    */
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
-
-    try {
-      if (!this.containerName) {
-        return {
-          success: false,
-          error: "Container not initialized. Call createWorkspace first.",
-        };
-      }
-
-      if (shouldSkipInitHook(params, initLogger)) {
-        initLogger.logComplete(0);
-        return { success: true };
-      }
-
-      // Run .mux/init hook if it exists
-      const hookExists = await checkInitHookExists(projectPath);
-      if (hookExists) {
-        initLogger.enterHookPhase?.();
-        const muxEnv = { ...env, ...getMuxEnv(projectPath, "docker", branchName) };
-        const hookPath = `${workspacePath}/.mux/init`;
-        await runInitHookOnRuntime(this, hookPath, workspacePath, muxEnv, initLogger, abortSignal);
-      } else {
-        initLogger.logComplete(0);
-      }
-
-      return { success: true };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      initLogger.logComplete(-1);
-      // Do NOT delete container on hook failure - user can debug
+    if (!this.containerName) {
       return {
         success: false,
-        error: errorMsg,
+        error: "Container not initialized. Call createWorkspace first.",
       };
     }
+
+    // Do NOT delete container on hook failure - user can debug.
+    return runWorkspaceInitHook({
+      params,
+      runtimeType: "docker",
+      hookCheckPath: params.projectPath,
+      runHook: async ({ muxEnv, initLogger, abortSignal }) => {
+        const hookPath = `${params.workspacePath}/.mux/init`;
+        await runInitHookOnRuntime(
+          this,
+          hookPath,
+          params.workspacePath,
+          muxEnv,
+          initLogger,
+          abortSignal
+        );
+      },
+    });
   }
 
   /**

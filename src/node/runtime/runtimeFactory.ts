@@ -57,16 +57,12 @@ export function runBackgroundInit(
   workspaceId: string,
   logger?: { error: (msg: string, ctx: object) => void }
 ): void {
-  void (async () => {
-    try {
-      await runFullInit(runtime, params);
-    } catch (error: unknown) {
-      const errorMsg = getErrorMessage(error);
-      logger?.error(`Workspace init failed for ${workspaceId}:`, { error });
-      params.initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      params.initLogger.logComplete(-1);
-    }
-  })();
+  void runFullInit(runtime, params).catch((error: unknown) => {
+    const errorMsg = getErrorMessage(error);
+    logger?.error(`Workspace init failed for ${workspaceId}:`, { error });
+    params.initLogger.logStderr(`Initialization failed: ${errorMsg}`);
+    params.initLogger.logComplete(-1);
+  });
 }
 
 function shouldUseSSH2Runtime(): boolean {

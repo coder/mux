@@ -9,9 +9,8 @@ import type {
   WorkspaceForkResult,
 } from "./Runtime";
 import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
-import { checkInitHookExists, getMuxEnv, shouldSkipInitHook } from "./initHook";
+import { runWorkspaceInitHook } from "./initHook";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
-import { getErrorMessage } from "@/common/utils/errors";
 import { isGitRepository } from "@/node/utils/pathUtils";
 import { WorktreeManager } from "@/node/worktree/WorktreeManager";
 
@@ -80,6 +79,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
     return this.worktreeManager.createWorkspace({
       projectPath: params.projectPath,
       branchName: params.branchName,
+      directoryName: params.directoryName,
       trunkBranch: params.trunkBranch,
       initLogger: params.initLogger,
       abortSignal: params.abortSignal,
@@ -89,35 +89,14 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
-
-    try {
-      if (shouldSkipInitHook(params, initLogger)) {
-        initLogger.logComplete(0);
-        return { success: true };
-      }
-
-      // Run .mux/init hook if it exists
-      // Note: runInitHook calls logComplete() internally if hook exists
-      const hookExists = await checkInitHookExists(projectPath);
-      if (hookExists) {
-        initLogger.enterHookPhase?.();
-        const muxEnv = { ...env, ...getMuxEnv(projectPath, "worktree", branchName) };
-        await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
-      } else {
-        // No hook - signal completion immediately
-        initLogger.logComplete(0);
-      }
-      return { success: true };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      initLogger.logComplete(-1);
-      return {
-        success: false,
-        error: errorMsg,
-      };
-    }
+    return runWorkspaceInitHook({
+      params,
+      runtimeType: "worktree",
+      hookCheckPath: params.projectPath,
+      runHook: async ({ muxEnv, initLogger, abortSignal }) => {
+        await this.runInitHook(params.workspacePath, muxEnv, initLogger, abortSignal);
+      },
+    });
   }
 
   async renameWorkspace(

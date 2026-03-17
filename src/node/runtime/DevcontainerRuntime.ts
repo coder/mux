@@ -30,12 +30,7 @@ import {
   type BindMount,
 } from "./credentialForwarding";
 import { devcontainerUp, devcontainerDown } from "./devcontainerCli";
-import {
-  checkInitHookExists,
-  getMuxEnv,
-  runInitHookOnRuntime,
-  shouldSkipInitHook,
-} from "./initHook";
+import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
@@ -481,6 +476,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     return this.worktreeManager.createWorkspace({
       projectPath: params.projectPath,
       branchName: params.branchName,
+      directoryName: params.directoryName,
       trunkBranch: params.trunkBranch,
       initLogger: params.initLogger,
       abortSignal: params.abortSignal,
@@ -530,36 +526,23 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
    * Run .mux/init hook inside the devcontainer.
    */
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, env } = params;
-
-    try {
-      if (shouldSkipInitHook(params, initLogger)) {
-        initLogger.logComplete(0);
-        return { success: true };
-      }
-
-      // Check if init hook exists (on host - worktree is bind-mounted)
-      const hookExists = await checkInitHookExists(workspacePath);
-      if (hookExists) {
-        initLogger.enterHookPhase?.();
-        const muxEnv = { ...env, ...getMuxEnv(projectPath, "devcontainer", branchName) };
-        const containerWorkspacePath = this.remoteWorkspaceFolder ?? workspacePath;
+    return runWorkspaceInitHook({
+      params,
+      runtimeType: "devcontainer",
+      hookCheckPath: params.workspacePath,
+      runHook: async ({ muxEnv, initLogger, abortSignal }) => {
+        const containerWorkspacePath = this.remoteWorkspaceFolder ?? params.workspacePath;
         const hookPath = `${containerWorkspacePath}/.mux/init`;
-        await runInitHookOnRuntime(this, hookPath, containerWorkspacePath, muxEnv, initLogger);
-      } else {
-        // No hook - signal completion immediately
-        initLogger.logComplete(0);
-      }
-      return { success: true };
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(`Initialization failed: ${errorMsg}`);
-      initLogger.logComplete(-1);
-      return {
-        success: false,
-        error: errorMsg,
-      };
-    }
+        await runInitHookOnRuntime(
+          this,
+          hookPath,
+          containerWorkspacePath,
+          muxEnv,
+          initLogger,
+          abortSignal
+        );
+      },
+    });
   }
 
   /**
