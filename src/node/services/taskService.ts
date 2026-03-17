@@ -3302,6 +3302,15 @@ export class TaskService {
       return;
     }
 
+    if (!isPlanLike && status !== "awaiting_report") {
+      const implicitReportArgs = this.findImplicitAgentReportArgsInParts(event.parts);
+      if (implicitReportArgs) {
+        await this.finalizeAgentTaskReport(workspaceId, entry, implicitReportArgs);
+        await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+        return;
+      }
+    }
+
     if (status !== "awaiting_report") {
       await this.setTaskStatus(workspaceId, "awaiting_report");
     }
@@ -4132,6 +4141,25 @@ export class TaskService {
       return { planPath };
     }
     return null;
+  }
+
+  private findImplicitAgentReportArgsInParts(
+    parts: readonly unknown[]
+  ): { reportMarkdown: string } | null {
+    let reportMarkdown = "";
+    for (const part of parts) {
+      if (!part || typeof part !== "object") continue;
+      const maybeText = part as { type?: unknown; text?: unknown };
+      if (maybeText.type !== "text" || typeof maybeText.text !== "string") continue;
+      reportMarkdown += maybeText.text;
+    }
+
+    const trimmedReport = reportMarkdown.trim();
+    if (trimmedReport.length === 0) {
+      return null;
+    }
+
+    return { reportMarkdown: trimmedReport };
   }
 
   private findAgentReportArgsInParts(

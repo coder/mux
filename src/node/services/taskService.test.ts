@@ -6110,6 +6110,122 @@ describe("TaskService", () => {
     }
   });
 
+  test("non-plan subagent stream-end with final assistant text finalizes an implicit report", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({ remove });
+    const { partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-partial",
+      "assistant",
+      "Waiting on subagent…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-call-1",
+          toolName: "task",
+          input: { subagent_type: "explore", prompt: "do the thing", title: "Test task" },
+          state: "input-available",
+        },
+      ]
+    );
+    const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
+    expect(writeParentPartial.success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [{ type: "text", text: "## Final answer\n\nImplicit report content from the child." }],
+    });
+
+    const updatedParentPartial = await partialService.readPartial(parentId);
+    expect(updatedParentPartial).not.toBeNull();
+    if (updatedParentPartial) {
+      const toolPart = updatedParentPartial.parts.find(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          "type" in p &&
+          (p as { type?: unknown }).type === "dynamic-tool"
+      ) as unknown as
+        | {
+            toolName: string;
+            state: string;
+            output?: unknown;
+          }
+        | undefined;
+      expect(toolPart?.toolName).toBe("task");
+      expect(toolPart?.state).toBe("output-available");
+      const outputJson = JSON.stringify(toolPart?.output);
+      expect(outputJson).toContain("Implicit report content from the child.");
+      expect(outputJson).not.toContain("fallback");
+    }
+
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.reportMarkdown).toBe(
+      "## Final answer\n\nImplicit report content from the child."
+    );
+    expect(report?.title).toBeUndefined();
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws).toBeUndefined();
+
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childId, true);
+    const sendCalls = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    for (const call of sendCalls) {
+      const msg = call[1] as string;
+      expect(msg).not.toContain("agent_report");
+    }
+  });
+
   test("missing agent_report keeps the task awaiting_report and retries with agent_report-only prompts", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -7466,6 +7582,30 @@ describe("TaskService", () => {
 
     expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("plan task stream-end with final assistant text still requires propose_plan", async () => {
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness();
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-plan-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [{ type: "text", text: "Here is the final plan in prose, but no propose_plan call." }],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const reminderMessage = (sendMessage as unknown as { mock: { calls: Array<[string, string]> } })
+      .mock.calls[0]?.[1];
+    expect(reminderMessage).toContain("propose_plan");
+    expect(reminderMessage).not.toContain("agent_report");
+
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(updatedTask?.taskStatus).toBe("awaiting_report");
   });
 
   test("plan task stream-end without propose_plan sends propose_plan reminder (not agent_report)", async () => {
