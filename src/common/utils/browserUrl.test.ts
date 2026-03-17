@@ -30,10 +30,10 @@ describe("normalizeBrowserUrl", () => {
     });
   });
 
-  test("allows about:blank as a passthrough", () => {
+  test("rejects about:blank", () => {
     expect(normalizeBrowserUrl("about:blank")).toEqual({
-      ok: true,
-      normalizedUrl: "about:blank",
+      ok: false,
+      error: "Cannot navigate to about:blank",
     });
   });
 

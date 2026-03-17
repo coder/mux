@@ -13,8 +13,11 @@ export function normalizeBrowserUrl(raw: string): NormalizeBrowserUrlResult {
     return { ok: false, error: "URL is required" };
   }
 
+  // about:blank is the browser-session default, but manual navigation to it would
+  // trip BrowserSessionBackend.refreshNavigationMetadata's external-close detector,
+  // which treats a real-page -> about:blank transition as the browser closing.
   if (trimmedUrl.toLowerCase() === "about:blank") {
-    return { ok: true, normalizedUrl: "about:blank" };
+    return { ok: false, error: "Cannot navigate to about:blank" };
   }
 
   const lowercasedUrl = trimmedUrl.toLowerCase();
