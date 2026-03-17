@@ -2053,9 +2053,11 @@ export class TaskService {
         }
 
         if (initialStatus === "awaiting_report") {
+          // Reuse the standard completion reminder when a waiter attaches instead of carrying a
+          // separate waiter-only recovery mode and prompt string.
           void this.workspaceEventLocks
             .withLock(taskId, async () => {
-              await this.promptTaskForRequiredCompletionTool(taskId, { reason: "waiter" });
+              await this.promptTaskForRequiredCompletionTool(taskId);
             })
             .catch((error: unknown) => {
               log.error("Failed to resume awaiting_report task for waiter", {
@@ -3081,7 +3083,7 @@ export class TaskService {
   private buildCompletionToolRecoveryMessage(
     completionToolName: "agent_report" | "propose_plan",
     options?: {
-      reason?: "startup" | "stream_end" | "error" | "waiter";
+      reason?: "startup" | "stream_end" | "error";
       error?: Pick<ErrorEvent, "error" | "errorType">;
     }
   ): string {
@@ -3105,8 +3107,6 @@ export class TaskService {
           : "";
         return `The previous ${completionToolLabel} attempt failed${errorType}. ${noExtraWorkInstruction} ${completionInstruction}`;
       }
-      case "waiter":
-        return `A caller is still waiting for ${completionToolLabel} from this task. ${noExtraWorkInstruction} ${completionInstruction}`;
       case "stream_end":
       default:
         return `Your stream ended without calling ${completionToolLabel}. ${noExtraWorkInstruction} ${completionInstruction}`;
@@ -3116,7 +3116,7 @@ export class TaskService {
   private async promptTaskForRequiredCompletionTool(
     workspaceId: string,
     options?: {
-      reason?: "startup" | "stream_end" | "error" | "waiter";
+      reason?: "startup" | "stream_end" | "error";
       error?: Pick<ErrorEvent, "error" | "errorType">;
     }
   ): Promise<boolean> {

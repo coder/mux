@@ -3690,6 +3690,62 @@ describe("TaskService", () => {
     expect(report.reportMarkdown).toBe("ok");
   });
 
+  test("waitForAgentReport reuses the standard completion reminder for awaiting_report tasks", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "awaiting_report",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const waitError = await taskService
+      .waitForAgentReport(childId, { timeoutMs: 10 })
+      .catch((error: unknown) => error);
+
+    expect(waitError).toBeInstanceOf(Error);
+    if (waitError instanceof Error) {
+      expect(waitError.message).toBe("Timed out waiting for agent_report");
+    }
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Your stream ended without calling agent_report"),
+      expect.any(Object),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("A caller is still waiting for agent_report"),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
   test("waitForAgentReport rejects interrupted tasks without waiting", async () => {
     const config = await createTestConfig(rootDir);
 
