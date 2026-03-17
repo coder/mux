@@ -1927,7 +1927,6 @@ const BrowserStreamStateSchema = z.enum([
   "disconnected",
   "connecting",
   "live",
-  "fallback",
   "restart_required",
   "error",
 ]);
@@ -2019,6 +2018,9 @@ const BrowserSessionEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("action"),
     action: BrowserActionSchema,
+  }),
+  z.object({
+    type: z.literal("heartbeat"),
   }),
   z.object({
     type: z.literal("session-ended"),

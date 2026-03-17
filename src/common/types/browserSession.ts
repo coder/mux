@@ -15,7 +15,6 @@ export type BrowserStreamState =
   | "disconnected"
   | "connecting"
   | "live"
-  | "fallback"
   | "restart_required"
   | "error";
 
@@ -81,5 +80,6 @@ export type BrowserSessionEvent =
   | { type: "snapshot"; session: BrowserSession | null; recentActions: BrowserAction[] }
   | { type: "session-updated"; session: BrowserSession }
   | { type: "action"; action: BrowserAction }
+  | { type: "heartbeat" }
   | { type: "session-ended"; workspaceId: string }
   | { type: "error"; workspaceId: string; error: string };
