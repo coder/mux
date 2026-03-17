@@ -347,30 +347,34 @@ async function probeAgentBrowserSession(
 ): Promise<AgentBrowserSessionProbeResult> {
   assert(sessionId.trim().length > 0, "probeAgentBrowserSession requires a non-empty sessionId");
 
-  const result = await runAgentBrowserCliCommand(sessionId, ["session", "list"], timeoutMs, {
-    inFlightProcesses: options?.inFlightProcesses,
-    spawnFn: options?.spawnFn,
-    resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
-    env: options?.env,
-  });
-  if (!result.ok) {
-    return { ok: false, error: result.error };
-  }
-
-  const stdout = result.stdout.trim();
-  if (stdout.length === 0) {
-    return { ok: false, error: "Unexpected CLI output" };
-  }
-
   try {
-    const parsedOutput: unknown = JSON.parse(stdout);
-    const sessions = extractCliSessionNames(parsedOutput);
-    if (sessions === null) {
+    const result = await runAgentBrowserCliCommand(sessionId, ["session", "list"], timeoutMs, {
+      inFlightProcesses: options?.inFlightProcesses,
+      spawnFn: options?.spawnFn,
+      resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
+      env: options?.env,
+    });
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    const stdout = result.stdout.trim();
+    if (stdout.length === 0) {
       return { ok: false, error: "Unexpected CLI output" };
     }
-    return { ok: true, exists: sessions.includes(sessionId) };
-  } catch {
-    return { ok: false, error: "Unexpected CLI output" };
+
+    try {
+      const parsedOutput: unknown = JSON.parse(stdout);
+      const sessions = extractCliSessionNames(parsedOutput);
+      if (sessions === null) {
+        return { ok: false, error: "Unexpected CLI output" };
+      }
+      return { ok: true, exists: sessions.includes(sessionId) };
+    } catch {
+      return { ok: false, error: "Unexpected CLI output" };
+    }
+  } catch (error) {
+    return { ok: false, error: getErrorMessage(error) };
   }
 }
 
@@ -903,9 +907,26 @@ export class BrowserSessionBackend {
           return;
         }
 
-        void this.handleUnexpectedStreamClose(closeReason);
+        this.handleUnexpectedStreamClose(closeReason).catch((error) => {
+          this.handleUnexpectedStreamCloseFailure(error, closeReason);
+        });
       });
     });
+  }
+
+  private handleUnexpectedStreamCloseFailure(error: unknown, closeReason: string): void {
+    const errorMessage = getErrorMessage(error);
+    log.warn("BrowserSessionBackend failed to classify unexpected stream close", {
+      workspaceId: this.options.workspaceId,
+      error: errorMessage,
+      closeReason,
+    });
+
+    if (this.disposed || this.hasTerminalSessionState()) {
+      return;
+    }
+
+    this.transitionToRestartRequired(closeReason);
   }
 
   private async handleUnexpectedStreamClose(error: string): Promise<void> {
@@ -1166,7 +1187,9 @@ export class BrowserSessionBackend {
       lastError: errorMessage,
     });
     this.closeCurrentStreamSocket();
-    void this.handleUnexpectedStreamClose(errorMessage);
+    this.handleUnexpectedStreamClose(errorMessage).catch((error) => {
+      this.handleUnexpectedStreamCloseFailure(error, errorMessage);
+    });
   }
 
   private transitionToError(error: string): void {
