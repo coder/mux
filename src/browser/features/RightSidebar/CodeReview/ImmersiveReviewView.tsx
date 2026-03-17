@@ -25,9 +25,10 @@ import { KeycapGroup } from "@/browser/components/Keycap/Keycap";
 import { useAPI } from "@/browser/contexts/API";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import {
+  findAdjacentFileHunkId,
   flattenFileTreeLeaves,
-  getAdjacentFilePath,
   getFileHunks,
+  sortHunksInFileOrder,
 } from "@/browser/utils/review/navigation";
 import {
   isDialogOpen,
@@ -165,22 +166,6 @@ function normalizeFileLines(content: string): string[] {
     .split(/\r?\n/)
     .map((line) => (line.endsWith("\r") ? line.slice(0, Math.max(0, line.length - 1)) : line));
   return lines.filter((line, idx) => idx < lines.length - 1 || line !== "");
-}
-
-function sortHunksInFileOrder(hunks: DiffHunk[]): DiffHunk[] {
-  return [...hunks].sort((a, b) => {
-    const newStartDelta = a.newStart - b.newStart;
-    if (newStartDelta !== 0) {
-      return newStartDelta;
-    }
-
-    const oldStartDelta = a.oldStart - b.oldStart;
-    if (oldStartDelta !== 0) {
-      return oldStartDelta;
-    }
-
-    return a.id.localeCompare(b.id);
-  });
 }
 
 function buildOverlayFromFileContent(
@@ -881,28 +866,26 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const navigateFile = useCallback(
     (direction: 1 | -1) => {
-      if (!activeFilePath || fileList.length <= 1) {
+      if (!activeFilePath) {
         return;
       }
 
       // Skip files with no currently visible hunks (e.g. filtered out by read/search filters).
       // This keeps file navigation moving forward instead of getting stuck on empty files.
-      let candidatePath = activeFilePath;
-      for (let step = 0; step < fileList.length - 1; step += 1) {
-        const nextPath = getAdjacentFilePath(fileList, candidatePath, direction);
-        if (!nextPath) {
-          return;
-        }
-
-        candidatePath = nextPath;
-        const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, candidatePath));
-        if (fileHunks.length > 0) {
-          pendingJumpSelectAllHunkIdRef.current = null;
-          hunkJumpRef.current = true;
-          onSelectHunk(fileHunks[0].id);
-          return;
-        }
+      const targetHunkId = findAdjacentFileHunkId(
+        fileList,
+        activeFilePath,
+        hunks,
+        direction,
+        "first"
+      );
+      if (!targetHunkId) {
+        return;
       }
+
+      pendingJumpSelectAllHunkIdRef.current = null;
+      hunkJumpRef.current = true;
+      onSelectHunk(targetHunkId);
     },
     [activeFilePath, fileList, hunks, onSelectHunk]
   );
@@ -915,23 +898,51 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         ? currentFileHunks.findIndex((hunk) => hunk.id === selectedHunkId)
         : -1;
 
-      let nextIdx: number;
+      let targetHunkId: string | null;
       if (currentIdx === -1) {
-        nextIdx = direction === 1 ? 0 : currentFileHunks.length - 1;
+        targetHunkId =
+          currentFileHunks[direction === 1 ? 0 : currentFileHunks.length - 1]?.id ?? null;
       } else {
-        nextIdx = currentIdx + direction;
+        const nextIdx = currentIdx + direction;
         if (nextIdx < 0 || nextIdx >= currentFileHunks.length) {
-          setBoundaryToast("No more hunks in this file — use H / L to move between files");
-          return;
+          // Keep J/K feeling like one continuous hunk stream instead of forcing an
+          // extra file-navigation step at every file boundary.
+          targetHunkId = activeFilePath
+            ? findAdjacentFileHunkId(
+                fileList,
+                activeFilePath,
+                selectedHunkIsFilteredOut ? allHunks : hunks,
+                direction,
+                direction === 1 ? "first" : "last"
+              )
+            : null;
+          if (!targetHunkId) {
+            setBoundaryToast(
+              direction === 1
+                ? "Reached the last hunk in review"
+                : "Reached the first hunk in review"
+            );
+            return;
+          }
+        } else {
+          targetHunkId = currentFileHunks[nextIdx].id;
         }
       }
 
-      const targetHunkId = currentFileHunks[nextIdx].id;
       pendingJumpSelectAllHunkIdRef.current = targetHunkId;
       hunkJumpRef.current = true;
       onSelectHunk(targetHunkId);
     },
-    [currentFileHunks, selectedHunkId, onSelectHunk]
+    [
+      activeFilePath,
+      allHunks,
+      currentFileHunks,
+      fileList,
+      hunks,
+      onSelectHunk,
+      selectedHunkId,
+      selectedHunkIsFilteredOut,
+    ]
   );
 
   const navigateToReview = useCallback(

@@ -7,6 +7,26 @@ import { extractNewPath, type FileTreeNode } from "@/common/utils/git/numstatPar
 import type { DiffHunk } from "@/common/types/review";
 
 /**
+ * Keep file hunks in source order so file-level navigation lands on the same hunks the
+ * renderer treats as first/last within a file.
+ */
+export function sortHunksInFileOrder(hunks: DiffHunk[]): DiffHunk[] {
+  return [...hunks].sort((a, b) => {
+    const newStartDelta = a.newStart - b.newStart;
+    if (newStartDelta !== 0) {
+      return newStartDelta;
+    }
+
+    const oldStartDelta = a.oldStart - b.oldStart;
+    if (oldStartDelta !== 0) {
+      return oldStartDelta;
+    }
+
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/**
  * Find the next hunk ID to navigate to when the current hunk is being removed
  * (e.g., marked as read when "hide read" is enabled).
  *
@@ -107,6 +127,36 @@ export function getAdjacentFilePath(
   if (idx === -1) return files[0];
   const next = (idx + direction + files.length) % files.length;
   return files[next];
+}
+
+/**
+ * Find the first or last hunk in the nearest adjacent file that still has hunks.
+ * Used when immersive review should feel like one continuous hunk stream across files.
+ */
+export function findAdjacentFileHunkId(
+  files: string[],
+  currentFilePath: string,
+  hunks: DiffHunk[],
+  direction: 1 | -1,
+  boundary: "first" | "last"
+): string | null {
+  let candidatePath = currentFilePath;
+  for (let step = 0; step < files.length - 1; step += 1) {
+    const nextPath = getAdjacentFilePath(files, candidatePath, direction);
+    if (!nextPath) {
+      return null;
+    }
+
+    candidatePath = nextPath;
+    const fileHunks = sortHunksInFileOrder(getFileHunks(hunks, candidatePath));
+    if (fileHunks.length === 0) {
+      continue;
+    }
+
+    return boundary === "first" ? fileHunks[0].id : fileHunks[fileHunks.length - 1].id;
+  }
+
+  return null;
 }
 
 /**

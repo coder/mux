@@ -7,6 +7,7 @@
 
 import { describe, test, expect } from "bun:test";
 import {
+  findAdjacentFileHunkId,
   findNextHunkId,
   findNextHunkIdAfterFileRemoval,
   flattenFileTreeLeaves,
@@ -17,7 +18,7 @@ import type { DiffHunk } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 
 // Helper to create minimal DiffHunk for testing
-function makeHunk(id: string, filePath: string): DiffHunk {
+function makeHunk(id: string, filePath: string, overrides: Partial<DiffHunk> = {}): DiffHunk {
   return {
     id,
     filePath,
@@ -28,6 +29,7 @@ function makeHunk(id: string, filePath: string): DiffHunk {
     content: "",
     header: "@@ -1,1 +1,1 @@",
     changeType: "modified",
+    ...overrides,
   };
 }
 
@@ -315,6 +317,45 @@ describe("getAdjacentFilePath", () => {
     const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
 
     expect(getAdjacentFilePath(files, "src/a.ts", -1)).toBe("src/c.ts");
+  });
+});
+
+describe("findAdjacentFileHunkId", () => {
+  test("returns the first hunk in the next file in file order", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+    const hunks = [
+      makeHunk("a1", "src/a.ts"),
+      makeHunk("b2", "src/b.ts", { oldStart: 20, newStart: 20 }),
+      makeHunk("b1", "src/b.ts", { oldStart: 10, newStart: 10 }),
+    ];
+
+    expect(findAdjacentFileHunkId(files, "src/a.ts", hunks, 1, "first")).toBe("b1");
+  });
+
+  test("returns the last hunk in the previous file in file order", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+    const hunks = [
+      makeHunk("b1", "src/b.ts", { oldStart: 10, newStart: 10 }),
+      makeHunk("b2", "src/b.ts", { oldStart: 20, newStart: 20 }),
+      makeHunk("c1", "src/c.ts"),
+    ];
+
+    expect(findAdjacentFileHunkId(files, "src/c.ts", hunks, -1, "last")).toBe("b2");
+  });
+
+  test("skips empty files and wraps around the file list", () => {
+    const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
+    const hunks = [makeHunk("a1", "src/a.ts"), makeHunk("c1", "src/c.ts")];
+
+    expect(findAdjacentFileHunkId(files, "src/a.ts", hunks, 1, "first")).toBe("c1");
+    expect(findAdjacentFileHunkId(files, "src/c.ts", hunks, 1, "first")).toBe("a1");
+  });
+
+  test("returns null when no adjacent file has hunks", () => {
+    const files = ["src/a.ts", "src/b.ts"];
+    const hunks = [makeHunk("a1", "src/a.ts")];
+
+    expect(findAdjacentFileHunkId(files, "src/a.ts", hunks, 1, "first")).toBeNull();
   });
 });
 
