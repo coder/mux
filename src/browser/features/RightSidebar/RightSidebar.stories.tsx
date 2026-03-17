@@ -6,13 +6,26 @@
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import { AboutDialogProvider } from "@/browser/contexts/AboutDialogContext";
+import { AgentProvider } from "@/browser/contexts/AgentContext";
+import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
+import { CommandRegistryProvider } from "@/browser/contexts/CommandRegistryContext";
+import { ConfirmDialogProvider } from "@/browser/contexts/ConfirmDialogContext";
 import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
+import { PolicyProvider } from "@/browser/contexts/PolicyContext";
+import { PowerModeProvider } from "@/browser/contexts/PowerModeContext";
 import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
+import { SettingsProvider } from "@/browser/contexts/SettingsContext";
+import { TelemetryEnabledProvider } from "@/browser/contexts/TelemetryEnabledContext";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { TutorialProvider } from "@/browser/contexts/TutorialContext";
+import { UILayoutsProvider } from "@/browser/contexts/UILayoutsContext";
 import { WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
+import { SplashScreenProvider } from "@/browser/features/SplashScreens/SplashScreenProvider";
+import { TerminalRouterProvider } from "@/browser/terminal/TerminalRouterContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mockFactory";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
@@ -111,22 +124,56 @@ function RightSidebarStoryShell(props: { setup: () => APIClient; children: React
 
   clientRef.current ??= props.setup();
 
+  const selectedWorkspaceId = readPersistedState<string | null>(SELECTED_WORKSPACE_KEY, null);
+  const workspaceId = selectedWorkspaceId ?? "ws-story";
+
   return (
     <ThemeProvider>
       <APIProvider key={renderKey ?? "right-sidebar-story"} client={clientRef.current}>
-        <RouterProvider>
-          <ProjectProvider>
-            <WorkspaceProvider>
-              <ExperimentsProvider>
-                <TooltipProvider>
-                  <ProviderOptionsProvider>
-                    <TutorialProvider>{props.children}</TutorialProvider>
-                  </ProviderOptionsProvider>
-                </TooltipProvider>
-              </ExperimentsProvider>
-            </WorkspaceProvider>
-          </ProjectProvider>
-        </RouterProvider>
+        <PolicyProvider>
+          <RouterProvider>
+            <ProjectProvider>
+              <WorkspaceProvider>
+                <TelemetryEnabledProvider>
+                  <TerminalRouterProvider>
+                    <ExperimentsProvider>
+                      <UILayoutsProvider>
+                        <TooltipProvider delayDuration={200}>
+                          <SettingsProvider>
+                            <AboutDialogProvider>
+                              <ProviderOptionsProvider>
+                                <SplashScreenProvider>
+                                  <TutorialProvider>
+                                    <CommandRegistryProvider>
+                                      <PowerModeProvider>
+                                        <ConfirmDialogProvider>
+                                          <AgentProvider
+                                            workspaceId={workspaceId}
+                                            projectPath={STORY_PROJECT_PATH}
+                                          >
+                                            <ThinkingProvider workspaceId={workspaceId}>
+                                              <BackgroundBashProvider workspaceId={workspaceId}>
+                                                {props.children}
+                                              </BackgroundBashProvider>
+                                            </ThinkingProvider>
+                                          </AgentProvider>
+                                        </ConfirmDialogProvider>
+                                      </PowerModeProvider>
+                                    </CommandRegistryProvider>
+                                  </TutorialProvider>
+                                </SplashScreenProvider>
+                              </ProviderOptionsProvider>
+                            </AboutDialogProvider>
+                          </SettingsProvider>
+                        </TooltipProvider>
+                      </UILayoutsProvider>
+                    </ExperimentsProvider>
+                  </TerminalRouterProvider>
+                </TelemetryEnabledProvider>
+              </WorkspaceProvider>
+            </ProjectProvider>
+          </RouterProvider>
+        </PolicyProvider>
       </APIProvider>
     </ThemeProvider>
   );
