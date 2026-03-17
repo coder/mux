@@ -24,6 +24,7 @@
  *   - KEEP_SANDBOX=1                   # don't delete temp MUX_ROOT on exit
  *   - BACKEND_PORT=3001                # override picked backend port
  *   - VITE_PORT=5174                   # override picked Vite port
+ *   - MUX_ENABLE_TUTORIALS_IN_SANDBOX=1 # re-enable tutorials inside the sandbox
  *   - MAKE=gmake                       # override make binary
  */
 
@@ -72,8 +73,12 @@ Optional CLI flags:
   --clean-providers   Do not copy providers.jsonc into the sandbox
   --clean-projects    Do not import projects from config.json (projects will be empty)
 
-Note: to pass flags via make, use:
-  make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-providers --clean-projects"`);
+Optional env vars:
+  MUX_ENABLE_TUTORIALS_IN_SANDBOX=1  Re-enable tutorials inside the sandbox
+
+Examples:
+  make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-providers --clean-projects"
+  MUX_ENABLE_TUTORIALS_IN_SANDBOX=1 BACKEND_PORT=3900 VITE_PORT=5174 make dev-server-sandbox`);
 }
 
 async function main(): Promise<number> {
@@ -181,6 +186,7 @@ async function main(): Promise<number> {
           MUX_ROOT: muxRoot,
           BACKEND_PORT: String(backendPort),
           VITE_PORT: String(vitePort),
+          MUX_ENABLE_TUTORIALS_IN_SANDBOX: process.env.MUX_ENABLE_TUTORIALS_IN_SANDBOX ?? "0",
         },
       });
     } catch (err) {

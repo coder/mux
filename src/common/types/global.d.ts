@@ -26,6 +26,8 @@ declare global {
     isE2E?: boolean;
     // Enables in-app React.Profiler capture for automated perf tests.
     enableReactPerfProfile?: boolean;
+    // Sandbox launchers default tutorials off unless explicitly re-enabled by env.
+    enableTutorialsInSandbox?: boolean;
     // True if running under Rosetta 2 translation on Apple Silicon (storybook/tests may set this)
     isRosetta?: boolean;
     // Async getter (used in Electron) for environments where preload cannot use Node builtins
@@ -73,6 +75,11 @@ declare global {
    * to rely on `import.meta.env`.
    */
   var __MUX_MD_URL_OVERRIDE__: string | undefined;
+  /**
+   * Optional tutorial sandbox override injected either by Vite (`define`) in browser-mode sandboxes
+   * or by Electron preload. `null`/`undefined` means normal tutorial behavior.
+   */
+  var __MUX_ENABLE_TUTORIALS_IN_SANDBOX__: boolean | null | undefined;
 }
 
 export {};

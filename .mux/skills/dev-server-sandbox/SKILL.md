@@ -26,6 +26,7 @@ make dev-server-sandbox
   - `providers.jsonc` (provider config)
   - `config.json` (project list)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
+- Disables tutorials by default inside the sandbox (`MUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
 - Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains
 - Runs `make dev-server` with those env overrides
 
@@ -49,6 +50,9 @@ KEEP_SANDBOX=1 make dev-server-sandbox
 
 # Pin ports (must be different)
 BACKEND_PORT=3001 VITE_PORT=5174 make dev-server-sandbox
+
+# Re-enable tutorials for sandbox dogfooding
+MUX_ENABLE_TUTORIALS_IN_SANDBOX=1 make dev-server-sandbox
 
 # Override which make binary to use
 MAKE=gmake make dev-server-sandbox

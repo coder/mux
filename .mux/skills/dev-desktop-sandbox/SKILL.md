@@ -24,6 +24,7 @@ make dev-desktop-sandbox
 - Picks free ports:
   - Vite devserver port (used by the renderer)
   - Electron remote debugging port (optional)
+- Disables tutorials by default inside the sandbox (`MUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
 - Runs `make dev` with:
   - `MUX_ROOT=<temp>`
   - `MUX_VITE_PORT=<free-port>`
@@ -58,6 +59,9 @@ VITE_PORT=5174 make dev-desktop-sandbox
 
 # Control how long we wait for Vite to come up (ms)
 VITE_READY_TIMEOUT_MS=120000 make dev-desktop-sandbox
+
+# Re-enable tutorials for sandbox dogfooding
+MUX_ENABLE_TUTORIALS_IN_SANDBOX=1 make dev-desktop-sandbox
 
 # Enable/pin Electron remote debugging port (defaults to an auto-picked free port)
 ELECTRON_DEBUG_PORT=9223 make dev-desktop-sandbox
