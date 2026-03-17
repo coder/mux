@@ -27,6 +27,7 @@ import { WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
 import { SplashScreenProvider } from "@/browser/features/SplashScreens/SplashScreenProvider";
 import { TerminalRouterProvider } from "@/browser/terminal/TerminalRouterContext";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mockFactory";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { blurActiveElement } from "@/browser/stories/storyPlayHelpers";
@@ -48,7 +49,7 @@ import {
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "@storybook/test";
 import type { ComponentType, ReactNode } from "react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { RightSidebar } from "./RightSidebar.js";
 
 const meta: Meta = {
@@ -123,6 +124,17 @@ function RightSidebarStoryShell(props: { setup: () => APIClient; children: React
   }
 
   clientRef.current ??= props.setup();
+
+  const workspaceStore = useWorkspaceStoreRaw();
+  const client = clientRef.current;
+
+  useEffect(() => {
+    // App stories bypass AppLoader, so manually sync WorkspaceStore to the story client.
+    workspaceStore.setClient(client);
+    return () => {
+      workspaceStore.setClient(null);
+    };
+  }, [client, workspaceStore]);
 
   const selectedWorkspaceId = readPersistedState<string | null>(SELECTED_WORKSPACE_KEY, null);
   const workspaceId = selectedWorkspaceId ?? "ws-story";
