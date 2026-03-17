@@ -776,11 +776,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   }
                   data-workspace-id={workspaceId}
                 >
-                  {isRemoving ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Trash2 />
-                  )}
+                  {isRemoving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 />}
                 </button>
               </TooltipTrigger>
               <TooltipContent align="start">
@@ -824,7 +820,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     aria-label={`Workspace actions for ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
-                    <EllipsisVertical  />
+                    <EllipsisVertical />
                   </button>
                 </PopoverTrigger>
 

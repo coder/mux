@@ -73,7 +73,15 @@ import {
   PositionedMenu,
   PositionedMenuItem,
 } from "@/browser/components/PositionedMenu/PositionedMenu";
-import { ChevronRight, CircleHelp, EllipsisVertical, KeyRound, Pencil, Trash, Plus } from "lucide-react";
+import {
+  ChevronRight,
+  CircleHelp,
+  EllipsisVertical,
+  KeyRound,
+  Pencil,
+  Trash,
+  Plus,
+} from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";

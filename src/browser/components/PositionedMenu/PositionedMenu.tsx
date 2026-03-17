@@ -104,7 +104,7 @@ export function PositionedMenuItem(props: PositionedMenuItemProps) {
         "bg-surface-primary w-full rounded-sm p-2 text-left text-xs whitespace-nowrap disabled:pointer-events-none disabled:opacity-50",
         isDestructive
           ? "text-content-destructive hover:bg-content-destructive/10 hover:text-destructive"
-          : "text-content-secondary hover:bg-hover",
+          : "text-content-secondary hover:bg-hover"
       )}
       onClick={(e) => {
         e.stopPropagation();
