@@ -1,4 +1,5 @@
 import assert from "@/common/utils/assert";
+import { clamp } from "@/common/utils/clamp";
 import type { Keybind } from "@/common/types/keybind";
 import { hasModifierKeybind, normalizeKeybind } from "@/common/types/keybind";
 
@@ -99,14 +100,14 @@ function normalizeRightSidebarWidthPreset(raw: unknown): RightSidebarWidthPreset
     const value =
       typeof record.value === "number" && Number.isFinite(record.value) ? record.value : 0.3;
     // Keep in a sensible range (avoid 0px or >100% layouts)
-    const clamped = Math.min(0.9, Math.max(0.1, value));
+    const clamped = clamp(value, 0.1, 0.9);
     return { mode: "fraction", value: clamped };
   }
 
   const value =
     typeof record.value === "number" && Number.isFinite(record.value) ? record.value : 400;
   const rounded = Math.floor(value);
-  const clamped = Math.min(1200, Math.max(300, rounded));
+  const clamped = clamp(rounded, 300, 1200);
   return { mode: "px", value: clamped };
 }
 
@@ -244,7 +245,7 @@ function normalizeLayoutPreset(raw: unknown): LayoutPreset | undefined {
 
   const leftSidebarWidthPx =
     typeof record.leftSidebarWidthPx === "number" && Number.isFinite(record.leftSidebarWidthPx)
-      ? Math.min(600, Math.max(200, Math.floor(record.leftSidebarWidthPx)))
+      ? clamp(Math.floor(record.leftSidebarWidthPx), 200, 600)
       : undefined;
 
   if (!record.rightSidebar || typeof record.rightSidebar !== "object") {
