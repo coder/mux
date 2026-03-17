@@ -917,6 +917,10 @@ export class BrowserSessionBackend {
       return;
     }
 
+    if (this.disposed || this.hasTerminalSessionState()) {
+      return;
+    }
+
     if (this.streamRetryTimer !== null) {
       return;
     }

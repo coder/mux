@@ -421,6 +421,52 @@ describe("BrowserSessionBackend", () => {
     expect(session.streamErrorMessage).toBe("socket closed");
   });
 
+  test("does not schedule retries after refresh-based close classification transitions to error", async () => {
+    const backend = createBackend();
+    setSession(backend, {
+      status: "live",
+      currentUrl: "https://example.com",
+      title: "Example",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+    });
+
+    let inspectCallCount = 0;
+    expect(
+      Reflect.set(backend, "inspectExistingSession", () => {
+        inspectCallCount += 1;
+        return Promise.resolve(
+          inspectCallCount === 1
+            ? ({ ok: true as const, exists: true } as const)
+            : ({ ok: true as const, exists: false } as const)
+        );
+      })
+    ).toBe(true);
+    expect(
+      Reflect.set(backend, "runCliCommand", (args: string[]) => {
+        if (args[0] === "get" && args[1] === "url") {
+          return Promise.resolve({ ok: true as const, data: { url: "about:blank" } });
+        }
+        if (args[0] === "get" && args[1] === "title") {
+          return Promise.resolve({ ok: true as const, data: { title: "about:blank" } });
+        }
+        throw new Error(`Unexpected CLI args: ${args.join(" ")}`);
+      })
+    ).toBe(true);
+
+    const handleUnexpectedStreamClose = Reflect.get(backend, "handleUnexpectedStreamClose") as (
+      this: BrowserSessionBackend,
+      error: string
+    ) => Promise<void>;
+    await handleUnexpectedStreamClose.call(backend, "socket closed");
+
+    const session = getSession(backend);
+    expect(session.status).toBe("error");
+    expect(session.streamState).toBe("error");
+    expect(session.streamErrorMessage).toBe("Browser session disappeared unexpectedly.");
+    expect(Reflect.get(backend, "streamRetryTimer")).toBeNull();
+  });
+
   test("treats about:blank as a metadata failure when session probing fails", async () => {
     const backend = createBackend();
     setSession(backend, {
