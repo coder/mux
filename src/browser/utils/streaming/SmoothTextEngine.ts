@@ -1,8 +1,5 @@
 import { STREAM_SMOOTHING } from "@/constants/streaming";
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
+import { clamp } from "@/common/utils/clamp";
 
 function getAdaptiveRate(backlog: number): number {
   const backlogPressure = clamp(backlog / STREAM_SMOOTHING.CATCHUP_BACKLOG_CHARS, 0, 1);

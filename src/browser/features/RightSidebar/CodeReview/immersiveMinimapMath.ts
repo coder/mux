@@ -1,10 +1,8 @@
+import { clamp } from "@/common/utils/clamp";
+
 export type LineCategory = "add" | "remove" | "context";
 
 const MIN_THUMB_HEIGHT_PX = 24;
-
-const clamp = (value: number, min: number, max: number): number => {
-  return Math.min(Math.max(value, min), max);
-};
 
 /**
  * Keep minimap line categories aligned with SelectableDiffRenderer display indices:
