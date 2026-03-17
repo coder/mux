@@ -142,19 +142,22 @@ type BrowserSessionSubscribe = (
 
 type MockSubscription = ReturnType<typeof createMockSubscription>;
 
+type BrowserSessionHookModule = typeof import("./useBrowserSessionSubscription");
+
 let currentApi: {
   browserSession: {
     subscribe: BrowserSessionSubscribe;
   };
 } | null = null;
+let hookImportCounter = 0;
+let useBrowserSessionSubscription: BrowserSessionHookModule["useBrowserSessionSubscription"];
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: currentApi,
-  }),
-}));
-
-import { useBrowserSessionSubscription } from "./useBrowserSessionSubscription";
+async function loadUseBrowserSessionSubscription() {
+  hookImportCounter += 1;
+  return (await import(
+    `./useBrowserSessionSubscription.ts?test-isolation=${hookImportCounter}`
+  )) as BrowserSessionHookModule;
+}
 
 function createMockSubscription() {
   let pendingResolve: ((value: IteratorResult<BrowserSessionEvent>) => void) | null = null;
@@ -295,7 +298,7 @@ describe("useBrowserSessionSubscription", () => {
   let subscribeMock: ReturnType<typeof mock<BrowserSessionSubscribe>>;
   let subscriptions: MockSubscription[];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
 
@@ -315,6 +318,20 @@ describe("useBrowserSessionSubscription", () => {
         subscribe: subscribeMock,
       },
     };
+
+    // Neighboring BrowserTab tests mock both the hook module and the API context globally.
+    // Re-install this file's API mock and import a cache-busted copy of the real hook so each
+    // test observes its own fake client and timer controls, even after those other files run.
+    void mock.module("@/browser/contexts/API", () => ({
+      useAPI: () => ({
+        api: currentApi,
+        status: currentApi ? ("connected" as const) : ("error" as const),
+        error: null,
+        authenticate: () => undefined,
+        retry: () => undefined,
+      }),
+    }));
+    ({ useBrowserSessionSubscription } = await loadUseBrowserSessionSubscription());
 
     Object.defineProperty(document, "hidden", {
       configurable: true,
