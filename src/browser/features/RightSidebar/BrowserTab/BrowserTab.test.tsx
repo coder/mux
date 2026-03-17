@@ -203,6 +203,42 @@ describe("BrowserTab address bar and reload", () => {
     expect(input.getAttribute("placeholder")).toBe("Enter a URL…");
   });
 
+  test("shows Browser ready state when session is at about:blank", () => {
+    mockSession = createSession({
+      currentUrl: "about:blank",
+      lastScreenshotBase64: "some-data",
+    });
+
+    const view = renderBrowserTab();
+
+    expect(view.getByText("Browser ready")).toBeTruthy();
+    expect(view.getByText("Enter a URL above or ask the agent to browse.")).toBeTruthy();
+    expect(view.queryByAltText("Example page")).toBeNull();
+  });
+
+  test("hides ready state once a real URL is loaded", () => {
+    mockSession = createSession({
+      currentUrl: "https://example.com",
+      lastScreenshotBase64: "abc123",
+    });
+
+    const view = renderBrowserTab();
+
+    expect(view.queryByText("Browser ready")).toBeNull();
+    expect(view.getByAltText("Example page")).toBeTruthy();
+  });
+
+  test("shows ready state even with non-live stream state at about:blank", () => {
+    mockSession = createSession({
+      currentUrl: "about:blank",
+      streamState: "fallback",
+    });
+
+    const view = renderBrowserTab();
+
+    expect(view.getByText("Browser ready")).toBeTruthy();
+  });
+
   test("submits valid URL on Enter", () => {
     mockSession = createSession({ currentUrl: "https://original.com" });
 

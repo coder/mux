@@ -137,9 +137,13 @@ export function BrowserTab(props: BrowserTabProps) {
 
   const isStarting =
     startingSession || autoStartState.autoStartPending || session?.status === "starting";
-  const screenshotSrc = session?.lastScreenshotBase64
-    ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
-    : null;
+  // Suppress the blank-page screenshot so the ready-state placeholder renders instead
+  // of an empty white frame. The viewport shows its placeholder prop when screenshotSrc is null.
+  const isBlankPage = session?.currentUrl === "about:blank";
+  const screenshotSrc =
+    session?.lastScreenshotBase64 && !isBlankPage
+      ? `data:image/jpeg;base64,${session.lastScreenshotBase64}`
+      : null;
   const visibleError =
     startError ?? error ?? session?.lastError ?? session?.streamErrorMessage ?? null;
   const sessionIsActive =
@@ -630,6 +634,16 @@ function getViewerContent(
       iconClassName: "text-accent animate-spin",
       title: "Starting browser session…",
       description: "Waiting for the browser backend to establish the session.",
+    };
+  }
+
+  // Live session at about:blank — show a friendly ready state instead of the raw blank page.
+  if (session?.status === "live" && session.currentUrl === "about:blank") {
+    return {
+      Icon: Globe,
+      iconClassName: "text-accent",
+      title: "Browser ready",
+      description: "Enter a URL above or ask the agent to browse.",
     };
   }
 
