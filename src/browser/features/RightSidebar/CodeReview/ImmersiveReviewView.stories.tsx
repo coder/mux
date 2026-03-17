@@ -322,7 +322,7 @@ function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
 
 const meta = {
   ...appMeta,
-  title: "App/RightSidebar",
+  title: "Features/RightSidebar/CodeReview/ImmersiveReviewView",
   component: ImmersiveReviewView,
   decorators: [
     (Story: ComponentType) => (
