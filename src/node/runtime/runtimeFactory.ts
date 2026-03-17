@@ -136,30 +136,29 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
     );
   }
 
+  const runtimeIdentity = {
+    projectPath: options?.projectPath,
+    workspaceName: options?.workspaceName,
+  };
+
   switch (config.type) {
     case "local":
       // Check if this is legacy "local" with srcBaseDir (= worktree semantics)
       // or new "local" without srcBaseDir (= project-dir semantics)
       if (hasSrcBaseDir(config)) {
         // Legacy: "local" with srcBaseDir is treated as worktree
-        return new WorktreeRuntime(config.srcBaseDir, {
-          projectPath: options?.projectPath,
-          workspaceName: options?.workspaceName,
-        });
+        return new WorktreeRuntime(config.srcBaseDir, runtimeIdentity);
       }
       // Project-dir: uses project path directly, no isolation
-      if (!options?.projectPath) {
+      if (!runtimeIdentity.projectPath) {
         throw new Error(
           "LocalRuntime requires projectPath in options for project-dir config (type: 'local' without srcBaseDir)"
         );
       }
-      return new LocalRuntime(options.projectPath);
+      return new LocalRuntime(runtimeIdentity.projectPath);
 
     case "worktree":
-      return new WorktreeRuntime(config.srcBaseDir, {
-        projectPath: options?.projectPath,
-        workspaceName: options?.workspaceName,
-      });
+      return new WorktreeRuntime(config.srcBaseDir, runtimeIdentity);
 
     case "ssh": {
       // Normalize Coder host before transport creation so both transport
@@ -183,23 +182,22 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
         if (!coderService) {
           throw new Error("Coder runtime requested but CoderService is not initialized");
         }
-        return new CoderSSHRuntime({ ...sshConfig, coder: config.coder }, transport, coderService, {
-          projectPath: options?.projectPath,
-          workspaceName: options?.workspaceName,
-        });
+        return new CoderSSHRuntime(
+          { ...sshConfig, coder: config.coder },
+          transport,
+          coderService,
+          runtimeIdentity
+        );
       }
 
-      return new SSHRuntime(sshConfig, transport, {
-        projectPath: options?.projectPath,
-        workspaceName: options?.workspaceName,
-      });
+      return new SSHRuntime(sshConfig, transport, runtimeIdentity);
     }
 
     case "docker": {
       // For existing workspaces, derive container name from project+workspace
       const containerName =
-        options?.projectPath && options?.workspaceName
-          ? getContainerName(options.projectPath, options.workspaceName)
+        runtimeIdentity.projectPath && runtimeIdentity.workspaceName
+          ? getContainerName(runtimeIdentity.projectPath, runtimeIdentity.workspaceName)
           : config.containerName;
       return new DockerRuntime({
         image: config.image,
@@ -222,9 +220,9 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       // can diverge for migrated/non-canonical entries.
       if (options?.workspacePath) {
         runtime.setCurrentWorkspacePath(options.workspacePath);
-      } else if (options?.projectPath && options?.workspaceName) {
+      } else if (runtimeIdentity.projectPath && runtimeIdentity.workspaceName) {
         runtime.setCurrentWorkspacePath(
-          runtime.getWorkspacePath(options.projectPath, options.workspaceName)
+          runtime.getWorkspacePath(runtimeIdentity.projectPath, runtimeIdentity.workspaceName)
         );
       }
       return runtime;
