@@ -5,6 +5,7 @@ import * as fsPromises from "fs/promises";
 import { execSync } from "node:child_process";
 import * as disposableExec from "@/node/utils/disposableExec";
 import type { InitLogger } from "@/node/runtime/Runtime";
+import * as submoduleSync from "@/node/runtime/submoduleSync";
 import { WorktreeManager } from "./WorktreeManager";
 
 function initGitRepo(projectPath: string): void {
@@ -24,6 +25,30 @@ function createNullInitLogger(): InitLogger {
     logStdout: (_line: string) => undefined,
     logStderr: (_line: string) => undefined,
     logComplete: (_exitCode: number) => undefined,
+  };
+}
+
+async function createCreateWorkspaceFixture(existingBranchName?: string) {
+  const rootDir = await fsPromises.realpath(
+    await fsPromises.mkdtemp(path.join(os.tmpdir(), "worktree-manager-create-"))
+  );
+  const projectPath = path.join(rootDir, "repo");
+  await fsPromises.mkdir(projectPath, { recursive: true });
+  initGitRepo(projectPath);
+
+  if (existingBranchName) {
+    execSync(`git branch ${existingBranchName}`, { cwd: projectPath, stdio: "ignore" });
+  }
+
+  const srcBaseDir = path.join(rootDir, "src");
+  await fsPromises.mkdir(srcBaseDir, { recursive: true });
+
+  return {
+    rootDir,
+    projectPath,
+    manager: new WorktreeManager(srcBaseDir),
+    initLogger: createNullInitLogger(),
+    cleanup: () => fsPromises.rm(rootDir, { recursive: true, force: true }),
   };
 }
 
@@ -52,6 +77,79 @@ describe("WorktreeManager constructor", () => {
     const expected = path.join(os.homedir(), "project", "branch");
     expect(workspacePath).toBe(expected);
   });
+});
+
+describe("WorktreeManager.createWorkspace", () => {
+  const rollbackCases = [
+    {
+      name: "rolls back failed new worktrees when submodule materialization fails",
+      branchName: "feature-rollback",
+      existingBranchName: undefined,
+      expectedBranchAfter: "",
+    },
+    {
+      name: "preserves existing branches when rollback removes a failed worktree",
+      branchName: "feature-existing",
+      existingBranchName: "feature-existing",
+      expectedBranchAfter: "feature-existing",
+    },
+  ] as const;
+
+  for (const testCase of rollbackCases) {
+    it(
+      testCase.name,
+      async () => {
+        const fixture = await createCreateWorkspaceFixture(testCase.existingBranchName);
+
+        try {
+          const workspacePath = fixture.manager.getWorkspacePath(
+            fixture.projectPath,
+            testCase.branchName
+          );
+          const syncSpy = spyOn(submoduleSync, "syncLocalGitSubmodules").mockRejectedValue(
+            new Error("submodule auth failed")
+          );
+
+          try {
+            const result = await fixture.manager.createWorkspace({
+              projectPath: fixture.projectPath,
+              branchName: testCase.branchName,
+              trunkBranch: "main",
+              initLogger: fixture.initLogger,
+              trusted: true,
+            });
+
+            expect(result.success).toBe(false);
+            if (result.success) {
+              throw new Error("Expected createWorkspace to fail");
+            }
+            expect(result.error).toContain("submodule auth failed");
+
+            let workspaceExists = true;
+            try {
+              await fsPromises.access(workspacePath);
+            } catch {
+              workspaceExists = false;
+            }
+            expect(workspaceExists).toBe(false);
+
+            const branchAfter = execSync(`git branch --list "${testCase.branchName}"`, {
+              cwd: fixture.projectPath,
+              stdio: ["ignore", "pipe", "ignore"],
+            })
+              .toString()
+              .trim();
+            expect(branchAfter).toBe(testCase.expectedBranchAfter);
+          } finally {
+            syncSpy.mockRestore();
+          }
+        } finally {
+          await fixture.cleanup();
+        }
+      },
+      20_000
+    );
+  }
 });
 
 describe("WorktreeManager.deleteWorkspace", () => {

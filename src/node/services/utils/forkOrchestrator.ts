@@ -51,6 +51,10 @@ interface OrchestrateForkParams {
   preferredTrunkBranch?: string;
 
   abortSignal?: AbortSignal;
+  /** Optional environment variables for checkout-time auth when forking a single project */
+  env?: Record<string, string>;
+  /** Resolve per-project env for multi-project fork fallbacks and checkout materialization */
+  projectEnvResolver?: (projectPath: string) => Promise<Record<string, string>>;
   /** Whether the project is trusted — when false, git hooks are disabled */
   trusted?: boolean;
   /**
@@ -277,12 +281,15 @@ export async function orchestrateFork(
 
     for (const [runtimeIndex, projectRuntime] of sourceProjectRuntimes.entries()) {
       const projectTrusted = getProjectTrusted(projectRuntime.projectPath);
+      const projectEnv =
+        (await params.projectEnvResolver?.(projectRuntime.projectPath)) ?? params.env;
       const forkResult = await projectRuntime.runtime.forkWorkspace({
         projectPath: projectRuntime.projectPath,
         sourceWorkspaceName,
         newWorkspaceName,
         initLogger,
         abortSignal,
+        env: projectEnv,
         trusted: projectTrusted,
       });
 
@@ -397,6 +404,7 @@ export async function orchestrateFork(
         directoryName: newWorkspaceName,
         initLogger,
         abortSignal,
+        env: projectEnv,
         trusted: projectTrusted,
       });
 
@@ -502,6 +510,7 @@ export async function orchestrateFork(
     newWorkspaceName,
     initLogger,
     abortSignal,
+    env: params.env,
     trusted: params.trusted,
   });
 
@@ -553,6 +562,7 @@ export async function orchestrateFork(
       directoryName: newWorkspaceName,
       initLogger,
       abortSignal,
+      env: params.env,
       trusted: params.trusted,
     });
 

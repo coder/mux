@@ -46,6 +46,7 @@ import {
   resolveSshAgentForwarding,
 } from "./credentialForwarding";
 import { streamToString, shescape } from "./streamUtils";
+import { syncRuntimeGitSubmodules } from "./submoduleSync";
 
 /** Hardcoded source directory inside container */
 const CONTAINER_SRC_DIR = "/src";
@@ -753,6 +754,53 @@ export class DockerRuntime extends RemoteRuntime {
       throw new Error(`Failed to checkout branch: ${stderr || stdout}`);
     }
     initLogger.logStep("Branch checked out successfully");
+
+    await this.materializeCheckedOutWorkspace({
+      containerName,
+      workspacePath,
+      initLogger,
+      abortSignal,
+      env,
+      trusted: params.trusted,
+    });
+  }
+
+  private async materializeCheckedOutWorkspace(args: {
+    containerName: string;
+    workspacePath: string;
+    initLogger: InitLogger;
+    abortSignal?: AbortSignal;
+    env?: Record<string, string>;
+    trusted?: boolean;
+  }): Promise<void> {
+    try {
+      // Container provisioning owns checkout completeness so initWorkspace can focus on
+      // running repo-controlled hooks against an already-materialized source tree.
+      await syncRuntimeGitSubmodules({
+        runtime: this,
+        workspacePath: args.workspacePath,
+        initLogger: args.initLogger,
+        abortSignal: args.abortSignal,
+        env: args.env,
+        trusted: args.trusted,
+      });
+    } catch (error) {
+      try {
+        await this.removeProvisioningContainer(args.containerName);
+      } catch (cleanupError) {
+        throw new Error(
+          `${getErrorMessage(error)} (cleanup failed: ${getErrorMessage(cleanupError)})`
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async removeProvisioningContainer(containerName: string): Promise<void> {
+    const removeResult = await runDockerCommand(`docker rm -f ${containerName}`, 10000);
+    if (removeResult.exitCode !== 0) {
+      throw new Error(removeResult.stderr || removeResult.stdout || "docker rm failed");
+    }
   }
 
   private async syncProjectToContainer(

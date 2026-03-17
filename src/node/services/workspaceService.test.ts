@@ -3925,7 +3925,7 @@ describe("WorkspaceService init cancellation", () => {
         return Promise.resolve();
       }),
       getAllWorkspaceMetadata: mock(() => Promise.resolve([mockMetadata])),
-      getEffectiveSecrets: mock(() => []),
+      getEffectiveSecrets: mock(() => [{ key: "GH_TOKEN", value: "token" }]),
       getSessionDir: mock(() => "/tmp/test/sessions"),
       findWorkspace: mock(() => null),
       loadConfigOrDefault: mock(() => ({
@@ -4010,6 +4010,9 @@ describe("WorkspaceService init cancellation", () => {
         return;
       }
 
+      expect(createWorkspaceMock).toHaveBeenCalledWith(
+        expect.objectContaining({ env: { GH_TOKEN: "token" } })
+      );
       expect(result.data.metadata.isInitializing).toBe(undefined);
       expect(clearInMemoryStateMock).toHaveBeenCalledWith(workspaceId);
 
@@ -4503,6 +4506,7 @@ describe("WorkspaceService fork", () => {
       generateStableId: mock(() => newWorkspaceId),
       findWorkspace: mock(() => null),
       getSessionDir: mock(() => "/tmp/test/sessions"),
+      getEffectiveSecrets: mock(() => []),
       loadConfigOrDefault: mock(() => ({
         projects: new Map([[sourceProjectPath, { workspaces: [], trusted: true }]]),
       })),

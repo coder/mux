@@ -16,6 +16,7 @@ import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { toPosixPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
+import { syncLocalGitSubmodules } from "@/node/runtime/submoduleSync";
 import { syncMuxignoreFiles } from "./muxignore";
 
 export class WorktreeManager {
@@ -36,18 +37,21 @@ export class WorktreeManager {
     branchName: string;
     trunkBranch: string;
     initLogger: InitLogger;
+    abortSignal?: AbortSignal;
+    env?: Record<string, string>;
     trusted?: boolean;
   }): Promise<WorkspaceCreationResult> {
     const { projectPath, branchName, trunkBranch, initLogger } = params;
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
     const noHooksEnv = params.trusted ? undefined : { env: GIT_NO_HOOKS_ENV };
+    const workspacePath = this.getWorkspacePath(projectPath, branchName);
+    let worktreeCreated = false;
+    let createdBranch = false;
 
     // Clean up stale lock before git operations on main repo
     cleanStaleLock(projectPath);
 
     try {
-      // Compute workspace path using the canonical method
-      const workspacePath = this.getWorkspacePath(projectPath, branchName);
       initLogger.logStep("Creating git worktree...");
 
       // Create parent directory if needed
@@ -107,7 +111,9 @@ export class WorktreeManager {
           noHooksEnv
         );
         await proc.result;
+        createdBranch = true;
       }
+      worktreeCreated = true;
 
       initLogger.logStep("Worktree created successfully");
 
@@ -122,13 +128,107 @@ export class WorktreeManager {
         await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, noHooksEnv);
       }
 
+      // Worktree creation is responsible for materializing the checkout completely.
+      // Skills, docs, and other repo-managed files may live inside submodules, so make
+      // them available before any runtime-specific provisioning or init hooks run.
+      await syncLocalGitSubmodules({
+        workspacePath,
+        initLogger,
+        abortSignal: params.abortSignal,
+        env: params.env,
+        trusted: params.trusted,
+      });
+
       return { success: true, workspacePath };
     } catch (error) {
-      return {
-        success: false,
-        error: getErrorMessage(error),
-      };
+      const errorMessage = getErrorMessage(error);
+
+      if (!worktreeCreated) {
+        return {
+          success: false,
+          error: errorMessage,
+        };
+      }
+
+      try {
+        await this.rollbackFailedWorkspaceCreation({
+          projectPath,
+          workspacePath,
+          branchName,
+          createdBranch,
+          trusted: params.trusted,
+        });
+        return {
+          success: false,
+          error: errorMessage,
+        };
+      } catch (rollbackError) {
+        return {
+          success: false,
+          error: `${errorMessage} (rollback failed: ${getErrorMessage(rollbackError)})`,
+        };
+      }
     }
+  }
+
+  private async rollbackFailedWorkspaceCreation(args: {
+    projectPath: string;
+    workspacePath: string;
+    branchName: string;
+    createdBranch: boolean;
+    trusted?: boolean;
+  }): Promise<void> {
+    const noHooksEnv = args.trusted ? undefined : { env: GIT_NO_HOOKS_ENV };
+
+    try {
+      using removeProc = execFileAsync(
+        "git",
+        ["-C", args.projectPath, "worktree", "remove", "--force", args.workspacePath],
+        noHooksEnv
+      );
+      await removeProc.result;
+    } catch {
+      // If git refuses to remove a partially-initialized worktree (for example because a
+      // submodule checkout left extra files behind), fall back to pruning metadata and
+      // deleting the directory so retries do not get stuck behind a stale collision.
+      try {
+        using pruneProc = execFileAsync(
+          "git",
+          ["-C", args.projectPath, "worktree", "prune"],
+          noHooksEnv
+        );
+        await pruneProc.result;
+      } catch {
+        // Ignore prune errors - we'll still try to remove the directory directly.
+      }
+
+      using rmProc = execAsync(`rm -rf ${shellQuote(toPosixPath(args.workspacePath))}`, {
+        shell: getBashPath(),
+      });
+      await rmProc.result;
+    }
+
+    try {
+      using pruneProc = execFileAsync(
+        "git",
+        ["-C", args.projectPath, "worktree", "prune"],
+        noHooksEnv
+      );
+      await pruneProc.result;
+    } catch {
+      // Best-effort cleanup - branch deletion below will still refuse if metadata remains.
+    }
+
+    if (!args.createdBranch) {
+      return;
+    }
+
+    using deleteProc = execFileAsync(
+      "git",
+      ["-C", args.projectPath, "branch", "-D", args.branchName],
+      noHooksEnv
+    );
+    await deleteProc.result;
   }
 
   /**
@@ -636,6 +736,8 @@ export class WorktreeManager {
         branchName: newWorkspaceName,
         trunkBranch: sourceBranch, // Fork from source branch instead of main/master
         initLogger,
+        abortSignal: params.abortSignal,
+        env: params.env,
         trusted: params.trusted,
       });
 

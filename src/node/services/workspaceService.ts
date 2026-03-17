@@ -1822,6 +1822,11 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      const createEnv = await secretsToRecord(
+        this.config.getEffectiveSecrets(projectPath),
+        this.opResolver
+      );
+
       for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
         createResult = await runtime.createWorkspace({
           projectPath,
@@ -1830,6 +1835,7 @@ export class WorkspaceService extends EventEmitter {
           directoryName: finalBranchName,
           initLogger,
           abortSignal: initAbortController.signal,
+          env: createEnv,
           trusted: projectConfig.trusted ?? false,
         });
 
@@ -2149,6 +2155,11 @@ export class WorkspaceService extends EventEmitter {
           `Expected non-empty trunk branch for project ${projectRuntimeEntry.project.projectPath}`
         );
 
+        const createEnv = await secretsToRecord(
+          this.config.getEffectiveSecrets(projectRuntimeEntry.project.projectPath),
+          this.opResolver
+        );
+
         const createResult = await projectRuntimeEntry.runtime.createWorkspace({
           projectPath: projectRuntimeEntry.project.projectPath,
           branchName,
@@ -2156,6 +2167,7 @@ export class WorkspaceService extends EventEmitter {
           directoryName: branchName,
           initLogger,
           abortSignal: initAbortController.signal,
+          env: createEnv,
           trusted,
         });
 
@@ -4177,6 +4189,23 @@ export class WorkspaceService extends EventEmitter {
       const initAbortController = new AbortController();
       this.initAbortControllers.set(newWorkspaceId, initAbortController);
 
+      const projectEnvCache = new Map<string, Record<string, string>>();
+      const resolveProjectEnv = async (runtimeProjectPath: string) => {
+        const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
+        const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
+        if (cachedEnv) {
+          return cachedEnv;
+        }
+
+        const projectEnv = await secretsToRecord(
+          this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
+          this.opResolver
+        );
+        projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
+        return projectEnv;
+      };
+      const createEnv = await resolveProjectEnv(foundProjectPath);
+
       let forkResult: Awaited<ReturnType<typeof orchestrateFork>>;
       try {
         forkResult = await orchestrateFork({
@@ -4191,6 +4220,8 @@ export class WorkspaceService extends EventEmitter {
           parentMetadata: sourceMetadata,
           allowCreateFallback: false,
           abortSignal: initAbortController.signal,
+          env: createEnv,
+          projectEnvResolver: resolveProjectEnv,
           trusted: projectConfig.trusted ?? false,
           multiProjectExperimentEnabled: this.isExperimentEnabled(
             EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
@@ -4220,27 +4251,10 @@ export class WorkspaceService extends EventEmitter {
       // Run init for forked workspace (fire-and-forget like create()).
       // Multi-project forks need per-project secrets for each runtime's init hook.
       if (targetRuntime instanceof MultiProjectRuntime) {
-        const projectEnvCache = new Map<string, Record<string, string>>();
-        targetRuntime.envResolver = async (runtimeProjectPath: string) => {
-          const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
-          const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
-          if (cachedEnv) {
-            return cachedEnv;
-          }
-
-          const projectEnv = await secretsToRecord(
-            this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
-            this.opResolver
-          );
-          projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
-          return projectEnv;
-        };
+        targetRuntime.envResolver = resolveProjectEnv;
       }
 
-      const secrets = await secretsToRecord(
-        this.config.getEffectiveSecrets(foundProjectPath),
-        this.opResolver
-      );
+      const secrets = await resolveProjectEnv(foundProjectPath);
       runBackgroundInit(
         targetRuntime,
         {

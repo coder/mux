@@ -46,6 +46,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
 import { getOriginUrlForBundle } from "./gitBundleSync";
 import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
+import { syncRuntimeGitSubmodules } from "./submoduleSync";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
 
@@ -804,167 +805,13 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
-      params;
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
 
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
     const nhp = gitNoHooksPrefix(params.trusted);
 
     try {
-      // If the workspace directory already exists and contains a git repo (e.g. forked from
-      // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
-      const workspacePathArg = expandTildeForSSH(workspacePath);
-      let shouldSync = true;
-
-      try {
-        const dirCheck = await execBuffered(this, `test -d ${workspacePathArg}`, {
-          cwd: "/tmp",
-          timeout: 10,
-          abortSignal,
-        });
-        if (dirCheck.exitCode === 0) {
-          const gitCheck = await execBuffered(
-            this,
-            `git -C ${workspacePathArg} rev-parse --is-inside-work-tree`,
-            {
-              cwd: "/tmp",
-              timeout: 20,
-              abortSignal,
-            }
-          );
-          shouldSync = gitCheck.exitCode !== 0;
-        }
-      } catch {
-        // Default to syncing on unexpected errors.
-        shouldSync = true;
-      }
-
-      if (shouldSync) {
-        // 1. Sync project to the shared bare base repo with retry for transient SSH failures.
-        // Errors like "pack-objects died" occur when SSH drops mid-transfer.
-        initLogger.logStep("Syncing project files to remote...");
-        const maxSyncAttempts = 3;
-        for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
-          try {
-            await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
-            break;
-          } catch (error) {
-            const errorMsg = getErrorMessage(error);
-            const isRetryable =
-              errorMsg.includes("pack-objects died") ||
-              errorMsg.includes("Connection reset") ||
-              errorMsg.includes("Connection closed") ||
-              errorMsg.includes("Broken pipe") ||
-              errorMsg.includes("EPIPE");
-
-            if (!isRetryable || attempt === maxSyncAttempts) {
-              initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
-              initLogger.logComplete(-1);
-              return {
-                success: false,
-                error: `Failed to sync project: ${errorMsg}`,
-              };
-            }
-
-            log.info(
-              `Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`
-            );
-
-            initLogger.logStep(
-              `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
-            );
-            await new Promise((r) => setTimeout(r, attempt * 1000));
-          }
-        }
-        initLogger.logStep("Files synced successfully");
-
-        // 2. Create a worktree from the shared bare base repo for this workspace.
-        const baseRepoPath = this.getBaseRepoPath(projectPath);
-        const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
-
-        // Fetch latest from origin in the base repo (best-effort) so new branches
-        // can start from the latest upstream state.
-        const fetchedOrigin = await this.fetchOriginTrunk(
-          baseRepoPath,
-          trunkBranch,
-          initLogger,
-          abortSignal,
-          nhp
-        );
-
-        // Resolve the bundle's staging ref to use as the local fallback start
-        // point. The staging ref is refs/mux-bundle/<trunk> — but the local
-        // project's default branch may differ from what was passed as trunkBranch
-        // (e.g. "master" vs "main"), so probe for the expected ref and fall back
-        // to whatever is available in refs/mux-bundle/.
-        const bundleTrunkRef = await this.resolveBundleTrunkRef(
-          baseRepoPathArg,
-          trunkBranch,
-          abortSignal
-        );
-
-        const shouldUseOrigin =
-          fetchedOrigin &&
-          bundleTrunkRef != null &&
-          (await this.canFastForwardToOrigin(
-            baseRepoPath,
-            bundleTrunkRef,
-            trunkBranch,
-            initLogger,
-            abortSignal
-          ));
-
-        // When origin is reachable, branch from the fresh remote tracking ref.
-        // Otherwise, use the bundle's staging ref (or HEAD as last resort).
-        const newBranchBase = shouldUseOrigin
-          ? `origin/${trunkBranch}`
-          : (bundleTrunkRef ?? "HEAD");
-
-        // git worktree add creates the directory and checks out the branch in one step.
-        // -B creates the branch or resets it to the start point if it already exists
-        // (e.g. orphaned from a previously deleted workspace). Git still prevents
-        // checking out a branch that's active in another worktree.
-        initLogger.logStep(`Creating worktree for branch: ${branchName}`);
-        const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
-
-        const worktreeResult = await execBuffered(this, worktreeCmd, {
-          cwd: "/tmp",
-          timeout: 300,
-          abortSignal,
-        });
-
-        if (worktreeResult.exitCode !== 0) {
-          const errorMsg = `Failed to create worktree: ${worktreeResult.stderr || worktreeResult.stdout}`;
-          initLogger.logStderr(errorMsg);
-          initLogger.logComplete(-1);
-          return { success: false, error: errorMsg };
-        }
-        initLogger.logStep("Worktree created successfully");
-      } else {
-        initLogger.logStep("Remote workspace already contains a git repo; skipping sync");
-
-        // Existing workspace (e.g. forked): fetch origin and checkout as before.
-        const fetchedOrigin = await this.fetchOriginTrunk(
-          workspacePath,
-          trunkBranch,
-          initLogger,
-          abortSignal,
-          nhp
-        );
-        const shouldUseOrigin =
-          fetchedOrigin &&
-          (await this.canFastForwardToOrigin(
-            workspacePath,
-            trunkBranch,
-            trunkBranch,
-            initLogger,
-            abortSignal
-          ));
-
-        if (shouldUseOrigin) {
-          await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal, nhp);
-        }
-      }
+      await this.prepareWorkspaceCheckout(params, nhp);
 
       // 3. Run .mux/init hook if it exists
       // Note: runInitHookOnRuntime calls logComplete() internally
@@ -1001,6 +848,163 @@ export class SSHRuntime extends RemoteRuntime {
         error: errorMsg,
       };
     }
+  }
+
+  private async prepareWorkspaceCheckout(params: WorkspaceInitParams, nhp: string): Promise<void> {
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
+      params;
+
+    // If the workspace directory already exists and contains a git repo (e.g. forked from
+    // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
+    const workspacePathArg = expandTildeForSSH(workspacePath);
+    let shouldSync = true;
+
+    try {
+      const dirCheck = await execBuffered(this, `test -d ${workspacePathArg}`, {
+        cwd: "/tmp",
+        timeout: 10,
+        abortSignal,
+      });
+      if (dirCheck.exitCode === 0) {
+        const gitCheck = await execBuffered(
+          this,
+          `git -C ${workspacePathArg} rev-parse --is-inside-work-tree`,
+          {
+            cwd: "/tmp",
+            timeout: 20,
+            abortSignal,
+          }
+        );
+        shouldSync = gitCheck.exitCode !== 0;
+      }
+    } catch {
+      // Default to syncing on unexpected errors.
+      shouldSync = true;
+    }
+
+    if (shouldSync) {
+      // SSH workspace initialization owns repo materialization: it syncs the project into
+      // the shared base repo, checks out the worktree, and then materializes submodules
+      // before repo-controlled init hooks run.
+      initLogger.logStep("Syncing project files to remote...");
+      const maxSyncAttempts = 3;
+      for (let attempt = 1; attempt <= maxSyncAttempts; attempt++) {
+        try {
+          await this.syncProjectToRemote(projectPath, workspacePath, initLogger, abortSignal);
+          break;
+        } catch (error) {
+          const errorMsg = getErrorMessage(error);
+          const isRetryable =
+            errorMsg.includes("pack-objects died") ||
+            errorMsg.includes("Connection reset") ||
+            errorMsg.includes("Connection closed") ||
+            errorMsg.includes("Broken pipe") ||
+            errorMsg.includes("EPIPE");
+
+          if (!isRetryable || attempt === maxSyncAttempts) {
+            throw new Error(`Failed to sync project: ${errorMsg}`);
+          }
+
+          log.info(`Sync failed (attempt ${attempt}/${maxSyncAttempts}), will retry: ${errorMsg}`);
+          initLogger.logStep(
+            `Sync failed, retrying (attempt ${attempt + 1}/${maxSyncAttempts})...`
+          );
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
+      }
+      initLogger.logStep("Files synced successfully");
+
+      // Create a worktree from the shared bare base repo for this workspace.
+      const baseRepoPath = this.getBaseRepoPath(projectPath);
+      const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
+
+      // Fetch latest from origin in the base repo (best-effort) so new branches
+      // can start from the latest upstream state.
+      const fetchedOrigin = await this.fetchOriginTrunk(
+        baseRepoPath,
+        trunkBranch,
+        initLogger,
+        abortSignal,
+        nhp
+      );
+
+      // Resolve the bundle's staging ref to use as the local fallback start point.
+      // The staging ref is refs/mux-bundle/<trunk>, but the local project's default
+      // branch may differ from trunkBranch (e.g. "master" vs "main").
+      const bundleTrunkRef = await this.resolveBundleTrunkRef(
+        baseRepoPathArg,
+        trunkBranch,
+        abortSignal
+      );
+
+      const shouldUseOrigin =
+        fetchedOrigin &&
+        bundleTrunkRef != null &&
+        (await this.canFastForwardToOrigin(
+          baseRepoPath,
+          bundleTrunkRef,
+          trunkBranch,
+          initLogger,
+          abortSignal
+        ));
+
+      // When origin is reachable, branch from the fresh remote tracking ref.
+      // Otherwise, use the bundle's staging ref (or HEAD as last resort).
+      const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : (bundleTrunkRef ?? "HEAD");
+
+      // git worktree add creates the directory and checks out the branch in one step.
+      // -B creates the branch or resets it to the start point if it already exists
+      // (e.g. orphaned from a previously deleted workspace). Git still prevents
+      // checking out a branch that's active in another worktree.
+      initLogger.logStep(`Creating worktree for branch: ${branchName}`);
+      const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
+
+      const worktreeResult = await execBuffered(this, worktreeCmd, {
+        cwd: "/tmp",
+        timeout: 300,
+        abortSignal,
+      });
+
+      if (worktreeResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to create worktree: ${worktreeResult.stderr || worktreeResult.stdout}`
+        );
+      }
+      initLogger.logStep("Worktree created successfully");
+    } else {
+      initLogger.logStep("Remote workspace already contains a git repo; skipping sync");
+
+      // Existing workspace (e.g. forked): fetch origin and checkout as before.
+      const fetchedOrigin = await this.fetchOriginTrunk(
+        workspacePath,
+        trunkBranch,
+        initLogger,
+        abortSignal,
+        nhp
+      );
+      const shouldUseOrigin =
+        fetchedOrigin &&
+        (await this.canFastForwardToOrigin(
+          workspacePath,
+          trunkBranch,
+          trunkBranch,
+          initLogger,
+          abortSignal
+        ));
+
+      if (shouldUseOrigin) {
+        await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal, nhp);
+      }
+    }
+
+    await syncRuntimeGitSubmodules({
+      runtime: this,
+      workspacePath,
+      initLogger,
+      abortSignal,
+      env,
+      trusted: params.trusted,
+    });
   }
 
   /**

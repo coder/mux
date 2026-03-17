@@ -538,6 +538,11 @@ async function main(): Promise<number> {
     // Read trust state from real config so trusted projects can run hooks
     const trusted = realConfig.loadConfigOrDefault().projects.get(projectDir)?.trusted ?? false;
 
+    const createEnv = Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string"
+      )
+    );
     const initLogger = makeCliInitLogger(writeHumanLine);
     const createResult = await runtime.createWorkspace({
       projectPath: projectDir,
@@ -545,6 +550,7 @@ async function main(): Promise<number> {
       trunkBranch,
       directoryName: branchName,
       initLogger,
+      env: createEnv,
       trusted,
     });
     if (!createResult.success) {
@@ -561,6 +567,7 @@ async function main(): Promise<number> {
         trunkBranch,
         workspacePath: createResult.workspacePath!,
         initLogger,
+        env: createEnv,
         trusted,
       });
     } catch (error) {
