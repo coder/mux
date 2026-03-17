@@ -327,71 +327,32 @@ describe("BrowserSessionBackend", () => {
     });
   });
 
-  test("only refreshes fallback screenshots when streaming is unavailable", async () => {
-    const fallbackBackend = createBackend({ initialUrl: "https://fallback.example.com" });
-    const fallbackScreenshotRefresh = mock(() => Promise.resolve());
 
-    expect(Reflect.set(fallbackBackend, "hasExistingSession", () => false)).toBe(true);
+  test("marks new sessions restart_required when stream transport is unavailable", async () => {
+    const backend = createBackend({ initialUrl: "https://restart.example.com" });
+
+    expect(Reflect.set(backend, "hasExistingSession", () => false)).toBe(true);
     expect(
-      Reflect.set(fallbackBackend, "runCliCommand", () =>
-        Promise.resolve({ ok: true as const, data: {} })
-      )
+      Reflect.set(backend, "runCliCommand", () => Promise.resolve({ ok: true as const, data: {} }))
     ).toBe(true);
     expect(
-      Reflect.set(fallbackBackend, "refreshNavigationMetadata", () => {
-        setSession(fallbackBackend, {
-          currentUrl: "https://fallback.example.com",
-          title: "Fallback",
+      Reflect.set(backend, "refreshNavigationMetadata", () => {
+        setSession(backend, {
+          currentUrl: "https://restart.example.com",
+          title: "Restart required",
         });
         return Promise.resolve();
       })
     ).toBe(true);
-    expect(
-      Reflect.set(fallbackBackend, "refreshFallbackScreenshot", fallbackScreenshotRefresh)
-    ).toBe(true);
-    expect(Reflect.set(fallbackBackend, "startMetadataRefreshLoop", noop)).toBe(true);
-    expect(Reflect.set(fallbackBackend, "startFallbackPolling", noop)).toBe(true);
+    expect(Reflect.set(backend, "startMetadataRefreshLoop", noop)).toBe(true);
 
-    const fallbackSession = await fallbackBackend.start();
+    const session = await backend.start();
 
-    expect(fallbackSession.streamState).toBe("fallback");
-    expect(fallbackScreenshotRefresh).toHaveBeenCalledTimes(1);
-
-    const streamingBackend = createBackend({
-      initialUrl: "https://stream.example.com",
-      streamPort: 9223,
-    });
-    const streamingFallbackRefresh = mock(() => Promise.resolve());
-
-    expect(Reflect.set(streamingBackend, "hasExistingSession", () => false)).toBe(true);
-    expect(
-      Reflect.set(streamingBackend, "runCliCommand", () =>
-        Promise.resolve({ ok: true as const, data: {} })
-      )
-    ).toBe(true);
-    expect(
-      Reflect.set(streamingBackend, "refreshNavigationMetadata", () => {
-        setSession(streamingBackend, {
-          currentUrl: "https://stream.example.com",
-          title: "Stream",
-        });
-        return Promise.resolve();
-      })
-    ).toBe(true);
-    expect(
-      Reflect.set(streamingBackend, "startStreamTransport", () =>
-        Promise.resolve("stream" as const)
-      )
-    ).toBe(true);
-    expect(
-      Reflect.set(streamingBackend, "refreshFallbackScreenshot", streamingFallbackRefresh)
-    ).toBe(true);
-    expect(Reflect.set(streamingBackend, "startMetadataRefreshLoop", noop)).toBe(true);
-
-    const streamingSession = await streamingBackend.start();
-
-    expect(streamingSession.streamState).not.toBe("fallback");
-    expect(streamingFallbackRefresh).not.toHaveBeenCalled();
+    expect(session.status).toBe("live");
+    expect(session.streamState).toBe("restart_required");
+    expect(session.streamErrorMessage).toBe(
+      "Streaming unavailable; restart the browser session to relaunch streaming."
+    );
   });
 
   test("clears stream state when the session stops", async () => {

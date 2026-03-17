@@ -138,15 +138,7 @@ describe("BrowserTab recent action timestamps", () => {
     expect(endedView.queryByText("Stream live")).toBeNull();
   });
 
-  test("shows stream-specific combined header badges for live sessions", () => {
-    mockSession = createSession({ streamState: "fallback" });
-
-    const fallbackView = renderBrowserTab();
-
-    expect(fallbackView.getAllByText("Fallback")).toHaveLength(1);
-
-    fallbackView.unmount();
-
+  test("shows degraded stream-state header badges for live sessions", () => {
     mockSession = createSession({ streamState: "restart_required", title: "Restart page" });
 
     const restartRequiredView = renderBrowserTab();
