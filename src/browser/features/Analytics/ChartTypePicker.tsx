@@ -41,7 +41,6 @@ export function ChartTypePicker(props: ChartTypePickerProps) {
               ? "bg-accent text-accent-foreground"
               : "text-muted hover:bg-accent/50 hover:text-foreground"
           )}
-          title={`Show ${option.label} chart`}
         >
           <option.icon className="size-3" />
           {option.label}

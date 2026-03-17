@@ -6,7 +6,12 @@ import React from "react";
 import { ArrowLeft, Maximize2 } from "lucide-react";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipIfPresent,
+  TooltipTrigger,
+} from "@/browser/components/Tooltip/Tooltip";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ReviewFilters, ReviewStats, ReviewSortOrder } from "@/common/types/review";
@@ -146,13 +151,14 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
           data-testid="review-base-value"
         />
         {showSetDefault && (
-          <button
-            onClick={handleSetDefault}
-            className="text-dim font-primary hover:text-muted cursor-pointer border-none bg-transparent p-0 text-[10px] whitespace-nowrap transition-colors duration-150"
-            title="Set as default base"
-          >
-            ★
-          </button>
+          <TooltipIfPresent tooltip="Set as default base" side="bottom">
+            <button
+              onClick={handleSetDefault}
+              className="text-dim font-primary hover:text-muted cursor-pointer border-none bg-transparent p-0 text-[10px] whitespace-nowrap transition-colors duration-150"
+            >
+              ★
+            </button>
+          </TooltipIfPresent>
         )}
       </div>
 

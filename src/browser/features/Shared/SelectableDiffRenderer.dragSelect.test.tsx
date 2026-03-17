@@ -103,6 +103,38 @@ describe("SelectableDiffRenderer drag selection", () => {
     }
   });
 
+  test("hovering the review button uses the full custom range-selection tooltip", async () => {
+    const content = "+const a = 1;\n+const b = 2;";
+
+    const { container } = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <SelectableDiffRenderer
+            content={content}
+            filePath="src/test.ts"
+            onReviewNote={onReviewNote}
+            maxHeight="none"
+            enableHighlighting={false}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    const commentButton = await waitFor(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Add review comment"]')
+    );
+    expect(commentButton).toBeTruthy();
+    expect(commentButton?.getAttribute("title")).toBeNull();
+
+    fireEvent.mouseEnter(commentButton!);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain(
+        "Add review comment (Shift-click or drag to select range)"
+      );
+    });
+  });
+
   test("dragging on the indicator column selects a line range", async () => {
     const content = "+const a = 1;\n+const b = 2;\n+const c = 3;";
 

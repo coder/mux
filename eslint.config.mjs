@@ -192,6 +192,157 @@ const localPlugin = {
         };
       },
     },
+    "no-native-interactive-tooltips": {
+      meta: {
+        type: "problem",
+        docs: {
+          description:
+            "Disallow native title tooltips on interactive controls when the content is long or dynamic",
+        },
+        messages: {
+          useTooltip:
+            "Native title tooltips on interactive controls truncate easily when the content is long or dynamic. Use the shared Tooltip component (or tooltip prop on Button/Switch) instead.",
+        },
+      },
+      create(context) {
+        const MAX_NATIVE_TOOLTIP_LENGTH = 20;
+        const INTERACTIVE_TAGS = new Set(["button", "input", "select", "textarea"]);
+
+        const getAttribute = (node, attributeName) =>
+          node.attributes.find(
+            (attribute) =>
+              attribute.type === "JSXAttribute" &&
+              attribute.name.type === "JSXIdentifier" &&
+              attribute.name.name === attributeName
+          ) ?? null;
+
+        const getStaticString = (expression) => {
+          if (!expression) {
+            return null;
+          }
+
+          if (expression.type === "Literal") {
+            return typeof expression.value === "string" ? expression.value : null;
+          }
+
+          if (expression.type === "TemplateLiteral" && expression.expressions.length === 0) {
+            return expression.quasis
+              .map((quasi) => quasi.value.cooked ?? quasi.value.raw)
+              .join("");
+          }
+
+          return null;
+        };
+
+        const isProblematicTitleExpression = (expression) => {
+          if (!expression) {
+            return false;
+          }
+
+          if (expression.type === "Literal") {
+            if (expression.value == null) {
+              return false;
+            }
+
+            return (
+              typeof expression.value === "string" &&
+              (expression.value.includes("\n") ||
+                expression.value.length > MAX_NATIVE_TOOLTIP_LENGTH)
+            );
+          }
+
+          if (expression.type === "TemplateLiteral") {
+            if (expression.expressions.length > 0) {
+              return true;
+            }
+
+            const value = getStaticString(expression);
+            return value !== null
+              ? value.includes("\n") || value.length > MAX_NATIVE_TOOLTIP_LENGTH
+              : true;
+          }
+
+          if (expression.type === "ConditionalExpression") {
+            return (
+              isProblematicTitleExpression(expression.consequent) ||
+              isProblematicTitleExpression(expression.alternate)
+            );
+          }
+
+          const staticValue = getStaticString(expression);
+          if (staticValue !== null) {
+            return (
+              staticValue.includes("\n") || staticValue.length > MAX_NATIVE_TOOLTIP_LENGTH
+            );
+          }
+
+          return true;
+        };
+
+        return {
+          JSXOpeningElement(node) {
+            if (node.name.type !== "JSXIdentifier") {
+              return;
+            }
+
+            const elementName = node.name.name;
+            if (elementName !== elementName.toLowerCase()) {
+              return;
+            }
+
+            const onClickAttribute = getAttribute(node, "onClick");
+            const hrefAttribute = getAttribute(node, "href");
+            const roleAttribute = getAttribute(node, "role");
+            const roleValue =
+              roleAttribute &&
+              roleAttribute.value?.type === "Literal" &&
+              typeof roleAttribute.value.value === "string"
+                ? roleAttribute.value.value
+                : null;
+            const isInteractive =
+              INTERACTIVE_TAGS.has(elementName) ||
+              (elementName === "a" && hrefAttribute !== null) ||
+              onClickAttribute !== null ||
+              roleValue === "button" ||
+              roleValue === "link" ||
+              roleValue === "switch";
+            if (!isInteractive) {
+              return;
+            }
+
+            const titleAttribute = getAttribute(node, "title");
+            if (!titleAttribute || !titleAttribute.value) {
+              return;
+            }
+
+            if (titleAttribute.value.type === "Literal") {
+              if (
+                typeof titleAttribute.value.value === "string" &&
+                (titleAttribute.value.value.includes("\n") ||
+                  titleAttribute.value.value.length > MAX_NATIVE_TOOLTIP_LENGTH)
+              ) {
+                context.report({
+                  node: titleAttribute,
+                  messageId: "useTooltip",
+                });
+              }
+              return;
+            }
+
+            if (titleAttribute.value.type !== "JSXExpressionContainer") {
+              return;
+            }
+
+            if (isProblematicTitleExpression(titleAttribute.value.expression)) {
+              context.report({
+                node: titleAttribute,
+                messageId: "useTooltip",
+              });
+            }
+          },
+        };
+      },
+    },
   },
 };
 
@@ -352,6 +503,8 @@ export default defineConfig([
       "local/no-unsafe-child-process": "error",
       "local/no-sync-fs-methods": "error",
       "local/no-cross-boundary-imports": "error",
+
+      "local/no-native-interactive-tooltips": "error",
 
       // Allow console for this app (it's a dev tool)
       "no-console": "off",

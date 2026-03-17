@@ -31,7 +31,7 @@ describe("StreamingBarrierView", () => {
     const stopButton = view.getByRole("button", { name: "Stop streaming" });
     expect(stopButton.textContent).toContain("Stop");
     expect(stopButton.textContent).toContain("Esc");
-    expect(stopButton.getAttribute("title")).toBe("Esc");
+    expect(stopButton.getAttribute("title")).toBeNull();
 
     fireEvent.click(stopButton);
 

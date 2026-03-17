@@ -12,7 +12,12 @@ import {
 } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipIfPresent,
+} from "@/browser/components/Tooltip/Tooltip";
 import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
 
 /**
@@ -272,45 +277,46 @@ const TreeNodeContent: React.FC<{
               className="shrink-0"
               style={{ opacity: iconOpacity }}
             />
-            <span
-              className={cn(
-                "flex-1",
-                fileLabelMode === "path" && "min-w-0",
-                isDeletedFile && "line-through",
-                isFullyRead &&
-                  "text-dim line-through [text-decoration-color:var(--color-read)] [text-decoration-thickness:2px]",
-                isUnknownState && !isFullyRead && "text-dim",
-                !isFullyRead && !isUnknownState && "text-foreground"
-              )}
-              title={fileLabelTitle}
-            >
-              {fileLabelMode === "path" ? (
-                <span className="flex min-w-0 items-baseline gap-2">
-                  <span className={cn("min-w-0 truncate", fileDirPath && "max-w-[60%]")}>
-                    {shouldShowRenameArrow ? (
-                      <>
-                        <span className="text-muted">{oldFileName}</span>
-                        <span className="text-muted">{" -> "}</span>
-                        <span>{fallbackFileName}</span>
-                      </>
-                    ) : (
-                      fallbackFileName
-                    )}
+            <TooltipIfPresent tooltip={fileLabelTitle} side="top" align="start">
+              <span
+                className={cn(
+                  "flex-1",
+                  fileLabelMode === "path" && "min-w-0",
+                  isDeletedFile && "line-through",
+                  isFullyRead &&
+                    "text-dim line-through [text-decoration-color:var(--color-read)] [text-decoration-thickness:2px]",
+                  isUnknownState && !isFullyRead && "text-dim",
+                  !isFullyRead && !isUnknownState && "text-foreground"
+                )}
+              >
+                {fileLabelMode === "path" ? (
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className={cn("min-w-0 truncate", fileDirPath && "max-w-[60%]")}>
+                      {shouldShowRenameArrow ? (
+                        <>
+                          <span className="text-muted">{oldFileName}</span>
+                          <span className="text-muted">{" -> "}</span>
+                          <span>{fallbackFileName}</span>
+                        </>
+                      ) : (
+                        fallbackFileName
+                      )}
+                    </span>
+                    {fileDirPath ? (
+                      <span className="text-muted min-w-0 flex-1 truncate">{fileDirPath}</span>
+                    ) : null}
                   </span>
-                  {fileDirPath ? (
-                    <span className="text-muted min-w-0 flex-1 truncate">{fileDirPath}</span>
-                  ) : null}
-                </span>
-              ) : shouldShowRenameArrow ? (
-                <>
-                  <span className="text-muted">{oldFileName}</span>
-                  <span className="text-muted">{" -> "}</span>
-                  <span>{fallbackFileName}</span>
-                </>
-              ) : (
-                node.name
-              )}
-            </span>
+                ) : shouldShowRenameArrow ? (
+                  <>
+                    <span className="text-muted">{oldFileName}</span>
+                    <span className="text-muted">{" -> "}</span>
+                    <span>{fallbackFileName}</span>
+                  </>
+                ) : (
+                  node.name
+                )}
+              </span>
+            </TooltipIfPresent>
             <span className="ml-auto flex items-center gap-2 text-[11px]">
               {node.stats?.additions ? (
                 <span className="text-success-light">+{node.stats.additions}</span>
@@ -403,14 +409,19 @@ export const FileTree: React.FC<FileTreeExternalProps> = ({
             />
           </div>
           {selectedPath && (
-            <button
-              className="bg-code-keyword-overlay text-foreground hover:bg-code-keyword-overlay/80 flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
-              onClick={() => onSelectFile(null)}
-              title={`Filtering: ${selectedPath}\nClick to clear`}
+            <TooltipIfPresent
+              tooltip={`Filtering: ${selectedPath}\nClick to clear`}
+              side="bottom"
+              align="end"
             >
-              <span className="max-w-[120px] truncate">{filterDisplayName}</span>
-              <span className="text-muted">✕</span>
-            </button>
+              <button
+                className="bg-code-keyword-overlay text-foreground hover:bg-code-keyword-overlay/80 flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
+                onClick={() => onSelectFile(null)}
+              >
+                <span className="max-w-[120px] truncate">{filterDisplayName}</span>
+                <span className="text-muted">✕</span>
+              </button>
+            </TooltipIfPresent>
           )}
         </div>
       </div>

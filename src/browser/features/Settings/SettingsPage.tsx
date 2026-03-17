@@ -198,7 +198,7 @@ export function SettingsPage(props: SettingsPageProps) {
               variant="ghost"
               size="icon"
               onClick={props.onToggleLeftSidebarCollapsed}
-              title="Open sidebar"
+              tooltip="Open sidebar"
               aria-label="Open sidebar menu"
               className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
             >
@@ -211,7 +211,7 @@ export function SettingsPage(props: SettingsPageProps) {
           variant="ghost"
           size="sm"
           onClick={close}
-          title="Back"
+          tooltip="Back"
           aria-label="Back to previous page"
           className="text-muted hover:text-foreground px-2"
         >

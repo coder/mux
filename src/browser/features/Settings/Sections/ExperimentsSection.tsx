@@ -76,7 +76,7 @@ function ExperimentRow(props: ExperimentRowProps) {
         disabled={disabled}
         onCheckedChange={handleToggle}
         aria-label={`Toggle ${props.name}`}
-        title={availabilityMessage ?? undefined}
+        tooltip={availabilityMessage ?? undefined}
       />
     </div>
   );

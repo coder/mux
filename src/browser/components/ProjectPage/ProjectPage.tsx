@@ -276,7 +276,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                 variant="ghost"
                 size="icon"
                 onClick={onToggleLeftSidebarCollapsed}
-                title="Open sidebar"
+                tooltip="Open sidebar"
                 aria-label="Open sidebar menu"
                 className={cn(
                   "hidden mobile-menu-btn h-6 w-6 shrink-0 text-muted hover:text-foreground",

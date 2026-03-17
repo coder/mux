@@ -37,6 +37,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { buildReadFileScript, processFileContents } from "@/browser/utils/fileExplorer";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import {
   parseReviewLineRange,
   type DiffHunk,
@@ -1569,21 +1570,27 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             <ChevronLeft className="h-4 w-4" />
           </button>
           {/* Mobile: show filename only */}
-          <span
-            className="text-foreground min-w-0 flex-1 truncate font-mono text-xs sm:hidden"
-            title={isReviewComplete ? undefined : (activeFilePath ?? undefined)}
+          <TooltipIfPresent
+            tooltip={isReviewComplete ? null : activeFilePath}
+            side="bottom"
+            align="start"
           >
-            {isReviewComplete
-              ? "Review complete"
-              : (activeFilePath?.split("/").pop() ?? "No files")}
-          </span>
+            <span className="text-foreground min-w-0 flex-1 truncate font-mono text-xs sm:hidden">
+              {isReviewComplete
+                ? "Review complete"
+                : (activeFilePath?.split("/").pop() ?? "No files")}
+            </span>
+          </TooltipIfPresent>
           {/* Desktop: show full path */}
-          <span
-            className="text-foreground hidden max-w-[400px] truncate font-mono text-xs sm:block"
-            title={isReviewComplete ? undefined : (activeFilePath ?? undefined)}
+          <TooltipIfPresent
+            tooltip={isReviewComplete ? null : activeFilePath}
+            side="bottom"
+            align="start"
           >
-            {isReviewComplete ? "Review complete" : (activeFilePath ?? "No files")}
-          </span>
+            <span className="text-foreground hidden max-w-[400px] truncate font-mono text-xs sm:block">
+              {isReviewComplete ? "Review complete" : (activeFilePath ?? "No files")}
+            </span>
+          </TooltipIfPresent>
           <span className="text-dim hidden shrink-0 text-[10px] sm:inline">
             {!isReviewComplete && fileIndex >= 0 ? `${fileIndex + 1}/${fileCount}` : ""}
           </span>
@@ -1814,12 +1821,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                           <div className="flex items-center gap-1.5">
                             <ReviewTypeIcon className={cn("size-3 shrink-0", statusClasses.icon)} />
 
-                            <span
-                              className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]"
-                              title={`${review.data.filePath}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                            <TooltipIfPresent
+                              tooltip={`${review.data.filePath}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                              side="top"
+                              align="start"
                             >
-                              {`${getFileBaseName(review.data.filePath)}:L${formatLineRangeCompact(review.data.lineRange)}`}
-                            </span>
+                              <span className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]">
+                                {`${getFileBaseName(review.data.filePath)}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                              </span>
+                            </TooltipIfPresent>
 
                             <span
                               className={cn(

@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import React, { useContext, useEffect, useId, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { StreamingContext } from "./StreamingContext";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 const MIN_HEIGHT = 300;
@@ -364,29 +365,29 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
             gap: "4px",
           }}
         >
-          <button
-            onClick={handleDecreaseHeight}
-            disabled={atMinHeight}
-            style={getButtonStyle(atMinHeight)}
-            title="Decrease diagram height"
-          >
-            −
-          </button>
-          <button
-            onClick={handleIncreaseHeight}
-            disabled={atMaxHeight}
-            style={getButtonStyle(atMaxHeight)}
-            title="Increase diagram height"
-          >
-            +
-          </button>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            style={getButtonStyle()}
-            title="Expand diagram"
-          >
-            ⤢
-          </button>
+          <TooltipIfPresent tooltip="Decrease diagram height" side="bottom">
+            <button
+              onClick={handleDecreaseHeight}
+              disabled={atMinHeight}
+              style={getButtonStyle(atMinHeight)}
+            >
+              −
+            </button>
+          </TooltipIfPresent>
+          <TooltipIfPresent tooltip="Increase diagram height" side="bottom">
+            <button
+              onClick={handleIncreaseHeight}
+              disabled={atMaxHeight}
+              style={getButtonStyle(atMaxHeight)}
+            >
+              +
+            </button>
+          </TooltipIfPresent>
+          <TooltipIfPresent tooltip="Expand diagram" side="bottom">
+            <button onClick={() => setIsModalOpen(true)} style={getButtonStyle()}>
+              ⤢
+            </button>
+          </TooltipIfPresent>
         </div>
         <div
           ref={containerRef}

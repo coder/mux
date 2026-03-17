@@ -12,7 +12,12 @@ import {
   type SearchHighlightConfig,
   escapeRegex,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipIfPresent,
+} from "@/browser/components/Tooltip/Tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
@@ -333,18 +338,19 @@ export const HunkViewer = React.memo<HunkViewerProps>(
             </Tooltip>
           )}
           {onOpenFile ? (
-            <button
-              type="button"
-              onClick={handleOpenFile}
-              className={cn(
-                "text-foreground min-w-0 truncate bg-transparent p-0 text-left",
-                "hover:text-link focus-visible:text-link cursor-pointer border-none"
-              )}
-              title={hunk.filePath}
-              aria-label={`Open ${hunk.filePath} in new tab`}
-            >
-              <span>{highlightedFilePath}</span>
-            </button>
+            <TooltipIfPresent tooltip={hunk.filePath} side="top" align="start">
+              <button
+                type="button"
+                onClick={handleOpenFile}
+                className={cn(
+                  "text-foreground min-w-0 truncate bg-transparent p-0 text-left",
+                  "hover:text-link focus-visible:text-link cursor-pointer border-none"
+                )}
+                aria-label={`Open ${hunk.filePath} in new tab`}
+              >
+                <span>{highlightedFilePath}</span>
+              </button>
+            </TooltipIfPresent>
           ) : (
             <div className="text-foreground min-w-0 truncate">{highlightedFilePath}</div>
           )}

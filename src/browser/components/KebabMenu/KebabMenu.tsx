@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipIfPresent } from "../Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
 export interface KebabMenuItem {
@@ -9,7 +9,7 @@ export interface KebabMenuItem {
   active?: boolean;
   disabled?: boolean;
   emoji?: string;
-  tooltip?: string;
+  tooltip?: React.ReactNode;
 }
 
 interface KebabMenuProps {
@@ -103,27 +103,40 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
               left: `${dropdownPosition.left}px`,
             }}
           >
-            {items.map((item, index) => (
-              <button
-                key={index}
-                onClick={() => handleItemClick(item)}
-                title={item.tooltip}
-                className={cn(
-                  "w-full border-none border-b border-modal-bg text-xs py-2 px-3 text-left transition-all duration-150 font-primary flex items-center gap-2",
-                  "last:border-b-0",
-                  item.disabled
-                    ? "bg-dark text-muted-light cursor-not-allowed opacity-50 hover:bg-dark hover:text-muted-light"
-                    : item.active
-                      ? "bg-white/15 text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
-                      : "bg-dark text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
-                )}
-              >
-                {item.emoji && (
-                  <span className="w-4 shrink-0 text-center text-[13px]">{item.emoji}</span>
-                )}
-                <span className="flex-1">{item.label}</span>
-              </button>
-            ))}
+            {items.map((item, index) => {
+              const itemButton = (
+                <button
+                  key={index}
+                  onClick={() => handleItemClick(item)}
+                  className={cn(
+                    "w-full border-none border-b border-modal-bg text-xs py-2 px-3 text-left transition-all duration-150 font-primary flex items-center gap-2",
+                    "last:border-b-0",
+                    item.disabled
+                      ? "bg-dark text-muted-light cursor-not-allowed opacity-50 hover:bg-dark hover:text-muted-light"
+                      : item.active
+                        ? "bg-white/15 text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
+                        : "bg-dark text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
+                  )}
+                >
+                  {item.emoji && (
+                    <span className="w-4 shrink-0 text-center text-[13px]">{item.emoji}</span>
+                  )}
+                  <span className="flex-1">{item.label}</span>
+                </button>
+              );
+
+              return (
+                <TooltipIfPresent
+                  key={index}
+                  tooltip={item.tooltip}
+                  side="right"
+                  align="center"
+                  className="z-[10001]"
+                >
+                  {itemButton}
+                </TooltipIfPresent>
+              );
+            })}
           </div>,
           document.body
         )}

@@ -149,7 +149,7 @@ describe("StreamingBarrier", () => {
 
     const stopButton = view.getByRole("button", { name: "Stop streaming" });
     expect(stopButton.textContent).toContain("Esc");
-    expect(stopButton.getAttribute("title")).toBe("Esc");
+    expect(stopButton.getAttribute("title")).toBeNull();
 
     fireEvent.click(stopButton);
 
@@ -174,7 +174,7 @@ describe("StreamingBarrier", () => {
     );
 
     expect(stopButton.textContent).toContain(expectedVimShortcut);
-    expect(stopButton.getAttribute("title")).toBe(expectedVimShortcut);
+    expect(stopButton.getAttribute("title")).toBeNull();
   });
 
   test("clicking stop during compaction uses onCancelCompaction when provided", () => {

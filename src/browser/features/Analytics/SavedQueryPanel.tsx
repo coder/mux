@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Code, RefreshCw, Trash2, X } from "lucide-react";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { Button } from "@/browser/components/Button/Button";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { useAnalyticsRawQuery } from "@/browser/hooks/useAnalytics";
@@ -130,16 +131,17 @@ function EditableLabel(props: EditableLabelProps) {
   }
 
   return (
-    <button
-      type="button"
-      className="min-w-0 border-none bg-transparent p-0 text-left"
-      onDoubleClick={() => {
-        setIsEditing(true);
-      }}
-      title="Double-click to rename panel"
-    >
-      <h3 className="text-foreground truncate text-sm font-semibold">{props.label}</h3>
-    </button>
+    <TooltipIfPresent tooltip="Double-click to rename panel" side="top" align="start">
+      <button
+        type="button"
+        className="min-w-0 border-none bg-transparent p-0 text-left"
+        onDoubleClick={() => {
+          setIsEditing(true);
+        }}
+      >
+        <h3 className="text-foreground truncate text-sm font-semibold">{props.label}</h3>
+      </button>
+    </TooltipIfPresent>
   );
 }
 

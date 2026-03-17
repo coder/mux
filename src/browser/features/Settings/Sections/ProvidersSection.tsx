@@ -1611,7 +1611,7 @@ export function ProvidersSection() {
                                     size="icon"
                                     onClick={() => setShowPassword(!showPassword)}
                                     className="text-muted hover:text-foreground h-6 w-6"
-                                    title={showPassword ? "Hide password" : "Show password"}
+                                    tooltip={showPassword ? "Hide password" : "Show password"}
                                   >
                                     {showPassword ? (
                                       <EyeOff className="h-4 w-4" />
@@ -1705,7 +1705,7 @@ export function ProvidersSection() {
                                         size="sm"
                                         onClick={() => setOpPickerProvider(provider)}
                                         className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
-                                        title="Link to 1Password"
+                                        tooltip="Link to 1Password"
                                       >
                                         <KeyRound className="h-3.5 w-3.5" />
                                       </Button>

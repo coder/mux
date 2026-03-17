@@ -1,4 +1,5 @@
 import * as React from "react";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
 interface SwitchProps {
@@ -8,7 +9,7 @@ interface SwitchProps {
   /** "default" (h-6 w-11) or "sm" (h-4 w-7) */
   size?: "default" | "sm";
   className?: string;
-  title?: string;
+  tooltip?: React.ReactNode;
   "aria-label"?: string;
 }
 
@@ -24,21 +25,19 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
       disabled = false,
       size = "default",
       className,
-      title,
+      tooltip,
       "aria-label": ariaLabel,
     },
     ref
   ) => {
     const isSmall = size === "sm";
-
-    return (
+    const button = (
       <button
         ref={ref}
         type="button"
         role="switch"
         aria-checked={checked}
         aria-label={ariaLabel}
-        title={title}
         disabled={disabled}
         onClick={() => onCheckedChange(!checked)}
         className={cn(
@@ -65,6 +64,8 @@ const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
         </span>
       </button>
     );
+
+    return <TooltipIfPresent tooltip={tooltip}>{button}</TooltipIfPresent>;
   }
 );
 Switch.displayName = "Switch";

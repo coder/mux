@@ -3,11 +3,26 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 
 import { cn } from "@/common/lib/utils";
 
-const TooltipProvider = TooltipPrimitive.Provider;
+const DEFAULT_TOOLTIP_DELAY_MS = 200;
+const TooltipProviderPresenceContext = React.createContext(false);
+
+const TooltipProvider: React.FC<
+  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Provider>
+> = ({ children, ...props }) => (
+  <TooltipProviderPresenceContext.Provider value={true}>
+    <TooltipPrimitive.Provider {...props}>{children}</TooltipPrimitive.Provider>
+  </TooltipProviderPresenceContext.Provider>
+);
 
 const Tooltip = TooltipPrimitive.Root;
 
 const TooltipTrigger = TooltipPrimitive.Trigger;
+
+const TOOLTIP_SURFACE_CLASSNAME = [
+  "bg-modal-bg text-foreground z-[9999] max-w-80 rounded px-[10px] py-[6px]",
+  "text-[11px] font-normal font-sans text-left whitespace-normal break-words",
+  "border border-separator-light shadow-[0_2px_8px_rgba(0,0,0,0.4)]",
+].join(" ");
 
 const TooltipArrow = React.forwardRef<
   React.ElementRef<typeof TooltipPrimitive.Arrow>,
@@ -28,9 +43,7 @@ const TooltipContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "bg-modal-bg text-foreground z-[9999] rounded px-[10px] py-[6px]",
-        "text-[11px] font-normal font-sans text-left",
-        "border border-separator-light shadow-[0_2px_8px_rgba(0,0,0,0.4)]",
+        TOOLTIP_SURFACE_CLASSNAME,
         "animate-in fade-in-0 zoom-in-95",
         "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
         "data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2",
@@ -46,6 +59,45 @@ const TooltipContent = React.forwardRef<
 ));
 TooltipContent.displayName = TooltipPrimitive.Content.displayName;
 
+interface TooltipIfPresentProps extends Omit<
+  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>,
+  "children" | "content"
+> {
+  children: React.ReactElement;
+  tooltip?: React.ReactNode;
+  showArrow?: boolean;
+}
+
+const TooltipIfPresent: React.FC<TooltipIfPresentProps> = ({
+  children,
+  tooltip,
+  showArrow = true,
+  ...props
+}) => {
+  const hasTooltipProvider = React.useContext(TooltipProviderPresenceContext);
+
+  if (tooltip == null || tooltip === "") {
+    return children;
+  }
+
+  const tooltipElement = (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent showArrow={showArrow} {...props}>
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  );
+
+  if (hasTooltipProvider) {
+    return tooltipElement;
+  }
+
+  return (
+    <TooltipProvider delayDuration={DEFAULT_TOOLTIP_DELAY_MS}>{tooltipElement}</TooltipProvider>
+  );
+};
+
 const HelpIndicator = React.forwardRef<
   HTMLSpanElement,
   React.HTMLAttributes<HTMLSpanElement> & { className?: string; children?: React.ReactNode }
@@ -60,4 +112,13 @@ const HelpIndicator = React.forwardRef<
 ));
 HelpIndicator.displayName = "HelpIndicator";
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, TooltipArrow, HelpIndicator };
+export {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+  TOOLTIP_SURFACE_CLASSNAME,
+  TooltipArrow,
+  TooltipIfPresent,
+  HelpIndicator,
+};

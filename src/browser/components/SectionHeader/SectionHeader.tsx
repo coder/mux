@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { cn } from "@/common/lib/utils";
 import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipIfPresent } from "../Tooltip/Tooltip";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
 
@@ -146,20 +146,20 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
               {/* Preset swatches */}
               <div className="mb-2 grid grid-cols-5 gap-1">
                 {SECTION_COLOR_PALETTE.map(([name, color]) => (
-                  <button
-                    key={color}
-                    onClick={() => {
-                      onChangeColor(color);
-                      setShowColorPicker(false);
-                    }}
-                    className={cn(
-                      "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
-                      sectionColor === color ? "border-white" : "border-transparent"
-                    )}
-                    style={{ backgroundColor: color }}
-                    title={name}
-                    aria-label={`Set color to ${name}`}
-                  />
+                  <TooltipIfPresent key={color} tooltip={name} side="bottom" align="center">
+                    <button
+                      onClick={() => {
+                        onChangeColor(color);
+                        setShowColorPicker(false);
+                      }}
+                      className={cn(
+                        "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
+                        sectionColor === color ? "border-white" : "border-transparent"
+                      )}
+                      style={{ backgroundColor: color }}
+                      aria-label={`Set color to ${name}`}
+                    />
+                  </TooltipIfPresent>
                 ))}
               </div>
               {/* Full color picker */}

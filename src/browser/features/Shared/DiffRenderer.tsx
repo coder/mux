@@ -5,11 +5,13 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
+import { TOOLTIP_SURFACE_CLASSNAME } from "@/browser/components/Tooltip/Tooltip";
 import { InlineReviewNote, type ReviewActionCallbacks } from "./InlineReviewNote";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
@@ -670,6 +672,15 @@ interface LineSelection {
   endIndex: number;
 }
 
+interface TooltipAnchorRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+const REVIEW_COMMENT_TOOLTIP = "Add review comment (Shift-click or drag to select range)";
+
 // CSS class for diff line wrapper - used by arbitrary selector in CommentButton
 const SELECTABLE_DIFF_LINE_CLASS = "selectable-diff-line";
 
@@ -1018,6 +1029,49 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const [selection, setSelection] = React.useState<LineSelection | null>(null);
     const [selectionInitialNoteText, setSelectionInitialNoteText] = React.useState("");
 
+    const reviewTooltipTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+    const [reviewTooltipAnchorRect, setReviewTooltipAnchorRect] =
+      React.useState<TooltipAnchorRect | null>(null);
+
+    const hideReviewTooltip = React.useCallback((trigger?: HTMLButtonElement | null) => {
+      if (trigger && reviewTooltipTriggerRef.current !== trigger) {
+        return;
+      }
+
+      reviewTooltipTriggerRef.current = null;
+      setReviewTooltipAnchorRect(null);
+    }, []);
+
+    const syncReviewTooltipAnchor = React.useCallback(() => {
+      const trigger = reviewTooltipTriggerRef.current;
+      if (!trigger?.isConnected) {
+        hideReviewTooltip();
+        return;
+      }
+
+      const { left, top, width, height } = trigger.getBoundingClientRect();
+      setReviewTooltipAnchorRect((previousRect) => {
+        if (
+          previousRect?.left === left &&
+          previousRect?.top === top &&
+          previousRect?.width === width &&
+          previousRect?.height === height
+        ) {
+          return previousRect;
+        }
+
+        return { left, top, width, height };
+      });
+    }, [hideReviewTooltip]);
+
+    const showReviewTooltip = React.useCallback(
+      (trigger: HTMLButtonElement) => {
+        reviewTooltipTriggerRef.current = trigger;
+        syncReviewTooltipAnchor();
+      },
+      [syncReviewTooltipAnchor]
+    );
+
     const flushPendingDragSelection = React.useCallback(() => {
       const anchorIndex = dragAnchorRef.current;
       const pendingLineIndex = pendingDragLineIndexRef.current;
@@ -1084,6 +1138,34 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         }
       };
     }, []);
+
+    React.useEffect(() => {
+      if (!reviewTooltipAnchorRect) {
+        return;
+      }
+
+      const handleViewportChange = () => {
+        syncReviewTooltipAnchor();
+      };
+
+      window.addEventListener("resize", handleViewportChange);
+      window.addEventListener("scroll", handleViewportChange, true);
+
+      return () => {
+        window.removeEventListener("resize", handleViewportChange);
+        window.removeEventListener("scroll", handleViewportChange, true);
+      };
+    }, [reviewTooltipAnchorRect, syncReviewTooltipAnchor]);
+
+    React.useEffect(() => {
+      if (!reviewTooltipTriggerRef.current) {
+        return;
+      }
+
+      // File/hunk switches can remove the hovered trigger during a normal React render without any
+      // scroll/resize event, so resync here too to avoid leaving a stale floating tooltip behind.
+      syncReviewTooltipAnchor();
+    });
 
     const { theme } = useTheme();
 
@@ -1286,6 +1368,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           return;
         }
 
+        hideReviewTooltip();
+
         // Notify parent that this hunk should become active.
         onLineClick?.();
         onLineIndexSelect?.(lineIndex, shiftKey);
@@ -1312,7 +1396,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           return { startIndex: anchor, endIndex: lineIndex };
         });
       },
-      [onLineClick, onLineIndexSelect, onReviewNote, renderSelectionStartIndex]
+      [hideReviewTooltip, onLineClick, onLineIndexSelect, onReviewNote, renderSelectionStartIndex]
     );
 
     const updateDragSelection = React.useCallback(
@@ -1329,6 +1413,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     );
 
     const handleCommentButtonClick = (lineIndex: number, shiftKey: boolean) => {
+      hideReviewTooltip();
+
       // Keep immersive cursor/hunk selection in sync with inline comment actions.
       onLineClick?.();
       onLineIndexSelect?.(lineIndex, shiftKey);
@@ -1417,144 +1503,168 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     };
 
     return (
-      <DiffContainer
-        fontSize={fontSize}
-        maxHeight={maxHeight}
-        className={className}
-        firstLineType={firstLineType}
-        lastLineType={lastLineType}
-      >
-        {highlightedLineData.map((lineInfo, displayIndex) => {
-          const isComposerSelected = isLineInSelection(displayIndex, renderSelection);
-          const isRangeSelected = isLineInSelection(displayIndex, normalizedSelectedLineRange);
-          const lineOutlineStyle = getCursorLikeOutlineStyle(displayIndex);
-          const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
-          const baseCodeBg = getDiffLineBackground(lineInfo.type);
-          const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
-          const gutterBg = applyReviewRangeOverlay(
-            getDiffLineGutterBackground(lineInfo.type),
-            isInReviewRange
-          );
-          const anchoredReviews = inlineReviewsByAnchor.get(displayIndex);
+      <>
+        <DiffContainer
+          fontSize={fontSize}
+          maxHeight={maxHeight}
+          className={className}
+          firstLineType={firstLineType}
+          lastLineType={lastLineType}
+        >
+          {highlightedLineData.map((lineInfo, displayIndex) => {
+            const isComposerSelected = isLineInSelection(displayIndex, renderSelection);
+            const isRangeSelected = isLineInSelection(displayIndex, normalizedSelectedLineRange);
+            const lineOutlineStyle = getCursorLikeOutlineStyle(displayIndex);
+            const isInReviewRange = reviewRangeByLineIndex[displayIndex] ?? false;
+            const baseCodeBg = getDiffLineBackground(lineInfo.type);
+            const codeBg = applyReviewRangeOverlay(baseCodeBg, isInReviewRange);
+            const gutterBg = applyReviewRangeOverlay(
+              getDiffLineGutterBackground(lineInfo.type),
+              isInReviewRange
+            );
+            const anchoredReviews = inlineReviewsByAnchor.get(displayIndex);
 
-          // Each line renders as 3 CSS Grid cells: gutter | indicator | code
-          // Use display:contents wrapper for selection state + group hover behavior
-          return (
-            <React.Fragment key={displayIndex}>
-              <div
-                className={cn(
-                  SELECTABLE_DIFF_LINE_CLASS,
-                  "group relative col-span-3 grid grid-cols-subgrid",
-                  onLineIndexSelect ? "cursor-pointer" : "cursor-text"
-                )}
-                style={lineOutlineStyle}
-                data-line-index={displayIndex}
-                data-selected={isComposerSelected || isRangeSelected ? "true" : "false"}
-                onClick={(e) => {
-                  if (!onLineIndexSelect) {
-                    return;
-                  }
-                  onLineClick?.();
-                  onLineIndexSelect(displayIndex, e.shiftKey);
-                }}
-              >
-                <DiffLineGutter
-                  type={lineInfo.type}
-                  oldLineNum={lineInfo.oldLineNum}
-                  newLineNum={lineInfo.newLineNum}
-                  showLineNumbers={showLineNumbers}
-                  lineNumberMode={lineNumberMode}
-                  lineNumberWidths={lineNumberWidths}
-                  background={gutterBg}
-                />
-                <DiffIndicator
-                  type={lineInfo.type}
-                  background={codeBg}
-                  lineIndex={displayIndex}
-                  isInteractive={Boolean(onReviewNote ?? onLineIndexSelect)}
-                  onMouseDown={(e) => {
-                    if (!onReviewNote) return;
-                    if (e.button !== 0) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    startDragSelection(displayIndex, e.shiftKey);
+            // Each line renders as 3 CSS Grid cells: gutter | indicator | code
+            // Use display:contents wrapper for selection state + group hover behavior
+            return (
+              <React.Fragment key={displayIndex}>
+                <div
+                  className={cn(
+                    SELECTABLE_DIFF_LINE_CLASS,
+                    "group relative col-span-3 grid grid-cols-subgrid",
+                    onLineIndexSelect ? "cursor-pointer" : "cursor-text"
+                  )}
+                  style={lineOutlineStyle}
+                  data-line-index={displayIndex}
+                  data-selected={isComposerSelected || isRangeSelected ? "true" : "false"}
+                  onClick={(e) => {
+                    if (!onLineIndexSelect) {
+                      return;
+                    }
+                    onLineClick?.();
+                    onLineIndexSelect(displayIndex, e.shiftKey);
                   }}
-                  onMouseEnter={() => {
-                    if (!onReviewNote) return;
-                    updateDragSelection(displayIndex);
-                  }}
-                  reviewButton={
-                    onReviewNote && (
-                      <>
-                        {/* Regular review can mount thousands of diff lines at once, so keep
-                            this affordance native instead of attaching a Radix tooltip to
-                            every line and paying the listener/DOM cost up front. */}
-                        <button
-                          type="button"
-                          className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
-                          style={{ position: "absolute", inset: 0 }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCommentButtonClick(displayIndex, e.shiftKey);
-                          }}
-                          aria-label="Add review comment"
-                          title="Add review comment (Shift-click or drag to select range)"
-                        >
-                          <MessageSquare className="size-3" />
-                        </button>
-                      </>
-                    )
-                  }
-                />
-                {/* SECURITY AUDIT: lineInfo.html is derived from Shiki/escapeHtml output
-                    (optionally transformed by text-node-only search highlighting). */}
-                <span
-                  className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
-                  style={{
-                    background: codeBg,
-                    color: getLineContentColor(lineInfo.type),
-                  }}
-                  dangerouslySetInnerHTML={{ __html: lineInfo.html }}
-                />
-              </div>
-
-              {/* Show textarea after the current cursor line (selection end). */}
-              {isComposerSelected &&
-                renderSelection &&
-                displayIndex === (composerAfterIndex ?? renderSelection.endIndex) && (
-                  <ReviewNoteInput
-                    selection={renderSelection}
-                    lineData={lineData}
-                    filePath={filePath}
+                >
+                  <DiffLineGutter
+                    type={lineInfo.type}
+                    oldLineNum={lineInfo.oldLineNum}
+                    newLineNum={lineInfo.newLineNum}
                     showLineNumbers={showLineNumbers}
                     lineNumberMode={lineNumberMode}
                     lineNumberWidths={lineNumberWidths}
-                    onSubmit={handleSubmitNote}
-                    onCancel={handleCancelNote}
-                    initialNoteText={renderNoteText}
+                    background={gutterBg}
                   />
-                )}
+                  <DiffIndicator
+                    type={lineInfo.type}
+                    background={codeBg}
+                    lineIndex={displayIndex}
+                    isInteractive={Boolean(onReviewNote ?? onLineIndexSelect)}
+                    onMouseDown={(e) => {
+                      if (!onReviewNote) return;
+                      if (e.button !== 0) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      startDragSelection(displayIndex, e.shiftKey);
+                    }}
+                    onMouseEnter={() => {
+                      if (!onReviewNote) return;
+                      updateDragSelection(displayIndex);
+                    }}
+                    reviewButton={
+                      onReviewNote && (
+                        <>
+                          {/* Regular review can mount thousands of diff lines at once, so keep
+                              one shared tooltip anchored to the active button instead of mounting
+                              a full Radix tooltip tree for every individual line. */}
+                          <button
+                            type="button"
+                            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
+                            style={{ position: "absolute", inset: 0 }}
+                            onMouseEnter={(event) => showReviewTooltip(event.currentTarget)}
+                            onMouseLeave={(event) => hideReviewTooltip(event.currentTarget)}
+                            onFocus={(event) => showReviewTooltip(event.currentTarget)}
+                            onBlur={(event) => hideReviewTooltip(event.currentTarget)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCommentButtonClick(displayIndex, e.shiftKey);
+                            }}
+                            aria-label="Add review comment"
+                          >
+                            <MessageSquare className="size-3" />
+                          </button>
+                        </>
+                      )
+                    }
+                  />
+                  {/* SECURITY AUDIT: lineInfo.html is derived from Shiki/escapeHtml output
+                      (optionally transformed by text-node-only search highlighting). */}
+                  <span
+                    className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
+                    style={{
+                      background: codeBg,
+                      color: getLineContentColor(lineInfo.type),
+                    }}
+                    dangerouslySetInnerHTML={{ __html: lineInfo.html }}
+                  />
+                </div>
 
-              {anchoredReviews?.map((review) => (
-                <InlineReviewNoteRow
-                  key={review.id}
-                  review={review}
-                  lineType={lineInfo.type}
-                  showLineNumbers={showLineNumbers}
-                  lineNumberMode={lineNumberMode}
-                  lineNumberWidths={lineNumberWidths}
-                  reviewActions={reviewActions}
-                  editRequestId={
-                    externalEditRequest?.reviewId === review.id
-                      ? externalEditRequest.requestId
-                      : null
-                  }
-                />
-              ))}
-            </React.Fragment>
-          );
-        })}
-      </DiffContainer>
+                {/* Show textarea after the current cursor line (selection end). */}
+                {isComposerSelected &&
+                  renderSelection &&
+                  displayIndex === (composerAfterIndex ?? renderSelection.endIndex) && (
+                    <ReviewNoteInput
+                      selection={renderSelection}
+                      lineData={lineData}
+                      filePath={filePath}
+                      showLineNumbers={showLineNumbers}
+                      lineNumberMode={lineNumberMode}
+                      lineNumberWidths={lineNumberWidths}
+                      onSubmit={handleSubmitNote}
+                      onCancel={handleCancelNote}
+                      initialNoteText={renderNoteText}
+                    />
+                  )}
+
+                {anchoredReviews?.map((review) => (
+                  <InlineReviewNoteRow
+                    key={review.id}
+                    review={review}
+                    lineType={lineInfo.type}
+                    showLineNumbers={showLineNumbers}
+                    lineNumberMode={lineNumberMode}
+                    lineNumberWidths={lineNumberWidths}
+                    reviewActions={reviewActions}
+                    editRequestId={
+                      externalEditRequest?.reviewId === review.id
+                        ? externalEditRequest.requestId
+                        : null
+                    }
+                  />
+                ))}
+              </React.Fragment>
+            );
+          })}
+        </DiffContainer>
+        {reviewTooltipAnchorRect &&
+          createPortal(
+            <div
+              className={cn(
+                TOOLTIP_SURFACE_CLASSNAME,
+                "pointer-events-none fixed z-[10001] border-separator-light"
+              )}
+              style={{
+                left: reviewTooltipAnchorRect.left + reviewTooltipAnchorRect.width + 8,
+                top: reviewTooltipAnchorRect.top + reviewTooltipAnchorRect.height / 2,
+                maxWidth: "min(20rem, calc(100vw - 24px))",
+                transform: "translateY(-50%)",
+              }}
+            >
+              <span className="border-border-medium bg-modal-bg absolute top-1/2 left-0 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-l" />
+              {REVIEW_COMMENT_TOOLTIP}
+            </div>,
+            document.body
+          )}
+      </>
     );
   }
 );

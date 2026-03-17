@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
 const buttonVariants = cva(
@@ -32,16 +33,21 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
+  extends
+    Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "title">,
+    VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  tooltip?: React.ReactNode;
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, tooltip, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
-    return (
+    const button = (
       <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />
     );
+
+    return <TooltipIfPresent tooltip={tooltip}>{button}</TooltipIfPresent>;
   }
 );
 Button.displayName = "Button";

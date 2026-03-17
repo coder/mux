@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import {
   Dialog,
   DialogContent,
@@ -105,18 +106,18 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
     <>
       <div className="mt-2 flex flex-wrap gap-2">
         {safeImages.map((dataUrl, index) => (
-          <button
-            key={index}
-            onClick={() => setSelectedImage(dataUrl)}
-            className="border-border-light bg-dark block cursor-pointer overflow-hidden rounded border p-0 transition-opacity hover:opacity-80"
-            title="Click to view full size"
-          >
-            <img
-              src={dataUrl}
-              alt={`Tool result image ${index + 1}`}
-              className="max-h-48 max-w-full object-contain"
-            />
-          </button>
+          <TooltipIfPresent key={index} tooltip="Click to view full size" side="top">
+            <button
+              onClick={() => setSelectedImage(dataUrl)}
+              className="border-border-light bg-dark block cursor-pointer overflow-hidden rounded border p-0 transition-opacity hover:opacity-80"
+            >
+              <img
+                src={dataUrl}
+                alt={`Tool result image ${index + 1}`}
+                className="max-h-48 max-w-full object-contain"
+              />
+            </button>
+          </TooltipIfPresent>
         ))}
       </div>
 

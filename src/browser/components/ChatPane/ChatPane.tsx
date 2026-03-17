@@ -34,6 +34,7 @@ import {
   getInterruptionContext,
   getLastNonDecorativeMessage,
 } from "@/common/utils/messages/retryEligibility";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
@@ -776,15 +777,19 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                     <>
                       {shouldRenderLoadOlderMessagesButton && (
                         <div className="flex justify-center py-3">
-                          <button
-                            type="button"
-                            onClick={handleLoadOlderHistory}
-                            disabled={loadingOlderHistory}
-                            title={`Load older messages (${loadOlderMessagesShortcutLabel})`}
-                            className="text-muted hover:text-foreground text-xs underline underline-offset-2 transition-colors disabled:opacity-50"
+                          <TooltipIfPresent
+                            tooltip={`Load older messages (${loadOlderMessagesShortcutLabel})`}
+                            side="top"
                           >
-                            {loadingOlderHistory ? "Loading..." : "Load older messages"}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={handleLoadOlderHistory}
+                              disabled={loadingOlderHistory}
+                              className="text-muted hover:text-foreground text-xs underline underline-offset-2 transition-colors disabled:opacity-50"
+                            >
+                              {loadingOlderHistory ? "Loading..." : "Load older messages"}
+                            </button>
+                          </TooltipIfPresent>
                         </div>
                       )}
                       {deferredMessages.map((msg, index) => {

@@ -1068,12 +1068,11 @@ export const ReviewTabWithFileFilter: AppStory = {
     });
 
     // Verify file filter indicator is visible in the header (has clear button with ✕)
-    await waitFor(async () => {
-      // Look for the filter indicator button by its title attribute which includes "Filtering:"
-      const filterIndicator = canvasElement.querySelector('button[title^="Filtering:"]');
-      await expect(filterIndicator).toBeInTheDocument();
-      await expect(filterIndicator).toHaveTextContent("Button.tsx");
+    const filterIndicator = await canvas.findByRole("button", {
+      name: /^Button\.tsx\s*✕$/,
     });
+    await expect(filterIndicator).toBeInTheDocument();
+    await expect(filterIndicator).toHaveTextContent("Button.tsx");
   },
 };
 
