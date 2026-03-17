@@ -2433,10 +2433,9 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
             const normalizedPath = stripTrailingSlashes(input.projectPath);
-            let project = config.projects.get(normalizedPath);
+            const project = config.projects.get(normalizedPath);
             if (!project) {
-              project = { workspaces: [] };
-              config.projects.set(normalizedPath, project);
+              throw new Error(`Project not found: ${normalizedPath}`);
             }
             project.displayName = input.displayName ?? undefined;
             return config;
