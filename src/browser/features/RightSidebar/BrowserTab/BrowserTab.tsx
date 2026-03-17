@@ -448,7 +448,7 @@ function BrowserActionRow(props: { action: BrowserAction }) {
       <div className="min-w-0 flex-1">
         <p className="text-foreground truncate text-xs">{props.action.description}</p>
         <div className="text-muted flex items-center gap-2 text-[10px]">
-          <span className="capitalize">{props.action.type}</span>
+          <span className="capitalize">{getBrowserActionTypeLabel(props.action)}</span>
           {absoluteTimestampLabel == null ? (
             <span className="counter-nums">{relativeTimestampLabel}</span>
           ) : (
@@ -469,6 +469,13 @@ function BrowserActionRow(props: { action: BrowserAction }) {
   );
 }
 
+function getBrowserActionTypeLabel(action: BrowserAction): BrowserAction["type"] | "scroll" {
+  if (action.type !== "custom" || action.metadata?.inputKind !== "scroll") {
+    return action.type;
+  }
+
+  return "scroll";
+}
 function getViewerContent(
   session: BrowserSession | null,
   isStarting: boolean,

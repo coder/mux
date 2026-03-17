@@ -133,6 +133,29 @@ describe("BrowserTab recent action timestamps", () => {
     expect(streamErrorView.getAllByText("Stream error")).toHaveLength(1);
   });
 
+  test("labels custom scroll summaries as scroll actions", () => {
+    mockRecentActions = [
+      {
+        id: "scroll-action-1",
+        type: "custom",
+        description: "Scrolled down ×3",
+        timestamp: new Date("2026-03-16T00:01:00.000Z").toISOString(),
+        metadata: {
+          source: "user-input",
+          inputKind: "scroll",
+          scrollDirection: "down",
+          scrollCount: 3,
+        },
+      },
+    ];
+
+    const view = renderBrowserTab();
+
+    expect(view.getByText("Scrolled down ×3")).toBeTruthy();
+    expect(view.getByText("scroll")).toBeTruthy();
+    expect(view.queryByText("custom")).toBeNull();
+  });
+
   test("uses the custom tooltip instead of a native title attribute for valid timestamps", () => {
     const timestamp = Date.now() - 60_000;
     const relativeLabel = formatRelativeTime(timestamp);

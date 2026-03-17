@@ -4,6 +4,7 @@ import { EventEmitter } from "events";
 import type {
   BrowserAction,
   BrowserInputEvent,
+  BrowserMouseInput,
   BrowserSession,
   BrowserSessionEvent,
 } from "@/common/types/browserSession";
@@ -17,6 +18,17 @@ import type { BrowserSessionStreamPortRegistry } from "@/node/services/browserSe
 import { log } from "@/node/services/log";
 
 const MAX_RECENT_ACTIONS = 50;
+const MAX_IGNORABLE_SCROLL_DELTA = 1;
+const USER_INPUT_ACTION_SOURCE = "user-input";
+
+type ScrollDirection = "up" | "down" | "left" | "right";
+
+interface UserInputScrollActionMetadata extends Record<string, unknown> {
+  source: typeof USER_INPUT_ACTION_SOURCE;
+  inputKind: "scroll";
+  scrollDirection: ScrollDirection;
+  scrollCount: number;
+}
 
 type BrowserSessionServiceStreamPortRegistry = Pick<
   BrowserSessionStreamPortRegistry,
@@ -117,8 +129,8 @@ export class BrowserSessionService extends EventEmitter {
           return;
         }
 
-        this.appendAction(workspaceId, action);
-        this.emitEvent(workspaceId, { type: "action", action });
+        const appendedAction = this.appendAction(workspaceId, action);
+        this.emitEvent(workspaceId, { type: "action", action: appendedAction });
       },
       onEnded: (wsId) => {
         if (!isCurrentBackend(wsId)) {
@@ -217,62 +229,36 @@ export class BrowserSessionService extends EventEmitter {
     this.emit(`update:${workspaceId}`, event);
   }
 
-  private appendAction(workspaceId: string, action: BrowserAction): void {
+  private appendAction(workspaceId: string, action: BrowserAction): BrowserAction {
     let actions = this.recentActions.get(workspaceId);
     if (!actions) {
       actions = [];
       this.recentActions.set(workspaceId, actions);
     }
 
+    const previousAction = actions.at(-1);
+    const mergedAction =
+      previousAction == null ? null : mergeConsecutiveScrollActions(previousAction, action);
+    if (mergedAction != null) {
+      actions[actions.length - 1] = mergedAction;
+      return mergedAction;
+    }
+
     actions.push(action);
     if (actions.length > MAX_RECENT_ACTIONS) {
       actions.shift();
     }
+    return action;
   }
 
   private logInputAction(workspaceId: string, input: BrowserInputEvent): void {
-    let actionType: BrowserAction["type"];
-    let description: string;
-
-    switch (input.kind) {
-      case "mouse":
-        if (input.eventType === "mousePressed") {
-          actionType = "click";
-          description = `Clicked at (${Math.round(input.x)}, ${Math.round(input.y)})`;
-        } else if (input.eventType === "mouseWheel") {
-          actionType = "custom";
-          description = `Scrolled (${input.deltaX ?? 0}, ${input.deltaY ?? 0})`;
-        } else {
-          return;
-        }
-        break;
-      case "keyboard":
-        return;
-      case "touch": {
-        if (input.eventType !== "touchStart") {
-          return;
-        }
-
-        const point = input.touchPoints[0];
-        if (point == null) {
-          return;
-        }
-
-        actionType = "click";
-        description = `Tapped at (${Math.round(point.x)}, ${Math.round(point.y)})`;
-        break;
-      }
+    const action = createInputAction(input);
+    if (action == null) {
+      return;
     }
 
-    const action: BrowserAction = {
-      id: `browser-action-${randomUUID().slice(0, 8)}`,
-      type: actionType,
-      description,
-      timestamp: new Date().toISOString(),
-      metadata: { source: "user-input" },
-    };
-    this.appendAction(workspaceId, action);
-    this.emitEvent(workspaceId, { type: "action", action });
+    const appendedAction = this.appendAction(workspaceId, action);
+    this.emitEvent(workspaceId, { type: "action", action: appendedAction });
   }
 
   private async cleanupWorkspace(workspaceId: string): Promise<void> {
@@ -306,4 +292,164 @@ export class BrowserSessionService extends EventEmitter {
     this.startPromises.delete(workspaceId);
     this.streamPortRegistry?.releasePort(workspaceId);
   }
+}
+
+function createInputAction(input: BrowserInputEvent): BrowserAction | null {
+  switch (input.kind) {
+    case "mouse":
+      if (input.eventType === "mousePressed") {
+        assert(Number.isFinite(input.x), "BrowserSessionService expected mouse x to be finite");
+        assert(Number.isFinite(input.y), "BrowserSessionService expected mouse y to be finite");
+        return createUserInputAction(
+          "click",
+          `Clicked at (${Math.round(input.x)}, ${Math.round(input.y)})`
+        );
+      }
+
+      if (input.eventType !== "mouseWheel") {
+        return null;
+      }
+
+      return createScrollInputAction(input);
+    case "keyboard":
+      return null;
+    case "touch": {
+      if (input.eventType !== "touchStart") {
+        return null;
+      }
+
+      const point = input.touchPoints[0];
+      if (point == null) {
+        return null;
+      }
+
+      assert(Number.isFinite(point.x), "BrowserSessionService expected touch x to be finite");
+      assert(Number.isFinite(point.y), "BrowserSessionService expected touch y to be finite");
+      return createUserInputAction(
+        "click",
+        `Tapped at (${Math.round(point.x)}, ${Math.round(point.y)})`
+      );
+    }
+  }
+}
+
+function createScrollInputAction(input: BrowserMouseInput): BrowserAction | null {
+  const deltaX = input.deltaX ?? 0;
+  const deltaY = input.deltaY ?? 0;
+  assert(Number.isFinite(input.x), "BrowserSessionService expected wheel x to be finite");
+  assert(Number.isFinite(input.y), "BrowserSessionService expected wheel y to be finite");
+  assert(Number.isFinite(deltaX), "BrowserSessionService expected wheel deltaX to be finite");
+  assert(Number.isFinite(deltaY), "BrowserSessionService expected wheel deltaY to be finite");
+
+  if (
+    Math.abs(deltaX) <= MAX_IGNORABLE_SCROLL_DELTA &&
+    Math.abs(deltaY) <= MAX_IGNORABLE_SCROLL_DELTA
+  ) {
+    return null;
+  }
+
+  const scrollDirection = getScrollDirection(deltaX, deltaY);
+  return createUserInputAction("custom", formatScrollActionDescription(scrollDirection, 1), {
+    inputKind: "scroll",
+    scrollDirection,
+    scrollCount: 1,
+  });
+}
+
+function createUserInputAction(
+  type: BrowserAction["type"],
+  description: string,
+  metadata: Record<string, unknown> = {}
+): BrowserAction {
+  return {
+    id: `browser-action-${randomUUID().slice(0, 8)}`,
+    type,
+    description,
+    timestamp: new Date().toISOString(),
+    metadata: {
+      source: USER_INPUT_ACTION_SOURCE,
+      ...metadata,
+    },
+  };
+}
+
+// Recent actions is a user-facing timeline, so collapse repeated wheel ticks into
+// a readable scroll summary instead of spending the 50-item budget on raw deltas.
+function mergeConsecutiveScrollActions(
+  previousAction: BrowserAction,
+  nextAction: BrowserAction
+): BrowserAction | null {
+  const previousScrollMetadata = getUserInputScrollActionMetadata(previousAction);
+  const nextScrollMetadata = getUserInputScrollActionMetadata(nextAction);
+  if (previousScrollMetadata == null || nextScrollMetadata == null) {
+    return null;
+  }
+
+  if (previousScrollMetadata.scrollDirection !== nextScrollMetadata.scrollDirection) {
+    return null;
+  }
+
+  const scrollCount = previousScrollMetadata.scrollCount + nextScrollMetadata.scrollCount;
+
+  return {
+    ...previousAction,
+    description: formatScrollActionDescription(previousScrollMetadata.scrollDirection, scrollCount),
+    timestamp: nextAction.timestamp,
+    metadata: {
+      ...(previousAction.metadata ?? {}),
+      ...(nextAction.metadata ?? {}),
+      source: USER_INPUT_ACTION_SOURCE,
+      inputKind: "scroll",
+      scrollDirection: previousScrollMetadata.scrollDirection,
+      scrollCount,
+    },
+  };
+}
+
+function getUserInputScrollActionMetadata(
+  action: BrowserAction
+): UserInputScrollActionMetadata | null {
+  if (action.type !== "custom") {
+    return null;
+  }
+
+  const metadata = action.metadata;
+  if (metadata?.source !== USER_INPUT_ACTION_SOURCE || metadata.inputKind !== "scroll") {
+    return null;
+  }
+
+  const scrollDirection = metadata.scrollDirection;
+  if (!isScrollDirection(scrollDirection)) {
+    return null;
+  }
+
+  const scrollCount = metadata.scrollCount;
+  if (typeof scrollCount !== "number" || !Number.isInteger(scrollCount) || scrollCount < 1) {
+    return null;
+  }
+
+  return {
+    source: USER_INPUT_ACTION_SOURCE,
+    inputKind: "scroll",
+    scrollDirection,
+    scrollCount,
+  };
+}
+
+function getScrollDirection(deltaX: number, deltaY: number): ScrollDirection {
+  if (Math.abs(deltaY) >= Math.abs(deltaX)) {
+    return deltaY >= 0 ? "down" : "up";
+  }
+
+  return deltaX >= 0 ? "right" : "left";
+}
+
+function formatScrollActionDescription(direction: ScrollDirection, count: number): string {
+  assert(Number.isInteger(count), "BrowserSessionService expected scroll counts to be integers");
+  assert(count >= 1, "BrowserSessionService expected scroll counts to stay positive");
+  return count === 1 ? `Scrolled ${direction}` : `Scrolled ${direction} ×${count}`;
+}
+
+function isScrollDirection(value: unknown): value is ScrollDirection {
+  return value === "up" || value === "down" || value === "left" || value === "right";
 }
