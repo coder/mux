@@ -112,6 +112,12 @@
                         cp -r node_modules $out/lib/mux/
                         cp package.json $out/lib/mux/
 
+                        # Ensure vendored binaries have execute permission.
+                        # agent-browser's postinstall normally does this, but
+                        # --ignore-scripts in offlineCache skips it, and the
+                        # Nix store is read-only at runtime so chmod is impossible.
+                        chmod +x $out/lib/mux/node_modules/agent-browser/bin/* 2>/dev/null || true
+
                         # Create wrapper script. When running in Nix, mux doesn't know that
                         # it's packaged. Use MUX_E2E_LOAD_DIST to force using compiled
                         # assets instead of a dev server.
