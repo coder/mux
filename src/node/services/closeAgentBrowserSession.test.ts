@@ -3,7 +3,10 @@ import type * as childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { AgentBrowserBinaryNotFoundError } from "@/node/services/agentBrowserLauncher";
-import { closeAgentBrowserSession } from "@/node/services/browserSessionBackend";
+import {
+  closeAgentBrowserSession,
+  hasAgentBrowserSession,
+} from "@/node/services/browserSessionBackend";
 
 const mockResolveAgentBrowserBinary = mock(() => "/fake/agent-browser-binary");
 const mockSpawn = mock();
@@ -82,6 +85,59 @@ beforeEach(() => {
   mockResolveAgentBrowserBinary.mockReset();
   mockResolveAgentBrowserBinary.mockReturnValue("/fake/agent-browser-binary");
   mockSpawn.mockReset();
+});
+
+describe("hasAgentBrowserSession", () => {
+  test("returns true when session list contains the requested session", async () => {
+    mockSpawn.mockReturnValue(
+      createMockChildProcess(
+        0,
+        '{"success":true,"data":{"sessions":["mux-workspace-123","other-session"]}}'
+      )
+    );
+
+    const result = await hasAgentBrowserSession("mux-workspace-123", undefined, {
+      spawnFn: mockSpawn as SpawnFn,
+      resolveAgentBrowserBinaryFn: mockResolveAgentBrowserBinary,
+    });
+
+    expect(result).toBe(true);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      "/fake/agent-browser-binary",
+      ["--json", "--session", "mux-workspace-123", "session", "list"],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      }
+    );
+  });
+
+  test("returns false when the session list does not include the requested session", async () => {
+    mockSpawn.mockReturnValue(
+      createMockChildProcess(0, '{"success":true,"data":{"sessions":["other-session"]}}')
+    );
+
+    const result = await hasAgentBrowserSession("mux-workspace-123", undefined, {
+      spawnFn: mockSpawn as SpawnFn,
+      resolveAgentBrowserBinaryFn: mockResolveAgentBrowserBinary,
+    });
+
+    expect(result).toBe(false);
+  });
+
+  test("returns false when the vendored binary can no longer be resolved", async () => {
+    mockResolveAgentBrowserBinary.mockImplementation(() => {
+      throw new AgentBrowserBinaryNotFoundError("/missing/agent-browser", "linux", "x64");
+    });
+
+    const result = await hasAgentBrowserSession("mux-workspace-123", undefined, {
+      spawnFn: mockSpawn as SpawnFn,
+      resolveAgentBrowserBinaryFn: mockResolveAgentBrowserBinary,
+    });
+
+    expect(result).toBe(false);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
 });
 
 describe("closeAgentBrowserSession", () => {

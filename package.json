@@ -89,7 +89,7 @@
     "@radix-ui/react-visually-hidden": "^1.2.4",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
-    "agent-browser": "^0.17.1",
+    "agent-browser": "^0.20.14",
     "ai": "^6.0.72",
     "ai-tokenizer": "^1.0.6",
     "chalk": "^5.6.2",

@@ -356,6 +356,47 @@ async function runAgentBrowserCliCommand(
   });
 }
 
+function extractCliSessionNames(data: unknown): string[] | null {
+  const rawSessions = isRecord(data) && isRecord(data.data) ? data.data.sessions : null;
+  if (!Array.isArray(rawSessions)) {
+    return null;
+  }
+
+  const sessions = rawSessions.filter((session): session is string => typeof session === "string");
+  return sessions.length === rawSessions.length ? sessions : null;
+}
+
+export async function hasAgentBrowserSession(
+  sessionId: string,
+  timeoutMs = CLI_TIMEOUT_MS,
+  options?: AgentBrowserCliCommandOptions
+): Promise<boolean> {
+  assert(sessionId.trim().length > 0, "hasAgentBrowserSession requires a non-empty sessionId");
+
+  const result = await runAgentBrowserCliCommand(sessionId, ["session", "list"], timeoutMs, {
+    inFlightProcesses: options?.inFlightProcesses,
+    spawnFn: options?.spawnFn,
+    resolveAgentBrowserBinaryFn: options?.resolveAgentBrowserBinaryFn,
+    env: options?.env,
+  });
+  if (!result.ok) {
+    return false;
+  }
+
+  const stdout = result.stdout.trim();
+  if (stdout.length === 0) {
+    return false;
+  }
+
+  try {
+    const parsedOutput: unknown = JSON.parse(stdout);
+    const sessions = extractCliSessionNames(parsedOutput);
+    return sessions?.includes(sessionId) ?? false;
+  } catch {
+    return false;
+  }
+}
+
 export async function closeAgentBrowserSession(
   sessionId: string,
   timeoutMs = CLI_TIMEOUT_MS,
@@ -453,7 +494,11 @@ export class BrowserSessionBackend {
     this.resetRuntimeState();
     this.sessionId = this.createSessionId();
     this.session = this.createSession("starting");
-    this.startedFromExistingSession = this.hasExistingSession();
+    this.startedFromExistingSession = await this.hasExistingSession();
+    if (this.disposed) {
+      return this.getSession();
+    }
+
     this.emitSessionUpdate();
 
     if (!this.startedFromExistingSession) {
@@ -589,19 +634,12 @@ export class BrowserSessionBackend {
     this.fallbackScreenshotInFlight = false;
   }
 
-  private hasExistingSession(): boolean {
-    try {
-      // Lazy-load to avoid startup crashes when the optional agent-browser package is missing
-      // or corrupt. agent-browser also auto-launches blank browsers for metadata commands,
-      // so checking the daemon PID is the least destructive way to detect attachable sessions.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { isDaemonRunning: isDaemonRunningFn } = require("agent-browser/dist/daemon.js") as {
-        isDaemonRunning: (sessionId: string) => boolean;
-      };
-      return isDaemonRunningFn(this.sessionId);
-    } catch {
-      return false;
-    }
+  private async hasExistingSession(): Promise<boolean> {
+    // agent-browser 0.20+ removed the old JS daemon helper. Query the vendored CLI instead so
+    // Browser tab attach/detach keeps working across package layout changes without launching a page.
+    return await hasAgentBrowserSession(this.sessionId, CLI_TIMEOUT_MS, {
+      inFlightProcesses: this.inFlightProcesses,
+    });
   }
 
   private emitSessionUpdate(): void {

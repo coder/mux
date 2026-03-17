@@ -142,6 +142,34 @@ describe("BrowserSessionBackend", () => {
     expect(session.currentUrl).toBe("https://start.example.com");
   });
 
+  test("does not reopen the browser if disposed while awaiting existing-session detection", async () => {
+    const backend = createBackend({
+      initialUrl: "https://start.example.com",
+      streamPort: 9223,
+    });
+    let resolveExistingSession!: (value: boolean) => void;
+    const hasExistingSession = mock(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveExistingSession = resolve;
+        })
+    );
+    const runCliCommand = mock(() => Promise.resolve({ ok: true as const, data: {} }));
+
+    expect(Reflect.set(backend, "hasExistingSession", hasExistingSession)).toBe(true);
+    expect(Reflect.set(backend, "runCliCommand", runCliCommand)).toBe(true);
+
+    const startPromise = backend.start();
+    backend.dispose();
+    resolveExistingSession(false);
+
+    const session = await startPromise;
+
+    expect(hasExistingSession).toHaveBeenCalledTimes(1);
+    expect(runCliCommand).not.toHaveBeenCalled();
+    expect(session.status).toBe("starting");
+  });
+
   test("updates frame metadata and screenshot state from valid stream payloads", () => {
     const backend = createBackend({ streamPort: 9223 });
     const expectedMetadata: BrowserFrameMetadata = {
