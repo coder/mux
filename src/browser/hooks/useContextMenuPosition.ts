@@ -85,12 +85,13 @@ export function useContextMenuPosition(
 
   const getContextMenuPositionFromEvent = useCallback(
     (e: React.MouseEvent): ContextMenuPosition => {
-      // Keyboard-triggered click events report client coordinates as 0,0.
-      // Anchor those opens to the trigger element so menus appear next to the control.
-      const isKeyboardClick =
-        e.type === "click" && (e.detail === 0 || (e.clientX === 0 && e.clientY === 0));
+      // Keyboard-triggered activations (click/contextmenu) can report client
+      // coordinates as 0,0. Anchor those opens to the trigger element so menus
+      // appear next to the control.
+      const isKeyboardActivation =
+        (e.type === "click" && e.detail === 0) || (e.clientX === 0 && e.clientY === 0);
 
-      if (!isKeyboardClick) {
+      if (!isKeyboardActivation) {
         return { x: e.clientX, y: e.clientY };
       }
 
