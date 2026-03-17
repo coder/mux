@@ -73,7 +73,7 @@ import {
   PositionedMenu,
   PositionedMenuItem,
 } from "@/browser/components/PositionedMenu/PositionedMenu";
-import { ChevronRight, CircleHelp, EllipsisVertical, KeyRound, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, CircleHelp, EllipsisVertical, KeyRound, Pencil, Trash, Plus } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -86,6 +86,7 @@ import { WorkspaceSectionDropZone } from "../WorkspaceSectionDropZone/WorkspaceS
 import { WorkspaceDragLayer } from "../WorkspaceDragLayer/WorkspaceDragLayer";
 import { SectionDragLayer } from "../SectionDragLayer/SectionDragLayer";
 import { DraggableSection } from "../DraggableSection/DraggableSection";
+import { Separator } from "../Separator/Separator";
 import type { SectionConfig } from "@/common/types/project";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
@@ -1533,9 +1534,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`New chat in ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-secondary hover:bg-hover hover:border-border-light mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
+                                className="text-content-secondary hover:bg-hover hover:border-border-light mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none transition-all duration-200"
                               >
-                                +
+                                <Plus />
                               </button>
                             </TooltipTrigger>
                             <TooltipContent>
@@ -1551,9 +1552,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 }}
                                 aria-label={`Project options for ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200"
+                                className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200"
                               >
-                                <EllipsisVertical size={12} />
+                                <EllipsisVertical />
                               </button>
                             </TooltipTrigger>
                             <TooltipContent align="end">Project options</TooltipContent>
@@ -2425,9 +2426,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 handleProjectMenuManageSecrets();
               }}
             />
+            <Separator />
             <PositionedMenuItem
-              icon={<Trash2 />}
+              icon={<Trash />}
               label="Delete..."
+              variant="destructive"
               disabled={!hasProjectMenuTarget}
               onClick={(event) => {
                 handleProjectMenuDelete(event.currentTarget);

@@ -63,7 +63,7 @@ export function PositionedMenu(props: PositionedMenuProps) {
         align="start"
         side="right"
         sideOffset={0}
-        className={cn("!min-w-0 p-1", props.className ?? "w-[180px]")}
+        className={cn("min-w-0! bg-surface-primary p-1", props.className ?? "w-[180px]")}
         style={{ visibility: !props.open || isPlaced ? "visible" : "hidden" }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -84,6 +84,7 @@ interface PositionedMenuItemProps {
   /** Optional keybind hint (e.g. "⌘K") rendered as muted text on the right */
   shortcut?: string;
   disabled?: boolean;
+  variant?: "default" | "destructive";
 }
 
 /**
@@ -93,11 +94,18 @@ interface PositionedMenuItemProps {
  * positioned menus share a consistent look.
  */
 export function PositionedMenuItem(props: PositionedMenuItemProps) {
+  const isDestructive = props.variant === "destructive";
+
   return (
     <button
       type="button"
       disabled={props.disabled}
-      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap disabled:pointer-events-none disabled:opacity-50"
+      className={cn(
+        "bg-surface-primary w-full rounded-sm p-2 text-left text-xs whitespace-nowrap disabled:pointer-events-none disabled:opacity-50",
+        isDestructive
+          ? "text-content-destructive hover:bg-content-destructive/10 hover:text-destructive"
+          : "text-content-secondary hover:bg-hover",
+      )}
       onClick={(e) => {
         e.stopPropagation();
         props.onClick(e);

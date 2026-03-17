@@ -304,12 +304,12 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex min-w-0 items-center gap-1 text-[14px] leading-6">
           <PenLine
-            className={cn("h-3 w-3 shrink-0", isSelected ? "text-foreground" : "text-muted")}
+            className={cn("h-3 w-3 shrink-0", isSelected ? "text-content-primary" : "text-muted")}
           />
           <span
             className={cn(
               "min-w-0 truncate text-left italic",
-              isSelected ? "text-foreground" : "text-muted"
+              isSelected ? "text-content-primary" : "text-muted"
             )}
           >
             {draft.title}
@@ -319,7 +319,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
           <span
             className={cn(
               "block truncate text-left text-xs leading-4",
-              isSelected ? "text-foreground" : "text-muted"
+              isSelected ? "text-content-primary" : "text-muted"
             )}
           >
             {draft.promptPreview}
@@ -350,7 +350,7 @@ function DraftAgentListItemInner(props: DraftAgentListItemProps) {
               data-project-path={projectPath}
               data-draft-id={draft.draftId}
             >
-              <Trash className="h-3 w-3" />
+              <Trash />
             </button>
           </TooltipTrigger>
           <TooltipContent align="start">Delete draft</TooltipContent>
@@ -593,6 +593,12 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   };
   const isDevcontainerWorkspace = isDevcontainerRuntime(metadata.runtimeConfig);
   const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";
+  const titleColorClass =
+    !isSelected && visualState === "idle"
+      ? "text-content-primary"
+      : !isSelected && visualState === "seen"
+        ? "text-content-secondary"
+        : "text-content-primary";
 
   const paddingLeft = getItemPaddingLeft(depth);
 
@@ -773,7 +779,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   {isRemoving ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 />
                   )}
                 </button>
               </TooltipTrigger>
@@ -818,7 +824,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     aria-label={`Workspace actions for ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
-                    <EllipsisVertical className="h-3 w-3" />
+                    <EllipsisVertical  />
                   </button>
                 </PopoverTrigger>
 
@@ -827,7 +833,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   align={ctxMenu.position ? "start" : "end"}
                   side={ctxMenu.position ? "right" : "bottom"}
                   sideOffset={ctxMenu.position ? 0 : 6}
-                  className="w-[250px] !min-w-0 p-1"
+                  className="bg-surface-primary w-[250px] min-w-0! p-1"
                   onClick={(event: React.MouseEvent<HTMLDivElement>) => {
                     event.stopPropagation();
                   }}
@@ -924,10 +930,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
               <div className="flex min-w-0 items-center gap-1">
                 <span
                   className={cn(
-                    "text-foreground min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
+                    "min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
                     !isDisabled && "cursor-pointer",
                     isGeneratingTitle && "italic",
-                    !isSelected && visualState === "seen" && "text-secondary"
+                    titleColorClass
                   )}
                 >
                   {displayTitle}
