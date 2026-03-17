@@ -170,6 +170,9 @@ function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: 
   return true;
 }
 
+const LEADING_SLOT_CONTAINER_CLASSES =
+  "relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center";
+
 function StatusDot(props: {
   state: VisualState;
   isDraft?: boolean;
@@ -206,7 +209,7 @@ function StatusDot(props: {
     <div
       // Keep the status dot above sub-agent connector overlays so branch lines do
       // not draw across the dot when rows are nested.
-      className="relative z-20 flex h-4 w-4 shrink-0 items-center justify-center self-center"
+      className={LEADING_SLOT_CONTAINER_CLASSES}
     >
       {dot}
       {props.overlay && (
@@ -214,6 +217,33 @@ function StatusDot(props: {
           {props.overlay}
         </span>
       )}
+    </div>
+  );
+}
+
+function QuickArchiveButton(props: {
+  displayTitle: string;
+  onArchiveWorkspace: (button: HTMLElement) => void;
+}) {
+  return (
+    <div className={LEADING_SLOT_CONTAINER_CLASSES}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="text-muted hover:text-foreground focus-visible:text-foreground pointer-events-none inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-[color,opacity] duration-200 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100"
+            onKeyDown={stopKeyboardPropagation}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onArchiveWorkspace(event.currentTarget);
+            }}
+            aria-label={`Archive workspace ${props.displayTitle}`}
+          >
+            <ArchiveIcon className="h-3 w-3 shrink-0" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">Archive chat</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
@@ -545,6 +575,15 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const isCompletedChildrenExpanded = completedChildrenExpanded === true;
   const showCompletedChildrenIndicator =
     canToggleCompletedChildren && isCompletedChildrenExpanded && !showsVisibleStatusDot;
+  // Keep one-click archive in the empty "seen" slot for regular workspaces, but leave
+  // sub-agents on the existing status-dot lifecycle because parent cleanup owns them.
+  const shouldShowQuickArchiveButton =
+    !isDisabled &&
+    !isEditing &&
+    !isMuxHelpChat &&
+    !isSubAgentRow &&
+    !showCompletedChildrenIndicator &&
+    !showsVisibleStatusDot;
   const toggleCompletedChildren = () => {
     if (!canToggleCompletedChildren) {
       return false;
@@ -589,6 +628,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         ref={drag}
         className={cn(
           LIST_ITEM_BASE_CLASSES,
+          "group/row",
           isDragging && "opacity-50",
           isRemoving && "opacity-70",
           // Keep hover styles enabled for initializing workspaces so the row feels interactive.
@@ -678,19 +718,28 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-workspace-id={workspaceId}
         data-section-id={sectionId ?? ""}
       >
-        <StatusDot
-          state={visualState}
-          isSubAgent={isSubAgentRow}
-          overlay={
-            showCompletedChildrenIndicator ? (
-              <ChevronDown
-                aria-hidden="true"
-                className="text-muted h-3 w-3"
-                data-testid={`completed-children-expanded-indicator-${workspaceId}`}
-              />
-            ) : undefined
-          }
-        />
+        {shouldShowQuickArchiveButton ? (
+          <QuickArchiveButton
+            displayTitle={displayTitle}
+            onArchiveWorkspace={(button) => {
+              void onArchiveWorkspace(workspaceId, button);
+            }}
+          />
+        ) : (
+          <StatusDot
+            state={visualState}
+            isSubAgent={isSubAgentRow}
+            overlay={
+              showCompletedChildrenIndicator ? (
+                <ChevronDown
+                  aria-hidden="true"
+                  className="text-muted h-3 w-3"
+                  data-testid={`completed-children-expanded-indicator-${workspaceId}`}
+                />
+              ) : undefined
+            }
+          />
+        )}
 
         {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
         {isInitializing ? (

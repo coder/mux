@@ -38,6 +38,10 @@ function getWorkspaceRow(container: HTMLElement, workspaceId: string): HTMLEleme
   ) as HTMLElement | null;
 }
 
+function getQuickArchiveButton(row: HTMLElement): HTMLButtonElement | null {
+  return row.querySelector('button[aria-label^="Archive workspace "]') as HTMLButtonElement | null;
+}
+
 function getSubagentConnector(container: HTMLElement, workspaceId: string): HTMLElement | null {
   // Find all connector elements and match by shared parent with the target workspace row.
   // This avoids fragile sibling/parent traversal assumptions.
@@ -307,6 +311,11 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         { timeout: 10_000 }
       );
       expect(parentRow.getAttribute("aria-expanded")).toBe("true");
+      const reportedCompletedRow = getWorkspaceRow(renderedView.container, reportedChild.id);
+      if (!reportedCompletedRow) {
+        throw new Error("Expected reported child row after expansion");
+      }
+      expect(getQuickArchiveButton(reportedCompletedRow)).toBeNull();
 
       // Expanded rows with hidden status dots should show the completed-children indicator.
       expect(

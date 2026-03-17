@@ -59,6 +59,13 @@ describe("Workspace intermediate status (mock AI router)", () => {
             throw new Error("Expected model display in intermediate status");
           }
 
+          const quickArchiveButton = wsEl.querySelector('button[aria-label^="Archive workspace "]');
+          if (quickArchiveButton) {
+            throw new Error(
+              "Quick archive button should stay hidden while the workspace is starting"
+            );
+          }
+
           const text = wsEl.textContent ?? "";
           expect(text.toLowerCase()).toContain("starting");
         },

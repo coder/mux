@@ -28,6 +28,24 @@ import { installDom } from "../dom";
 import { renderApp } from "../renderReviewPanel";
 import { cleanupView, openProjectCreationView, setupWorkspaceView } from "../helpers";
 
+async function findQuickArchiveButton(params: {
+  container: HTMLElement;
+  title: string;
+}): Promise<HTMLButtonElement> {
+  return waitFor(
+    () => {
+      const button = params.container.querySelector(
+        `button[aria-label="Archive workspace ${params.title}"]`
+      ) as HTMLButtonElement | null;
+      if (!button) {
+        throw new Error(`Quick archive button not found for ${params.title}`);
+      }
+      return button;
+    },
+    { timeout: 5_000 }
+  );
+}
+
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 describeIntegration("Workspace Creation (UI)", () => {
@@ -156,28 +174,11 @@ describeIntegration("Workspace Archive (UI)", () => {
         { timeout: 5_000 }
       );
 
-      // Archive the first workspace via sidebar menu
-      const menuButton = await waitFor(
-        () => {
-          const btn = view.container.querySelector(
-            `[aria-label="Workspace actions for ${firstDisplayTitle}"]`
-          ) as HTMLElement;
-          if (!btn) throw new Error("Workspace actions menu button not found");
-          return btn;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(menuButton);
-
-      const archiveButton = await waitFor(
-        () => {
-          const buttons = Array.from(document.querySelectorAll("button"));
-          const archiveBtn = buttons.find((b) => b.textContent?.includes("Archive chat"));
-          if (!archiveBtn) throw new Error("Archive button not found in menu");
-          return archiveBtn as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
+      // Archive the first workspace via the inline quick action.
+      const archiveButton = await findQuickArchiveButton({
+        container: view.container,
+        title: firstDisplayTitle,
+      });
       fireEvent.click(archiveButton);
 
       // Wait for the archived workspace to disappear from sidebar
