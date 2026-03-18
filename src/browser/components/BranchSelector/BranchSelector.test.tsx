@@ -5,10 +5,18 @@ import React, {
   useContext,
   type ReactNode,
 } from "react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import * as APIModule from "@/browser/contexts/API";
 import type { APIClient } from "@/browser/contexts/API";
+import * as GitStatusStoreModule from "@/browser/stores/GitStatusStore";
+import type { GitStatus } from "@/common/types/workspace";
+import * as CopyToClipboardModule from "@/browser/hooks/useCopyToClipboard";
+import * as PopoverModule from "../Popover/Popover";
+import * as TooltipModule from "../Tooltip/Tooltip";
+
+import { BranchSelector } from "./BranchSelector";
 
 interface ExecuteBashInput {
   workspaceId: string;
@@ -41,7 +49,7 @@ interface MockApiClient {
 }
 
 let mockApi: MockApiClient;
-let mockGitStatus: { branch: string } | null = null;
+let mockGitStatus: GitStatus | null = null;
 const invalidateGitStatusMock = mock(() => undefined);
 const copyToClipboardMock = mock(() => Promise.resolve());
 
@@ -52,68 +60,6 @@ const PopoverContext = createContext<{
   open: false,
   onOpenChange: () => undefined,
 });
-
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: mockApi as unknown as APIClient,
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
-
-void mock.module("@/browser/stores/GitStatusStore", () => ({
-  useGitStatus: () => mockGitStatus,
-  invalidateGitStatus: invalidateGitStatusMock,
-}));
-
-void mock.module("@/browser/hooks/useCopyToClipboard", () => ({
-  useCopyToClipboard: () => ({
-    copied: false,
-    copyToClipboard: copyToClipboardMock,
-  }),
-}));
-
-void mock.module("../Popover/Popover", () => ({
-  Popover: (props: {
-    open: boolean;
-    onOpenChange: (open: boolean) => void;
-    children: ReactNode;
-  }) => (
-    <PopoverContext.Provider value={{ open: props.open, onOpenChange: props.onOpenChange }}>
-      {props.children}
-    </PopoverContext.Provider>
-  ),
-  PopoverTrigger: (props: { asChild?: boolean; children: ReactNode }) => {
-    const popover = useContext(PopoverContext);
-    if (
-      props.asChild &&
-      isValidElement<{ onClick?: (event: React.MouseEvent) => void }>(props.children)
-    ) {
-      const child = props.children;
-      return cloneElement(child, {
-        onClick: (event: React.MouseEvent) => {
-          child.props.onClick?.(event);
-          popover.onOpenChange(!popover.open);
-        },
-      });
-    }
-    return <button onClick={() => popover.onOpenChange(!popover.open)}>{props.children}</button>;
-  },
-  PopoverContent: (props: { children: ReactNode }) => {
-    const popover = useContext(PopoverContext);
-    return popover.open ? <div>{props.children}</div> : null;
-  },
-}));
-
-void mock.module("../Tooltip/Tooltip", () => ({
-  Tooltip: (props: { children: ReactNode }) => <>{props.children}</>,
-  TooltipTrigger: (props: { children: ReactNode; asChild?: boolean }) => <>{props.children}</>,
-  TooltipContent: (props: { children: ReactNode; side?: string }) => <>{props.children}</>,
-}));
-
-import { BranchSelector } from "./BranchSelector";
 
 function bashSuccess(output: string): ExecuteBashResult {
   return {
@@ -153,10 +99,71 @@ describe("BranchSelector", () => {
         executeBash: mock(() => Promise.resolve(bashSuccess(""))),
       },
     };
+
+    spyOn(APIModule, "useAPI").mockImplementation(() => ({
+      api: mockApi as unknown as APIClient,
+      status: "connected" as const,
+      error: null,
+      authenticate: () => undefined,
+      retry: () => undefined,
+    }));
+
+    spyOn(GitStatusStoreModule, "useGitStatus").mockImplementation(() => mockGitStatus);
+    spyOn(GitStatusStoreModule, "invalidateGitStatus").mockImplementation(invalidateGitStatusMock);
+    spyOn(CopyToClipboardModule, "useCopyToClipboard").mockImplementation(() => ({
+      copied: false,
+      copyToClipboard: copyToClipboardMock,
+    }));
+
+    spyOn(PopoverModule, "Popover").mockImplementation(((props: {
+      open: boolean;
+      onOpenChange: (open: boolean) => void;
+      children: ReactNode;
+    }) => (
+      <PopoverContext.Provider value={{ open: props.open, onOpenChange: props.onOpenChange }}>
+        {props.children}
+      </PopoverContext.Provider>
+    )) as unknown as typeof PopoverModule.Popover);
+    spyOn(PopoverModule, "PopoverTrigger").mockImplementation(((props: {
+      asChild?: boolean;
+      children: ReactNode;
+    }) => {
+      const popover = useContext(PopoverContext);
+      if (
+        props.asChild &&
+        isValidElement<{ onClick?: (event: React.MouseEvent) => void }>(props.children)
+      ) {
+        const child = props.children;
+        return cloneElement(child, {
+          onClick: (event: React.MouseEvent) => {
+            child.props.onClick?.(event);
+            popover.onOpenChange(!popover.open);
+          },
+        });
+      }
+      return <button onClick={() => popover.onOpenChange(!popover.open)}>{props.children}</button>;
+    }) as unknown as typeof PopoverModule.PopoverTrigger);
+    spyOn(PopoverModule, "PopoverContent").mockImplementation(((props: { children: ReactNode }) => {
+      const popover = useContext(PopoverContext);
+      return popover.open ? <div>{props.children}</div> : null;
+    }) as unknown as typeof PopoverModule.PopoverContent);
+
+    spyOn(TooltipModule, "Tooltip").mockImplementation(((props: { children: ReactNode }) => (
+      <>{props.children}</>
+    )) as unknown as typeof TooltipModule.Tooltip);
+    spyOn(TooltipModule, "TooltipTrigger").mockImplementation(((props: {
+      children: ReactNode;
+      asChild?: boolean;
+    }) => <>{props.children}</>) as unknown as typeof TooltipModule.TooltipTrigger);
+    spyOn(TooltipModule, "TooltipContent").mockImplementation(((props: {
+      children: ReactNode;
+      side?: string;
+    }) => <>{props.children}</>) as unknown as typeof TooltipModule.TooltipContent);
   });
 
   afterEach(() => {
     cleanup();
+    mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.localStorage = originalLocalStorage;

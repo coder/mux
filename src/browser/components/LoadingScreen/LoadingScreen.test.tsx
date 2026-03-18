@@ -18,8 +18,19 @@ void mock.module("@/browser/assets/logos/mux-logo-light.svg?react", () => ({
   default: SvgStub,
 }));
 
-import { LoadingScreen } from "../LoadingScreen/LoadingScreen";
+import type { LoadingScreen as LoadingScreenComponent } from "../LoadingScreen/LoadingScreen";
 import { ThemeProvider } from "../../contexts/ThemeContext";
+
+// IMPORTANT: AppLoader.auth.test.tsx globally mocks LoadingScreen and Bun module mocks can
+// leak across test files. Load the real module through a distinct cache key so this test
+// always exercises the actual boot-loader markup instead of another file's stub.
+/* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
+const {
+  LoadingScreen,
+}: {
+  LoadingScreen: typeof LoadingScreenComponent;
+} = require("../LoadingScreen/LoadingScreen?real=1");
+/* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
 
 let cleanupDom: (() => void) | null = null;
 

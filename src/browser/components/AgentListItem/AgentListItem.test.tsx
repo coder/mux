@@ -3,8 +3,8 @@ import "../../../../tests/ui/dom";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, render, within } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
-import * as ReactDndModule from "react-dnd";
-import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
+import type * as ReactDndModuleType from "react-dnd";
+import type * as ReactDndHtml5BackendModuleType from "react-dnd-html5-backend";
 import * as APIModule from "@/browser/contexts/API";
 import * as TelemetryEnabledContextModule from "@/browser/contexts/TelemetryEnabledContext";
 import * as WorkspaceTitleEditContextModule from "@/browser/contexts/WorkspaceTitleEditContext";
@@ -14,7 +14,11 @@ import * as WorkspaceUnreadModule from "@/browser/hooks/useWorkspaceUnread";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { AgentListItem } from "./AgentListItem";
+import type { AgentListItem as AgentListItemComponent } from "./AgentListItem";
+
+let ReactDndModule!: typeof ReactDndModuleType;
+let ReactDndHtml5BackendModule!: typeof ReactDndHtml5BackendModuleType;
+let AgentListItem!: typeof AgentListItemComponent;
 
 const TEST_WORKSPACE_ID = "workspace-archiving";
 const TEST_WORKSPACE_TITLE = "Archiving Workspace";
@@ -102,6 +106,14 @@ describe("AgentListItem archiving layout", () => {
 
   beforeEach(() => {
     cleanupDom = installDom();
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    ReactDndModule = require("react-dnd") as typeof ReactDndModuleType;
+    ReactDndHtml5BackendModule =
+      require("react-dnd-html5-backend") as typeof ReactDndHtml5BackendModuleType;
+    ({ AgentListItem } = require("./AgentListItem") as {
+      AgentListItem: typeof AgentListItemComponent;
+    });
+    /* eslint-enable @typescript-eslint/no-require-imports */
     installAgentListItemTestDoubles();
   });
 
