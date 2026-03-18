@@ -76,11 +76,18 @@ function getDesktopBridgeBaseUrl(): string {
   return "http://localhost";
 }
 
-function buildDesktopBridgeUrl(bridgePath: string, token: string): string {
+function buildDesktopBridgeUrl(
+  bridgePath: string,
+  token: string,
+  localBridgeBaseUrl?: string
+): string {
   assertDesktop(bridgePath.length > 0, "Desktop bootstrap response is missing a valid bridgePath.");
   assertDesktop(token.length > 0, "Desktop bootstrap response is missing a valid token.");
 
-  const baseUrl = getDesktopBridgeBaseUrl();
+  const baseUrl =
+    typeof localBridgeBaseUrl === "string" && localBridgeBaseUrl.length > 0
+      ? localBridgeBaseUrl
+      : getDesktopBridgeBaseUrl();
   // Concatenate base + bridgePath to preserve any app-proxy prefix
   // (e.g. /@user/ws/apps/mux + /desktop/ws → /@user/ws/apps/mux/desktop/ws)
   const fullUrl = baseUrl.endsWith("/")
@@ -220,7 +227,7 @@ export function useDesktopConnection(workspaceId: string): UseDesktopConnectionR
           typeof token === "string" && token.length > 0,
           "Desktop bootstrap response is missing a valid token."
         );
-        const wsUrl = buildDesktopBridgeUrl(bridgePath, token);
+        const wsUrl = buildDesktopBridgeUrl(bridgePath, token, result.localBridgeBaseUrl);
         setWidth(result.capability.width);
         setHeight(result.capability.height);
 

@@ -2357,6 +2357,7 @@ export const desktop = {
       capability: DesktopCapabilitySchema,
       bridgePath: z.string().optional(),
       token: z.string().optional(),
+      localBridgeBaseUrl: z.string().optional(),
     }),
   },
 };

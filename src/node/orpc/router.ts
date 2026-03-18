@@ -4454,6 +4454,7 @@ export const router = (authToken?: string) => {
               capability: startedCapability,
               bridgePath: DESKTOP_WS_PATH,
               token,
+              localBridgeBaseUrl: context.serverService.getServerInfo()?.baseUrl,
             };
           } catch (error) {
             log.error("Desktop bootstrap failed", {
