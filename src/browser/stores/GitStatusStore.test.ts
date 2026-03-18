@@ -525,6 +525,61 @@ describe("GitStatusStore", () => {
       unsubscribe();
     });
 
+    it("installs a separate fetch retry even when status gating already registered a listener", async () => {
+      store.dispose();
+      const workspaceId = "dc-fetch-backoff";
+      const runtimeStatusStore = createRuntimeStatusStoreMock(null);
+      store = createStore(runtimeStatusStore.runtimeStatusStore);
+      store.syncWorkspaces(
+        new Map([[workspaceId, createWorkspaceMetadata(workspaceId, DEVCONTAINER_RUNTIME)]])
+      );
+      const unsubscribe = store.subscribeKey(workspaceId, jest.fn());
+
+      // Seed fetch backoff so the first passive refresh only registers the status retry.
+      // @ts-expect-error - Accessing private field for fetch-backoff coverage
+      store.fetchCache.set("test-project", {
+        lastFetch: Date.now(),
+        inProgress: false,
+        consecutiveFailures: 0,
+      });
+
+      // @ts-expect-error - Accessing private method for passive runtime gating coverage
+      await store.updateGitStatus();
+      await waitUntil(() => runtimeStatusStore.getListenerCount(workspaceId) === 1);
+      expect(getFetchCallCount()).toBe(0);
+
+      // Let fetch become eligible while the runtime is still stopped so the fetch path
+      // registers its own retry listener instead of sharing the status slot.
+      // @ts-expect-error - Accessing private field for fetch-backoff coverage
+      store.fetchCache.set("test-project", {
+        lastFetch: Date.now() - 10_000,
+        inProgress: false,
+        consecutiveFailures: 0,
+      });
+      // @ts-expect-error - Accessing private method for passive runtime gating coverage
+      await store.updateGitStatus();
+      await waitUntil(() => runtimeStatusStore.getListenerCount(workspaceId) === 2);
+      expect(getFetchCallCount()).toBe(0);
+
+      // Re-arm backoff so only the fetch retry callback can make the immediate retry fetch.
+      // @ts-expect-error - Accessing private field for fetch-backoff coverage
+      store.fetchCache.set("test-project", {
+        lastFetch: Date.now(),
+        inProgress: false,
+        consecutiveFailures: 0,
+      });
+
+      mockExecuteBash.mockClear();
+      runtimeStatusStore.setStatus("running");
+      runtimeStatusStore.emit(workspaceId);
+
+      await waitUntil(() => getFetchCallCount() === 1);
+      expect(getFetchCallCount()).toBe(1);
+      await waitUntil(() => runtimeStatusStore.getListenerCount(workspaceId) === 0);
+
+      unsubscribe();
+    });
+
     it("rechecks passive eligibility before each secondary repo fetch", async () => {
       store.dispose();
       const workspaceId = "dc-secondary-stop";

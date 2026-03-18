@@ -95,7 +95,8 @@ export class GitStatusStore {
   private statuses = new MapStore<string, GitStatus | null>();
   private projectStatuses = new MapStore<string, ProjectGitStatusResult[] | null>();
   private fetchCache = new Map<string, FetchState>();
-  private runtimeRetryUnsubscribers = new Map<string, () => void>();
+  private runtimeStatusRetryUnsubscribers = new Map<string, () => void>();
+  private runtimeFetchRetryUnsubscribers = new Map<string, () => void>();
   private client: RouterClient<AppRouter> | null = null;
   private immediateUpdateQueued = false;
   private workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
@@ -283,6 +284,36 @@ export class GitStatusStore {
   // Incremented on invalidate; status updates check generation to avoid race conditions.
   private invalidationGeneration = new Map<string, number>();
 
+  private cleanupRuntimeRetryMap(
+    retryUnsubscribers: Map<string, () => void>,
+    metadata: ReadonlyMap<string, FrontendWorkspaceMetadata>
+  ): void {
+    for (const [id, unsub] of retryUnsubscribers) {
+      if (!metadata.has(id)) {
+        unsub();
+        retryUnsubscribers.delete(id);
+      }
+    }
+  }
+
+  private registerRuntimeEligibilityRetry(
+    retryUnsubscribers: Map<string, () => void>,
+    metadata: FrontendWorkspaceMetadata,
+    onEligible: () => void
+  ): void {
+    if (retryUnsubscribers.has(metadata.id)) {
+      return;
+    }
+
+    retryUnsubscribers.set(
+      metadata.id,
+      onPassiveRuntimeEligible(metadata.id, metadata.runtimeConfig, this.runtimeStatusStore, () => {
+        retryUnsubscribers.delete(metadata.id);
+        onEligible();
+      })
+    );
+  }
+
   /**
    * Sync workspaces with metadata.
    * Called when workspace list changes.
@@ -296,12 +327,8 @@ export class GitStatusStore {
 
     this.workspaceMetadata = metadata;
 
-    for (const [id, unsub] of this.runtimeRetryUnsubscribers) {
-      if (!metadata.has(id)) {
-        unsub();
-        this.runtimeRetryUnsubscribers.delete(id);
-      }
-    }
+    this.cleanupRuntimeRetryMap(this.runtimeStatusRetryUnsubscribers, metadata);
+    this.cleanupRuntimeRetryMap(this.runtimeFetchRetryUnsubscribers, metadata);
 
     // Remove statuses for deleted workspaces
     // Iterate plain map (statusCache) for membership, not reactive store
@@ -556,20 +583,9 @@ export class GitStatusStore {
       )
     ) {
       // Arm a one-shot retry so status repopulates when the runtime starts.
-      if (!this.runtimeRetryUnsubscribers.has(metadata.id)) {
-        this.runtimeRetryUnsubscribers.set(
-          metadata.id,
-          onPassiveRuntimeEligible(
-            metadata.id,
-            metadata.runtimeConfig,
-            this.runtimeStatusStore,
-            () => {
-              this.runtimeRetryUnsubscribers.delete(metadata.id);
-              this.refreshController.requestImmediate();
-            }
-          )
-        );
-      }
+      this.registerRuntimeEligibilityRetry(this.runtimeStatusRetryUnsubscribers, metadata, () => {
+        this.refreshController.requestImmediate();
+      });
       // Passive runtime gating means we have no fresh snapshot, not that the last known
       // git status became invalid. Preserve cached branch/status data until an explicit
       // user action or a running runtime produces a newer result.
@@ -823,25 +839,14 @@ export class GitStatusStore {
       ) {
         // Arm a one-shot retry so the workspace gets a fetch
         // once the runtime becomes passively runnable.
-        if (!this.runtimeRetryUnsubscribers.has(metadata.id)) {
-          this.runtimeRetryUnsubscribers.set(
-            metadata.id,
-            onPassiveRuntimeEligible(
-              metadata.id,
-              metadata.runtimeConfig,
-              this.runtimeStatusStore,
-              () => {
-                this.runtimeRetryUnsubscribers.delete(metadata.id);
-                // Clear fetch backoff so the retry isn't suppressed.
-                const retryMetadata = this.workspaceMetadata.get(metadata.id);
-                if (retryMetadata) {
-                  this.fetchCache.delete(this.getFetchKey(retryMetadata));
-                }
-                this.refreshController.requestImmediate();
-              }
-            )
-          );
-        }
+        this.registerRuntimeEligibilityRetry(this.runtimeFetchRetryUnsubscribers, metadata, () => {
+          // Clear fetch backoff so the retry isn't suppressed.
+          const retryMetadata = this.workspaceMetadata.get(metadata.id);
+          if (retryMetadata) {
+            this.fetchCache.delete(this.getFetchKey(retryMetadata));
+          }
+          this.refreshController.requestImmediate();
+        });
         continue;
       }
 
@@ -1063,10 +1068,14 @@ export class GitStatusStore {
     this.fetchCache.clear();
     this.fileModifyUnsubscribe?.();
     this.fileModifyUnsubscribe = null;
-    for (const unsub of this.runtimeRetryUnsubscribers.values()) {
+    for (const unsub of this.runtimeStatusRetryUnsubscribers.values()) {
       unsub();
     }
-    this.runtimeRetryUnsubscribers.clear();
+    this.runtimeStatusRetryUnsubscribers.clear();
+    for (const unsub of this.runtimeFetchRetryUnsubscribers.values()) {
+      unsub();
+    }
+    this.runtimeFetchRetryUnsubscribers.clear();
     this.refreshController.dispose();
   }
 
