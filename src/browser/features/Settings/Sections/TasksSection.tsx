@@ -14,8 +14,10 @@ import {
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { copyToClipboard } from "@/browser/utils/clipboard";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { getDefaultModel, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import {
   AGENT_AI_DEFAULTS_KEY,
   GLOBAL_SCOPE_ID,
@@ -38,103 +40,12 @@ import {
   type TaskSettings,
 } from "@/common/types/tasks";
 import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { getErrorMessage } from "@/common/utils/errors";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { FALLBACK_AGENTS, deriveTasksSectionAgentGroups } from "./TasksSection.agents";
 
 const INHERIT = "__inherit__";
-
-const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
-  {
-    id: "plan",
-    scope: "built-in",
-    name: "Plan",
-    description: "Create a plan before coding",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: true,
-    base: "plan",
-  },
-  {
-    id: "exec",
-    scope: "built-in",
-    name: "Exec",
-    description: "Implement changes in the repository",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: true,
-  },
-  {
-    id: "auto",
-    scope: "built-in",
-    name: "Auto",
-    description: "Automatically route to the best agent for the task",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: false,
-    base: "exec",
-  },
-  {
-    // Keep Ask visible when workspace agent discovery is unavailable.
-    id: "ask",
-    scope: "built-in",
-    name: "Ask",
-    description: "Delegate questions to Explore sub-agents and synthesize an answer.",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: false,
-    base: "exec",
-  },
-  {
-    id: "compact",
-    scope: "built-in",
-    name: "Compact",
-    description: "History compaction (internal)",
-    uiSelectable: false,
-    uiRoutable: false,
-    subagentRunnable: false,
-  },
-  {
-    id: "explore",
-    scope: "built-in",
-    name: "Explore",
-    description: "Read-only repository exploration",
-    uiSelectable: false,
-    uiRoutable: false,
-    subagentRunnable: true,
-    base: "exec",
-  },
-  {
-    id: "mux",
-    scope: "built-in",
-    name: "Chat With Mux",
-    description: "Configure global Mux settings",
-    uiSelectable: false,
-    uiRoutable: false,
-    subagentRunnable: false,
-  },
-  {
-    // Keep every built-in agent ID in the fallback list so user overrides don't
-    // get mislabeled as "Unknown agents" when workspace discovery is unavailable.
-    id: "orchestrator",
-    scope: "built-in",
-    name: "Orchestrator",
-    description: "Coordinate sub-agent implementation and apply patches",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: false,
-    base: "exec",
-  },
-  {
-    id: "system1_bash",
-    scope: "built-in",
-    name: "System1 Bash",
-    description: "Fast bash-output filtering (internal)",
-    uiSelectable: false,
-    uiRoutable: false,
-    subagentRunnable: false,
-  },
-];
 
 function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
   switch (agent.scope) {
@@ -346,6 +257,7 @@ export function TasksSection() {
     }
   );
   const newWorkspaceDefaultAgentId = coerceAgentId(globalDefaultAgentIdRaw);
+  const portableDesktopEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
 
   // Resolve the workspace's active model so that when a sub-agent's model is
   // "Inherit", we show thinking levels for the workspace model (falling back to
@@ -650,12 +562,14 @@ export function TasksSection() {
   const listedAgents = agents.length > 0 ? agents : FALLBACK_AGENTS;
   const enabledAgentIdSet = new Set(enabledAgentIds);
 
-  const uiAgents = useMemo(
+  const { uiAgents, subagents, internalAgents, unknownAgentIds } = useMemo(
     () =>
-      [...listedAgents]
-        .filter((agent) => agent.uiSelectable)
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [listedAgents]
+      deriveTasksSectionAgentGroups({
+        listedAgents,
+        agentAiDefaults,
+        portableDesktopEnabled,
+      }),
+    [agentAiDefaults, listedAgents, portableDesktopEnabled]
   );
   const newWorkspaceDefaultAgentOptions = useMemo(() => {
     const options = uiAgents.map((agent) => ({
@@ -672,31 +586,6 @@ export function TasksSection() {
 
     return options;
   }, [newWorkspaceDefaultAgentId, uiAgents]);
-
-  const subagents = useMemo(
-    () =>
-      [...listedAgents]
-        // Keep the sections mutually exclusive: UI agents belong under "UI agents" even if they
-        // can also run as sub-agents.
-        .filter((agent) => agent.subagentRunnable && !agent.uiSelectable)
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [listedAgents]
-  );
-
-  const internalAgents = useMemo(
-    () =>
-      [...listedAgents]
-        .filter((agent) => !agent.uiSelectable && !agent.subagentRunnable)
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [listedAgents]
-  );
-
-  const unknownAgentIds = useMemo(() => {
-    const known = new Set(listedAgents.map((agent) => agent.id));
-    return Object.keys(agentAiDefaults)
-      .filter((id) => !known.has(id))
-      .sort((a, b) => a.localeCompare(b));
-  }, [agentAiDefaults, listedAgents]);
 
   const renderAgentDefaults = (agent: AgentDefinitionDescriptor) => {
     const entry = agentAiDefaults[agent.id];
