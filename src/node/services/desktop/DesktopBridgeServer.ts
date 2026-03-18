@@ -51,6 +51,20 @@ function closeWebSocket(ws: WebSocket, code: number, reason: string): void {
   }
 }
 
+function rejectUpgrade(socket: Duplex): void {
+  try {
+    socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+  } catch (error) {
+    log.debug("DesktopBridgeServer: failed to write upgrade rejection response", { error });
+  }
+
+  try {
+    socket.destroy();
+  } catch (error) {
+    log.debug("DesktopBridgeServer: failed to destroy rejected upgrade socket", { error });
+  }
+}
+
 async function waitForWebSocketClose(ws: WebSocket, timeoutMs = 250): Promise<void> {
   if (ws.readyState === WebSocket.CLOSED) {
     return;
@@ -82,6 +96,10 @@ export class DesktopBridgeServer {
   private readonly desktopTokenManager: Pick<DesktopTokenManager, "validate">;
   private readonly wss: WebSocketServer;
   private readonly activePairs = new Set<BridgePair>();
+  // Keep upgrade rejection aligned with stop() so httpServer.close() cannot hang on sockets
+  // that reconnect after shutdown snapshots the current bridge clients.
+  private isStopping = false;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(options: DesktopBridgeServerOptions) {
     assert(options.desktopSessionManager, "DesktopBridgeServer requires a DesktopSessionManager");
@@ -98,48 +116,70 @@ export class DesktopBridgeServer {
 
   public handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
     this.ensureReady();
+    if (this.isStopping) {
+      log.debug("DesktopBridgeServer: rejecting upgrade while stopping", { url: request.url });
+      rejectUpgrade(socket);
+      return;
+    }
+
     this.wss.handleUpgrade(request, socket, head, (ws) => {
       void this.handleUpgradedConnection(ws, request);
     });
   }
 
   async stop(): Promise<void> {
-    const activePairs = Array.from(this.activePairs);
-    const trackedWebSockets = new Set(activePairs.map((pair) => pair.ws));
-    const activePairClosePromises = activePairs.map((pair) => waitForWebSocketClose(pair.ws));
-
-    for (const pair of activePairs) {
-      this.cleanupPair(pair, {
-        closeCode: SERVER_STOPPING_CLOSE_CODE,
-        closeReason: "server stopping",
-      });
+    if (this.stopPromise) {
+      await this.stopPromise;
+      return;
     }
-    await Promise.allSettled(activePairClosePromises);
 
-    const orphanClientClosePromises: Array<Promise<void>> = [];
-    for (const ws of this.wss.clients) {
-      if (trackedWebSockets.has(ws)) {
-        continue;
+    this.isStopping = true;
+    const stopPromise = (async () => {
+      const activePairs = Array.from(this.activePairs);
+      const trackedWebSockets = new Set(activePairs.map((pair) => pair.ws));
+      const activePairClosePromises = activePairs.map((pair) => waitForWebSocketClose(pair.ws));
+
+      for (const pair of activePairs) {
+        this.cleanupPair(pair, {
+          closeCode: SERVER_STOPPING_CLOSE_CODE,
+          closeReason: "server stopping",
+        });
+      }
+      await Promise.allSettled(activePairClosePromises);
+
+      const orphanClientClosePromises: Array<Promise<void>> = [];
+      for (const ws of this.wss.clients) {
+        if (trackedWebSockets.has(ws)) {
+          continue;
+        }
+
+        orphanClientClosePromises.push(waitForWebSocketClose(ws));
+        closeWebSocket(ws, SERVER_STOPPING_CLOSE_CODE, "server stopping");
+      }
+      await Promise.allSettled(orphanClientClosePromises);
+
+      for (const ws of this.wss.clients) {
+        if (ws.readyState !== WebSocket.CLOSED) {
+          ws.terminate();
+        }
       }
 
-      orphanClientClosePromises.push(waitForWebSocketClose(ws));
-      closeWebSocket(ws, SERVER_STOPPING_CLOSE_CODE, "server stopping");
-    }
-    await Promise.allSettled(orphanClientClosePromises);
+      this.activePairs.clear();
 
-    for (const ws of this.wss.clients) {
-      if (ws.readyState !== WebSocket.CLOSED) {
-        ws.terminate();
+      if (activePairs.length > 0 || orphanClientClosePromises.length > 0) {
+        log.debug("DesktopBridgeServer: stopped", {
+          activePairs: activePairs.length,
+          orphanClients: orphanClientClosePromises.length,
+        });
       }
-    }
+    })();
+    this.stopPromise = stopPromise;
 
-    this.activePairs.clear();
-
-    if (activePairs.length > 0 || orphanClientClosePromises.length > 0) {
-      log.debug("DesktopBridgeServer: stopped", {
-        activePairs: activePairs.length,
-        orphanClients: orphanClientClosePromises.length,
-      });
+    try {
+      await stopPromise;
+    } finally {
+      this.stopPromise = null;
+      this.isStopping = false;
     }
   }
 
