@@ -121,6 +121,27 @@ describe("git diff parser (real repository)", () => {
     expect(nonPhantomLines.every((l) => l.startsWith("+"))).toBe(true);
   });
 
+  it("should parse diff headers with non-literal path prefixes", () => {
+    const diffOutput = [
+      "diff --git c/foo.ts w/foo.ts",
+      "index 1111111..2222222 100644",
+      "--- c/foo.ts",
+      "+++ w/foo.ts",
+      "@@ -1 +1 @@",
+      "-old line",
+      "+new line",
+    ].join("\n");
+
+    const fileDiffs = parseDiff(diffOutput);
+    const allHunks = extractAllHunks(fileDiffs);
+
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0].filePath).toBe("foo.ts");
+    expect(fileDiffs[0].oldPath).toBeUndefined();
+    expect(allHunks).toHaveLength(1);
+    expect(allHunks[0].content).toContain("+new line");
+  });
+
   it("should normalize CRLF diff output (no \\r in hunk content)", () => {
     const diffOutput =
       [

@@ -95,15 +95,17 @@ export function parseDiff(diffOutput: string): FileDiff[] {
   };
 
   for (const line of lines) {
-    // File header: diff --git a/... b/...
+    // File header: git emits path labels here, but they are not guaranteed to be literal a/ and b/.
     if (line.startsWith("diff --git ")) {
       finishFile();
-      // Extract file paths from "diff --git a/path b/path"
-      const regex = /^diff --git a\/(.+) b\/(.+)$/;
-      const match = regex.exec(line);
-      if (match) {
-        const oldPath = match[1];
-        const newPath = match[2];
+      // Extract the trailing paths from "diff --git <label>/path <label>/path" without
+      // assuming specific labels. Review diffs can use other prefixes (for example c/ and w/).
+      const parts = line.split(" ");
+      if (parts.length >= 4) {
+        const oldPathWithLabel = parts[2];
+        const newPathWithLabel = parts[3];
+        const oldPath = oldPathWithLabel.replace(/^[^/]+\//, "");
+        const newPath = newPathWithLabel.replace(/^[^/]+\//, "");
         currentFile = {
           filePath: newPath,
           oldPath: oldPath !== newPath ? oldPath : undefined,
