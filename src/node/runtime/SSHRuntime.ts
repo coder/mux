@@ -38,8 +38,6 @@ import {
   runInitHookOnRuntime,
   shouldSkipInitHook,
 } from "./initHook";
-import { expandTildeForSSH as expandHookPath } from "./tildeExpansion";
-
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -823,7 +821,7 @@ export class SSHRuntime extends RemoteRuntime {
           initLogger.enterHookPhase?.();
           const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
           // Expand tilde in hook path (quoted paths don't auto-expand on remote)
-          const hookPath = expandHookPath(`${workspacePath}/.mux/init`);
+          const hookPath = expandTildeForSSH(`${workspacePath}/.mux/init`);
           await runInitHookOnRuntime(
             this,
             hookPath,
