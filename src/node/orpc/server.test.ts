@@ -1181,6 +1181,7 @@ describe("createOrpcServer", () => {
   test("routes desktop WebSocket connections to the bridge server without ORPC origin validation", async () => {
     const stubContext: Partial<ORPCContext> = {};
     const desktopRelayServer = new WebSocketServer({ noServer: true });
+    let desktopRelayServerStopped = false;
     const desktopRequests: Array<{ origin: string | null; url: string | undefined }> = [];
     const desktopBridgeServer = {
       handleUpgrade(
@@ -1190,6 +1191,16 @@ describe("createOrpcServer", () => {
       ) {
         desktopRelayServer.handleUpgrade(req, socket, head, (ws) => {
           desktopRelayServer.emit("connection", ws, req);
+        });
+      },
+      async stop() {
+        if (desktopRelayServerStopped) {
+          return;
+        }
+
+        desktopRelayServerStopped = true;
+        await new Promise<void>((resolve) => {
+          desktopRelayServer.close(() => resolve());
         });
       },
     };
@@ -1231,10 +1242,11 @@ describe("createOrpcServer", () => {
       ws = null;
     } finally {
       ws?.terminate();
-      await server?.close();
-      await new Promise<void>((resolve) => {
-        desktopRelayServer.close(() => resolve());
-      });
+      if (server) {
+        await server.close();
+      } else {
+        await desktopBridgeServer.stop();
+      }
     }
   });
 

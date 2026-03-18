@@ -57,8 +57,8 @@ export interface OrpcServerOptions {
   authToken?: string;
   /** Optional pre-created router (if not provided, creates router(authToken)) */
   router?: AppRouter;
-  /** Desktop bridge upgrade handler for /desktop/ws */
-  desktopBridgeServer?: Pick<ORPCContext["desktopBridgeServer"], "handleUpgrade">;
+  /** Desktop bridge upgrade/shutdown hooks for /desktop/ws */
+  desktopBridgeServer?: Pick<ORPCContext["desktopBridgeServer"], "handleUpgrade" | "stop">;
   /**
    * Allow HTTPS browser origins when reverse proxies forward X-Forwarded-Proto=http.
    * Keep disabled by default and only enable when TLS is terminated before mux.
@@ -1530,11 +1530,18 @@ export async function createOrpcServer({
         ws.terminate();
       }
 
-      // Close WebSocket server first
+      // Close ORPC WebSocket server first.
       await new Promise<void>((resolve) => {
         wsServer.close(() => resolve());
       });
-      // Then close HTTP server
+
+      // Desktop relay upgrades are owned by the same HTTP server, so close them
+      // before awaiting httpServer.close() to avoid shutdown hanging on upgraded sockets.
+      if (desktopBridgeServer) {
+        await desktopBridgeServer.stop();
+      }
+
+      // Then close HTTP server.
       httpServer.closeIdleConnections?.();
       httpServer.closeAllConnections?.();
       if (httpServer.listening) {
