@@ -68,6 +68,13 @@ const MODEL_DEFINITIONS = {
     aliases: ["gpt-mini"],
     tokenizerOverride: "openai/gpt-5",
   },
+  // GPT Nano alias tracks the latest stable GPT-5 nano tier.
+  GPT_54_NANO: {
+    provider: "openai",
+    providerModelId: "gpt-5.4-nano",
+    aliases: ["gpt-nano"],
+    tokenizerOverride: "openai/gpt-5",
+  },
   // GPT-5.3-Codex is the released API model id.
   GPT_53_CODEX: {
     provider: "openai",

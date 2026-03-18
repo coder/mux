@@ -24,8 +24,19 @@ describe("getModelStats", () => {
     ["openai:gpt-5.4-2026-03-05", "openai:gpt-5.4"],
     ["mux-gateway:openai/gpt-5.4-pro-2026-03-05", "openai:gpt-5.4-pro"],
     ["mux-gateway:openai/gpt-5.4-mini-2026-03-11", "openai:gpt-5.4-mini"],
+    ["mux-gateway:openai/gpt-5.4-nano-2026-03-17", "openai:gpt-5.4-nano"],
   ])("falls back from %s to the published %s family entry", (datedModel, canonicalModel) => {
     expect(expectStats(datedModel)).toEqual(expectStats(canonicalModel));
+  });
+
+  test("resolves GPT-5.4 nano with the published limits and pricing", () => {
+    const stats = expectStats(KNOWN_MODELS.GPT_54_NANO.id);
+    expect(stats.max_input_tokens).toBe(400000);
+    expect(stats.max_output_tokens).toBe(128000);
+    expect(stats.input_cost_per_token).toBe(0.0000002);
+    expect(stats.cache_read_input_token_cost).toBe(0.00000002);
+    expect(stats.output_cost_per_token).toBe(0.00000125);
+    expect(stats.tiered_pricing_threshold_tokens).toBeUndefined();
   });
 
   test("defaults tiered pricing threshold to 200K when metadata only ships *_above_200k rates", () => {

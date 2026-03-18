@@ -4797,6 +4797,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "| GPT-5.4                | openai:gpt-5.4                | `gpt`                                    |         |",
       "| GPT-5.4 Pro            | openai:gpt-5.4-pro            | `gpt-pro`                                |         |",
       "| GPT-5.4 Mini           | openai:gpt-5.4-mini           | `gpt-mini`                               |         |",
+      "| GPT-5.4 Nano           | openai:gpt-5.4-nano           | `gpt-nano`                               |         |",
       "| Codex 5.3              | openai:gpt-5.3-codex          | `codex`, `codex-5.3`                     |         |",
       "| Spark 5.3              | openai:gpt-5.3-codex-spark    | `spark`                                  |         |",
       "| Codex Mini 5.1         | openai:gpt-5.1-codex-mini     | `codex-mini`                             |         |",

@@ -76,8 +76,11 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["medium", "high", "xhigh"];
   }
 
-  // gpt-5.2 and gpt-5.4 support 5 reasoning levels including xhigh (Extra High)
-  if (/^gpt-5\.(?:2|4)(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // gpt-5.2, gpt-5.4, and GPT-5.4 mini/nano support 5 reasoning levels including xhigh.
+  if (
+    /^gpt-5\.2(?!-[a-z])/.test(withoutProviderNamespace) ||
+    /^gpt-5\.4(?:-(?:mini|nano))?(?!-[a-z])/.test(withoutProviderNamespace)
+  ) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
