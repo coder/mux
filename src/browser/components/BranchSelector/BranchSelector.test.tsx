@@ -51,6 +51,7 @@ interface MockApiClient {
 let mockApi: MockApiClient;
 let mockGitStatus: GitStatus | null = null;
 const invalidateGitStatusMock = mock(() => undefined);
+const clearGitStatusMock = mock(() => undefined);
 const copyToClipboardMock = mock(() => Promise.resolve());
 
 const PopoverContext = createContext<{
@@ -93,6 +94,7 @@ describe("BranchSelector", () => {
 
     mockGitStatus = null;
     invalidateGitStatusMock.mockClear();
+    clearGitStatusMock.mockClear();
     copyToClipboardMock.mockClear();
     mockApi = {
       workspace: {
@@ -110,6 +112,7 @@ describe("BranchSelector", () => {
 
     spyOn(GitStatusStoreModule, "useGitStatus").mockImplementation(() => mockGitStatus);
     spyOn(GitStatusStoreModule, "invalidateGitStatus").mockImplementation(invalidateGitStatusMock);
+    spyOn(GitStatusStoreModule, "clearGitStatus").mockImplementation(clearGitStatusMock);
     spyOn(CopyToClipboardModule, "useCopyToClipboard").mockImplementation(() => ({
       copied: false,
       copyToClipboard: copyToClipboardMock,
@@ -238,6 +241,16 @@ describe("BranchSelector", () => {
         executeBash,
       },
     };
+    mockGitStatus = {
+      branch: "stale-branch",
+      ahead: 1,
+      behind: 0,
+      dirty: false,
+      outgoingAdditions: 0,
+      outgoingDeletions: 0,
+      incomingAdditions: 0,
+      incomingDeletions: 0,
+    };
     localStorage.setItem(
       "branch:ws-2",
       JSON.stringify({ data: "stale-branch", cachedAt: Date.now() })
@@ -259,6 +272,7 @@ describe("BranchSelector", () => {
     expect(view.getByText("plain-workspace")).toBeDefined();
     expect(localStorage.getItem("branch:ws-2")).toBeNull();
     expect(localStorage.getItem("branchIndex")).toBe(JSON.stringify([]));
+    expect(clearGitStatusMock).toHaveBeenCalledWith("ws-2");
     expect(executeBash.mock.calls[0]?.[0].script).toContain("git rev-parse --is-inside-work-tree");
   });
 });

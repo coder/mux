@@ -5,7 +5,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { Popover, PopoverContent, PopoverTrigger } from "../Popover/Popover";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { invalidateGitStatus, useGitStatus } from "@/browser/stores/GitStatusStore";
+import { clearGitStatus, invalidateGitStatus, useGitStatus } from "@/browser/stores/GitStatusStore";
 import { createLRUCache } from "@/browser/utils/lruCache";
 import { buildCheckoutCommand, buildRemoteBranchListCommand } from "./branchCommands";
 import { repoRootBashOptions } from "@/browser/utils/executeBash";
@@ -97,6 +97,7 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         repoProbeResult.data.output?.trim() === "true";
       if (!isGitRepo) {
         branchCache.remove(workspaceId);
+        clearGitStatus(workspaceId);
         setCurrentBranch(false);
         setLocalBranches([]);
         setLocalBranchesTruncated(false);

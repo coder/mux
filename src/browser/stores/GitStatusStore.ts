@@ -231,6 +231,15 @@ export class GitStatusStore {
     this.refreshController.requestImmediate();
   }
 
+  clearWorkspace(workspaceId: string): void {
+    const currentGen = this.invalidationGeneration.get(workspaceId) ?? 0;
+    this.invalidationGeneration.set(workspaceId, currentGen + 1);
+    this.statusCache.delete(workspaceId);
+    this.statuses.delete(workspaceId);
+    this.clearMultiProjectState(workspaceId);
+    this.setWorkspaceRefreshing(workspaceId, false);
+  }
+
   /**
    * Set the refreshing state for a workspace and notify subscribers.
    */
@@ -1180,4 +1189,9 @@ export function useGitStatusStoreRaw(): GitStatusStore {
 export function invalidateGitStatus(workspaceId: string): void {
   const store = getGitStoreInstance();
   store.invalidateWorkspace(workspaceId);
+}
+
+export function clearGitStatus(workspaceId: string): void {
+  const store = getGitStoreInstance();
+  store.clearWorkspace(workspaceId);
 }
