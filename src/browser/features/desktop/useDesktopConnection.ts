@@ -42,14 +42,41 @@ function assertDesktop(condition: unknown, message: string): asserts condition {
   }
 }
 
+/**
+ * Derive the base URL for the Desktop WebSocket bridge.
+ *
+ * In browser mode, getBrowserBackendBaseUrl() works correctly (respects
+ * VITE_BACKEND_URL, app-proxy paths, and window.location.origin).
+ *
+ * In packaged Electron, window.location.origin may be "file://" or
+ * "null", so we fall back to a localhost URL. The backend port in
+ * Electron is available through window.api (the preload bridge).
+ */
+function getDesktopBridgeBaseUrl(): string {
+  const backendUrl = getBrowserBackendBaseUrl();
+  // getBrowserBackendBaseUrl checks VITE_BACKEND_URL first, which is
+  // set in dev mode. In production browser mode it uses window.location.origin.
+  // Both are valid — only packaged Electron (file:// origin) needs a fallback.
+  const origin = new URL(backendUrl).origin;
+  if (origin && origin !== "null" && !origin.startsWith("file:")) {
+    return backendUrl;
+  }
+  // Electron fallback: use localhost. In Electron, the backend URL is
+  // provided via the preload bridge at window.api.
+  return "http://localhost";
+}
+
 function buildDesktopBridgeUrl(bridgePath: string, token: string): string {
   assertDesktop(bridgePath.length > 0, "Desktop bootstrap response is missing a valid bridgePath.");
   assertDesktop(token.length > 0, "Desktop bootstrap response is missing a valid token.");
 
-  // User rationale: routed deployments only expose the main backend origin, so reuse that
-  // origin with the server-provided bridge path instead of mutating to a separate bridge port.
-  const baseUrl = getBrowserBackendBaseUrl();
-  const wsUrl = new URL(bridgePath, baseUrl);
+  const baseUrl = getDesktopBridgeBaseUrl();
+  // Concatenate base + bridgePath to preserve any app-proxy prefix
+  // (e.g. /@user/ws/apps/mux + /desktop/ws → /@user/ws/apps/mux/desktop/ws)
+  const fullUrl = baseUrl.endsWith("/")
+    ? baseUrl + bridgePath.replace(/^\//, "")
+    : baseUrl + bridgePath;
+  const wsUrl = new URL(fullUrl);
   // Derive ws/wss from page protocol — in HTTPS deployments, a reverse proxy handles TLS
   // termination for the bridge.
   wsUrl.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
