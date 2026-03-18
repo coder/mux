@@ -315,25 +315,19 @@ const localPlugin = {
               return;
             }
 
+            // Normalize: Literal value nodes and JSXExpressionContainer inner
+            // expressions are both valid AST expression nodes that
+            // isProblematicTitleExpression already handles.
+            let expression;
             if (titleAttribute.value.type === "Literal") {
-              if (
-                typeof titleAttribute.value.value === "string" &&
-                (titleAttribute.value.value.includes("\n") ||
-                  titleAttribute.value.value.length > MAX_NATIVE_TOOLTIP_LENGTH)
-              ) {
-                context.report({
-                  node: titleAttribute,
-                  messageId: "useTooltip",
-                });
-              }
+              expression = titleAttribute.value;
+            } else if (titleAttribute.value.type === "JSXExpressionContainer") {
+              expression = titleAttribute.value.expression;
+            } else {
               return;
             }
 
-            if (titleAttribute.value.type !== "JSXExpressionContainer") {
-              return;
-            }
-
-            if (isProblematicTitleExpression(titleAttribute.value.expression)) {
+            if (isProblematicTitleExpression(expression)) {
               context.report({
                 node: titleAttribute,
                 messageId: "useTooltip",
