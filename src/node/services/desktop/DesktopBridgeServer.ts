@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import * as net from "node:net";
 import type { IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { assert } from "@/common/utils/assert";
 import { log } from "@/node/services/log";
@@ -67,14 +68,6 @@ function closeHttpServer(server: http.Server): void {
   }
 }
 
-function closeWebSocketServer(server: WebSocketServer): void {
-  try {
-    server.close();
-  } catch (error) {
-    log.debug("DesktopBridgeServer: WebSocketServer close failed", { error });
-  }
-}
-
 async function waitForWebSocketClose(ws: WebSocket, timeoutMs = 250): Promise<void> {
   if (ws.readyState === WebSocket.CLOSED) {
     return;
@@ -106,7 +99,7 @@ export class DesktopBridgeServer {
   private readonly desktopSessionManager: Pick<DesktopSessionManager, "getLiveSessionConnection">;
   private readonly desktopTokenManager: Pick<DesktopTokenManager, "validate">;
   private httpServer: http.Server | null = null;
-  private wss: WebSocketServer | null = null;
+  private readonly wss: WebSocketServer;
   private port: number | null = null;
   private startPromise: Promise<number> | null = null;
   private stopPromise: Promise<void> | null = null;
@@ -120,6 +113,18 @@ export class DesktopBridgeServer {
     this.host = normalizeListenHost(options.host);
     this.desktopSessionManager = options.desktopSessionManager;
     this.desktopTokenManager = options.desktopTokenManager;
+    this.wss = new WebSocketServer({ noServer: true });
+  }
+
+  public ensureReady(): void {
+    assert(this.wss, "DesktopBridgeServer WebSocketServer must be initialized");
+  }
+
+  public handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+    this.ensureReady();
+    this.wss.handleUpgrade(request, socket, head, (ws) => {
+      void this.handleUpgradedConnection(ws, request);
+    });
   }
 
   async start(host?: string): Promise<number> {
@@ -147,7 +152,6 @@ export class DesktopBridgeServer {
     this.startPromise = (async () => {
       const listenHost = this.host;
       const httpServer = http.createServer();
-      const wss = new WebSocketServer({ noServer: true });
 
       httpServer.on("connection", (socket) => {
         this.httpSockets.add(socket);
@@ -157,9 +161,7 @@ export class DesktopBridgeServer {
       });
 
       httpServer.on("upgrade", (request, socket, head) => {
-        wss.handleUpgrade(request, socket, head, (ws) => {
-          void this.handleUpgradedConnection(ws, request);
-        });
+        this.handleUpgrade(request, socket, head);
       });
 
       httpServer.on("clientError", (_error, socket) => {
@@ -189,13 +191,11 @@ export class DesktopBridgeServer {
         assert(address.port > 0, "DesktopBridgeServer port must be positive");
 
         this.httpServer = httpServer;
-        this.wss = wss;
         this.port = address.port;
 
         log.debug("DesktopBridgeServer: started", { host: this.host, port: this.port });
         return address.port;
       } catch (error) {
-        closeWebSocketServer(wss);
         closeHttpServer(httpServer);
         throw error;
       }
@@ -211,9 +211,9 @@ export class DesktopBridgeServer {
   async stop(): Promise<void> {
     const hasStateToClose =
       this.httpServer !== null ||
-      this.wss !== null ||
       this.startPromise !== null ||
-      this.activePairs.size > 0;
+      this.activePairs.size > 0 ||
+      this.wss.clients.size > 0;
     if (!hasStateToClose) {
       return;
     }
@@ -228,7 +228,6 @@ export class DesktopBridgeServer {
         await pendingStart.catch(() => undefined);
       }
 
-      const wss = this.wss;
       const httpServer = this.httpServer;
       const activePairs = Array.from(this.activePairs);
       const activeWebSockets = new Set(activePairs.map((pair) => pair.ws));
@@ -242,35 +241,28 @@ export class DesktopBridgeServer {
       }
       await Promise.allSettled(activePairClosePromises);
 
-      if (wss) {
-        for (const ws of wss.clients) {
-          if (activeWebSockets.has(ws)) {
-            continue;
-          }
+      for (const ws of this.wss.clients) {
+        if (activeWebSockets.has(ws)) {
+          continue;
+        }
 
-          try {
-            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-              ws.close();
-            } else if (ws.readyState !== WebSocket.CLOSED) {
-              ws.terminate();
-            }
-          } catch (error) {
-            log.debug("DesktopBridgeServer: failed to close tracked WebSocket during shutdown", {
-              error,
-            });
+        try {
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.close();
+          } else if (ws.readyState !== WebSocket.CLOSED) {
+            ws.terminate();
           }
+        } catch (error) {
+          log.debug("DesktopBridgeServer: failed to close tracked WebSocket during shutdown", {
+            error,
+          });
         }
       }
 
       this.httpSockets.clear();
-
-      this.wss = null;
       this.httpServer = null;
       this.port = null;
 
-      if (wss) {
-        closeWebSocketServer(wss);
-      }
       if (httpServer) {
         closeHttpServer(httpServer);
       }
@@ -285,7 +277,6 @@ export class DesktopBridgeServer {
     } finally {
       this.startPromise = null;
       this.stopPromise = null;
-      this.wss = null;
       this.httpServer = null;
       this.port = null;
       this.httpSockets.clear();

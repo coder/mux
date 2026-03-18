@@ -2,11 +2,11 @@ import { describe, expect, mock, test } from "bun:test";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { RPCLink as HTTPRPCLink } from "@orpc/client/fetch";
 import { createORPCClient } from "@orpc/client";
 import type { RouterClient } from "@orpc/server";
-import { createOrpcServer } from "./server";
+import { createOrpcServer, DESKTOP_WS_PATH } from "./server";
 import type { ORPCContext } from "./context";
 import type { AppRouter } from "./router";
 import { Config } from "@/node/config";
@@ -1175,6 +1175,66 @@ describe("createOrpcServer", () => {
     } finally {
       ws?.terminate();
       await server?.close();
+    }
+  });
+
+  test("routes desktop WebSocket connections to the bridge server without ORPC origin validation", async () => {
+    const stubContext: Partial<ORPCContext> = {};
+    const desktopRelayServer = new WebSocketServer({ noServer: true });
+    const desktopRequests: Array<{ origin: string | null; url: string | undefined }> = [];
+    const desktopBridgeServer = {
+      handleUpgrade(
+        req: Parameters<WebSocketServer["handleUpgrade"]>[0],
+        socket: Parameters<WebSocketServer["handleUpgrade"]>[1],
+        head: Parameters<WebSocketServer["handleUpgrade"]>[2]
+      ) {
+        desktopRelayServer.handleUpgrade(req, socket, head, (ws) => {
+          desktopRelayServer.emit("connection", ws, req);
+        });
+      },
+    };
+
+    desktopRelayServer.on("connection", (_ws, req) => {
+      desktopRequests.push({
+        origin: typeof req.headers.origin === "string" ? req.headers.origin : null,
+        url: req.url,
+      });
+    });
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+    let ws: WebSocket | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+        desktopBridgeServer,
+      });
+
+      ws = new WebSocket(
+        `${server.baseUrl.replace(/^http/, "ws")}${DESKTOP_WS_PATH}?token=test-token`,
+        {
+          headers: { origin: "https://evil.example.com" },
+        }
+      );
+
+      await waitForWebSocketOpen(ws);
+      expect(desktopRequests).toEqual([
+        {
+          origin: "https://evil.example.com",
+          url: `${DESKTOP_WS_PATH}?token=test-token`,
+        },
+      ]);
+
+      await closeWebSocket(ws);
+      ws = null;
+    } finally {
+      ws?.terminate();
+      await server?.close();
+      await new Promise<void>((resolve) => {
+        desktopRelayServer.close(() => resolve());
+      });
     }
   });
 

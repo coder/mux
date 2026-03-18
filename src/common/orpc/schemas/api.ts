@@ -2355,6 +2355,7 @@ export const desktop = {
     input: z.object({ workspaceId: z.string() }),
     output: z.object({
       capability: DesktopCapabilitySchema,
+      bridgePath: z.string().optional(),
       bridgePort: z.number().int().positive().optional(),
       token: z.string().optional(),
     }),

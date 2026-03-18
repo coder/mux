@@ -21,6 +21,7 @@ import type { ORPCContext } from "@/node/orpc/context";
 import { extractCookieValues, extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
+import { DESKTOP_WS_PATH, ORPC_WS_PATH } from "@/node/orpc/wsPaths";
 import { log } from "@/node/services/log";
 import {
   SERVER_AUTH_SESSION_COOKIE_NAME,
@@ -29,8 +30,11 @@ import {
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
 import { getErrorMessage } from "@/common/utils/errors";
 import { escapeHtml } from "@/node/utils/oauthUtils";
+import { assert } from "@/common/utils/assert";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
+
+export { DESKTOP_WS_PATH, ORPC_WS_PATH };
 
 const WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -53,6 +57,8 @@ export interface OrpcServerOptions {
   authToken?: string;
   /** Optional pre-created router (if not provided, creates router(authToken)) */
   router?: AppRouter;
+  /** Desktop bridge upgrade handler for /desktop/ws */
+  desktopBridgeServer?: Pick<ORPCContext["desktopBridgeServer"], "handleUpgrade">;
   /**
    * Allow HTTPS browser origins when reverse proxies forward X-Forwarded-Proto=http.
    * Keep disabled by default and only enable when TLS is terminated before mux.
@@ -445,6 +451,7 @@ function shouldEnforceOriginValidation(req: Pick<express.Request, "path">): bool
  *
  * HTTP endpoint: /orpc
  * WebSocket endpoint: /orpc/ws
+ * Desktop relay WebSocket endpoint: /desktop/ws
  * Health check: /health
  * Version: /version
  */
@@ -475,6 +482,7 @@ export async function createOrpcServer({
     }
   },
   router: existingRouter,
+  desktopBridgeServer = context.desktopBridgeServer,
 }: OrpcServerOptions): Promise<OrpcServer> {
   // Express app setup
   const app = express();
@@ -1383,31 +1391,41 @@ export async function createOrpcServer({
 
   httpServer.on("upgrade", (req, socket, head) => {
     const pathname = getPathnameFromRequestUrl(req.url);
-    if (pathname !== "/orpc/ws") {
-      socket.destroy();
-      return;
-    }
+    if (pathname === ORPC_WS_PATH) {
+      const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
+      if (!isOriginAllowed(req, expectedOrigins)) {
+        log.warn("Blocked cross-origin WebSocket upgrade request", {
+          origin: getFirstHeaderValue(req, "origin"),
+          expectedOrigins,
+          url: req.url,
+        });
 
-    const expectedOrigins = getExpectedOrigins(req, allowHttpOrigin);
-    if (!isOriginAllowed(req, expectedOrigins)) {
-      log.warn("Blocked cross-origin WebSocket upgrade request", {
-        origin: getFirstHeaderValue(req, "origin"),
-        expectedOrigins,
-        url: req.url,
-      });
+        try {
+          socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        } finally {
+          socket.destroy();
+        }
 
-      try {
-        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
-      } finally {
-        socket.destroy();
+        return;
       }
 
+      wsServer.handleUpgrade(req, socket, head, (ws) => {
+        wsServer.emit("connection", ws, req);
+      });
       return;
     }
 
-    wsServer.handleUpgrade(req, socket, head, (ws) => {
-      wsServer.emit("connection", ws, req);
-    });
+    if (pathname === DESKTOP_WS_PATH) {
+      assert(pathname === DESKTOP_WS_PATH, "Desktop relay upgrades must use DESKTOP_WS_PATH");
+      assert(
+        desktopBridgeServer,
+        "createOrpcServer requires desktopBridgeServer for desktop relay upgrades"
+      );
+      desktopBridgeServer.handleUpgrade(req, socket, head);
+      return;
+    }
+
+    socket.destroy();
   });
 
   attachStreamErrorHandler(wsServer, "orpc-ws-server", { logger: log });
@@ -1503,7 +1521,7 @@ export async function createOrpcServer({
     app,
     port: actualPort,
     baseUrl: `http://${connectableHostForUrl}:${actualPort}`,
-    wsUrl: `ws://${connectableHostForUrl}:${actualPort}/orpc/ws`,
+    wsUrl: `ws://${connectableHostForUrl}:${actualPort}${ORPC_WS_PATH}`,
     specUrl: `http://${connectableHostForUrl}:${actualPort}/api/spec.json`,
     docsUrl: `http://${connectableHostForUrl}:${actualPort}/api/docs`,
     close: async () => {

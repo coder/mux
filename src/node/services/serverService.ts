@@ -274,6 +274,7 @@ export class ServerService {
       context: options.context,
       authToken: options.authToken,
       router: options.router,
+      desktopBridgeServer: options.context.desktopBridgeServer,
       serveStatic,
       staticDir,
       allowHttpOrigin,

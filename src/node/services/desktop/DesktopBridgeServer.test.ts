@@ -1,3 +1,4 @@
+import * as http from "node:http";
 import * as net from "node:net";
 import { describe, expect, mock, test } from "bun:test";
 import { WebSocket, type RawData } from "ws";
@@ -236,6 +237,75 @@ describe("DesktopBridgeServer", () => {
       });
     } finally {
       await bridgeServer.stop();
+    }
+  });
+
+  test("handleUpgrade bridges binary traffic when mounted on an external HTTP server", async () => {
+    const tcpHarness = await listenTcpServer();
+    const bridgeServer = new DesktopBridgeServer({
+      desktopTokenManager: {
+        validate: mock((token: string) =>
+          token === "valid-token"
+            ? { workspaceId: "workspace-1", sessionId: "desktop:workspace-1" }
+            : null
+        ),
+      },
+      desktopSessionManager: {
+        getLiveSessionConnection: mock((workspaceId: string) =>
+          workspaceId === "workspace-1"
+            ? { sessionId: "desktop:workspace-1", vncPort: tcpHarness.port }
+            : null
+        ),
+      },
+    });
+    const httpServer = http.createServer();
+
+    httpServer.on("upgrade", (request, socket, head) => {
+      bridgeServer.handleUpgrade(request, socket, head);
+    });
+    httpServer.on("clientError", (_error, socket) => {
+      socket.destroy();
+    });
+
+    let ws: WebSocket | null = null;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          httpServer.off("error", onError);
+          reject(error);
+        };
+
+        httpServer.once("error", onError);
+        httpServer.listen(0, "127.0.0.1", () => {
+          httpServer.off("error", onError);
+          resolve();
+        });
+      });
+
+      const address = httpServer.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected upgrade test server to expose a numeric port");
+      }
+
+      ws = new WebSocket(`ws://127.0.0.1:${address.port}/?token=valid-token`);
+      await waitForWebSocketOpen(ws);
+
+      const tcpSocket = await tcpHarness.connectionPromise;
+      ws.send(Buffer.from([0x01, 0x02, 0x03]));
+      const forwarded = await waitForTcpData(tcpSocket);
+      expect(forwarded).toEqual(Buffer.from([0x01, 0x02, 0x03]));
+
+      tcpSocket.write(Buffer.from([0x0a, 0x0b, 0x0c]));
+      expect(await waitForWebSocketMessage(ws)).toEqual(Buffer.from([0x0a, 0x0b, 0x0c]));
+    } finally {
+      if (ws) {
+        await closeWebSocket(ws);
+      }
+      await new Promise<void>((resolve) => {
+        httpServer.close(() => resolve());
+      });
+      await bridgeServer.stop();
+      await tcpHarness.close();
     }
   });
 

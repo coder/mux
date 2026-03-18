@@ -78,6 +78,7 @@ import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
+import { DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
 import { SERVER_AUTH_SESSION_COOKIE_NAME } from "@/node/services/serverAuthService";
 import {
   readSubagentTranscriptArtifactsFile,
@@ -4456,7 +4457,12 @@ export const router = (authToken?: string) => {
               input.workspaceId,
               startedCapability.sessionId
             );
-            return { capability: startedCapability, bridgePort, token };
+            return {
+              capability: startedCapability,
+              bridgePath: DESKTOP_WS_PATH,
+              bridgePort,
+              token,
+            };
           } catch (error) {
             log.error("Desktop bootstrap failed", {
               workspaceId: input.workspaceId,
