@@ -84,8 +84,9 @@ function buildDesktopBridgeUrl(
   assertDesktop(bridgePath.length > 0, "Desktop bootstrap response is missing a valid bridgePath.");
   assertDesktop(token.length > 0, "Desktop bootstrap response is missing a valid token.");
 
+  const isDesktop = typeof window.api !== "undefined";
   const baseUrl =
-    typeof localBridgeBaseUrl === "string" && localBridgeBaseUrl.length > 0
+    isDesktop && typeof localBridgeBaseUrl === "string" && localBridgeBaseUrl.length > 0
       ? localBridgeBaseUrl
       : getDesktopBridgeBaseUrl();
   // Concatenate base + bridgePath to preserve any app-proxy prefix
