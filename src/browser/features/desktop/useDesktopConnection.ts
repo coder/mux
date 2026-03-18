@@ -57,10 +57,20 @@ function getDesktopBridgeBaseUrl(): string {
   // getBrowserBackendBaseUrl checks VITE_BACKEND_URL first, which is
   // set in dev mode. In production browser mode it uses window.location.origin.
   // Both are valid — only packaged Electron (file:// origin) needs a fallback.
-  const origin = new URL(backendUrl).origin;
-  if (origin && origin !== "null" && !origin.startsWith("file:")) {
-    return backendUrl;
+  if (!backendUrl || backendUrl === "null" || backendUrl.startsWith("file:")) {
+    return "http://localhost";
   }
+
+  try {
+    const origin = new URL(backendUrl).origin;
+    if (origin && origin !== "null") {
+      return backendUrl;
+    }
+  } catch {
+    // Packaged Electron can surface opaque or otherwise non-URL backend base strings.
+    // Fall back to localhost so the desktop bridge still connects through the preload backend.
+  }
+
   // Electron fallback: use localhost. In Electron, the backend URL is
   // provided via the preload bridge at window.api.
   return "http://localhost";
