@@ -163,10 +163,17 @@ describe("BranchSelector", () => {
     globalThis.location = originalLocation;
   });
 
-  test("uses the workspace name as an interactive fallback until an explicit open resolves the branch", async () => {
+  test("resolves and shows the active branch even when the recent branch list does not include it", async () => {
     const executeBash = mock((input: ExecuteBashInput) => {
-      if (input.script.includes("%(HEAD)")) {
-        return Promise.resolve(bashSuccess("*feature/lazy-start\nmain"));
+      if (input.script.includes("git branch --show-current")) {
+        return Promise.resolve(bashSuccess("feature/lazy-start"));
+      }
+      if (input.script.includes("%(refname:short)")) {
+        return Promise.resolve(
+          bashSuccess(
+            Array.from({ length: 101 }, (_, index) => `recent-branch-${index + 1}`).join("\n")
+          )
+        );
       }
       if (input.script.includes("git remote")) {
         return Promise.resolve(bashSuccess("origin"));
@@ -187,12 +194,12 @@ describe("BranchSelector", () => {
     fireEvent.click(view.getByRole("button", { name: "scratch-workspace" }));
 
     await waitFor(() => {
-      expect(executeBash.mock.calls).toHaveLength(2);
+      expect(executeBash.mock.calls).toHaveLength(3);
     });
     await waitFor(() => {
       expect(view.getByLabelText("Copy branch name")).toBeDefined();
     });
     expect(view.getAllByText("feature/lazy-start").length).toBeGreaterThan(0);
-    expect(executeBash.mock.calls[0]?.[0].script).toContain("%(HEAD)");
+    expect(executeBash.mock.calls[0]?.[0].script).toContain("git branch --show-current");
   });
 });

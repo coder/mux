@@ -84,12 +84,17 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
     setIsLoading(true);
 
     try {
-      // Fetch one extra to detect truncation. Include a current-branch marker so
-      // explicit user opens can resolve the active branch without any passive probe.
-      const [branchResult, remoteResult] = await Promise.all([
+      // Explicit opens can wake the runtime, so resolve the active branch with an
+      // untruncated command and keep the branch list separately capped for the popover.
+      const [currentBranchResult, branchResult, remoteResult] = await Promise.all([
         api.workspace.executeBash({
           workspaceId,
-          script: `git branch --sort=-committerdate --format='%(if)%(HEAD)%(then)*%(end)%(refname:short)' 2>/dev/null | head -${MAX_LOCAL_BRANCHES + 1}`,
+          script: `git branch --show-current 2>/dev/null`,
+          options: repoRootBashOptions(5),
+        }),
+        api.workspace.executeBash({
+          workspaceId,
+          script: `git branch --sort=-committerdate --format='%(refname:short)' 2>/dev/null | head -${MAX_LOCAL_BRANCHES + 1}`,
           options: repoRootBashOptions(5),
         }),
         api.workspace.executeBash({
@@ -99,37 +104,37 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         }),
       ]);
 
+      const currentBranchCommandSucceeded =
+        currentBranchResult.success && currentBranchResult.data.success;
       const branchCommandSucceeded = branchResult.success && branchResult.data.success;
       const remoteCommandSucceeded = remoteResult.success && remoteResult.data.success;
-      const branchLines =
+      const fetchedCurrentBranch =
+        currentBranchCommandSucceeded && currentBranchResult.data.output
+          ? currentBranchResult.data.output.trim() || null
+          : null;
+      const branchList =
         branchCommandSucceeded && branchResult.data.output
           ? branchResult.data.output
               .split("\n")
               .map((branchLine) => branchLine.trim())
               .filter((branchLine) => branchLine.length > 0)
           : [];
-      let fetchedCurrentBranch: string | null = null;
-      const branchList = branchLines
-        .map((branchLine) => {
-          const isCurrentBranch = branchLine.startsWith("*");
-          const branchName = isCurrentBranch ? branchLine.slice(1) : branchLine;
-          if (isCurrentBranch && branchName.length > 0) {
-            fetchedCurrentBranch = branchName;
-          }
-          return branchName;
-        })
-        .filter((branchName) => branchName.length > 0);
-      if (branchList.length > 0) {
-        const truncated = branchList.length > MAX_LOCAL_BRANCHES;
-        setLocalBranches(truncated ? branchList.slice(0, MAX_LOCAL_BRANCHES) : branchList);
+      const displayBranchList =
+        fetchedCurrentBranch && !branchList.includes(fetchedCurrentBranch)
+          ? [fetchedCurrentBranch, ...branchList]
+          : branchList;
+      if (displayBranchList.length > 0) {
+        const truncated = displayBranchList.length > MAX_LOCAL_BRANCHES;
+        setLocalBranches(
+          truncated ? displayBranchList.slice(0, MAX_LOCAL_BRANCHES) : displayBranchList
+        );
         setLocalBranchesTruncated(truncated);
       }
       if (fetchedCurrentBranch) {
-        const resolvedCurrentBranch = fetchedCurrentBranch;
         setCurrentBranch((prev) => {
-          if (prev === resolvedCurrentBranch) return prev;
-          branchCache.set(workspaceId, resolvedCurrentBranch);
-          return resolvedCurrentBranch;
+          if (prev === fetchedCurrentBranch) return prev;
+          branchCache.set(workspaceId, fetchedCurrentBranch);
+          return fetchedCurrentBranch;
         });
       }
 
@@ -143,8 +148,10 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
       setRemotes(remoteList);
 
       if (
+        currentBranchCommandSucceeded &&
         branchCommandSucceeded &&
         remoteCommandSucceeded &&
+        !fetchedCurrentBranch &&
         branchList.length === 0 &&
         remoteList.length === 0
       ) {
