@@ -147,7 +147,7 @@ function compareAgentsByName(a: AgentDefinitionDescriptor, b: AgentDefinitionDes
   return a.name.localeCompare(b.name);
 }
 
-export function shouldShowAgentInTasksSettings(
+function shouldShowAgentInTasksSettings(
   agent: AgentDefinitionDescriptor,
   portableDesktopEnabled: boolean
 ): boolean {
@@ -159,24 +159,22 @@ export function deriveTasksSectionAgentGroups(params: {
   agentAiDefaults: AgentAiDefaults;
   portableDesktopEnabled: boolean;
 }): {
-  visibleAgents: AgentDefinitionDescriptor[];
   uiAgents: AgentDefinitionDescriptor[];
   subagents: AgentDefinitionDescriptor[];
   internalAgents: AgentDefinitionDescriptor[];
   unknownAgentIds: string[];
 } {
-  const visibleAgents = params.listedAgents.filter((agent) =>
+  const visible = params.listedAgents.filter((agent) =>
     shouldShowAgentInTasksSettings(agent, params.portableDesktopEnabled)
   );
   const knownAgentIds = new Set(params.listedAgents.map((agent) => agent.id));
 
   return {
-    visibleAgents,
-    uiAgents: [...visibleAgents].filter((agent) => agent.uiSelectable).sort(compareAgentsByName),
-    subagents: [...visibleAgents]
+    uiAgents: [...visible].filter((agent) => agent.uiSelectable).sort(compareAgentsByName),
+    subagents: [...visible]
       .filter((agent) => agent.subagentRunnable && !agent.uiSelectable)
       .sort(compareAgentsByName),
-    internalAgents: [...visibleAgents]
+    internalAgents: [...visible]
       .filter((agent) => !agent.uiSelectable && !agent.subagentRunnable)
       .sort(compareAgentsByName),
     // Keep hidden agents such as Desktop known here so disabling their Settings visibility
