@@ -206,15 +206,13 @@ describe("BrowserViewport", () => {
     });
   });
 
-  test("captures keyboard only while focused and lets Escape and Tab pass through", () => {
+  test("continues to emit char events for printable typing", () => {
     const view = renderViewport(createSession());
     const viewport = view.getByRole("region", { name: "Browser viewport" });
 
     fireEvent.focus(viewport);
     fireEvent.keyDown(viewport, { key: "a", code: "KeyA" });
     fireEvent.keyUp(viewport, { key: "a", code: "KeyA" });
-    fireEvent.keyDown(viewport, { key: "Escape", code: "Escape" });
-    fireEvent.keyDown(viewport, { key: "Tab", code: "Tab" });
 
     expect(sendInputMock).toHaveBeenCalledTimes(3);
     expect(sendInputMock).toHaveBeenNthCalledWith(1, {
@@ -224,6 +222,7 @@ describe("BrowserViewport", () => {
         eventType: "keyDown",
         key: "a",
         code: "KeyA",
+        text: "a",
         modifiers: 0,
       },
     });
@@ -245,9 +244,118 @@ describe("BrowserViewport", () => {
         eventType: "keyUp",
         key: "a",
         code: "KeyA",
+        text: "a",
         modifiers: 0,
       },
     });
+  });
+
+  test("does not attach text to unrelated modified shortcuts", () => {
+    const view = renderViewport(createSession());
+    const viewport = view.getByRole("region", { name: "Browser viewport" });
+
+    fireEvent.focus(viewport);
+    fireEvent.keyDown(viewport, { key: "v", code: "KeyV", ctrlKey: true });
+    fireEvent.keyUp(viewport, { key: "v", code: "KeyV", ctrlKey: true });
+
+    expect(sendInputMock).toHaveBeenCalledTimes(2);
+    expect(sendInputMock).toHaveBeenNthCalledWith(1, {
+      workspaceId: "workspace-1",
+      input: {
+        kind: "keyboard",
+        eventType: "keyDown",
+        key: "v",
+        code: "KeyV",
+        modifiers: 2,
+      },
+    });
+    expect(sendInputMock).toHaveBeenNthCalledWith(2, {
+      workspaceId: "workspace-1",
+      input: {
+        kind: "keyboard",
+        eventType: "keyUp",
+        key: "v",
+        code: "KeyV",
+        modifiers: 2,
+      },
+    });
+  });
+
+  test("forwards Enter and Ctrl+C while leaving Escape and Tab untouched", () => {
+    const view = renderViewport(createSession());
+    const viewport = view.getByRole("region", { name: "Browser viewport" });
+
+    fireEvent.focus(viewport);
+    fireEvent.keyDown(viewport, { key: "Enter", code: "Enter" });
+    fireEvent.keyUp(viewport, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(viewport, { key: "c", code: "KeyC", ctrlKey: true });
+    fireEvent.keyUp(viewport, { key: "c", code: "KeyC", ctrlKey: true });
+    fireEvent.keyDown(viewport, { key: "Escape", code: "Escape" });
+    fireEvent.keyDown(viewport, { key: "Tab", code: "Tab" });
+
+    expect(sendInputMock).toHaveBeenCalledTimes(4);
+    expect(sendInputMock).toHaveBeenNthCalledWith(1, {
+      workspaceId: "workspace-1",
+      input: {
+        kind: "keyboard",
+        eventType: "keyDown",
+        key: "Enter",
+        code: "Enter",
+        text: "\r",
+        modifiers: 0,
+      },
+    });
+    expect(sendInputMock).toHaveBeenNthCalledWith(2, {
+      workspaceId: "workspace-1",
+      input: {
+        kind: "keyboard",
+        eventType: "keyUp",
+        key: "Enter",
+        code: "Enter",
+        text: "\r",
+        modifiers: 0,
+      },
+    });
+    expect(sendInputMock).toHaveBeenNthCalledWith(3, {
+      workspaceId: "workspace-1",
+      input: {
+        kind: "keyboard",
+        eventType: "keyDown",
+        key: "c",
+        code: "KeyC",
+        text: "c",
+        modifiers: 2,
+      },
+    });
+    expect(sendInputMock).toHaveBeenNthCalledWith(4, {
+      workspaceId: "workspace-1",
+      input: {
+        kind: "keyboard",
+        eventType: "keyUp",
+        key: "c",
+        code: "KeyC",
+        text: "c",
+        modifiers: 2,
+      },
+    });
+  });
+
+  test("only marks the viewport as browser-focused while interaction is enabled", () => {
+    const interactiveView = renderViewport(createSession());
+    const interactiveViewport = interactiveView.getByRole("region", { name: "Browser viewport" });
+    expect(interactiveViewport.getAttribute("data-browser-viewport")).toBe("true");
+    interactiveView.unmount();
+
+    const nonInteractiveView = renderViewport(
+      createSession({
+        streamState: "restart_required",
+        lastFrameMetadata: null,
+      })
+    );
+    const nonInteractiveViewport = nonInteractiveView.getByRole("region", {
+      name: "Browser viewport",
+    });
+    expect(nonInteractiveViewport.hasAttribute("data-browser-viewport")).toBe(false);
   });
 
   test("shows restart-required stream overlay", () => {

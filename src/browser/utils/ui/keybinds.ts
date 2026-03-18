@@ -165,6 +165,13 @@ export function isEditableElement(target: EventTarget | null): boolean {
 export const TERMINAL_CONTAINER_ATTR = "data-terminal-container";
 
 /**
+ * Data attribute used to identify focused browser viewports.
+ * Used by isBrowserViewportFocused() to let the live browser session keep browser-owned
+ * keystrokes instead of having capture/bubble-phase app shortcuts steal them first.
+ */
+export const BROWSER_VIEWPORT_ATTR = "data-browser-viewport";
+
+/**
  * Data attribute used to opt an element (or one of its ancestors) into allowing Escape
  * to interrupt streams, even when the event target is editable (input/textarea/etc).
  *
@@ -197,6 +204,21 @@ export function isTerminalFocused(target: EventTarget | null): boolean {
     return false;
   }
   return target.closest(`[${TERMINAL_CONTAINER_ATTR}]`) !== null;
+}
+
+/**
+ * Check if the event target is inside a browser viewport container.
+ * Used by global keyboard handlers to avoid stealing keystrokes from live browser sessions.
+ */
+export function isBrowserViewportFocused(target: EventTarget | null): boolean {
+  if (!target) {
+    return false;
+  }
+  // Check if HTMLElement exists (not available in non-DOM test environments)
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+    return false;
+  }
+  return target.closest(`[${BROWSER_VIEWPORT_ATTR}]`) !== null;
 }
 
 /**

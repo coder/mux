@@ -1,6 +1,11 @@
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
-import { matchesKeybind, isTerminalFocused, isDialogOpen } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  isBrowserViewportFocused,
+  isTerminalFocused,
+  isDialogOpen,
+} from "@/browser/utils/ui/keybinds";
 
 export function handleLayoutSlotHotkeys(
   e: KeyboardEvent,
@@ -27,8 +32,9 @@ export function handleLayoutSlotHotkeys(
     return false;
   }
 
-  // Slot hotkeys are global, but we avoid stealing keyboard shortcuts from terminals.
-  if (isTerminalFocused(e.target)) {
+  // Slot hotkeys are global, but we avoid stealing keyboard shortcuts from terminals
+  // or the focused browser viewport.
+  if (isTerminalFocused(e.target) || isBrowserViewportFocused(e.target)) {
     return false;
   }
 

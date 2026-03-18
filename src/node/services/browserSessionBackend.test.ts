@@ -701,6 +701,68 @@ describe("BrowserSessionBackend", () => {
     });
   });
 
+  test("sends Enter keyboard input over the live stream socket", () => {
+    const backend = createBackend();
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput({
+      kind: "keyboard",
+      eventType: "keyDown",
+      key: "Enter",
+      code: "Enter",
+      text: "\r",
+    });
+
+    expect(result).toEqual({ success: true });
+    const firstCall = Reflect.get(send.mock.calls, "0") as string[] | undefined;
+    const sentMessage = firstCall?.[0];
+    expect(JSON.parse(sentMessage ?? "{}")).toEqual({
+      type: "input_keyboard",
+      eventType: "keyDown",
+      key: "Enter",
+      code: "Enter",
+      text: "\r",
+    });
+  });
+
+  test("sends modified keyboard input over the live stream socket", () => {
+    const backend = createBackend();
+    const send = mock(() => undefined);
+    setSession(backend, {
+      status: "live",
+      streamState: "live",
+      lastFrameMetadata: viewportMetadata,
+    });
+    setStreamSocket(backend, { readyState: WebSocket.OPEN, send });
+
+    const result = backend.sendInput({
+      kind: "keyboard",
+      eventType: "keyDown",
+      key: "c",
+      code: "KeyC",
+      text: "c",
+      modifiers: 2,
+    });
+
+    expect(result).toEqual({ success: true });
+    const firstCall = Reflect.get(send.mock.calls, "0") as string[] | undefined;
+    const sentMessage = firstCall?.[0];
+    expect(JSON.parse(sentMessage ?? "{}")).toEqual({
+      type: "input_keyboard",
+      eventType: "keyDown",
+      key: "c",
+      code: "KeyC",
+      text: "c",
+      modifiers: 2,
+    });
+  });
+
   test("returns an input error when the stream socket closes during send", () => {
     const backend = createBackend();
     const send = mock(() => {

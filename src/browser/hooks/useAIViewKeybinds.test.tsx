@@ -252,6 +252,49 @@ describe("useAIViewKeybinds", () => {
     expect(interruptStream.mock.calls.length).toBe(1);
   });
 
+  test("Ctrl+C does not interrupt when the focused browser viewport owns it", () => {
+    const interruptStream = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    currentClientMock = {
+      workspace: {
+        interruptStream,
+      },
+    };
+
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: true,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: true,
+    });
+
+    const browserViewport = document.createElement("div");
+    browserViewport.setAttribute("data-browser-viewport", "true");
+    document.body.appendChild(browserViewport);
+
+    browserViewport.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "c",
+        code: "KeyC",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(interruptStream.mock.calls.length).toBe(0);
+  });
+
   test("Shift+H loads older history when callback is provided", () => {
     const loadOlderHistory = mock(() => undefined);
     const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };

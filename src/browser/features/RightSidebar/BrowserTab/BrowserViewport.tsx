@@ -9,6 +9,7 @@ import {
 } from "react";
 import { Info, TriangleAlert } from "lucide-react";
 import { useAPI } from "@/browser/contexts/API";
+import { BROWSER_VIEWPORT_ATTR } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { clamp } from "@/common/utils/clamp";
@@ -411,11 +412,16 @@ export function BrowserViewport(props: BrowserViewportProps) {
     event.preventDefault();
     stopKeyboardPropagation(event);
 
+    // agent-browser's stream bridge only materializes DOM keyboard events when the
+    // key payload carries its text on the keyDown/keyUp messages themselves. Sending a
+    // separate char event is insufficient for Enter and modified shortcuts like Ctrl+C.
+    const keyEventText = getKeyEventText(event);
     const sharedKeyboardFields = {
       key: event.key,
       code: event.code,
       modifiers: getModifierBits(event),
-    } satisfies Pick<BrowserKeyboardInput, "key" | "code" | "modifiers">;
+      ...(keyEventText != null ? { text: keyEventText } : {}),
+    } satisfies Pick<BrowserKeyboardInput, "key" | "code" | "modifiers" | "text">;
     sendInput(
       {
         kind: "keyboard",
@@ -450,6 +456,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
 
     event.preventDefault();
     stopKeyboardPropagation(event);
+    const keyEventText = getKeyEventText(event);
     sendInput(
       {
         kind: "keyboard",
@@ -457,6 +464,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
         key: event.key,
         code: event.code,
         modifiers: getModifierBits(event),
+        ...(keyEventText != null ? { text: keyEventText } : {}),
       },
       props.session.id
     );
@@ -495,6 +503,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
           aria-label="Browser viewport"
           aria-disabled={!interactionState.canInteract}
           tabIndex={interactionState.canInteract ? 0 : -1}
+          {...(interactionState.canInteract ? { [BROWSER_VIEWPORT_ATTR]: "true" } : {})}
           onFocus={() => {
             setHasFocus(true);
           }}
@@ -623,6 +632,28 @@ function getPrintableText(event: KeyboardEvent<HTMLDivElement>): string | null {
   }
 
   return event.key.length === 1 ? event.key : null;
+}
+
+function getKeyEventText(event: KeyboardEvent<HTMLDivElement>): string | null {
+  if (event.altKey) {
+    return null;
+  }
+
+  if (event.key === "Enter") {
+    return "\r";
+  }
+
+  if (event.key.length !== 1) {
+    return null;
+  }
+
+  if (!event.ctrlKey && !event.metaKey) {
+    return event.key;
+  }
+
+  // agent-browser needs text on Ctrl/Cmd+C to surface the copy chord in the live viewport,
+  // but other modified keys should stay pure shortcuts instead of inserting characters.
+  return event.key.toLowerCase() === "c" ? event.key : null;
 }
 
 function getModifierBits(event: {

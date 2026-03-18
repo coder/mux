@@ -5,6 +5,7 @@ import {
   matchesKeybind,
   KEYBINDS,
   isEditableElement,
+  isBrowserViewportFocused,
   isTerminalFocused,
   isDialogOpen,
 } from "@/browser/utils/ui/keybinds";
@@ -61,12 +62,19 @@ export function useAIViewKeybinds({
         ? KEYBINDS.INTERRUPT_STREAM_VIM
         : KEYBINDS.INTERRUPT_STREAM_NORMAL;
 
-      // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode
-      // Skip if terminal is focused - let terminal handle Ctrl+C (sends SIGINT to process)
+      const browserViewportOwnsInterrupt = vimEnabled && isBrowserViewportFocused(e.target);
+
+      // Interrupt stream: Ctrl+C in vim mode, Esc in normal mode.
+      // Skip if the terminal owns Ctrl+C first, or if the focused browser viewport is using
+      // the vim-mode Ctrl+C keystroke itself. Keep Escape behavior unchanged for browser tabs.
       //
       // IMPORTANT: This handler runs in **bubble phase** so dialogs/popovers can stopPropagation()
       // on Escape without accidentally interrupting a stream.
-      if (matchesKeybind(e, interruptKeybind) && !isTerminalFocused(e.target)) {
+      if (
+        matchesKeybind(e, interruptKeybind) &&
+        !isTerminalFocused(e.target) &&
+        !browserViewportOwnsInterrupt
+      ) {
         // If something else already claimed this key event, skip.
         if (e.defaultPrevented) {
           return;
